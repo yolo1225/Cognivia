@@ -210,7 +210,11 @@ def test_unchanged_incremental_build_does_not_call_provider(tmp_path: Path) -> N
     store = CandidateManifestStore(root=tmp_path)
     clock = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
     with sessions() as db:
-        db.add(_item("item-a", "稳定内容。" * 30))
+        item = _item("item-a", "稳定内容。" * 30)
+        # Keep ORM timestamps aligned with the builder's injected clock.
+        item.created_at = clock - timedelta(seconds=1)
+        item.updated_at = clock - timedelta(seconds=1)
+        db.add(item)
         db.commit()
         first_provider = FakeProvider()
         CandidateIndexBuilder(

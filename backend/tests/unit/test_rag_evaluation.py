@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 import shutil
 from pathlib import Path
 
 import pytest
 
 from app.scripts.evaluate_rag import (
+    _markdown_report,
+    aggregate_v2_reports,
     build_legacy_corpus,
     evaluate_v2_cases,
     legacy_hash_query,
@@ -184,3 +187,100 @@ def test_v2_evaluation_records_contract_and_index_metadata() -> None:
     assert result["engine"] == "v2-candidate"
     assert result["metrics"]["v2_contract_illegal_outputs"] == 0
     assert result["index_version"] == "test-index"
+
+
+def test_v2_report_renders_metadata_and_failure_attribution() -> None:
+    datasets, metadata = load_evaluation_data()
+    case = datasets["development"][0]
+
+    class EmptyV2Agent:
+        def execute(self, request):
+            return RetrieveKnowledgeOutput(
+                task_id=request.task_id,
+                query_text="deterministic evaluation query",
+                chunks=[],
+                covered_knowledge_ids=[],
+                warnings=["explicit_knowledge_unavailable:missing"],
+            )
+
+    result = evaluate_v2_cases(
+        [case],
+        EmptyV2Agent(),
+        split="development",
+        knowledge_ids={item["knowledge_id"] for item in load_knowledge_items(DEFAULT_KNOWLEDGE_PATH)},
+        knowledge_version="test-version",
+        acceptance_hash=metadata["manifest"]["acceptance_cases_sha256"],
+        embedding_model="test-embedding",
+        index_version="test-index",
+        mode="full",
+    )
+
+    assert "index" in result["cases"][0]["failure_attributions"]
+    markdown = _markdown_report(result)
+    assert "# V2 Candidate RAG Evaluation" in markdown
+    assert "Candidate 索引版本：`test-index`" in markdown
+    assert "V2 契约非法输出：0" in markdown
+    assert "# RAG Legacy Hash Baseline" not in markdown
+
+
+def test_aggregate_v2_reports_preserves_frozen_run_metadata() -> None:
+    datasets, metadata = load_evaluation_data()
+    case = next(
+        item
+        for item in datasets["development"]
+        if item["retrieval_plan"]["priority_knowledge_ids"]
+    )
+    knowledge_id = case["retrieval_plan"]["priority_knowledge_ids"][0]
+
+    class PriorityOnlyV2Agent:
+        def execute(self, request):
+            return RetrieveKnowledgeOutput(
+                task_id=request.task_id,
+                query_text="aggregated V2 query",
+                chunks=[
+                    RetrievedChunk(
+                        chunk_id=f"{knowledge_id}::chunk::0",
+                        knowledge_id=knowledge_id,
+                        name="Knowledge",
+                        category="RAG",
+                        difficulty=2,
+                        content="Traceable evidence",
+                        similarity=0.75,
+                        matched_by=RetrievalMatchType.PRIORITY,
+                        used_for=RetrievalPurpose.REMEDIAL_EXPLANATION,
+                        source=SourceRef(
+                            source_ref_id=f"{knowledge_id}::chunk::0",
+                            knowledge_id=knowledge_id,
+                            source_title="Official source",
+                            source_url="https://example.com/source",
+                            license_note="Official documentation",
+                        ),
+                    )
+                ],
+                covered_knowledge_ids=[knowledge_id],
+            )
+
+    result = evaluate_v2_cases(
+        [case],
+        PriorityOnlyV2Agent(),
+        split="development",
+        knowledge_ids={item["knowledge_id"] for item in load_knowledge_items(DEFAULT_KNOWLEDGE_PATH)},
+        knowledge_version="test-version",
+        acceptance_hash=metadata["manifest"]["acceptance_cases_sha256"],
+        embedding_model="test-embedding",
+        index_version="test-index",
+        mode="full",
+    )
+    acceptance = deepcopy(result)
+    acceptance["split"] = "acceptance"
+    acceptance["cases"][0]["case_id"] = "RAG-ACC-TEST"
+    for values in acceptance["failed_case_ids"].values():
+        values[:] = ["RAG-ACC-TEST"]
+
+    aggregate = aggregate_v2_reports(result, acceptance)
+
+    assert aggregate["status"] == "aggregated"
+    assert aggregate["split"] == "all"
+    assert aggregate["case_count"] == 2
+    assert aggregate["index_version"] == "test-index"
+    assert aggregate["metrics"]["recall_at_12"]["denominator"] == 2 * result["metrics"]["recall_at_12"]["denominator"]

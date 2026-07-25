@@ -1,6 +1,6 @@
 # V2 RAG 知识检索智能体内部实现方案
 
-> 文档状态：阶段三算法已实现；全量调参与冻结验收待阶段四
+> 文档状态：阶段三算法、阶段四评测与收敛、阶段五 RAG 准入检查已完成；统一 V2 运行链切换仍被阻塞
 > 更新日期：2026-07-20  
 > 适用领域：`ai_app_dev`（人工智能应用开发实训）  
 > 当前阶段：V2 Agent 算法独立开发，不切换生产运行链
@@ -601,10 +601,21 @@ python -m app.scripts.evaluate_rag --split acceptance --json
 5. 所有返回 chunk 均具备可追溯 `SourceRef`。
 6. 50 个 RAG 案例达到本文件的检索指标。
 7. 当前 V1 演示链和既有测试无回归。
-8. 冻结 V2 contract、State、Schema 和顶层图没有被修改。
+8. 冻结 V2 contract、State、Schema 和顶层图没有未经契约负责人批准的检索相关修改。
 9. candidate manifest 能证明索引模型、维度、数据版本和同步水位一致，失败重建不会破坏上一
    个有效索引。
 10. 已提交 V2 集成准入清单，明确适配、运行记录、SSE 摘要和切换回退责任。
+
+### 11.1 阶段四、五完成记录
+
+- 阶段四已产出四组 development 消融报告、一次冻结 acceptance `full` 报告和由两份 split
+  报告离线汇总的 50 例 `full` 报告。验收报告满足 Recall@12、priority Top-12、prerequisite、
+  来源完整率、跨领域错误、P95 和 V2 契约非法输出全部门槛。
+- 阶段五已验证 candidate manifest 的 active collection、embedding 模型、索引版本、数据版本、
+  冻结验收哈希和 V1 非 live 回归记录一致，当前结论为 `rag_admitted / runtime_cutover_blocked`。
+- 当前 V2 契约存在一项已批准的画像侧扩展：`KnowledgeAssessment` 和
+  `AnalyzeProfileInput.knowledge_assessments`。它不改变 `RetrieveKnowledgeInput`、
+  `RetrieveKnowledgeOutput`、V2 retrieval State 所有权或顶层图。
 
 以下事项不属于本阶段完成条件：
 
