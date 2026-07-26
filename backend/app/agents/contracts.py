@@ -206,6 +206,22 @@ class EvidenceRef(ContractModel):
     confirmed: bool = False
 
 
+class KnowledgeAssessment(ContractModel):
+    assessment_id: str = Field(min_length=1, max_length=64)
+    evidence_id: str = Field(min_length=1, max_length=64)
+    knowledge_id: str = Field(min_length=1, max_length=64)
+    score: float | None = Field(default=None, ge=0, le=1)
+    difficulty: int = Field(ge=1, le=5)
+    attempted: bool
+    confidence: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_attempt(self) -> "KnowledgeAssessment":
+        if not self.attempted and self.score is not None:
+            raise ValueError("unattempted assessments cannot include a score")
+        return self
+
+
 class SourceRef(ContractModel):
     source_ref_id: str = Field(min_length=1, max_length=128)
     knowledge_id: str = Field(min_length=1, max_length=64)
@@ -417,6 +433,28 @@ class AnalyzeProfileInput(ContextNodeContract):
     diagnostic_summary: DiagnosticSummary | None = None
     feedback_evidence: list[EvidenceRef] = Field(default_factory=list, max_length=100)
     recommended_action: RecommendedAction | None = None
+    knowledge_assessments: list[KnowledgeAssessment] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_knowledge_assessments(self) -> "AnalyzeProfileInput":
+        assessment_ids = [item.assessment_id for item in self.knowledge_assessments]
+        if len(assessment_ids) != len(set(assessment_ids)):
+            raise ValueError("knowledge assessment IDs must be unique")
+
+        evidence = list(self.feedback_evidence)
+        if self.diagnostic_summary is not None:
+            evidence.extend(self.diagnostic_summary.evidence)
+        evidence_by_id = {item.evidence_id: item for item in evidence}
+
+        for assessment in self.knowledge_assessments:
+            source = evidence_by_id.get(assessment.evidence_id)
+            if source is None:
+                raise ValueError("knowledge assessments must reference available evidence")
+            if source.knowledge_id is None:
+                raise ValueError("assessment evidence must identify a knowledge ID")
+            if source.knowledge_id != assessment.knowledge_id:
+                raise ValueError("assessment and evidence knowledge IDs must match")
+        return self
 
 
 class AnalyzeProfileOutput(NodeContract):

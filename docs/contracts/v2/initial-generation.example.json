@@ -116,7 +116,18 @@
         ]
       },
       "feedback_evidence": [],
-      "recommended_action": null
+      "recommended_action": null,
+      "knowledge_assessments": [
+        {
+          "assessment_id": "assessment_diag_1",
+          "evidence_id": "evidence_diag_1",
+          "knowledge_id": "AIAPP-K029",
+          "score": 0.4,
+          "difficulty": 3,
+          "attempted": true,
+          "confidence": 0.95
+        }
+      ]
     },
     "output": {
       "contract_version": "agent-contract-v2",

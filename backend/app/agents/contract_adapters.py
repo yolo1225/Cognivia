@@ -19,6 +19,7 @@ from app.agents.contracts import (
     HumanReviewOutput,
     InterpretFeedbackInput,
     InterpretFeedbackOutput,
+    KnowledgeAssessment,
     LectureContent,
     PracticeGuideContent,
     PrepareTaskInput,
@@ -81,7 +82,11 @@ def build_interpret_feedback_input(state: AgentGraphState) -> InterpretFeedbackI
     )
 
 
-def build_analyze_profile_input(state: AgentGraphState) -> AnalyzeProfileInput:
+def build_analyze_profile_input(
+    state: AgentGraphState,
+    *,
+    knowledge_assessments: list[KnowledgeAssessment] | None = None,
+) -> AnalyzeProfileInput:
     context = _context(state)
     tutoring = state.get("interpret_feedback")
     return AnalyzeProfileInput(
@@ -91,6 +96,7 @@ def build_analyze_profile_input(state: AgentGraphState) -> AnalyzeProfileInput:
         diagnostic_summary=state.get("diagnostic_summary"),
         feedback_evidence=tutoring.evidence if tutoring else [],
         recommended_action=tutoring.recommended_action if tutoring else None,
+        knowledge_assessments=knowledge_assessments or [],
     )
 
 

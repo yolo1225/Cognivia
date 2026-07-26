@@ -33,6 +33,7 @@ from app.agents.contracts import (
     HumanReviewOutput,
     InterpretFeedbackInput,
     InterpretFeedbackOutput,
+    KnowledgeAssessment,
     LectureContent,
     MasteryType,
     MisconceptionBlock,
@@ -370,6 +371,17 @@ def initial_generation_flow_example() -> dict[str, object]:
         context=context,
         current_profile=PROFILE,
         diagnostic_summary=diagnostic,
+        knowledge_assessments=[
+            KnowledgeAssessment(
+                assessment_id="assessment_diag_1",
+                evidence_id="evidence_diag_1",
+                knowledge_id="AIAPP-K029",
+                score=0.4,
+                difficulty=3,
+                attempted=True,
+                confidence=0.95,
+            )
+        ],
     )
     analyze_output = AnalyzeProfileOutput(
         task_id=TASK_ID,

@@ -191,6 +191,14 @@
             }
           ],
           "default": null
+        },
+        "knowledge_assessments": {
+          "items": {
+            "$ref": "#/$defs/KnowledgeAssessment"
+          },
+          "maxItems": 100,
+          "title": "Knowledge Assessments",
+          "type": "array"
         }
       },
       "required": [
@@ -240,8 +248,8 @@
           "type": "array"
         },
         "confidence": {
-          "maximum": 1.0,
-          "minimum": 0.0,
+          "maximum": 1,
+          "minimum": 0,
           "title": "Confidence",
           "type": "number"
         },
@@ -450,8 +458,8 @@
           "type": "integer"
         },
         "score_percent": {
-          "maximum": 100.0,
-          "minimum": 0.0,
+          "maximum": 100,
+          "minimum": 0,
           "title": "Score Percent",
           "type": "number"
         },
@@ -520,8 +528,8 @@
           "title": "Source Ref Id"
         },
         "confidence": {
-          "maximum": 1.0,
-          "minimum": 0.0,
+          "maximum": 1,
+          "minimum": 0,
           "title": "Confidence",
           "type": "number"
         },
@@ -1281,6 +1289,69 @@
         "decision_reason"
       ],
       "title": "InterpretFeedbackOutput",
+      "type": "object"
+    },
+    "KnowledgeAssessment": {
+      "additionalProperties": false,
+      "properties": {
+        "assessment_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Assessment Id",
+          "type": "string"
+        },
+        "evidence_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "knowledge_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Knowledge Id",
+          "type": "string"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "difficulty": {
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Difficulty",
+          "type": "integer"
+        },
+        "attempted": {
+          "title": "Attempted",
+          "type": "boolean"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "assessment_id",
+        "evidence_id",
+        "knowledge_id",
+        "difficulty",
+        "attempted",
+        "confidence"
+      ],
+      "title": "KnowledgeAssessment",
       "type": "object"
     },
     "LectureContent": {
@@ -2230,8 +2301,8 @@
           "type": "string"
         },
         "similarity": {
-          "maximum": 1.0,
-          "minimum": 0.0,
+          "maximum": 1,
+          "minimum": 0,
           "title": "Similarity",
           "type": "number"
         },
@@ -2264,26 +2335,26 @@
       "additionalProperties": false,
       "properties": {
         "factual_accuracy": {
-          "maximum": 100.0,
-          "minimum": 0.0,
+          "maximum": 100,
+          "minimum": 0,
           "title": "Factual Accuracy",
           "type": "number"
         },
         "source_traceability": {
-          "maximum": 100.0,
-          "minimum": 0.0,
+          "maximum": 100,
+          "minimum": 0,
           "title": "Source Traceability",
           "type": "number"
         },
         "difficulty_match": {
-          "maximum": 100.0,
-          "minimum": 0.0,
+          "maximum": 100,
+          "minimum": 0,
           "title": "Difficulty Match",
           "type": "number"
         },
         "core_knowledge_coverage": {
-          "maximum": 100.0,
-          "minimum": 0.0,
+          "maximum": 100,
+          "minimum": 0,
           "title": "Core Knowledge Coverage",
           "type": "number"
         }
