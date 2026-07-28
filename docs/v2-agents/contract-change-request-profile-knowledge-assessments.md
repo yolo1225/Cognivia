@@ -1,10 +1,10 @@
 # Agent Contract V2 变更申请：知识点评估输入
 
-> 申请状态：已批准并应用  
-> 申请日期：2026-07-22  
-> 申请范围：Profile Analysis Agent  
-> 兼容性目标：向后兼容的增量变更  
-> 关联方案：`docs/v2-profile-analysis-agent-implementation-plan.md`
+> 申请状态：已批准并应用
+> 申请日期：2026-07-22
+> 申请范围：Profile Analysis Agent
+> 兼容性目标：向后兼容的增量变更
+> 关联方案：`v2-profile-analysis-agent-implementation-plan.md`
 
 ## 1. 申请结论
 
@@ -319,8 +319,8 @@ Agent 输出的 `ProfileSnapshot` 和 `RetrievalPlan`。
 
 ## 12. 审批记录
 
-审批人：项目契约维护者（用户确认）  
-审批日期：2026-07-22  
-审批结果：批准并已完成契约工件同步  
-批准方案：方案 A  
+审批人：项目契约维护者（用户确认）
+审批日期：2026-07-22
+审批结果：批准并已完成契约工件同步
+批准方案：方案 A
 附加条件：`knowledge_assessments` 通过节点输入构造器瞬时注入，默认不写入顶层 State

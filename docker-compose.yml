@@ -51,6 +51,7 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./data:/app/data
+      - ./docs:/app/docs:ro
       - ./storage:/app/storage
       - candidate_index_state:/app/storage/candidate-index
       - ./reports:/app/reports

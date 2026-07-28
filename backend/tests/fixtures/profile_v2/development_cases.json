@@ -1,0 +1,1158 @@
+{
+  "fixture_version": "ai_app_dev_profile_v1",
+  "templates": {
+    "initial_diagnostic": {
+      "task_id": "$case_id",
+      "context": {
+        "task_id": "$case_id",
+        "session_id": "$case_id",
+        "trigger_type": "initial_generation",
+        "execution_mode": "auto",
+        "learner_id": "learner_fixture",
+        "profile_id": "profile_fixture",
+        "domain_code": "ai_app_dev",
+        "resource_types": [
+          "lecture"
+        ],
+        "learning_goal": "掌握 $knowledge_name"
+      },
+      "current_profile": {
+        "profile_id": "profile_fixture",
+        "profile_version": 1,
+        "profile_type": "$current_profile_type",
+        "ability_scores": {
+          "theory": "$ability_score",
+          "practice": "$ability_score",
+          "problem_solving": "$ability_score",
+          "knowledge_breadth": "$ability_score",
+          "learning_speed": "$ability_score"
+        },
+        "weak_knowledge": [],
+        "blind_spot_ids": []
+      },
+      "diagnostic_summary": {
+        "diagnostic_session_id": "diagnostic_$case_id",
+        "question_count": 10,
+        "answered_count": 10,
+        "correct_count": 5,
+        "skipped_count": 0,
+        "score_percent": 50,
+        "evidence": [
+          {
+            "evidence_id": "evidence_$case_id",
+            "evidence_type": "diagnostic_result",
+            "summary": "脱敏诊断评分",
+            "knowledge_id": "$knowledge_id",
+            "confidence": 0.9,
+            "confirmed": true
+          }
+        ]
+      },
+      "feedback_evidence": [],
+      "recommended_action": null,
+      "knowledge_assessments": [
+        {
+          "assessment_id": "assessment_$case_id",
+          "evidence_id": "evidence_$case_id",
+          "knowledge_id": "$knowledge_id",
+          "score": "$score",
+          "difficulty": "$difficulty",
+          "attempted": true,
+          "confidence": 0.9
+        }
+      ]
+    },
+    "single_feedback": {
+      "task_id": "$case_id",
+      "context": {
+        "task_id": "$case_id",
+        "session_id": "$case_id",
+        "trigger_type": "resource_feedback",
+        "execution_mode": "auto",
+        "learner_id": "learner_fixture",
+        "profile_id": "profile_fixture",
+        "domain_code": "ai_app_dev",
+        "resource_types": [
+          "lecture"
+        ],
+        "learning_goal": "巩固 $knowledge_name",
+        "resource_id": "resource_fixture",
+        "feedback_id": "feedback_$case_id"
+      },
+      "current_profile": {
+        "profile_id": "profile_fixture",
+        "profile_version": 2,
+        "profile_type": "$current_profile_type",
+        "ability_scores": {
+          "theory": "$ability_score",
+          "practice": "$ability_score",
+          "problem_solving": "$ability_score",
+          "knowledge_breadth": "$ability_score",
+          "learning_speed": "$ability_score"
+        },
+        "weak_knowledge": [],
+        "blind_spot_ids": []
+      },
+      "diagnostic_summary": null,
+      "feedback_evidence": [
+        {
+          "evidence_id": "evidence_$case_id",
+          "evidence_type": "quick_feedback",
+          "summary": "单次脱敏快捷反馈",
+          "knowledge_id": "$knowledge_id",
+          "confidence": 0.3,
+          "confirmed": false
+        }
+      ],
+      "recommended_action": "ask_follow_up",
+      "knowledge_assessments": []
+    },
+    "confirmed_assessment": {
+      "task_id": "$case_id",
+      "context": {
+        "task_id": "$case_id",
+        "session_id": "$case_id",
+        "trigger_type": "resource_feedback",
+        "execution_mode": "auto",
+        "learner_id": "learner_fixture",
+        "profile_id": "profile_fixture",
+        "domain_code": "ai_app_dev",
+        "resource_types": [
+          "practice_guide"
+        ],
+        "learning_goal": "提升 $knowledge_name",
+        "resource_id": "resource_fixture",
+        "feedback_id": "feedback_$case_id"
+      },
+      "current_profile": {
+        "profile_id": "profile_fixture",
+        "profile_version": 2,
+        "profile_type": "$current_profile_type",
+        "ability_scores": {
+          "theory": "$ability_score",
+          "practice": "$ability_score",
+          "problem_solving": "$ability_score",
+          "knowledge_breadth": "$ability_score",
+          "learning_speed": "$ability_score"
+        },
+        "weak_knowledge": [],
+        "blind_spot_ids": []
+      },
+      "diagnostic_summary": null,
+      "feedback_evidence": [
+        {
+          "evidence_id": "evidence_$case_id",
+          "evidence_type": "scored_quiz",
+          "summary": "脱敏计分测验结果",
+          "knowledge_id": "$knowledge_id",
+          "confidence": 0.95,
+          "confirmed": true
+        }
+      ],
+      "recommended_action": "explain",
+      "knowledge_assessments": [
+        {
+          "assessment_id": "assessment_$case_id",
+          "evidence_id": "evidence_$case_id",
+          "knowledge_id": "$knowledge_id",
+          "score": "$score",
+          "difficulty": "$difficulty",
+          "attempted": true,
+          "confidence": 0.95
+        }
+      ]
+    },
+    "resource_review": {
+      "task_id": "$case_id",
+      "context": {
+        "task_id": "$case_id",
+        "session_id": "$case_id",
+        "trigger_type": "resource_feedback",
+        "execution_mode": "auto",
+        "learner_id": "learner_fixture",
+        "profile_id": "profile_fixture",
+        "domain_code": "ai_app_dev",
+        "resource_types": [
+          "lecture"
+        ],
+        "learning_goal": "复核 $knowledge_name",
+        "resource_id": "resource_fixture",
+        "feedback_id": "feedback_$case_id"
+      },
+      "current_profile": {
+        "profile_id": "profile_fixture",
+        "profile_version": 3,
+        "profile_type": "$current_profile_type",
+        "ability_scores": {
+          "theory": "$ability_score",
+          "practice": "$ability_score",
+          "problem_solving": "$ability_score",
+          "knowledge_breadth": "$ability_score",
+          "learning_speed": "$ability_score"
+        },
+        "weak_knowledge": [],
+        "blind_spot_ids": []
+      },
+      "diagnostic_summary": null,
+      "feedback_evidence": [
+        {
+          "evidence_id": "evidence_$case_id",
+          "evidence_type": "natural_language",
+          "summary": "资源事实错误报告",
+          "knowledge_id": "$knowledge_id",
+          "confidence": 0.9,
+          "confirmed": true
+        }
+      ],
+      "recommended_action": "review",
+      "knowledge_assessments": []
+    }
+  },
+  "cases": [
+    {
+      "case_id": "dev-initial-01",
+      "scenario": "initial_diagnostic",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "python_api_basics",
+        "knowledge_name": "Python API 调用基础",
+        "score": 0.2,
+        "difficulty": 1,
+        "current_profile_type": "beginner",
+        "ability_score": 50
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge",
+          "blind_spot_ids"
+        ],
+        "profile_type": "beginner",
+        "weak_knowledge_ids": [
+          "python_api_basics"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 1,
+        "priority_knowledge_ids": [
+          "python_api_basics"
+        ],
+        "prerequisite_knowledge_ids": [
+          "ai_app_dev_overview"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-initial-02",
+      "scenario": "initial_diagnostic",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "prompt_basic",
+        "knowledge_name": "Prompt 基础",
+        "score": 0.35,
+        "difficulty": 2,
+        "current_profile_type": "beginner",
+        "ability_score": 50
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge"
+        ],
+        "profile_type": "beginner",
+        "weak_knowledge_ids": [
+          "prompt_basic"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 1,
+        "priority_knowledge_ids": [
+          "prompt_basic"
+        ],
+        "prerequisite_knowledge_ids": [
+          "ai_app_dev_overview"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-initial-03",
+      "scenario": "initial_diagnostic",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "rag_pipeline_overview",
+        "knowledge_name": "RAG 流程概览",
+        "score": 0.45,
+        "difficulty": 2,
+        "current_profile_type": "beginner",
+        "ability_score": 50
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+        "weak_knowledge"
+
+        ],
+        "profile_type": "beginner",
+        "weak_knowledge_ids": [
+          "rag_pipeline_overview"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 2,
+        "priority_knowledge_ids": [
+          "rag_pipeline_overview"
+        ],
+        "prerequisite_knowledge_ids": [
+          "vector_similarity"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-initial-04",
+      "scenario": "initial_diagnostic",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "fastapi_endpoint_design",
+        "knowledge_name": "FastAPI 接口设计",
+        "score": 0.55,
+        "difficulty": 2,
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge"
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "fastapi_endpoint_design"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 2,
+        "priority_knowledge_ids": [
+          "fastapi_endpoint_design"
+        ],
+        "prerequisite_knowledge_ids": [
+          "http_rest_basics"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-initial-05",
+      "scenario": "initial_diagnostic",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "vector_similarity",
+        "knowledge_name": "向量相似度",
+        "score": 0.6,
+        "difficulty": 2,
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge"
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "vector_similarity"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 2,
+        "priority_knowledge_ids": [
+          "vector_similarity"
+        ],
+        "prerequisite_knowledge_ids": [
+          "embedding_basics"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-initial-06",
+      "scenario": "initial_diagnostic",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "function_calling_tools",
+        "knowledge_name": "函数调用工具",
+        "score": 0.7,
+        "difficulty": 3,
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge"
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "function_calling_tools"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 2,
+        "priority_knowledge_ids": [
+          "function_calling_tools"
+        ],
+        "prerequisite_knowledge_ids": [
+          "prompt_output_format",
+          "llm_api_calling"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-initial-07",
+      "scenario": "initial_diagnostic",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "observability_tracing",
+        "knowledge_name": "可观测性",
+        "score": 0.8,
+        "difficulty": 3,
+        "current_profile_type": "advanced",
+        "ability_score": 90
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge",
+          "profile_type"
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "observability_tracing"
+        ],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 4,
+        "priority_knowledge_ids": [
+          "observability_tracing"
+        ],
+        "prerequisite_knowledge_ids": [
+          "ai_app_dev_overview",
+          "streaming_responses"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-initial-08",
+      "scenario": "initial_diagnostic",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "evaluation_metrics",
+        "knowledge_name": "离线评测指标",
+        "score": 0.9,
+        "difficulty": 3,
+        "current_profile_type": "advanced",
+        "ability_score": 90
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge",
+          "profile_type"
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "evaluation_metrics"
+        ],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 4,
+        "priority_knowledge_ids": [
+          "evaluation_metrics"
+        ],
+        "prerequisite_knowledge_ids": [
+          "prompt_evaluation",
+          "review_validation_agent"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-initial-09",
+      "scenario": "initial_diagnostic",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "langgraph_stategraph",
+        "knowledge_name": "LangGraph 状态图",
+        "score": 0.5,
+        "difficulty": 3,
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge"
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "langgraph_stategraph"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 2,
+        "priority_knowledge_ids": [
+          "langgraph_stategraph"
+        ],
+        "prerequisite_knowledge_ids": [
+          "agent_role_design"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-weak-01",
+      "scenario": "weakness_prerequisite",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "rag_chunking",
+        "knowledge_name": "RAG 切分",
+        "score": 0.2,
+        "difficulty": 3,
+        "current_profile_type": "beginner",
+        "ability_score": 50
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge",
+          "blind_spot_ids"
+        ],
+        "profile_type": "beginner",
+        "weak_knowledge_ids": [
+          "rag_chunking"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 1,
+        "priority_knowledge_ids": [
+          "rag_chunking"
+        ],
+        "prerequisite_knowledge_ids": [
+          "rag_pipeline_overview"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-weak-02",
+      "scenario": "weakness_prerequisite",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "retrieval_reranking",
+        "knowledge_name": "检索重排序",
+        "score": 0.25,
+        "difficulty": 3,
+        "current_profile_type": "beginner",
+        "ability_score": 50
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge",
+          "blind_spot_ids"
+        ],
+        "profile_type": "beginner",
+        "weak_knowledge_ids": [
+          "retrieval_reranking"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 1,
+        "priority_knowledge_ids": [
+          "retrieval_reranking"
+        ],
+        "prerequisite_knowledge_ids": [
+          "vector_similarity",
+          "metadata_filtering"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-weak-03",
+      "scenario": "weakness_prerequisite",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "sqlalchemy_modeling",
+        "knowledge_name": "SQLAlchemy 建模",
+        "score": 0.3,
+        "difficulty": 3,
+        "current_profile_type": "beginner",
+        "ability_score": 50
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge"
+        ],
+        "profile_type": "beginner",
+        "weak_knowledge_ids": [
+          "sqlalchemy_modeling"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 1,
+        "priority_knowledge_ids": [
+          "sqlalchemy_modeling"
+        ],
+        "prerequisite_knowledge_ids": [
+          "data_schema_design"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-weak-04",
+      "scenario": "weakness_prerequisite",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "orchestrator_workflow",
+        "knowledge_name": "编排工作流",
+        "score": 0.35,
+        "difficulty": 3,
+        "current_profile_type": "beginner",
+        "ability_score": 50
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge"
+        ],
+        "profile_type": "beginner",
+        "weak_knowledge_ids": [
+          "orchestrator_workflow"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 1,
+        "priority_knowledge_ids": [
+          "orchestrator_workflow"
+        ],
+        "prerequisite_knowledge_ids": [
+          "langgraph_stategraph"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-weak-05",
+      "scenario": "weakness_prerequisite",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "prompt_injection_defense",
+        "knowledge_name": "提示注入防护",
+        "score": 0.38,
+        "difficulty": 3,
+        "current_profile_type": "beginner",
+        "ability_score": 50
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge"
+        ],
+        "profile_type": "beginner",
+        "weak_knowledge_ids": [
+          "prompt_injection_defense"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 1,
+        "priority_knowledge_ids": [
+          "prompt_injection_defense"
+        ],
+        "prerequisite_knowledge_ids": [
+          "prompt_context_design",
+          "function_calling_tools"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-weak-06",
+      "scenario": "weakness_prerequisite",
+      "template": "initial_diagnostic",
+      "values": {
+        "knowledge_id": "llm_judge_reliability",
+        "knowledge_name": "模型评审可靠性",
+        "score": 0.4,
+        "difficulty": 4,
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge"
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "llm_judge_reliability"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 2,
+        "priority_knowledge_ids": [
+          "llm_judge_reliability"
+        ],
+        "prerequisite_knowledge_ids": [
+          "prompt_evaluation",
+          "evaluation_metrics"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-feedback-01",
+      "scenario": "single_feedback_no_change",
+      "template": "single_feedback",
+      "values": {
+        "knowledge_id": "prompt_basic",
+        "knowledge_name": "Prompt 基础",
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": false,
+        "changed_dimensions": [],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 4,
+        "priority_knowledge_ids": [],
+        "prerequisite_knowledge_ids": [],
+        "needs_generation": false
+      }
+    },
+    {
+      "case_id": "dev-feedback-02",
+      "scenario": "single_feedback_no_change",
+      "template": "single_feedback",
+      "values": {
+        "knowledge_id": "rag_pipeline_overview",
+        "knowledge_name": "RAG 流程",
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": false,
+        "changed_dimensions": [],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 4,
+        "priority_knowledge_ids": [],
+        "prerequisite_knowledge_ids": [],
+        "needs_generation": false
+      }
+    },
+    {
+      "case_id": "dev-feedback-03",
+      "scenario": "single_feedback_no_change",
+      "template": "single_feedback",
+      "values": {
+        "knowledge_id": "fastapi_endpoint_design",
+        "knowledge_name": "FastAPI",
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": false,
+        "changed_dimensions": [],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 4,
+        "priority_knowledge_ids": [],
+        "prerequisite_knowledge_ids": [],
+        "needs_generation": false
+      }
+    },
+    {
+      "case_id": "dev-feedback-04",
+      "scenario": "single_feedback_no_change",
+      "template": "single_feedback",
+      "values": {
+        "knowledge_id": "docker_containerization",
+        "knowledge_name": "Docker",
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": false,
+        "changed_dimensions": [],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 4,
+        "priority_knowledge_ids": [],
+        "prerequisite_knowledge_ids": [],
+        "needs_generation": false
+      }
+    },
+    {
+      "case_id": "dev-feedback-05",
+      "scenario": "single_feedback_no_change",
+      "template": "single_feedback",
+      "values": {
+        "knowledge_id": "agent_role_design",
+        "knowledge_name": "Agent 职责",
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": false,
+        "changed_dimensions": [],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 4,
+        "priority_knowledge_ids": [],
+        "prerequisite_knowledge_ids": [],
+        "needs_generation": false
+      }
+    },
+    {
+      "case_id": "dev-feedback-06",
+      "scenario": "single_feedback_no_change",
+      "template": "single_feedback",
+      "values": {
+        "knowledge_id": "citation_traceability",
+        "knowledge_name": "来源追溯",
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": false,
+        "changed_dimensions": [],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 4,
+        "priority_knowledge_ids": [],
+        "prerequisite_knowledge_ids": [],
+        "needs_generation": false
+      }
+    },
+    {
+      "case_id": "dev-update-01",
+      "scenario": "confirmed_assessment_update",
+      "template": "confirmed_assessment",
+      "values": {
+        "knowledge_id": "pydantic_schema_validation",
+        "knowledge_name": "Pydantic 校验",
+        "score": 0.2,
+        "difficulty": 2,
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge",
+          "blind_spot_ids"
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "pydantic_schema_validation"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 2,
+        "priority_knowledge_ids": [
+          "pydantic_schema_validation"
+        ],
+        "prerequisite_knowledge_ids": [
+          "fastapi_endpoint_design"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-update-02",
+      "scenario": "confirmed_assessment_update",
+      "template": "confirmed_assessment",
+      "values": {
+        "knowledge_id": "metadata_filtering",
+        "knowledge_name": "元数据过滤",
+        "score": 0.3,
+        "difficulty": 3,
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge"
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "metadata_filtering"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 2,
+        "priority_knowledge_ids": [
+          "metadata_filtering"
+        ],
+        "prerequisite_knowledge_ids": [
+          "rag_pipeline_overview"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-update-03",
+      "scenario": "confirmed_assessment_update",
+      "template": "confirmed_assessment",
+      "values": {
+        "knowledge_id": "structured_output_validation",
+        "knowledge_name": "结构化输出",
+        "score": 0.85,
+        "difficulty": 3,
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+        "weak_knowledge"
+
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "structured_output_validation"
+        ],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 4,
+        "priority_knowledge_ids": [
+          "structured_output_validation"
+        ],
+        "prerequisite_knowledge_ids": [
+          "prompt_output_format",
+          "data_schema_design"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-update-04",
+      "scenario": "confirmed_assessment_update",
+      "template": "confirmed_assessment",
+      "values": {
+        "knowledge_id": "knowledge_base_ingestion",
+        "knowledge_name": "知识入库",
+        "score": 0.25,
+        "difficulty": 2,
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge",
+          "blind_spot_ids"
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "knowledge_base_ingestion"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 2,
+        "priority_knowledge_ids": [
+          "knowledge_base_ingestion"
+        ],
+        "prerequisite_knowledge_ids": [
+          "data_schema_design",
+          "rag_pipeline_overview"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-update-05",
+      "scenario": "confirmed_assessment_update",
+      "template": "confirmed_assessment",
+      "values": {
+        "knowledge_id": "api_resilience_retry",
+        "knowledge_name": "API 重试",
+        "score": 0.65,
+        "difficulty": 3,
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+          "ability_scores.theory",
+          "ability_scores.practice",
+          "ability_scores.problem_solving",
+          "weak_knowledge"
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "api_resilience_retry"
+        ],
+        "retrieval_strategy": "remedial",
+        "target_difficulty": 2,
+        "priority_knowledge_ids": [
+          "api_resilience_retry"
+        ],
+        "prerequisite_knowledge_ids": [
+          "llm_api_calling",
+          "python_async_concurrency"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-update-06",
+      "scenario": "confirmed_assessment_update",
+      "template": "confirmed_assessment",
+      "values": {
+        "knowledge_id": "frontend_api_client",
+        "knowledge_name": "前端 API 客户端",
+        "score": 0.9,
+        "difficulty": 2,
+        "current_profile_type": "intermediate",
+        "ability_score": 70
+      },
+      "expected": {
+        "profile_update_required": true,
+        "changed_dimensions": [
+        "weak_knowledge"
+
+        ],
+        "profile_type": "intermediate",
+        "weak_knowledge_ids": [
+          "frontend_api_client"
+        ],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 4,
+        "priority_knowledge_ids": [
+          "frontend_api_client"
+        ],
+        "prerequisite_knowledge_ids": [
+          "frontend_vue_state",
+          "fastapi_endpoint_design"
+        ],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-review-01",
+      "scenario": "resource_incorrect_review",
+      "template": "resource_review",
+      "values": {
+        "knowledge_id": "citation_traceability",
+        "knowledge_name": "来源追溯",
+        "current_profile_type": "advanced",
+        "ability_score": 90
+      },
+      "expected": {
+        "profile_update_required": false,
+        "changed_dimensions": [],
+        "profile_type": "advanced",
+        "weak_knowledge_ids": [],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 5,
+        "priority_knowledge_ids": [],
+        "prerequisite_knowledge_ids": [],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-review-02",
+      "scenario": "resource_incorrect_review",
+      "template": "resource_review",
+      "values": {
+        "knowledge_id": "hallucination_guardrails",
+        "knowledge_name": "幻觉防护",
+        "current_profile_type": "advanced",
+        "ability_score": 90
+      },
+      "expected": {
+        "profile_update_required": false,
+        "changed_dimensions": [],
+        "profile_type": "advanced",
+        "weak_knowledge_ids": [],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 5,
+        "priority_knowledge_ids": [],
+        "prerequisite_knowledge_ids": [],
+        "needs_generation": true
+      }
+    },
+    {
+      "case_id": "dev-review-03",
+      "scenario": "resource_incorrect_review",
+      "template": "resource_review",
+      "values": {
+        "knowledge_id": "secret_management",
+        "knowledge_name": "密钥管理",
+        "current_profile_type": "advanced",
+        "ability_score": 90
+      },
+      "expected": {
+        "profile_update_required": false,
+        "changed_dimensions": [],
+        "profile_type": "advanced",
+        "weak_knowledge_ids": [],
+        "retrieval_strategy": "consolidation",
+        "target_difficulty": 5,
+        "priority_knowledge_ids": [],
+        "prerequisite_knowledge_ids": [],
+        "needs_generation": true
+      }
+    }
+  ],
+  "baseline_source": "rule-reviewed formula + seed relations"
+}
