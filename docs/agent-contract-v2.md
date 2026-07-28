@@ -89,7 +89,7 @@ Agent 实现必须使用以上模型作为 `execute()` 边界，Prompt、RAG、�
 | `finalize_task` | `FinalizeTaskInput` | `FinalizeTaskOutput` | `finalize_task` |
 | `human_review` | `HumanReviewInput` | `HumanReviewOutput` | `human_review` |
 
-worker 可在执行前提供 `task_request`、`current_profile`、`diagnostic_summary`、`feedback_context` 和 `revision_plan`。它们是外部输入，不属于任何 Agent 的输出。
+worker 可在执行前提供 `task_request`、`current_profile`、`diagnostic_summary`、`feedback_context` 和 `revision_plan`。`analyze_profile` 节点输入构造器还可从受控诊断或计分测验记录中瞬时注入 `knowledge_assessments`。这些数据是外部输入，不属于任何 Agent 的输出；完整评估列表默认不写入顶层 State。
 
 ## 6. 关键对象
 
@@ -98,6 +98,8 @@ worker 可在执行前提供 `task_request`、`current_profile`、`diagnostic_su
 `ProfileSnapshot` 固定包含画像 ID、版本、类型、五维能力、薄弱知识和盲区 ID。能力分数范围为 0-100，薄弱程度范围为 1-5。
 
 `EvidenceRef` 固定包含证据 ID、类型、脱敏摘要、置信度、确认状态和可选知识 ID。快捷标签和一次主观反馈不能由 Tutoring Agent 直接输出画像更新结论。
+
+`KnowledgeAssessment` 固定包含评估 ID、关联证据 ID、知识 ID、0-1 可空得分、1-5 难度、是否作答和置信度。`AnalyzeProfileInput.knowledge_assessments` 默认空列表，最多 100 条；未作答评估不得携带得分，评估必须引用当前输入可用的证据且知识 ID 一致。该对象不包含原始答案或题目正文。
 
 ### 6.2 检索
 

@@ -1,0 +1,995 @@
+{
+  "status": "evaluated",
+  "engine": "v2-candidate",
+  "mode": "explicit-only",
+  "embedding_model": "qwen3.7-text-embedding",
+  "algorithm_version": "v2-candidate-1.0.0",
+  "index_version": "sha256:d704d3cf95e5cb11b8219d0fc1b767b84c669fb56cf162a70a3499a330c398c8",
+  "split": "development",
+  "case_count": 30,
+  "source_data_version": "sha256:837441b02400435bf83fc802d79b69a473b591fdd9062529e16154c22560c608",
+  "acceptance_cases_sha256": "sha256:25ce6ac9c25158a88cb7eb92d0068bec769331714bfd53a87d39c9900157d589",
+  "metrics": {
+    "recall_at_12": {
+      "numerator": 28,
+      "denominator": 64,
+      "ratio": 0.4375
+    },
+    "priority_direct_availability": {
+      "numerator": 21,
+      "denominator": 21,
+      "ratio": 1.0
+    },
+    "priority_top_12_coverage": {
+      "numerator": 21,
+      "denominator": 21,
+      "ratio": 1.0
+    },
+    "explicit_prerequisite_coverage": {
+      "numerator": 7,
+      "denominator": 7,
+      "ratio": 1.0
+    },
+    "discovered_prerequisite_coverage": {
+      "numerator": 0,
+      "denominator": 10,
+      "ratio": 0.0
+    },
+    "prerequisite_coverage": {
+      "numerator": 7,
+      "denominator": 17,
+      "ratio": 0.411765
+    },
+    "source_completeness": {
+      "numerator": 28,
+      "denominator": 28,
+      "ratio": 1.0
+    },
+    "cross_domain_errors": 0,
+    "latency_ms": {
+      "p50": 218.402,
+      "p95": 279.275
+    },
+    "v2_contract_illegal_outputs": 0
+  },
+  "target_checks": {
+    "recall_at_12": false,
+    "priority_top_12_coverage": true,
+    "prerequisite_coverage": false,
+    "source_completeness": true,
+    "cross_domain_errors": true,
+    "p95_latency_ms": true,
+    "v2_contract_illegal_outputs": true
+  },
+  "failed_case_ids": {
+    "recall_at_12": [
+      "RAG-DEV-001",
+      "RAG-DEV-002",
+      "RAG-DEV-003",
+      "RAG-DEV-005",
+      "RAG-DEV-006",
+      "RAG-DEV-007",
+      "RAG-DEV-008",
+      "RAG-DEV-009",
+      "RAG-DEV-010",
+      "RAG-DEV-011",
+      "RAG-DEV-012",
+      "RAG-DEV-013",
+      "RAG-DEV-014",
+      "RAG-DEV-015",
+      "RAG-DEV-016",
+      "RAG-DEV-017",
+      "RAG-DEV-018",
+      "RAG-DEV-019",
+      "RAG-DEV-020",
+      "RAG-DEV-021",
+      "RAG-DEV-022",
+      "RAG-DEV-023",
+      "RAG-DEV-024",
+      "RAG-DEV-025",
+      "RAG-DEV-026",
+      "RAG-DEV-027",
+      "RAG-DEV-028",
+      "RAG-DEV-029",
+      "RAG-DEV-030"
+    ],
+    "priority": [],
+    "prerequisite": [],
+    "discovered_prerequisite": [
+      "RAG-DEV-005",
+      "RAG-DEV-006",
+      "RAG-DEV-010",
+      "RAG-DEV-012",
+      "RAG-DEV-017",
+      "RAG-DEV-022",
+      "RAG-DEV-023",
+      "RAG-DEV-024",
+      "RAG-DEV-028",
+      "RAG-DEV-029"
+    ],
+    "source_completeness": [],
+    "cross_domain": [],
+    "contract": []
+  },
+  "cases": [
+    {
+      "case_id": "RAG-DEV-001",
+      "query_text": "理解并能够实践：AI 应用开发全流程 overview workflow",
+      "latency_ms": 377.0,
+      "gold_knowledge_ids": [
+        "ai_app_dev_overview"
+      ],
+      "retrieved_knowledge_ids": [],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "ranking"
+      ],
+      "top_12": []
+    },
+    {
+      "case_id": "RAG-DEV-002",
+      "query_text": "理解并能够实践：HTTP 与 REST 基础 http rest",
+      "latency_ms": 223.089,
+      "gold_knowledge_ids": [
+        "ai_app_dev_overview",
+        "http_rest_basics"
+      ],
+      "retrieved_knowledge_ids": [
+        "ai_app_dev_overview"
+      ],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "ai_app_dev_overview::chunk::0",
+          "knowledge_id": "ai_app_dev_overview",
+          "similarity": 0.25431749,
+          "matched_by": "priority",
+          "source_title": "NIST AI Risk Management Framework Playbook",
+          "source_url": "https://airc.nist.gov/AI_RMF_Knowledge_Base/Playbook"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-003",
+      "query_text": "理解并能够实践：应用数据结构设计 schema database",
+      "latency_ms": 240.182,
+      "gold_knowledge_ids": [
+        "data_schema_design"
+      ],
+      "retrieved_knowledge_ids": [],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "ranking"
+      ],
+      "top_12": []
+    },
+    {
+      "case_id": "RAG-DEV-004",
+      "query_text": "理解并能够实践：Prompt 工程基础 Prompt 工程基础 prompt llm",
+      "latency_ms": 203.128,
+      "gold_knowledge_ids": [
+        "ai_app_dev_overview",
+        "prompt_basic"
+      ],
+      "retrieved_knowledge_ids": [
+        "prompt_basic",
+        "ai_app_dev_overview"
+      ],
+      "failures": [],
+      "failure_attributions": [],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "prompt_basic::chunk::0",
+          "knowledge_id": "prompt_basic",
+          "similarity": 0.70796559,
+          "matched_by": "priority",
+          "source_title": "OpenAI Documentation - Prompt engineering",
+          "source_url": "https://platform.openai.com/docs/guides/prompt-engineering"
+        },
+        {
+          "rank": 2,
+          "chunk_id": "ai_app_dev_overview::chunk::0",
+          "knowledge_id": "ai_app_dev_overview",
+          "similarity": 0.40241918,
+          "matched_by": "prerequisite",
+          "source_title": "NIST AI Risk Management Framework Playbook",
+          "source_url": "https://airc.nist.gov/AI_RMF_Knowledge_Base/Playbook"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-005",
+      "query_text": "理解并能够实践：Prompt 输出格式约束 Prompt 输出格式约束 prompt json",
+      "latency_ms": 218.029,
+      "gold_knowledge_ids": [
+        "prompt_basic",
+        "prompt_output_format",
+        "structured_output_validation"
+      ],
+      "retrieved_knowledge_ids": [
+        "prompt_output_format"
+      ],
+      "failures": [
+        "recall_at_12",
+        "discovered_prerequisite"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "prompt_output_format::chunk::0",
+          "knowledge_id": "prompt_output_format",
+          "similarity": 0.84097203,
+          "matched_by": "priority",
+          "source_title": "OpenAI Documentation - Structured Outputs",
+          "source_url": "https://platform.openai.com/docs/guides/structured-outputs"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-006",
+      "query_text": "理解并能够实践：大模型 API 调用 大模型 API 调用 llm api",
+      "latency_ms": 209.91,
+      "gold_knowledge_ids": [
+        "llm_api_calling",
+        "prompt_basic",
+        "python_api_basics"
+      ],
+      "retrieved_knowledge_ids": [
+        "llm_api_calling",
+        "python_api_basics"
+      ],
+      "failures": [
+        "recall_at_12",
+        "discovered_prerequisite"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "llm_api_calling::chunk::0",
+          "knowledge_id": "llm_api_calling",
+          "similarity": 0.75729818,
+          "matched_by": "priority",
+          "source_title": "OpenAI API Reference - Responses",
+          "source_url": "https://developers.openai.com/api/reference/resources/responses"
+        },
+        {
+          "rank": 2,
+          "chunk_id": "python_api_basics::chunk::0",
+          "knowledge_id": "python_api_basics",
+          "similarity": 0.5457482,
+          "matched_by": "prerequisite",
+          "source_title": "Python 3 Documentation - urllib.request",
+          "source_url": "https://docs.python.org/3/library/urllib.request.html"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-007",
+      "query_text": "理解并能够实践：OpenAI 兼容接口 openai-compatible api",
+      "latency_ms": 205.358,
+      "gold_knowledge_ids": [
+        "fastapi_endpoint_design",
+        "llm_api_calling",
+        "openai_compatible_api"
+      ],
+      "retrieved_knowledge_ids": [
+        "llm_api_calling"
+      ],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "llm_api_calling::chunk::0",
+          "knowledge_id": "llm_api_calling",
+          "similarity": 0.49377956,
+          "matched_by": "priority",
+          "source_title": "OpenAI API Reference - Responses",
+          "source_url": "https://developers.openai.com/api/reference/resources/responses"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-008",
+      "query_text": "理解并能够实践：流式响应与进度反馈 streaming sse",
+      "latency_ms": 234.128,
+      "gold_knowledge_ids": [
+        "streaming_responses"
+      ],
+      "retrieved_knowledge_ids": [],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "ranking"
+      ],
+      "top_12": []
+    },
+    {
+      "case_id": "RAG-DEV-009",
+      "query_text": "理解并能够实践：结构化输出校验 validation json",
+      "latency_ms": 200.782,
+      "gold_knowledge_ids": [
+        "prompt_output_format",
+        "pydantic_schema_validation",
+        "structured_output_validation"
+      ],
+      "retrieved_knowledge_ids": [
+        "prompt_output_format"
+      ],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "prompt_output_format::chunk::0",
+          "knowledge_id": "prompt_output_format",
+          "similarity": 0.74798896,
+          "matched_by": "priority",
+          "source_title": "OpenAI Documentation - Structured Outputs",
+          "source_url": "https://platform.openai.com/docs/guides/structured-outputs"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-010",
+      "query_text": "理解并能够实践：Embedding 基础 Embedding 基础 embedding vector",
+      "latency_ms": 213.243,
+      "gold_knowledge_ids": [
+        "ai_app_dev_overview",
+        "embedding_basics"
+      ],
+      "retrieved_knowledge_ids": [
+        "embedding_basics"
+      ],
+      "failures": [
+        "recall_at_12",
+        "discovered_prerequisite"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "embedding_basics::chunk::0",
+          "knowledge_id": "embedding_basics",
+          "similarity": 0.69357881,
+          "matched_by": "priority",
+          "source_title": "OpenAI Documentation - Embeddings",
+          "source_url": "https://platform.openai.com/docs/guides/embeddings"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-011",
+      "query_text": "理解并能够实践：RAG 流程总览 RAG 流程总览 rag pipeline",
+      "latency_ms": 257.728,
+      "gold_knowledge_ids": [
+        "ai_app_dev_overview",
+        "rag_pipeline_overview",
+        "vector_similarity"
+      ],
+      "retrieved_knowledge_ids": [
+        "rag_pipeline_overview",
+        "vector_similarity"
+      ],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "ranking"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "rag_pipeline_overview::chunk::0",
+          "knowledge_id": "rag_pipeline_overview",
+          "similarity": 0.76118129,
+          "matched_by": "priority",
+          "source_title": "OpenAI Cookbook - Question answering using embeddings",
+          "source_url": "https://cookbook.openai.com/examples/question_answering_using_embeddings"
+        },
+        {
+          "rank": 2,
+          "chunk_id": "vector_similarity::chunk::0",
+          "knowledge_id": "vector_similarity",
+          "similarity": 0.45298889,
+          "matched_by": "prerequisite",
+          "source_title": "Chroma Documentation - Collections and distance metrics",
+          "source_url": "https://docs.trychroma.com/docs/collections/configure"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-012",
+      "query_text": "理解并能够实践：检索元数据过滤 检索元数据过滤 metadata retrieval",
+      "latency_ms": 213.129,
+      "gold_knowledge_ids": [
+        "metadata_filtering",
+        "rag_pipeline_overview"
+      ],
+      "retrieved_knowledge_ids": [
+        "metadata_filtering"
+      ],
+      "failures": [
+        "recall_at_12",
+        "discovered_prerequisite"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "metadata_filtering::chunk::0",
+          "knowledge_id": "metadata_filtering",
+          "similarity": 0.75834784,
+          "matched_by": "priority",
+          "source_title": "Chroma Documentation - Metadata filtering",
+          "source_url": "https://docs.trychroma.com/docs/querying-collections/metadata-filtering"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-013",
+      "query_text": "理解并能够实践：检索重排 rerank retrieval",
+      "latency_ms": 229.59,
+      "gold_knowledge_ids": [
+        "retrieval_reranking"
+      ],
+      "retrieved_knowledge_ids": [],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "ranking"
+      ],
+      "top_12": []
+    },
+    {
+      "case_id": "RAG-DEV-014",
+      "query_text": "理解并能够实践：幻觉防护策略 hallucination guardrails",
+      "latency_ms": 218.402,
+      "gold_knowledge_ids": [
+        "citation_traceability",
+        "hallucination_guardrails"
+      ],
+      "retrieved_knowledge_ids": [
+        "citation_traceability"
+      ],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "citation_traceability::chunk::0",
+          "knowledge_id": "citation_traceability",
+          "similarity": 0.3655789,
+          "matched_by": "priority",
+          "source_title": "W3C PROV-O: The PROV Ontology",
+          "source_url": "https://www.w3.org/TR/prov-o/"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-015",
+      "query_text": "理解并能够实践：文档解析与清洗 document parsing",
+      "latency_ms": 204.326,
+      "gold_knowledge_ids": [
+        "document_parsing"
+      ],
+      "retrieved_knowledge_ids": [],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "ranking"
+      ],
+      "top_12": []
+    },
+    {
+      "case_id": "RAG-DEV-016",
+      "query_text": "理解并能够实践：FastAPI 接口设计 FastAPI 接口设计 fastapi backend",
+      "latency_ms": 232.276,
+      "gold_knowledge_ids": [
+        "ai_app_dev_overview",
+        "fastapi_endpoint_design",
+        "http_rest_basics"
+      ],
+      "retrieved_knowledge_ids": [
+        "fastapi_endpoint_design",
+        "http_rest_basics"
+      ],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "ranking"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "fastapi_endpoint_design::chunk::0",
+          "knowledge_id": "fastapi_endpoint_design",
+          "similarity": 0.75242184,
+          "matched_by": "priority",
+          "source_title": "FastAPI Documentation - Bigger Applications",
+          "source_url": "https://fastapi.tiangolo.com/tutorial/bigger-applications/"
+        },
+        {
+          "rank": 2,
+          "chunk_id": "http_rest_basics::chunk::0",
+          "knowledge_id": "http_rest_basics",
+          "similarity": 0.41919357,
+          "matched_by": "prerequisite",
+          "source_title": "RFC 9110 - HTTP Semantics",
+          "source_url": "https://datatracker.ietf.org/doc/html/rfc9110"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-017",
+      "query_text": "理解并能够实践：SQLAlchemy 模型设计 SQLAlchemy 模型设计 sqlalchemy orm",
+      "latency_ms": 225.173,
+      "gold_knowledge_ids": [
+        "data_schema_design",
+        "sqlalchemy_modeling"
+      ],
+      "retrieved_knowledge_ids": [
+        "sqlalchemy_modeling"
+      ],
+      "failures": [
+        "recall_at_12",
+        "discovered_prerequisite"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "sqlalchemy_modeling::chunk::0",
+          "knowledge_id": "sqlalchemy_modeling",
+          "similarity": 0.68806658,
+          "matched_by": "priority",
+          "source_title": "SQLAlchemy 2.0 Documentation - ORM Quick Start",
+          "source_url": "https://docs.sqlalchemy.org/en/20/orm/quickstart.html"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-018",
+      "query_text": "理解并能够实践：MySQL 索引与查询 MySQL 索引与查询 mysql index",
+      "latency_ms": 279.275,
+      "gold_knowledge_ids": [
+        "ai_app_dev_overview",
+        "mysql_indexing",
+        "sqlalchemy_modeling"
+      ],
+      "retrieved_knowledge_ids": [
+        "mysql_indexing",
+        "sqlalchemy_modeling"
+      ],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "ranking"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "mysql_indexing::chunk::0",
+          "knowledge_id": "mysql_indexing",
+          "similarity": 0.77318214,
+          "matched_by": "priority",
+          "source_title": "MySQL 8.0 Reference Manual - Optimization and Indexes",
+          "source_url": "https://dev.mysql.com/doc/refman/8.0/en/optimization-indexes.html"
+        },
+        {
+          "rank": 2,
+          "chunk_id": "sqlalchemy_modeling::chunk::0",
+          "knowledge_id": "sqlalchemy_modeling",
+          "similarity": 0.37350956,
+          "matched_by": "prerequisite",
+          "source_title": "SQLAlchemy 2.0 Documentation - ORM Quick Start",
+          "source_url": "https://docs.sqlalchemy.org/en/20/orm/quickstart.html"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-019",
+      "query_text": "理解并能够实践：ChromaDB Collection 管理 chromadb collection",
+      "latency_ms": 217.118,
+      "gold_knowledge_ids": [
+        "chromadb_collections",
+        "embedding_basics"
+      ],
+      "retrieved_knowledge_ids": [
+        "embedding_basics"
+      ],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "embedding_basics::chunk::0",
+          "knowledge_id": "embedding_basics",
+          "similarity": 0.45264808,
+          "matched_by": "priority",
+          "source_title": "OpenAI Documentation - Embeddings",
+          "source_url": "https://platform.openai.com/docs/guides/embeddings"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-020",
+      "query_text": "理解并能够实践：前端 API 客户端封装 axios frontend",
+      "latency_ms": 228.315,
+      "gold_knowledge_ids": [
+        "frontend_api_client",
+        "sse_progress_events"
+      ],
+      "retrieved_knowledge_ids": [],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": []
+    },
+    {
+      "case_id": "RAG-DEV-021",
+      "query_text": "理解并能够实践：LangGraph StateGraph langgraph stategraph",
+      "latency_ms": 220.953,
+      "gold_knowledge_ids": [
+        "agent_role_design",
+        "langgraph_stategraph",
+        "orchestrator_workflow"
+      ],
+      "retrieved_knowledge_ids": [
+        "agent_role_design"
+      ],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "agent_role_design::chunk::0",
+          "knowledge_id": "agent_role_design",
+          "similarity": 0.38067239,
+          "matched_by": "priority",
+          "source_title": "OpenAI Agents SDK - Agents",
+          "source_url": "https://openai.github.io/openai-agents-python/agents/"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-022",
+      "query_text": "理解并能够实践：编排智能体工作流 编排智能体工作流 orchestrator workflow",
+      "latency_ms": 254.836,
+      "gold_knowledge_ids": [
+        "langgraph_stategraph",
+        "orchestrator_workflow"
+      ],
+      "retrieved_knowledge_ids": [
+        "orchestrator_workflow"
+      ],
+      "failures": [
+        "recall_at_12",
+        "discovered_prerequisite"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "orchestrator_workflow::chunk::0",
+          "knowledge_id": "orchestrator_workflow",
+          "similarity": 0.74459312,
+          "matched_by": "priority",
+          "source_title": "LangGraph Documentation - Workflows and Agents",
+          "source_url": "https://docs.langchain.com/oss/python/langgraph/workflows-agents"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-023",
+      "query_text": "理解并能够实践：知识检索智能体 知识检索智能体 agent retrieval",
+      "latency_ms": 236.348,
+      "gold_knowledge_ids": [
+        "agent_role_design",
+        "knowledge_retrieval_agent",
+        "rag_pipeline_overview"
+      ],
+      "retrieved_knowledge_ids": [
+        "knowledge_retrieval_agent",
+        "rag_pipeline_overview"
+      ],
+      "failures": [
+        "recall_at_12",
+        "discovered_prerequisite"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "knowledge_retrieval_agent::chunk::1",
+          "knowledge_id": "knowledge_retrieval_agent",
+          "similarity": 0.82684538,
+          "matched_by": "priority",
+          "source_title": "OpenAI Documentation - Retrieval",
+          "source_url": "https://platform.openai.com/docs/guides/retrieval"
+        },
+        {
+          "rank": 2,
+          "chunk_id": "rag_pipeline_overview::chunk::0",
+          "knowledge_id": "rag_pipeline_overview",
+          "similarity": 0.5241362,
+          "matched_by": "prerequisite",
+          "source_title": "OpenAI Cookbook - Question answering using embeddings",
+          "source_url": "https://cookbook.openai.com/examples/question_answering_using_embeddings"
+        },
+        {
+          "rank": 3,
+          "chunk_id": "knowledge_retrieval_agent::chunk::0",
+          "knowledge_id": "knowledge_retrieval_agent",
+          "similarity": 0.79832672,
+          "matched_by": "priority",
+          "source_title": "OpenAI Documentation - Retrieval",
+          "source_url": "https://platform.openai.com/docs/guides/retrieval"
+        },
+        {
+          "rank": 4,
+          "chunk_id": "knowledge_retrieval_agent::chunk::2",
+          "knowledge_id": "knowledge_retrieval_agent",
+          "similarity": 0.74333999,
+          "matched_by": "priority",
+          "source_title": "OpenAI Documentation - Retrieval",
+          "source_url": "https://platform.openai.com/docs/guides/retrieval"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-024",
+      "query_text": "理解并能够实践：评审与校验智能体 评审与校验智能体 agent review",
+      "latency_ms": 209.646,
+      "gold_knowledge_ids": [
+        "content_generation_agent",
+        "review_validation_agent"
+      ],
+      "retrieved_knowledge_ids": [
+        "review_validation_agent"
+      ],
+      "failures": [
+        "recall_at_12",
+        "discovered_prerequisite"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "review_validation_agent::chunk::0",
+          "knowledge_id": "review_validation_agent",
+          "similarity": 0.77795174,
+          "matched_by": "priority",
+          "source_title": "OpenAI Documentation - Evaluation Best Practices",
+          "source_url": "https://platform.openai.com/docs/guides/evaluation-best-practices"
+        },
+        {
+          "rank": 2,
+          "chunk_id": "review_validation_agent::chunk::1",
+          "knowledge_id": "review_validation_agent",
+          "similarity": 0.76952723,
+          "matched_by": "priority",
+          "source_title": "OpenAI Documentation - Evaluation Best Practices",
+          "source_url": "https://platform.openai.com/docs/guides/evaluation-best-practices"
+        },
+        {
+          "rank": 3,
+          "chunk_id": "review_validation_agent::chunk::2",
+          "knowledge_id": "review_validation_agent",
+          "similarity": 0.70433581,
+          "matched_by": "priority",
+          "source_title": "OpenAI Documentation - Evaluation Best Practices",
+          "source_url": "https://platform.openai.com/docs/guides/evaluation-best-practices"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-025",
+      "query_text": "理解并能够实践：自动化测试与测试分层 testing pytest quality",
+      "latency_ms": 187.682,
+      "gold_knowledge_ids": [
+        "automated_testing",
+        "evaluation_metrics"
+      ],
+      "retrieved_knowledge_ids": [],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": []
+    },
+    {
+      "case_id": "RAG-DEV-026",
+      "query_text": "理解并能够实践：密钥与配置管理 security secrets configuration",
+      "latency_ms": 243.008,
+      "gold_knowledge_ids": [
+        "http_rest_basics",
+        "secret_management"
+      ],
+      "retrieved_knowledge_ids": [
+        "http_rest_basics"
+      ],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "http_rest_basics::chunk::0",
+          "knowledge_id": "http_rest_basics",
+          "similarity": 0.25537415,
+          "matched_by": "priority",
+          "source_title": "RFC 9110 - HTTP Semantics",
+          "source_url": "https://datatracker.ietf.org/doc/html/rfc9110"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-027",
+      "query_text": "理解并能够实践：Prompt Injection 防护 security prompt-injection agents",
+      "latency_ms": 241.378,
+      "gold_knowledge_ids": [
+        "hallucination_guardrails",
+        "prompt_injection_defense"
+      ],
+      "retrieved_knowledge_ids": [],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": []
+    },
+    {
+      "case_id": "RAG-DEV-028",
+      "query_text": "理解并能够实践：模型 API 限流、重试与故障处理 模型 API 限流、重试与故障处理 api retry resilience",
+      "latency_ms": 208.69,
+      "gold_knowledge_ids": [
+        "api_resilience_retry",
+        "llm_api_calling",
+        "python_async_concurrency"
+      ],
+      "retrieved_knowledge_ids": [
+        "api_resilience_retry",
+        "llm_api_calling"
+      ],
+      "failures": [
+        "recall_at_12",
+        "discovered_prerequisite"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "api_resilience_retry::chunk::0",
+          "knowledge_id": "api_resilience_retry",
+          "similarity": 0.8598009,
+          "matched_by": "priority",
+          "source_title": "OpenAI Cookbook - How to Handle Rate Limits",
+          "source_url": "https://cookbook.openai.com/examples/how_to_handle_rate_limits"
+        },
+        {
+          "rank": 2,
+          "chunk_id": "llm_api_calling::chunk::0",
+          "knowledge_id": "llm_api_calling",
+          "similarity": 0.72018054,
+          "matched_by": "prerequisite",
+          "source_title": "OpenAI API Reference - Responses",
+          "source_url": "https://developers.openai.com/api/reference/resources/responses"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-029",
+      "query_text": "理解并能够实践：隐私与日志策略 隐私与日志策略 privacy logging",
+      "latency_ms": 189.941,
+      "gold_knowledge_ids": [
+        "data_schema_design",
+        "privacy_log_policy"
+      ],
+      "retrieved_knowledge_ids": [
+        "privacy_log_policy"
+      ],
+      "failures": [
+        "recall_at_12",
+        "discovered_prerequisite"
+      ],
+      "failure_attributions": [
+        "relation"
+      ],
+      "top_12": [
+        {
+          "rank": 1,
+          "chunk_id": "privacy_log_policy::chunk::0",
+          "knowledge_id": "privacy_log_policy",
+          "similarity": 0.74048208,
+          "matched_by": "priority",
+          "source_title": "OWASP Logging Cheat Sheet",
+          "source_url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html"
+        }
+      ]
+    },
+    {
+      "case_id": "RAG-DEV-030",
+      "query_text": "理解并能够实践：SSE 进度事件设计 sse progress",
+      "latency_ms": 196.51,
+      "gold_knowledge_ids": [
+        "sse_progress_events"
+      ],
+      "retrieved_knowledge_ids": [],
+      "failures": [
+        "recall_at_12"
+      ],
+      "failure_attributions": [
+        "ranking"
+      ],
+      "top_12": []
+    }
+  ],
+  "evaluated_at": "2026-07-25T06:03:58.999970+00:00"
+}

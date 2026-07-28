@@ -38,6 +38,7 @@ from app.agents.contract_examples import (
 from app.agents.contracts import (
     AgentContractSchema,
     AbilityScores,
+    AnalyzeProfileInput,
     ArbitrationResult,
     DiagnosticSummary,
     EvidenceRef,
@@ -48,6 +49,7 @@ from app.agents.contracts import (
     GenerateResourceOutput,
     GeneratedResourceArtifact,
     HumanReviewOutput,
+    KnowledgeAssessment,
     PrepareTaskInput,
     ProfileSnapshot,
     ReviewReport,
@@ -201,8 +203,11 @@ def test_initial_generation_fixture_crosses_all_automatic_nodes() -> None:
     validate_state_patch("prepare_task", patch)
     state.update(patch)
 
-    built_analyze = build_analyze_profile_input(state)
-    assert built_analyze.context == analyze["input"].context
+    built_analyze = build_analyze_profile_input(
+        state,
+        knowledge_assessments=analyze["input"].knowledge_assessments,
+    )
+    assert built_analyze == analyze["input"]
     patch = analyze_profile_output_to_patch(analyze["output"])
     validate_state_patch("analyze_profile", patch)
     state.update(patch)
@@ -255,6 +260,67 @@ def test_feedback_fixture_reaches_no_change_without_generation() -> None:
     assert built_finalize.tutoring_result == finalize["input"].tutoring_result
     state.update(finalize_task_output_to_patch(finalize["output"]))
     assert state["finalize_task"].decision.value == "no_change"
+
+
+def test_profile_assessments_are_optional_and_strictly_validated() -> None:
+    flow = initial_generation_flow_example()
+    node_input = flow["analyze_profile"]["input"]
+    assert node_input.knowledge_assessments
+
+    payload = node_input.model_dump()
+    payload.pop("knowledge_assessments")
+    assert AnalyzeProfileInput.model_validate(payload).knowledge_assessments == []
+
+    invalid_payloads = []
+    for field, value in (("score", 1.1), ("difficulty", 6), ("confidence", -0.1)):
+        invalid = node_input.model_dump()
+        invalid["knowledge_assessments"][0][field] = value
+        invalid_payloads.append(invalid)
+    for invalid in invalid_payloads:
+        with pytest.raises(ValidationError):
+            AnalyzeProfileInput.model_validate(invalid)
+
+    unattempted = node_input.model_dump()
+    unattempted["knowledge_assessments"][0]["attempted"] = False
+    with pytest.raises(ValidationError, match="unattempted assessments"):
+        AnalyzeProfileInput.model_validate(unattempted)
+
+
+def test_profile_assessments_require_unique_ids_and_matching_evidence() -> None:
+    node_input = initial_generation_flow_example()["analyze_profile"]["input"]
+
+    duplicate = node_input.model_dump()
+    duplicate["knowledge_assessments"].append(duplicate["knowledge_assessments"][0].copy())
+    with pytest.raises(ValidationError, match="assessment IDs must be unique"):
+        AnalyzeProfileInput.model_validate(duplicate)
+
+    missing_evidence = node_input.model_dump()
+    missing_evidence["knowledge_assessments"][0]["evidence_id"] = "unknown_evidence"
+    with pytest.raises(ValidationError, match="reference available evidence"):
+        AnalyzeProfileInput.model_validate(missing_evidence)
+
+    missing_knowledge = node_input.model_dump()
+    missing_knowledge["diagnostic_summary"]["evidence"][0]["knowledge_id"] = None
+    with pytest.raises(ValidationError, match="must identify a knowledge ID"):
+        AnalyzeProfileInput.model_validate(missing_knowledge)
+
+    mismatched_knowledge = node_input.model_dump()
+    mismatched_knowledge["knowledge_assessments"][0]["knowledge_id"] = "AIAPP-K030"
+    with pytest.raises(ValidationError, match="knowledge IDs must match"):
+        AnalyzeProfileInput.model_validate(mismatched_knowledge)
+
+
+def test_knowledge_assessment_accepts_unscored_attempts() -> None:
+    assessment = KnowledgeAssessment(
+        assessment_id="assessment_unscored",
+        evidence_id="evidence_unscored",
+        knowledge_id="AIAPP-K029",
+        score=None,
+        difficulty=3,
+        attempted=True,
+        confidence=0.4,
+    )
+    assert assessment.score is None
 
 
 def test_human_review_contract_has_a_dedicated_state_patch() -> None:

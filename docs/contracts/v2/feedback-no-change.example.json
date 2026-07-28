@@ -203,7 +203,8 @@
           "confirmed": false
         }
       ],
-      "recommended_action": "ask_follow_up"
+      "recommended_action": "ask_follow_up",
+      "knowledge_assessments": []
     },
     "output": {
       "contract_version": "agent-contract-v2",

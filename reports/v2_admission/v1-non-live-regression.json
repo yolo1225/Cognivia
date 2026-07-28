@@ -1,0 +1,9 @@
+{
+  "schema_version": "v1-non-live-regression-v1",
+  "status": "passed",
+  "command": "pytest tests/contracts tests/unit tests/integration -m \"not live\" -q",
+  "passed": 139,
+  "failed": 0,
+  "deselected": 3,
+  "recorded_at": "2026-07-25T07:47:52.9696552Z"
+}

@@ -38,8 +38,10 @@ if not exist ".env" (
 if not exist "storage" mkdir "storage"
 set "START_LOG=%~dp0storage\start.log"
 
-echo [INFO] Building and starting DomainMind...
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& { Start-Transcript -Path '%START_LOG%' -Force; try { & '%~dp0scripts\demo.ps1' start } finally { Stop-Transcript } }"
+echo [WARN] Clean rebuild will delete this project's MySQL, ChromaDB, and frontend dependency volumes.
+echo [WARN] Manually added knowledge, learner activity, generated resources, and other runtime data will be removed.
+echo [INFO] Rebuilding DomainMind from the current source and seed baseline...
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& { Start-Transcript -Path '%START_LOG%' -Force; try { & '%~dp0scripts\demo.ps1' reset -ConfirmReset } finally { Stop-Transcript } }"
 if errorlevel 1 (
     echo [ERROR] DomainMind failed to start. Review the output above.
     echo [INFO] Full log: %START_LOG%
@@ -47,7 +49,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo [OK] DomainMind is ready.
+echo [OK] DomainMind is ready with a clean, current data baseline.
 echo Frontend:    http://localhost:5173/
 echo Backend API: http://localhost:8000/docs
 echo Health:      http://localhost:8000/api/v1/health

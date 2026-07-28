@@ -16,6 +16,11 @@ data/chroma/*
 
 storage/exports/*
 !storage/exports/.gitkeep
+storage/candidate-index/
+
+# Rolling local evaluation output; frozen RAG/admission evidence remains tracked.
+reports/evaluation/latest*
+
 
 *.log
 *.err

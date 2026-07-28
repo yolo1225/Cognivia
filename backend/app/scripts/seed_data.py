@@ -171,7 +171,11 @@ PROFILE_PRESETS = {
             "breadth": 60,
             "learning_speed": 70,
         },
-        "weak_knowledge_json": ["review_dual_model", "evaluation_metrics", "learning_path_generation"],
+        "weak_knowledge_json": [
+            "llm_judge_reliability",
+            "evaluation_metrics",
+            "observability_tracing",
+        ],
     },
     "practice_oriented": {
         "ability_profile_json": {
