@@ -53,6 +53,9 @@ echo [OK] DomainMind is ready with a clean, current data baseline.
 echo Frontend:    http://localhost:5173/
 echo Backend API: http://localhost:8000/docs
 echo Health:      http://localhost:8000/api/v1/health
+echo.
+echo Press any key to close this window. Services will continue running in Docker.
+pause >nul
 
 endlocal
 exit /b 0
