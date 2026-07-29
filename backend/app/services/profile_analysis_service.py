@@ -112,6 +112,7 @@ def _effective_assessments(
     allowed_types = {
         EvidenceType.DIAGNOSTIC_RESULT,
         EvidenceType.SCORED_QUIZ,
+        EvidenceType.VALIDATED_BEHAVIOR,
         EvidenceType.MANUAL_REVIEW,
     }
     effective: list[KnowledgeAssessment] = []
