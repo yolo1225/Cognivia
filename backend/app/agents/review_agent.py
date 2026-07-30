@@ -333,7 +333,7 @@ def _cross_validate(
 # DeepSeek 结构适配器
 # ===========================================================================
 
-def _normalize_deepseek_review_structure(result: dict[str, Any]) -> dict[str, Any]:
+def _normalize_llm_response_structure(result: dict[str, Any]) -> dict[str, Any]:
     """在 Pydantic 校验前规范化各种 LLM 的 JSON 格式漂移。
 
     处理:
@@ -464,7 +464,7 @@ def _normalize_model_review_payload(result: dict[str, Any]) -> dict[str, Any]:
 
 def _adapt_review_response(result: dict[str, Any]) -> dict[str, Any]:
     """完整适配链：结构规范化 → 字段规范化。"""
-    result = _normalize_deepseek_review_structure(result)
+    result = _normalize_llm_response_structure(result)
     result = _normalize_model_review_payload(result)
     return result
 
