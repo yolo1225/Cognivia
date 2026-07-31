@@ -41,3 +41,6 @@ backend/uv.lock
 # Local competition source documents
 /XH-202630*.pdf
 /docs/设计方案-*.docx
+
+# Local prototype materials
+/docs/prototype/
