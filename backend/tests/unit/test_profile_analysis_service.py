@@ -128,6 +128,82 @@ def test_single_quick_feedback_does_not_update_profile() -> None:
     assert not result.needs_generation
 
 
+def test_confirmed_validated_behavior_with_scored_assessment_updates_profile() -> None:
+    payload = _feedback_payload(RecommendedAction.CHALLENGE)
+    payload["feedback_evidence"] = [
+        {
+            "evidence_id": "validated_behavior",
+            "evidence_type": "validated_behavior",
+            "summary": "已确认的迁移任务完成行为",
+            "knowledge_id": "rag_pipeline_overview",
+            "confidence": 0.9,
+            "confirmed": True,
+        }
+    ]
+    payload["knowledge_assessments"] = [
+        {
+            "assessment_id": "validated_behavior_assessment",
+            "evidence_id": "validated_behavior",
+            "knowledge_id": "rag_pipeline_overview",
+            "score": 0.95,
+            "difficulty": 3,
+            "attempted": True,
+            "confidence": 0.9,
+        }
+    ]
+    result = analyze_profile(AnalyzeProfileInput.model_validate(payload))
+    assert result.profile_update_required
+    assert result.profile.profile_version == 2
+    assert [item.evidence_type for item in result.evidence_refs] == [
+        EvidenceType.VALIDATED_BEHAVIOR
+    ]
+
+
+def test_validated_behavior_without_assessment_does_not_update_profile() -> None:
+    payload = _feedback_payload(RecommendedAction.CHALLENGE)
+    payload["feedback_evidence"] = [
+        {
+            "evidence_id": "validated_behavior_only",
+            "evidence_type": "validated_behavior",
+            "summary": "已确认的迁移任务完成行为",
+            "knowledge_id": "rag_pipeline_overview",
+            "confidence": 0.9,
+            "confirmed": True,
+        }
+    ]
+    result = analyze_profile(AnalyzeProfileInput.model_validate(payload))
+    assert not result.profile_update_required
+    assert result.profile.profile_version == 1
+
+
+def test_subjective_feedback_cannot_update_profile_even_with_assessment() -> None:
+    payload = _feedback_payload(RecommendedAction.CHALLENGE)
+    payload["feedback_evidence"] = [
+        {
+            "evidence_id": "quick_feedback_with_assessment",
+            "evidence_type": "quick_feedback",
+            "summary": "学习者认为内容太简单",
+            "knowledge_id": "rag_pipeline_overview",
+            "confidence": 0.9,
+            "confirmed": True,
+        }
+    ]
+    payload["knowledge_assessments"] = [
+        {
+            "assessment_id": "quick_feedback_assessment",
+            "evidence_id": "quick_feedback_with_assessment",
+            "knowledge_id": "rag_pipeline_overview",
+            "score": 0.95,
+            "difficulty": 3,
+            "attempted": True,
+            "confidence": 0.9,
+        }
+    ]
+    result = analyze_profile(AnalyzeProfileInput.model_validate(payload))
+    assert not result.profile_update_required
+    assert result.profile.profile_version == 1
+
+
 def test_resource_review_never_reduces_profile() -> None:
     node_input = AnalyzeProfileInput.model_validate(_feedback_payload(RecommendedAction.REVIEW))
     result = analyze_profile(node_input)
