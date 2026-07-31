@@ -39,6 +39,9 @@ COVERAGE_THRESHOLD = 90
 # 交叉验证阈值：LLM 评分与确定性评分差异超过此值 → 标记为可疑
 CROSS_CHECK_MAX_DELTA = 25
 
+# LLM 事实核查证据充分度阈值：fact_checks 中 supported 占比超过此值 → LLM 可信度高
+LLM_EVIDENCE_TRUST_RATIO = 0.75
+
 
 # ===========================================================================
 # 确定性验证引擎（语言无关，不依赖 LLM）
@@ -81,15 +84,52 @@ def _split_sentences(text: str) -> list[str]:
     return [s.strip() for s in raw if len(s.strip()) > 10]
 
 
-def _has_source_overlap(sentence: str, source_texts: list[str], threshold: float = 0.15) -> bool:
-    """句子是否与任一来源有足够重叠。"""
+def _detect_language(text: str) -> str:
+    """检测文本主要语言。"""
+    if not text:
+        return "en"
+    cjk_count = sum(1 for ch in text if '一' <= ch <= '鿿')
+    return "zh" if cjk_count > len(text) * 0.2 else "en"
+
+
+def _has_source_overlap(
+    sentence: str, source_texts: list[str], threshold: float | None = None
+) -> bool:
+    """句子是否与任一来源有足够重叠。
+
+    中文场景自动使用更宽松的阈值（字级 bigram 天然稀疏），
+    并额外检查关键词是否出现在来源中。
+    """
+    if threshold is None:
+        threshold = 0.06 if _detect_language(sentence) == "zh" else 0.12
+
     sent_tokens = _tokenize(sentence)
     if len(sent_tokens) < 3:
         return False
+
     for src in source_texts:
         src_tokens = _tokenize(src)
+        # 主检查：Jaccard 相似度
         if _jaccard_similarity(sent_tokens, src_tokens) >= threshold:
             return True
+
+    # 中文补充检查：提取关键字符（2 字及以上），检查是否在来源中成段出现
+    if _detect_language(sentence) == "zh":
+        meaningful = [ch for ch in sentence if '一' <= ch <= '鿿']
+        if len(meaningful) >= 4:
+            # 取 3-gram 关键片段，检查是否出现在来源中
+            key_segments = set()
+            for i in range(len(meaningful) - 2):
+                seg = ''.join(meaningful[i:i+3])
+                key_segments.add(seg)
+            if key_segments:
+                for src in source_texts:
+                    src_clean = re.sub(r'[^一-鿿]', '', src)
+                    matches = sum(1 for seg in key_segments if seg in src_clean)
+                    # 超过 25% 的关键片段出现在来源中 → 视为有依据
+                    if matches / len(key_segments) >= 0.25:
+                        return True
+
     return False
 
 
@@ -250,26 +290,122 @@ def _deterministic_review(
 # 交叉验证：LLM 评分 vs 确定性评分
 # ===========================================================================
 
+
+def _filter_hallucinated_claims(
+    fact_checks: list[dict[str, Any]],
+    draft_content: str,
+) -> list[dict[str, Any]]:
+    """过滤 LLM 编造的 fact_check（claim 在资源内容中找不到对应文本）。
+
+    DeepSeek 偶尔会在 fact_checks 中插入和资源内容完全无关的论断
+    （如 "printf('Helo') 会输出 Helo 没有新行"），这类幻觉需要过滤。
+    """
+    if not fact_checks or not draft_content:
+        return fact_checks
+
+    content_lower = draft_content.lower()
+    filtered: list[dict[str, Any]] = []
+    hallucinated_count = 0
+
+    for fc in fact_checks:
+        if not isinstance(fc, dict):
+            filtered.append(fc)
+            continue
+
+        claim = str(fc.get("claim", ""))
+        if not claim or len(claim) < 5:
+            filtered.append(fc)
+            continue
+
+        # 提取 claim 中的关键词（去标点，取最长连续文本段）
+        cleaned = re.sub(r'[^\w一-鿿\s]', '', claim)
+        # 取 claim 中最长的连续词序列作为搜索片段
+        fragments = [f.strip() for f in cleaned.split() if len(f.strip()) >= 4]
+        # 也取原始 claim 的短子串（中英文混合场景）
+        short_claim = claim[:80].lower()
+
+        found = False
+        for frag in fragments[:5]:  # 检查前 5 个关键词片段
+            if len(frag) >= 6 and frag.lower() in content_lower:
+                found = True
+                break
+        if not found and len(short_claim) >= 8 and short_claim in content_lower:
+            found = True
+        # 中文宽松匹配：claim 前 30 字在内容中
+        if not found and len(claim) >= 10:
+            claim_prefix = claim[:30]
+            # 计算字级重叠
+            overlap = sum(1 for ch in claim_prefix if ch in content_lower)
+            if overlap >= len(claim_prefix.replace(' ', '')) * 0.5:
+                found = True
+
+        if found:
+            filtered.append(fc)
+        else:
+            hallucinated_count += 1
+            logger.warning(
+                "Filtered hallucinated fact_check claim: %s", claim[:120]
+            )
+
+    if hallucinated_count > 0:
+        logger.info(
+            "Filtered %d/%d hallucinated fact_checks", hallucinated_count, len(fact_checks)
+        )
+
+    return filtered
+
+
+
 def _cross_validate(
     model_review: dict[str, Any],
     deterministic: dict[str, Any],
     role: str,
     valid_source_ids: set[str] | None = None,
+    draft_content: str = "",
 ) -> dict[str, Any]:
     """比对 LLM 评分与确定性评分，差异过大时标记并降权。
+
+    增强逻辑：
+    - 过滤 LLM 编造的 fact_check（claim 在资源内容中找不到）
+    - LLM 事实核查证据充分时（fact_checks 大多 supported），信任 LLM 更多
+    - 中文场景确定性引擎天然偏严，LLM 找到的依据更可靠
 
     Args:
         model_review: LLM 返回的审核结果
         deterministic: 确定性引擎计算的基准分
         role: 审查视角名称
         valid_source_ids: 合法的 knowledge_id 集合（用于过滤 LLM 编造的 ID）
+        draft_content: 资源原文（用于过滤编造的 fact_check claim）
 
     Returns:
-        如果差异可接受 → 返回 model_review（不变）
-        如果差异过大    → 返回 model_review 但附加 warning + 向确定性靠拢
+        差异可接受或 LLM 证据充分 → model_review（可能轻微调整）
+        差异过大且 LLM 证据不足 → 向确定性靠拢
     """
     warnings: list[str] = []
     adjusted = dict(model_review)
+
+    # ---- 0. 过滤 LLM 编造的 fact_checks ----
+    if draft_content:
+        raw_fcs = adjusted.get("fact_checks", [])
+        if isinstance(raw_fcs, list) and raw_fcs:
+            filtered = _filter_hallucinated_claims(raw_fcs, draft_content)
+            if len(filtered) != len(raw_fcs):
+                adjusted["fact_checks"] = filtered
+                # 重新计算 verified_claim_count
+                unsupported = [fc for fc in filtered if fc.get("supported") is False]
+                adjusted["verified_claim_count"] = len(filtered) - len(unsupported)
+                if unsupported:
+                    adjusted["unsupported_claims"] = [
+                        fc.get("claim", "") for fc in unsupported
+                    ]
+
+    # ---- 1. 计算 LLM 事实核查证据充分度 ----
+    fact_checks = adjusted.get("fact_checks", [])
+    if isinstance(fact_checks, list) and fact_checks:
+        supported = sum(1 for fc in fact_checks if fc.get("supported") is True)
+        llm_evidence_ratio = supported / len(fact_checks)
+    else:
+        llm_evidence_ratio = 0.0  # 无 fact_check → 无证据
 
     score_pairs = [
         ("factual_score", "factual_score"),
@@ -290,14 +426,21 @@ def _cross_validate(
             )
 
     if big_gaps >= 2:
-        # 两个以上维度差异过大 → LLM 评审可能不可靠，向确定性靠拢
-        logger.warning(
-            "Cross-validation flag: %s has %d dimensions with large delta. "
-            "Blending toward deterministic scores. Warnings: %s",
-            role, big_gaps, warnings,
-        )
-        llm_weight = max(0.3, 1.0 - big_gaps * 0.25)
+        # LLM 事实核查证据充分 → 信任 LLM 更多
+        # 证据不足 → 向确定性靠拢
+        if llm_evidence_ratio >= LLM_EVIDENCE_TRUST_RATIO:
+            # LLM 找到了充分依据，轻微调整
+            llm_weight = max(0.6, 1.0 - big_gaps * 0.12)
+        else:
+            llm_weight = max(0.3, 1.0 - big_gaps * 0.25)
+
         det_weight = 1.0 - llm_weight
+        logger.info(
+            "Cross-validation: %s has %d gaps, LLM evidence=%.0f%%, "
+            "llm_weight=%.2f det_weight=%.2f",
+            role, big_gaps, llm_evidence_ratio * 100, llm_weight, det_weight,
+        )
+
         for model_key, det_key in score_pairs:
             model_val = float(model_review.get(model_key, 0))
             det_val = float(deterministic.get(det_key, 0))
@@ -313,11 +456,11 @@ def _cross_validate(
         adjusted.setdefault("issues", [])
         if isinstance(adjusted["issues"], list):
             adjusted["issues"].append(
-                f"交叉验证警告：{big_gaps} 个维度与确定性评分偏差 >{CROSS_CHECK_MAX_DELTA}，已自动修正"
+                f"交叉验证警告：{big_gaps} 个维度与确定性评分偏差 >{CROSS_CHECK_MAX_DELTA}，已自动修正 "
+                f"(LLM证据充分度={llm_evidence_ratio:.0%})"
             )
 
-    # 校验 fact_checks 中的 source_ids 是否真实存在
-    # （DeepSeek 偶尔编造 source_id）
+    # ---- 校验 fact_checks 中的 source_ids 是否真实存在 ----
     if valid_source_ids:
         for fc in adjusted.get("fact_checks", []):
             if isinstance(fc, dict):
@@ -628,7 +771,11 @@ class ReviewValidationAgent(BaseAgent):
                 str(s.get("knowledge_id", ""))
                 for s in (context.get("sources") or [])
             )
-            result = _cross_validate(result, det_scores, role, valid_source_ids=valid_ids)
+            result = _cross_validate(
+                result, det_scores, role,
+                valid_source_ids=valid_ids,
+                draft_content=str(draft.get("content", "")),
+            )
 
         result["model_role"] = role
         result["provider_mode"] = metadata["provider_mode"]
