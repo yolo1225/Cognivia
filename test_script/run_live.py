@@ -22,6 +22,7 @@ PROFILE_LEARNERS = {
     "intermediate": "learner_003",
     "advanced": "learner_002",
 }
+EVALUATION_MARKER = "[[evaluation_case:{case_id}]]"
 
 
 class ApiFailure(RuntimeError):
@@ -92,10 +93,39 @@ def _final_review(runs: list[dict[str, Any]], resource_type: str) -> dict[str, A
 
 
 def _review_channels(report: dict[str, Any]) -> list[dict[str, Any]]:
-    recheck = (report.get("arbitration") or {}).get("recheck_scores") or {}
-    if recheck:
-        return [recheck.get("primary") or {}, recheck.get("secondary") or {}]
+    arbitration = report.get("arbitration") or {}
+    if arbitration.get("primary_recheck") and arbitration.get("secondary_recheck"):
+        return [arbitration["primary_recheck"], arbitration["secondary_recheck"]]
     return [report.get("primary_review") or {}, report.get("secondary_review") or {}]
+
+
+def _model_calls(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        call
+        for run in runs
+        for call in (run.get("output_summary") or {}).get("model_calls", [])
+        if isinstance(call, dict)
+    ]
+
+
+def _knowledge_ids_from_source_refs(source_ref_ids: set[str]) -> set[str]:
+    """Resolve V2 retrieval source references without inspecting resource text."""
+    return {
+        source_ref_id.split("::", 1)[0]
+        for source_ref_id in source_ref_ids
+        if source_ref_id
+    }
+
+
+def _profile_decision(runs: list[dict[str, Any]]) -> str:
+    analyses = [
+        run.get("output_summary") or {}
+        for run in runs
+        if (run.get("input_summary") or {}).get("step") == "analyze_profile"
+    ]
+    if not analyses:
+        return "not_evaluated"
+    return "update_profile" if any(item.get("profile_update_required") for item in analyses) else "no_change"
 
 
 def _observed_result(
@@ -106,29 +136,29 @@ def _observed_result(
 ) -> dict[str, Any]:
     report = _final_review(runs, str(case["resource_type"]))
     channels = _review_channels(report)
-    model_runs = [run for run in runs if run.get("model_name")]
-    all_live = bool(model_runs) and all(
-        (run.get("output_summary") or {}).get("provider_mode") == "live"
-        for run in model_runs
+    model_calls = _model_calls(runs)
+    all_live = bool(model_calls) and all(
+        call.get("provider_mode") == "live" for call in model_calls
     )
     claim_support: dict[str, list[bool | None]] = {}
     evidence_ids: set[str] = set()
     unable: list[str] = []
-    for channel in channels:
-        evidence_ids.update(str(item) for item in channel.get("evidence_refs", []) if item)
+    for channel_index, channel in enumerate(channels):
         unable.extend(str(item) for item in channel.get("unable_to_determine", []) if item)
-        for check in channel.get("fact_checks", []):
-            claim = str(check.get("claim") or "").strip()
-            if not claim:
-                continue
-            claim_support.setdefault(claim, []).append(check.get("supported"))
-            evidence_ids.update(str(item) for item in check.get("source_ids", []) if item)
+        for check_index, check in enumerate(channel.get("fact_checks", [])):
+            claim_key = f"{report.get('resource_type', 'resource')}:{check_index}"
+            claim_support.setdefault(claim_key, []).append(check.get("supported"))
+            evidence_ids.update(
+                str(item) for item in check.get("source_ref_ids", []) if item
+            )
             if not check.get("determinable", True):
-                unable.append(claim)
+                unable.append(f"{channel_index}:{check_index}")
+
+    evidence_ids.update(str(item) for item in report.get("evidence_ref_ids", []) if item)
 
     unsupported = sum(1 for values in claim_support.values() if False in values)
     target_ids = {str(item) for item in case.get("target_core_knowledge_ids", [])}
-    covered_ids = target_ids & evidence_ids
+    covered_ids = target_ids & _knowledge_ids_from_source_refs(evidence_ids)
     resource = next(
         (
             item
@@ -142,11 +172,12 @@ def _observed_result(
         "manual_review_required": "conflict",
         "rejected": "failed",
         "completed": "passed",
+        "passed": "passed",
     }.get(decision, decision)
     agent_latency: dict[str, int] = {}
     for run in runs:
         step = str((run.get("input_summary") or {}).get("step") or "")
-        if not step or run.get("model_name"):
+        if not step:
             continue
         agent_latency[step] = agent_latency.get(step, 0) + int(run.get("duration_ms") or 0)
 
@@ -156,12 +187,12 @@ def _observed_result(
         "hallucinated_fact_count": unsupported,
         "difficulty_matched": bool(
             resource.get("difficulty") == case.get("target_difficulty")
-            and float(report.get("difficulty_match") or 0) >= 85
+            and float((report.get("final_scores") or {}).get("difficulty_match") or 0) >= 85
         ),
         "covered_core_knowledge_count": len(covered_ids),
         "target_core_knowledge_count": len(target_ids),
         "review_conclusion": conclusion,
-        "profile_decision": "not_evaluated",
+        "profile_decision": _profile_decision(runs),
         "latency_ms": elapsed_ms,
         "agent_latency_ms": agent_latency,
         "determinable": determinable,
@@ -169,12 +200,13 @@ def _observed_result(
         "provider_mode": "live" if all_live else "invalid",
         "model_calls": [
             {
-                "model_name": run.get("model_name"),
-                "duration_ms": run.get("duration_ms"),
-                "tokens_input": run.get("tokens_input"),
-                "tokens_output": run.get("tokens_output"),
+                "model_name": call.get("model_name"),
+                "role": call.get("role"),
+                "duration_ms": call.get("duration_ms"),
+                "tokens_input": call.get("tokens_input"),
+                "tokens_output": call.get("tokens_output"),
             }
-            for run in model_runs
+            for call in model_calls
         ],
     }
 
@@ -189,7 +221,8 @@ def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[
         "domain_code": "ai_app_dev",
         "resource_types": [case["resource_type"]],
         "learning_goal": (
-            f"评测案例 {case['case_id']}，目标知识点："
+            EVALUATION_MARKER.format(case_id=case["case_id"])
+            + f" V2 评测案例 {case['case_id']}，目标知识点："
             + "、".join(case.get("target_core_knowledge_ids", []))
         ),
     }
@@ -210,6 +243,7 @@ def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run real-model evaluation through the public API.")
     parser.add_argument("--stage", choices=tuple(STAGE_LIMITS), required=True)
+    parser.add_argument("--case-id", help="Run one named case for live diagnostics; not stage acceptance.")
     parser.add_argument("--base-url", default="http://localhost:8000/api/v1")
     parser.add_argument("--timeout-seconds", type=int, default=300)
     parser.add_argument("--xlsx", action="store_true")
@@ -223,6 +257,10 @@ def main() -> None:
 
     cases, versions = evaluator.load_cases()
     selected = cases[: STAGE_LIMITS[args.stage]]
+    if args.case_id:
+        selected = [case for case in cases if case.get("case_id") == args.case_id]
+        if not selected:
+            raise SystemExit(f"unknown evaluation case: {args.case_id}")
     run_id = datetime.now(UTC).strftime(f"live-{args.stage}-%Y%m%dT%H%M%SZ")
     results: list[dict[str, Any]] = []
     for case in selected:
@@ -246,6 +284,7 @@ def main() -> None:
         "run_mode": "live",
         "stage": args.stage,
         "case_count": len(results),
+        "diagnostic_case_id": args.case_id,
         "valid": valid,
         "model_configuration": {
             "generation_model": health.get("generation_model", {}).get("model_name"),

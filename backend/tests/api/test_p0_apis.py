@@ -5,10 +5,17 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.agents.contracts import (
+    FeedbackIntent,
+    InterpretFeedbackOutput,
+    RecommendedAction,
+)
 from app.core.db import get_db
 from app.main import app
 from app.models import (
     Base,
+    AgentMessageRecord,
+    AgentRun,
     GenerationTask,
     GraphCheckpoint,
     Learner,
@@ -98,6 +105,18 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
         seed_resource(db)
     monkeypatch.setattr("app.api.v1.resources.run_generation_task", lambda task_id: None)
     monkeypatch.setattr("app.api.v1.tutoring.run_generation_task", lambda task_id: None)
+    monkeypatch.setattr(
+        "app.services.tutoring_service.V2TutoringAgent.execute",
+        lambda _self, request: InterpretFeedbackOutput(
+            task_id=request.task_id,
+            feedback_intent=FeedbackIntent.TOO_HARD,
+            recommended_action=RecommendedAction.ASK_FOLLOW_UP,
+            reply="你能指出具体卡住的概念或步骤吗？",
+            evidence=[],
+            needs_generation=False,
+            decision_reason="首次困难反馈先进行追问。",
+        ),
+    )
     app.dependency_overrides[get_db] = override(testing_session)
     client = TestClient(app)
     try:
@@ -121,6 +140,12 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
         ).json()["data"]
         assert message["profile_update_required"] is False
         assert message["task_id"] is None
+        with testing_session() as db:
+            run = db.query(AgentRun).filter_by(agent_name="tutoring_agent").one()
+            messages = db.query(AgentMessageRecord).filter_by(session_id=session_id).all()
+            assert run.prompt_version == "v2"
+            assert run.status == "completed"
+            assert {item.message_type for item in messages} >= {"command", "result"}
 
         feedback = client.post(
             "/api/v1/resources/resource_visible/feedback",

@@ -1,0 +1,252 @@
+"""Stage-three V2 flow: profile -> retrieval -> generation -> review."""
+
+from __future__ import annotations
+
+import pytest
+
+from app.agents.contract_adapters import (
+    analyze_profile_output_to_patch,
+    build_analyze_profile_input,
+    build_finalize_task_input,
+    build_generate_resource_input,
+    build_retrieve_knowledge_input,
+    build_review_resource_input,
+    generate_resource_output_to_patch,
+    prepare_task_output_to_patch,
+    retrieve_knowledge_output_to_patch,
+    review_resource_output_to_patch,
+    finalize_task_output_to_patch,
+    render_resource_markdown,
+)
+from app.agents.contracts import (
+    AnalyzeProfileInput,
+    ModelReview,
+    ReviewCriterionScores,
+    PrepareTaskOutput,
+    RetrieveKnowledgeInput,
+    RetrieveKnowledgeOutput,
+    RetrievedChunk,
+    RetrievalMatchType,
+    ReviewDecision,
+    SourceRef,
+    TaskRequest,
+    TriggerType,
+)
+from app.agents.state import AgentGraphState
+from app.agents.v2_generation_agent import V2ContentGenerationAgent
+from app.agents.v2_profile_analysis_agent import V2ProfileAnalysisAgent
+from app.agents.v2_retrieval_agent import V2KnowledgeRetrievalAgent
+from app.agents.v2_review_agent import V2ReviewValidationAgent
+from app.agents.v2_orchestrator_agent import V2OrchestratorAgent
+from app.services.profile_v2_fixture_service import rendered_cases
+
+
+class FlowRetriever:
+    """Controlled V2 retrieval boundary used to exercise downstream contracts."""
+
+    def __init__(self) -> None:
+        self.requests: list[RetrieveKnowledgeInput] = []
+
+    def execute(self, request: RetrieveKnowledgeInput) -> RetrieveKnowledgeOutput:
+        self.requests.append(request)
+        knowledge_ids = list(
+            dict.fromkeys(
+                [
+                    *request.retrieval_plan.priority_knowledge_ids,
+                    *request.retrieval_plan.prerequisite_knowledge_ids,
+                ]
+            )
+        )
+        chunks = [
+            RetrievedChunk(
+                chunk_id=f"{knowledge_id}::chunk::0",
+                knowledge_id=knowledge_id,
+                name=f"知识点 {knowledge_id}",
+                category="ai_app_dev",
+                difficulty=request.retrieval_plan.target_difficulty,
+                content=f"{knowledge_id} 的可追溯学习证据。",
+                similarity=0.95 - index * 0.01,
+                matched_by=(
+                    RetrievalMatchType.PRIORITY
+                    if knowledge_id in request.retrieval_plan.priority_knowledge_ids
+                    else RetrievalMatchType.PREREQUISITE
+                ),
+                used_for=request.purpose,
+                source=SourceRef(
+                    source_ref_id=f"{knowledge_id}::source::0",
+                    knowledge_id=knowledge_id,
+                    source_title=f"知识库条目 {knowledge_id}",
+                    license_note="team-authored",
+                ),
+            )
+            for index, knowledge_id in enumerate(knowledge_ids)
+        ]
+        return RetrieveKnowledgeOutput(
+            task_id=request.task_id,
+            query_text=" ".join(request.retrieval_plan.query_terms),
+            chunks=chunks,
+            covered_knowledge_ids=knowledge_ids,
+            missing_knowledge_ids=[],
+        )
+
+
+class DeterministicReviewChannel:
+    """Both V2 review channels independently return their computed baseline."""
+
+    def review(self, *, deterministic_review: ModelReview, **_kwargs) -> ModelReview:
+        return deterministic_review
+
+
+class PassingReviewChannel:
+    """A controlled independent review channel for the completed-task branch."""
+
+    def review(self, *, role, model, deterministic_review: ModelReview, **_kwargs) -> ModelReview:
+        return ModelReview(
+            model_role=role,
+            model_name=model or role,
+            scores=ReviewCriterionScores(
+                factual_accuracy=90,
+                source_traceability=90,
+                difficulty_match=90,
+                core_knowledge_coverage=90,
+            ),
+            passed=True,
+            fact_checks=deterministic_review.fact_checks,
+        )
+
+
+def _analysis_input(case_id: str) -> AnalyzeProfileInput:
+    for current_case_id, payload, _ in rendered_cases():
+        if current_case_id == case_id:
+            return AnalyzeProfileInput.model_validate(payload)
+    raise AssertionError(f"missing V2 profile fixture: {case_id}")
+
+
+def _initial_state(request: AnalyzeProfileInput) -> AgentGraphState:
+    task_request = TaskRequest.model_validate(
+        request.context.model_dump(mode="python", exclude={"contract_version"})
+    )
+    prepared = PrepareTaskOutput(
+        task_id=request.task_id,
+        context=request.context,
+        next_node=(
+            "interpret_feedback"
+            if request.context.trigger_type is TriggerType.RESOURCE_FEEDBACK
+            else "analyze_profile"
+        ),
+    )
+    state: AgentGraphState = {
+        "contract_version": "agent-contract-v2",
+        "task_request": task_request,
+        "current_profile": request.current_profile,
+        "diagnostic_summary": request.diagnostic_summary,
+    }
+    state.update(prepare_task_output_to_patch(prepared))
+    return state
+
+
+@pytest.mark.parametrize(
+    "case_id",
+    ["dev-initial-01", "dev-update-01", "accept-initial-01"],
+)
+def test_v2_profile_retrieval_generation_review_flow(case_id: str) -> None:
+    original_input = _analysis_input(case_id)
+    state = _initial_state(original_input)
+
+    if original_input.context.trigger_type is TriggerType.RESOURCE_FEEDBACK:
+        # The tutoring-to-profile state construction is covered by
+        # test_v2_tutoring_profile_flow; continue this chain from its V2 input.
+        profile_input = original_input
+    else:
+        profile_input = build_analyze_profile_input(
+            state, knowledge_assessments=original_input.knowledge_assessments
+        )
+        assert profile_input == original_input
+    profile_output = V2ProfileAnalysisAgent().execute(profile_input)
+    assert profile_output.needs_generation
+    state.update(analyze_profile_output_to_patch(profile_output))
+
+    retriever = FlowRetriever()
+    retrieval_input = build_retrieve_knowledge_input(state)
+    retrieval_output = V2KnowledgeRetrievalAgent(retriever).execute(retrieval_input)
+    assert retriever.requests == [retrieval_input]
+    assert retrieval_output.task_id == profile_output.task_id
+    state.update(retrieve_knowledge_output_to_patch(retrieval_output))
+
+    generation_input = build_generate_resource_input(state)
+    generation_output = V2ContentGenerationAgent(
+        renderer=render_resource_markdown
+    ).execute(generation_input)
+    assert generation_output.task_id == retrieval_output.task_id
+    assert {item.resource_type for item in generation_output.resources} == set(
+        generation_input.requirements.resource_types
+    )
+    for artifact in generation_output.resources:
+        assert {
+            source.source_ref_id for source in artifact.source_refs
+        }.issubset(generation_input.requirements.source_whitelist)
+    state.update(generate_resource_output_to_patch(generation_input, generation_output))
+
+    review_input = build_review_resource_input(state)
+    review_output = V2ReviewValidationAgent(
+        channel=DeterministicReviewChannel()
+    ).execute(review_input)
+    assert review_output.task_id == generation_output.task_id
+    assert {report.resource_type for report in review_output.reports} == {
+        resource.resource_type for resource in generation_output.resources
+    }
+    assert all(not report.manual_review_required for report in review_output.reports)
+    assert all(report.decision is ReviewDecision.REVISION_REQUIRED for report in review_output.reports)
+    assert all(report.final_scores.source_traceability == 100 for report in review_output.reports)
+    assert all(report.final_scores.core_knowledge_coverage == 100 for report in review_output.reports)
+    state.update(review_resource_output_to_patch(review_input, review_output))
+
+    finalize_input = build_finalize_task_input(state)
+    finalize_output = V2OrchestratorAgent().execute(finalize_input)
+    assert finalize_output.task_id == review_output.task_id
+    assert finalize_output.decision.value == "revision_required"
+    assert finalize_output.revision_count == 1
+    assert finalize_output.revision_plan is not None
+    assert finalize_output.revision_plan.resource_types == [
+        resource.resource_type for resource in generation_output.resources
+    ]
+    state.update(finalize_task_output_to_patch(finalize_output))
+
+    assert state["review_resource"] == review_output
+    assert state["finalize_task"] == finalize_output
+
+
+def test_v2_full_chain_can_complete_after_independent_review_passes() -> None:
+    original_input = _analysis_input("dev-initial-01")
+    state = _initial_state(original_input)
+    profile_output = V2ProfileAnalysisAgent().execute(
+        build_analyze_profile_input(
+            state, knowledge_assessments=original_input.knowledge_assessments
+        )
+    )
+    state.update(analyze_profile_output_to_patch(profile_output))
+
+    retriever = FlowRetriever()
+    retrieval_input = build_retrieve_knowledge_input(state)
+    retrieval_output = V2KnowledgeRetrievalAgent(retriever).execute(retrieval_input)
+    state.update(retrieve_knowledge_output_to_patch(retrieval_output))
+
+    generation_input = build_generate_resource_input(state)
+    generation_output = V2ContentGenerationAgent(
+        renderer=render_resource_markdown
+    ).execute(generation_input)
+    state.update(generate_resource_output_to_patch(generation_input, generation_output))
+
+    review_input = build_review_resource_input(state)
+    review_output = V2ReviewValidationAgent(
+        channel=PassingReviewChannel()
+    ).execute(review_input)
+    assert all(report.decision is ReviewDecision.PASSED for report in review_output.reports)
+    assert all(report.passed for report in review_output.reports)
+    state.update(review_resource_output_to_patch(review_input, review_output))
+
+    finalize_output = V2OrchestratorAgent().execute(build_finalize_task_input(state))
+    assert finalize_output.decision.value == "completed"
+    assert set(finalize_output.passed_resource_types) == {
+        resource.resource_type for resource in generation_output.resources
+    }

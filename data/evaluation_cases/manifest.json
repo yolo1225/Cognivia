@@ -1,0 +1,6 @@
+{
+  "schema_version": "v2",
+  "active_file": "v2/p0_cases.json",
+  "legacy_files": ["p0_cases.json"],
+  "note": "p0_cases.json 是旧 AIAPP-Kxxx ID 基线；真实 V2 验收仅使用 active_file。"
+}

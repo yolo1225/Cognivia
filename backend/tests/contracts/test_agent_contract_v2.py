@@ -74,7 +74,7 @@ def _imported_modules(path: Path) -> set[str]:
     }
 
 
-def test_v1_and_v2_contract_modules_are_physically_isolated() -> None:
+def test_v2_is_the_only_agent_contract_and_runtime_family() -> None:
     agent_dir = PROJECT_ROOT / "backend" / "app" / "agents"
     formal_contracts = (agent_dir / "contracts.py").read_text(encoding="utf-8")
     formal_state = (agent_dir / "state.py").read_text(encoding="utf-8")
@@ -86,10 +86,9 @@ def test_v1_and_v2_contract_modules_are_physically_isolated() -> None:
     assert "class MessageTypeV2" not in formal_contracts
     assert "class AgentMessageV2" not in formal_contracts
 
-    legacy_runtime_files = [
+    removed_v1_files = [
         "base.py",
         "generation_agent.py",
-        "graphs.py",
         "nodes.py",
         "orchestrator.py",
         "profile_agent.py",
@@ -97,21 +96,20 @@ def test_v1_and_v2_contract_modules_are_physically_isolated() -> None:
         "review_agent.py",
         "tools.py",
         "tutoring_agent.py",
+        "legacy_contracts.py",
+        "legacy_state.py",
     ]
-    for filename in legacy_runtime_files:
-        imported = _imported_modules(agent_dir / filename)
-        assert "app.agents.contracts" not in imported, filename
-        assert "app.agents.state" not in imported, filename
+    assert all(not (agent_dir / filename).exists() for filename in removed_v1_files)
 
-    legacy_consumers = [
-        PROJECT_ROOT / "backend" / "app" / "services" / "diagnostic_service.py",
-        PROJECT_ROOT / "backend" / "app" / "services" / "generation_service.py",
-        PROJECT_ROOT / "backend" / "app" / "workers" / "generation_worker.py",
-    ]
-    for path in legacy_consumers:
+    for path in (PROJECT_ROOT / "backend" / "app").rglob("*.py"):
         imported = _imported_modules(path)
-        assert "app.agents.state" not in imported, path.name
-        assert "app.agents.legacy_state" in imported, path.name
+        assert "app.agents.legacy_contracts" not in imported, path.name
+        assert "app.agents.legacy_state" not in imported, path.name
+
+    compatibility = (
+        PROJECT_ROOT / "backend" / "app" / "core" / "compatibility.py"
+    ).read_text(encoding="utf-8")
+    assert 'AGENT_CONTRACT_VERSION = "agent-contract-v2"' in compatibility
 
 
 def test_v2_models_reject_unknown_fields_and_out_of_range_values() -> None:

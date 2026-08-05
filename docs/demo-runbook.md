@@ -4,9 +4,11 @@
 
 1. 从 `.env.example` 复制 `.env`，填写接口地址、密钥和三个模型名。
 2. 保持 `ALLOW_FIXTURE_LLM=false`。
-3. 运行 `./scripts/demo.ps1 start`。
-4. 运行 `./scripts/demo.ps1 verify`，确认 `live_models_ready=True`、知识点 50、诊断题 60。
-5. 打开 http://localhost:5173/ 和 http://localhost:8000/docs。
+3. 运行 `./scripts/demo.ps1 backup`；它将 MySQL、Chroma、服务状态和 candidate manifest 保存到 `reports/preflight/`，不会重置数据。
+4. 运行 `./scripts/demo.ps1 start`。
+5. 运行 `./scripts/demo.ps1 verify`，确认 `live_models_ready=True`、知识点 50、诊断题 60。
+6. 执行真实 embedding 预检和 V2 candidate 索引重建，再检查 manifest 的模型、向量维度、数据版本和 active collection。
+7. 打开 http://localhost:5173/ 和 http://localhost:8000/docs。
 
 ## 2. 真实模型评测
 
@@ -19,6 +21,14 @@ python test_script/run_live.py --stage formal --xlsx
 ```
 
 每个任务必须在 Agent 运行记录中出现 `provider_mode=live`。报告输出到 `reports/evaluation`，原始运行证据输出到 `reports/evaluation/runs`。
+
+真实 SSE 验收会额外创建一个讲义任务并产生模型费用：
+
+```powershell
+python test_script/probe_sse.py
+```
+
+探针验证 V2 节点事件顺序、审核仲裁摘要和终态事件，并将结果写入 `reports/preflight/`。
 
 ## 3. 七分支验收
 

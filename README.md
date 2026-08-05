@@ -35,6 +35,14 @@ Windows 可以一键完成构建、迁移、种子初始化和索引重建：
 ./scripts/demo.ps1 start
 ```
 
+对已有 Docker 演示数据进行真实验收前，先执行非破坏性备份：
+
+```powershell
+./scripts/demo.ps1 backup
+```
+
+它会将 MySQL、Chroma、Compose 状态和 V2 candidate manifest 保存到 `reports/preflight/<timestamp>/`，不会执行 reset。
+
 2. 使用 Docker Compose 构建并启动：
 
 ```bash
@@ -93,6 +101,7 @@ python test_script/run_live.py --stage smoke
 python test_script/run_live.py --stage regression
 python test_script/run_live.py --stage formal --xlsx
 python test_script/demo_acceptance.py
+python test_script/probe_sse.py
 ```
 
 `demo_acceptance.py` 会显式产生真实模型费用。异常分支可使用带模型名、任务 ID、时间和 `provider_mode=live` 的历史真实快照；未标识 fixture 不得作为验收证据。
@@ -130,9 +139,9 @@ npm run dev
 
 ## V2 检索算法验收
 
-V2 检索智能体与 V1 演示链路并行存在。它只读取 candidate manifest 指向的 active collection，
-不会读取、修改或替换 `knowledge_ai_app_dev` 的 V1/mock 索引。V2 评测会调用真实 embedding，必须显式
-传入 `--live`；请先完成 candidate 索引验收。
+V2 检索智能体是当前唯一运行链的一部分，只读取 candidate manifest 指向的 active collection，
+不会读取、修改或替换历史 V1/mock collection。V2 评测会调用真实 embedding，必须显式传入
+`--live`；请先完成 candidate 索引验收。
 
 ```powershell
 docker compose exec backend python -m pytest tests/unit/test_v2_retrieval.py -q

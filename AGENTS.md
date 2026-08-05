@@ -145,16 +145,14 @@ development agents implementing concrete Agents must treat these files as read-o
 - `backend/app/agents/contracts.py`
 - `backend/app/agents/state.py`
 - `backend/app/agents/contract_adapters.py`
-- `backend/app/agents/legacy_contracts.py`
-- `backend/app/agents/legacy_state.py`
 - `backend/tests/contracts/`
 - `docs/agent-contract-v2.md`
 - `docs/contracts/v2/`
 
 The V2 source of truth is `docs/agent-contract-v2.md` together with the executable Pydantic
-models and generated JSON Schema. New Agent implementations import only from
-`app.agents.contracts` and `app.agents.state`. The current V1 runtime imports only from the
-two `legacy_*` modules until the coordinated V2 cutover.
+models and generated JSON Schema. All Agent implementations import only from
+`app.agents.contracts` and `app.agents.state`. V1 contracts, State and Agent implementations
+have been retired and must not be reintroduced.
 
 Concrete Agent developers must not change contract fields, enums, required/optional rules,
 defaults, State ownership, contract examples, or top-level graph structure to make their
@@ -170,8 +168,7 @@ stop changing shared files and submit a contract change request containing:
 
 Only the designated contract maintainer may approve and apply the change, regenerate Schema
 and examples, and update contract tests and documentation. Breaking changes require a new
-contract version. Never perform an import-only V1-to-V2 switch while retaining the V1 data
-shape.
+contract version.
 
 ## Review And Anti-Hallucination Rules
 

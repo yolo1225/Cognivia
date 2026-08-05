@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     embedding_model: str | None = None
     llm_timeout_seconds: int = 30
     allow_fixture_llm: bool = False
+    enable_evaluation_overrides: bool = False
     review_rule_version: str = "review-v1"
 
     log_level: str = "INFO"

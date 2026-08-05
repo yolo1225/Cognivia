@@ -7,7 +7,8 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from app.agents.contracts import FeedbackIntent, InterpretFeedbackInput, InterpretFeedbackOutput
+from app.agents.contracts import InterpretFeedbackInput, InterpretFeedbackOutput
+from app.agents.v2_observability import record_model_call
 from app.core.config import settings
 from app.services.llm_service import OpenAICompatibleGateway, gateway
 from app.services.tutoring_policy import (
@@ -46,13 +47,14 @@ class OpenAICompatibleTutoringInterpreter:
         self._gateway = model_gateway
 
     def interpret(self, request: InterpretFeedbackInput) -> TutoringSemanticResult:
-        result, _metadata = self._gateway.complete_json(
+        result, metadata = self._gateway.complete_json(
             model=self._model,
             system_prompt=SYSTEM_PROMPT,
             payload={"feedback_request": request.model_dump(mode="json")},
             fixture_factory=lambda: _fixture_semantics(request),
             response_model=TutoringSemanticResult,
         )
+        record_model_call(metadata, role="tutoring_model")
         return TutoringSemanticResult.model_validate(result)
 
 

@@ -159,7 +159,7 @@ def create_generation_task(
             "trigger_type": task.trigger_type,
             "execution_mode": task.execution_mode,
             "resource_types": requested_types,
-            "agent_graph": "unified_learning_graph_v1",
+            "agent_graph": "unified_learning_graph_v2",
             **_profile_summary(db, task),
             "decision": task.decision,
             "agent_trace": [],

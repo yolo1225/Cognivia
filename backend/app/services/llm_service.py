@@ -45,6 +45,10 @@ class OpenAICompatibleGateway:
             api_key=settings.openai_api_key,
             base_url=settings.openai_api_base,
             timeout=settings.llm_timeout_seconds,
+            # The gateway implements the only permitted retry policy below:
+            # initial request plus the three documented backoff retries.
+            # Disable the SDK's implicit retries to avoid multiplicative waits.
+            max_retries=0,
         )
 
     def complete_json(
@@ -107,21 +111,25 @@ class OpenAICompatibleGateway:
                 }
             except (json.JSONDecodeError, ValidationError, ModelResponseError) as exc:
                 last_error = ModelResponseError(f"model returned invalid structured output: {exc}")
+                validation_fields = _validation_error_fields(exc)
                 logger.warning(
-                    "Model structured output validation failed model=%s attempt=%s error_type=%s",
+                    "Model structured output validation failed model=%s attempt=%s error_type=%s fields=%s",
                     model,
                     attempt,
                     type(exc).__name__,
+                    validation_fields,
                 )
                 if attempt <= len(self.RETRY_DELAYS):
                     time.sleep(self.RETRY_DELAYS[attempt - 1])
             except Exception as exc:  # provider exceptions vary across compatible APIs
                 last_error = exc
                 logger.warning(
-                    "Model call failed model=%s attempt=%s error_type=%s",
+                    "Model call failed model=%s attempt=%s error_type=%s provider_status=%s provider_code=%s",
                     model,
                     attempt,
                     type(exc).__name__,
+                    getattr(exc, "status_code", None),
+                    getattr(exc, "code", None),
                 )
                 if attempt <= len(self.RETRY_DELAYS):
                     time.sleep(self.RETRY_DELAYS[attempt - 1])
@@ -195,6 +203,16 @@ class OpenAICompatibleGateway:
             "fixture_enabled": settings.allow_fixture_llm,
             "ready_for_live_demo": ready_for_live_demo,
         }
+
+
+def _validation_error_fields(exc: Exception) -> list[str]:
+    """Expose only failing field paths in ordinary logs, never provider content."""
+    if not isinstance(exc, ValidationError):
+        return []
+    return [
+        ".".join(str(part) for part in issue.get("loc", ()))
+        for issue in exc.errors(include_input=False)
+    ][:20]
 
 
 gateway = OpenAICompatibleGateway()

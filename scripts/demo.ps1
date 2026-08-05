@@ -1,6 +1,6 @@
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet("start", "reset", "verify", "stop")]
+    [ValidateSet("backup", "start", "reset", "verify", "stop")]
     [string]$Action,
     [switch]$ConfirmReset
 )
@@ -152,7 +152,72 @@ function Test-DemoEnvironment {
     }
 }
 
+function Backup-DemoEnvironment {
+    $stamp = Get-Date -Format "yyyyMMddTHHmmss"
+    $backupDirectory = Join-Path $ProjectRoot "reports/preflight/$stamp"
+    New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
+
+    Invoke-Compose -Arguments @("ps") | Out-File (Join-Path $backupDirectory "compose-ps.txt") -Encoding utf8
+    & docker images | Out-File (Join-Path $backupDirectory "docker-images.txt") -Encoding utf8
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to capture Docker image inventory."
+    }
+    try {
+        Invoke-RestMethod -Uri "http://localhost:8000/api/v1/health/dependencies" -TimeoutSec 10 |
+            ConvertTo-Json -Depth 12 | Set-Content (Join-Path $backupDirectory "health-dependencies.json") -Encoding utf8
+    } catch {
+        "health endpoint unavailable: $($_.Exception.Message)" |
+            Set-Content (Join-Path $backupDirectory "health-dependencies.txt") -Encoding utf8
+    }
+
+    $runningServices = @(& docker compose ps --status running --services)
+    $mysqlVolume = & docker volume ls --quiet --filter "label=com.docker.compose.project=$ProjectName" --filter "label=com.docker.compose.volume=mysql_data"
+    if ($LASTEXITCODE -ne 0 -or -not $mysqlVolume) {
+        throw "Could not find the MySQL Docker volume for project '$ProjectName'."
+    }
+    if ($runningServices -contains "mysql") {
+        $sqlPath = Join-Path $backupDirectory "mysql-yunchuan_zhihui.sql"
+        & docker compose exec --no-TTY mysql sh -c 'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' |
+            Out-File $sqlPath -Encoding utf8
+        if ($LASTEXITCODE -ne 0) {
+            throw "MySQL backup failed."
+        }
+    } else {
+        & docker run --rm `
+            -v "$($mysqlVolume | Select-Object -First 1):/source:ro" `
+            -v "${backupDirectory}:/backup" `
+            alpine:3.20 tar -czf /backup/mysql-data.tgz -C /source .
+        if ($LASTEXITCODE -ne 0) {
+            throw "Stopped MySQL volume backup failed."
+        }
+    }
+
+    $chromaVolume = & docker volume ls --quiet --filter "label=com.docker.compose.project=$ProjectName" --filter "label=com.docker.compose.volume=chroma_data"
+    if ($LASTEXITCODE -ne 0 -or -not $chromaVolume) {
+        throw "Could not find the Chroma Docker volume for project '$ProjectName'."
+    }
+    $archivePath = Join-Path $backupDirectory "chroma-data.tgz"
+    & docker run --rm `
+        -v "$($chromaVolume | Select-Object -First 1):/source:ro" `
+        -v "${backupDirectory}:/backup" `
+        alpine:3.20 tar -czf /backup/chroma-data.tgz -C /source .
+    if ($LASTEXITCODE -ne 0) {
+        throw "Chroma backup failed."
+    }
+    if ($runningServices -contains "backend") {
+        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "sh", "-c", "if [ -f /app/storage/candidate-index/ai_app_dev/manifest.json ]; then cat /app/storage/candidate-index/ai_app_dev/manifest.json; fi") |
+            Set-Content (Join-Path $backupDirectory "candidate-manifest.json") -Encoding utf8
+    } else {
+        "backend was not running; candidate manifest was not available through the container." |
+            Set-Content (Join-Path $backupDirectory "candidate-manifest.txt") -Encoding utf8
+    }
+    Write-Host "Preflight backup saved to $backupDirectory"
+}
+
 switch ($Action) {
+    "backup" {
+        Backup-DemoEnvironment
+    }
     "start" {
         Ensure-ServiceImage -Service "backend" -BuildInputs @("backend/Dockerfile", "backend/pyproject.toml")
         Ensure-ServiceImage -Service "frontend" -BuildInputs @("frontend/Dockerfile", "frontend/package.json", "frontend/package-lock.json")

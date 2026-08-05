@@ -159,8 +159,6 @@ human_review -> finalize_task         when approve or reject
 - `backend/app/agents/contracts.py`
 - `backend/app/agents/state.py`
 - `backend/app/agents/contract_adapters.py`
-- `backend/app/agents/legacy_contracts.py`
-- `backend/app/agents/legacy_state.py`
 - `backend/tests/contracts/`
 - `docs/agent-contract-v2.md`
 - `docs/contracts/v2/`
@@ -169,7 +167,7 @@ human_review -> finalize_task         when approve or reject
 
 变更申请必须说明申请字段或规则、所属输入/输出、生产与消费节点、使用原因、是否可空、默认值和兼容性影响。只有契约负责人可以决定是否修改，并统一更新模型、State、适配器、示例、Schema、测试和文档。破坏性变更必须升级契约版本。
 
-当前 V1 运行链只允许导入 `legacy_contracts` 和 `legacy_state`；新 Agent 只允许导入正式 `contracts` 和 `state`。禁止只替换 import 而保留 V1 数据结构。
+当前运行链和所有独立服务入口统一使用正式 `contracts` 与 `state`。V1 契约、State 和 Agent 实现已经退役，禁止重新引入。
 
 ## 6. 审核与反幻觉规范
 

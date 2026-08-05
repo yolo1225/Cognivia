@@ -227,11 +227,11 @@ def test_contract_baseline_without_attestation_blocks_rag_admission(tmp_path: Pa
     assert any(blocker["id"] == "contract_baseline" for blocker in result["blockers"])
 
 
-def test_v1_graph_and_runtime_nodes_remain_isolated_from_v2_retrieval() -> None:
+def test_v2_graph_runtime_uses_v2_nodes_without_legacy_state() -> None:
     graphs = (PROJECT_ROOT / "backend" / "app" / "agents" / "graphs.py").read_text(
         encoding="utf-8"
     )
-    nodes = (PROJECT_ROOT / "backend" / "app" / "agents" / "nodes.py").read_text(
+    nodes = (PROJECT_ROOT / "backend" / "app" / "agents" / "v2_nodes.py").read_text(
         encoding="utf-8"
     )
     graph_tree = ast.parse(graphs)
@@ -241,7 +241,6 @@ def test_v1_graph_and_runtime_nodes_remain_isolated_from_v2_retrieval() -> None:
         if isinstance(node, ast.ImportFrom) and node.module
     ]
 
-    assert "app.agents.legacy_state" in imports
-    assert "app.agents.state" not in imports
-    assert "v2_retrieval_agent" not in nodes
-    assert "V2KnowledgeRetrievalAgent" not in nodes
+    assert "app.agents.legacy_state" not in imports
+    assert "app.agents.v2_nodes" in imports
+    assert "V2KnowledgeRetrievalAgent" in nodes

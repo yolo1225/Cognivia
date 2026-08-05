@@ -126,13 +126,16 @@ def test_legacy_hash_evaluation_outcomes_are_deterministic() -> None:
 def test_rag_dataset_is_isolated_from_existing_p0_loader_directory() -> None:
     p0_path = PROJECT_ROOT / "data" / "evaluation_cases" / "p0_cases.json"
     p0_payload = json.loads(p0_path.read_text(encoding="utf-8"))
+    manifest = json.loads((p0_path.parent / "manifest.json").read_text(encoding="utf-8"))
     loaded_p0_cases = []
-    for path in sorted(p0_path.parent.glob("*.json")):
+    for file_name in manifest.get("legacy_files", []):
+        path = p0_path.parent / file_name
         payload = json.loads(path.read_text(encoding="utf-8"))
-        loaded_p0_cases.extend(payload.get("cases", payload))
+        loaded_p0_cases.extend(payload.get("cases", []))
 
     assert len(p0_payload["cases"]) == 50
     assert len(loaded_p0_cases) == 50
+    assert manifest["active_file"] == "v2/p0_cases.json"
     assert DEFAULT_DATA_DIR.parent != p0_path.parent
 
 

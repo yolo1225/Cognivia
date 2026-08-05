@@ -4,7 +4,7 @@
 >
 > 适用范围：`ai_app_dev` MVP，多智能体算法实现阶段
 >
-> 当前基线：V2 Agent 合同已冻结，生产运行链仍为 V1；本阶段先完成 V2 算法实现和独立验证，暂不切换生产图。
+> 当前状态：V2 Agent、唯一生产图、worker、诊断和独立导学入口均已切换；V1 源码已退役。
 
 ## 1. 推进目标
 
@@ -14,7 +14,7 @@
 V2 Input -> Agent 算法 -> V2 Output
 ```
 
-最终应形成可被后续 V2 LangGraph、State、worker 和持久化层直接接入的实现，同时保持当前 V1 演示链可运行。
+当前实现已被 V2 LangGraph、State、worker、持久化和独立服务入口统一采用。
 
 核心闭环为：
 
@@ -31,12 +31,10 @@ V2 Input -> Agent 算法 -> V2 Output
    - `backend/app/agents/contracts.py`
    - `backend/app/agents/state.py`
    - `backend/app/agents/contract_adapters.py`
-   - `backend/app/agents/legacy_contracts.py`
-   - `backend/app/agents/legacy_state.py`
    - `backend/tests/contracts/`
    - `docs/agent-contract-v2.md`
-3. 当前 V1 运行链继续使用 `legacy_contracts` 和 `legacy_state`，不得进行仅替换 import 的 V1/V2 切换。
-4. 本阶段不修改 `graphs.py`、`nodes.py`、`generation_worker.py` 和数据库表。
+3. 所有运行入口只允许使用正式 V2 contracts/State。
+4. 数据库表保持现有 MVP 结构。
 5. 每个 Agent 必须使用明确的 V2 Input/Output，不以 `dict[str, Any]` 作为正式边界。
 6. 每个 Agent 必须有独立职责、独立 Prompt、结构化输出、异常处理和单元测试。
 7. 普通日志只记录任务 ID、资源 ID、知识 ID、状态、摘要和分数，不记录完整画像、答案或资源正文。
@@ -201,19 +199,19 @@ FeedbackContext
 - 反馈结果能够被画像 Agent 正确判断；
 - `task_id`、`contract_version` 和来源 ID 在链路中保持一致。
 
-### 阶段四：V2 集成切换
+### 阶段四：V2 集成切换（已完成）
 
-算法和交叉测试完成后，再处理：
+已完成：
 
 - V2 LangGraph 节点输入构造；
 - V2 State patch 和 State 所有权；
 - worker 和 checkpoint；
 - `agent_runs`、`agent_messages` 持久化；
 - SSE 事件和任务状态；
-- V1/V2 端到端回归；
-- V1 legacy 链下线条件。
+- V2 端到端回归；
+- V1 Agent、契约和 State 退役。
 
-该阶段不与 Agent 算法实现并行，避免算法、State 和 worker 同时变化导致问题无法定位。
+真实模型 6/15/50 质量评测因 provider 超时单独补验，不影响 V2 代码切换结论。
 
 ## 5. 测试要求
 

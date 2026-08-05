@@ -10,21 +10,22 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES_DIR = ROOT / "data" / "evaluation_cases"
+CASES_MANIFEST = CASES_DIR / "manifest.json"
 REPORT_DIR = ROOT / "reports" / "evaluation"
 SCRIPT_VERSION = "live-evaluator-2.0"
 
 
 def load_cases() -> tuple[list[dict[str, Any]], set[str]]:
-    cases: list[dict[str, Any]] = []
-    versions: set[str] = set()
-    for path in sorted(CASES_DIR.glob("*.json")):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        file_cases = payload.get("cases", []) if isinstance(payload, dict) else payload
-        if not isinstance(file_cases, list):
-            raise ValueError(f"{path.name}: cases must be an array")
-        cases.extend(file_cases)
-        if isinstance(payload, dict) and payload.get("knowledge_base_version"):
-            versions.add(str(payload["knowledge_base_version"]))
+    manifest = json.loads(CASES_MANIFEST.read_text(encoding="utf-8"))
+    active_file = manifest.get("active_file")
+    if not isinstance(active_file, str):
+        raise ValueError("evaluation case manifest requires active_file")
+    path = CASES_DIR / active_file
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    cases = payload.get("cases", []) if isinstance(payload, dict) else payload
+    if not isinstance(cases, list):
+        raise ValueError(f"{path.name}: cases must be an array")
+    versions = {str(payload["knowledge_base_version"])} if payload.get("knowledge_base_version") else set()
     case_ids = [str(item.get("case_id")) for item in cases]
     if len(case_ids) != len(set(case_ids)):
         raise ValueError("duplicate case_id found")

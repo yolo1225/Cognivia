@@ -3,11 +3,11 @@
 > 状态：已冻结
 > 版本：`agent-contract-v2`
 > 适用范围：后续实现的六个 Agent 与八个 LangGraph 节点
-> 运行时：当前 V1 图暂不切换，禁止 V1/V2 混用
+> 运行时：唯一生产运行链与独立服务入口均使用 V2
 
 ## 1. 责任边界
 
-契约负责人独占修改 `contracts.py`、`state.py`、`contract_adapters.py`、两个 `legacy_*` 过渡文件、本文档、Schema 和契约测试。其他开发者只实现具体 Agent，不得修改公共字段、State 或顶层图。
+契约负责人独占修改 `contracts.py`、`state.py`、`contract_adapters.py`、本文档、Schema 和契约测试。其他开发者只实现具体 Agent，不得修改公共字段、State 或顶层图。
 
 契约变更申请必须包含：
 
@@ -24,18 +24,14 @@
 
 破坏性变更不允许继续使用 V2，必须升级为 `agent-contract-v3`。
 
-### 1.1 V1/V2 物理隔离
+### 1.1 唯一 V2 契约入口
 
 ```text
 contracts.py          # 正式 V2 契约，新 Agent 唯一入口
 state.py              # 正式 V2 AgentGraphState
-legacy_contracts.py   # 当前 V1 Agent 临时使用
-legacy_state.py       # 当前 V1 图、服务和 worker 临时使用
 ```
 
-新代码禁止导入 `legacy_contracts` 或 `legacy_state`。现有 V1 运行链禁止从正式 `contracts` 或 `state` 获取兼容类型。正式文件不重新导出 legacy 类型。
-
-当六个 Agent、节点适配、worker 和持久化全部切换到 V2 后，一次性删除两个 legacy 文件并将运行时契约常量升级为 `agent-contract-v2`。不允许仅替换 import 而保留 V1 数据结构。
+V1 契约、State 和 Agent 源码已经删除。正式文件不重新导出兼容类型，运行时契约常量固定为 `agent-contract-v2`。
 
 ## 2. 通用规则
 

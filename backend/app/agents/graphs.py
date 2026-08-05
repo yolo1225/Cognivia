@@ -1,64 +1,80 @@
-from collections.abc import Callable
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agents import nodes
-from app.agents.legacy_state import AgentGraphState
-
-NodeFunc = Callable[[AgentGraphState], AgentGraphState]
+from app.agents.v2_nodes import (
+    V2_GRAPH_STATE,
+    V2Runtime,
+    build_nodes,
+    route_after_finalize,
+    route_after_human_review,
+    route_after_prepare,
+    route_after_profile,
+)
 
 
 def build_learning_graph(
-    node_overrides: dict[str, NodeFunc] | None = None,
+    node_overrides: dict[str, Any] | None = None,
     checkpointer: Any | None = None,
+    runtime: V2Runtime | None = None,
 ):
-    """Build the single top-level graph used by initial and feedback tasks."""
+    """Build the single V2 top-level graph for initial and feedback tasks."""
 
-    overrides = node_overrides or {}
-    node_map: dict[str, NodeFunc] = {
-        "prepare_task": nodes.prepare_task,
-        "interpret_feedback": nodes.interpret_feedback,
-        "analyze_profile": nodes.analyze_profile,
-        "retrieve_knowledge": nodes.retrieve_knowledge,
-        "generate_resource": nodes.generate_resource,
-        "review_resource": nodes.review_resource,
-        "human_review": nodes.human_review,
-        "finalize_task": nodes.finalize_task,
-    }
-    node_map.update(overrides)
+    owned_runtime = runtime is None
+    active_runtime = runtime or V2Runtime.production()
+    node_map = build_nodes(active_runtime)
+    node_map.update(node_overrides or {})
 
-    graph = StateGraph(AgentGraphState)
+    graph = StateGraph(V2_GRAPH_STATE)
+    graph_node = {name: f"{name}_node" for name in node_map}
     for name, func in node_map.items():
-        graph.add_node(name, func)
+        # V2 State owns fields named prepare_task, analyze_profile, etc.;
+        # LangGraph reserves those channel names, so internal node IDs differ.
+        graph.add_node(graph_node[name], func)
 
-    graph.add_edge(START, "prepare_task")
+    graph.add_edge(START, graph_node["prepare_task"])
     graph.add_conditional_edges(
-        "prepare_task",
-        nodes.route_after_prepare,
+        graph_node["prepare_task"],
+        route_after_prepare,
         {
-            "interpret_feedback": "interpret_feedback",
-            "analyze_profile": "analyze_profile",
-            "human_review": "human_review",
+            "interpret_feedback": graph_node["interpret_feedback"],
+            "analyze_profile": graph_node["analyze_profile"],
+            "human_review": graph_node["human_review"],
         },
     )
-    graph.add_edge("interpret_feedback", "analyze_profile")
+    graph.add_edge(graph_node["interpret_feedback"], graph_node["analyze_profile"])
     graph.add_conditional_edges(
-        "analyze_profile",
-        nodes.route_after_profile,
-        {"retrieve_knowledge": "retrieve_knowledge", "finalize_task": "finalize_task"},
+        graph_node["analyze_profile"],
+        route_after_profile,
+        {
+            "retrieve_knowledge": graph_node["retrieve_knowledge"],
+            "finalize_task": graph_node["finalize_task"],
+        },
     )
-    graph.add_edge("retrieve_knowledge", "generate_resource")
-    graph.add_edge("generate_resource", "review_resource")
-    graph.add_edge("review_resource", "finalize_task")
+    graph.add_edge(graph_node["retrieve_knowledge"], graph_node["generate_resource"])
+    graph.add_edge(graph_node["generate_resource"], graph_node["review_resource"])
+    graph.add_edge(graph_node["review_resource"], graph_node["finalize_task"])
     graph.add_conditional_edges(
-        "finalize_task",
-        nodes.route_after_finalize,
-        {"retrieve_knowledge": "retrieve_knowledge", "human_review": "human_review", "end": END},
+        graph_node["finalize_task"],
+        route_after_finalize,
+        {
+            "retrieve_knowledge": graph_node["retrieve_knowledge"],
+            "human_review": graph_node["human_review"],
+            "end": END,
+        },
     )
     graph.add_conditional_edges(
-        "human_review",
-        nodes.route_after_human_review,
-        {"retrieve_knowledge": "retrieve_knowledge", "finalize_task": "finalize_task", "end": END},
+        graph_node["human_review"],
+        route_after_human_review,
+        {
+            "retrieve_knowledge": graph_node["retrieve_knowledge"],
+            "finalize_task": graph_node["finalize_task"],
+            "end": END,
+        },
     )
-    return graph.compile(checkpointer=checkpointer)
+    compiled = graph.compile(checkpointer=checkpointer)
+    # A caller supplying a runtime owns its lifecycle. The default runtime is
+    # retained by the compiled graph so the retrieval client stays alive.
+    if owned_runtime:
+        setattr(compiled, "_v2_runtime", active_runtime)
+    return compiled

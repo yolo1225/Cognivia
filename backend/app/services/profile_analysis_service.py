@@ -344,6 +344,15 @@ def _build_retrieval_plan(
     confirmed_high_mastery: bool,
 ) -> RetrievalPlan:
     weak = _prioritized_weak_knowledge(profile.weak_knowledge, context_goal, evidence_by_id)
+    # An explicit, valid knowledge ID in a learner's goal is a scoped learning
+    # request, not profile evidence.  It must be retrieved alongside the
+    # personalized priority instead of being ignored merely because it is not
+    # already listed as a historical weak point.
+    requested_ids = [
+        knowledge_id
+        for knowledge_id in catalog
+        if knowledge_id.casefold() in context_goal.casefold()
+    ]
     if action is RecommendedAction.CHALLENGE and confirmed_high_mastery:
         strategy = GenerationStrategy.CHALLENGE
     elif weak and (
@@ -354,7 +363,11 @@ def _build_retrieval_plan(
     else:
         strategy = GenerationStrategy.CONSOLIDATION
 
-    priority_ids = [item.knowledge_id for item in weak[:20]] if needs_generation else []
+    priority_ids = (
+        list(dict.fromkeys([*requested_ids, *(item.knowledge_id for item in weak)]))[:20]
+        if needs_generation
+        else []
+    )
     prerequisite_ids: list[str] = []
     for item in weak:
         if item.knowledge_id not in priority_ids:
