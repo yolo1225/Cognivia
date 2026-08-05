@@ -1,4 +1,4 @@
-import { getData, patchData, postData } from '@/api/client'
+import { getData, patchData, postData, type MutationOptions } from '@/api/client'
 
 export interface KnowledgeItem {
   knowledge_id: string
@@ -103,14 +103,21 @@ export function searchKnowledge(query: string, domainCode = 'ai_app_dev', nResul
   return getData<KnowledgeSearchResponse>(`/knowledge/search?${params.toString()}`)
 }
 
-export function createKnowledgeItem(payload: KnowledgeItemCreateRequest) {
-  return postData<KnowledgeItemCreateResponse>('/knowledge/items', payload)
+export function createKnowledgeItem(
+  payload: KnowledgeItemCreateRequest,
+  options: MutationOptions = {},
+) {
+  return postData<KnowledgeItemCreateResponse>('/knowledge/items', payload, options)
 }
 
-export function updateKnowledgeItem(knowledgeId: string, payload: KnowledgeItemUpdateRequest) {
-  return patchData<KnowledgeItemCreateResponse>(`/knowledge/items/${knowledgeId}`, payload)
+export function updateKnowledgeItem(
+  knowledgeId: string,
+  payload: KnowledgeItemUpdateRequest,
+  options: MutationOptions = {},
+) {
+  return patchData<KnowledgeItemCreateResponse>(`/knowledge/items/${knowledgeId}`, payload, options)
 }
 
-export function rebuildKnowledgeIndex() {
-  return postData<KnowledgeIndexResult>('/knowledge/rebuild-index?domain_code=ai_app_dev')
+export function rebuildKnowledgeIndex(options: MutationOptions = {}) {
+  return postData<KnowledgeIndexResult>('/knowledge/rebuild-index?domain_code=ai_app_dev', {}, options)
 }

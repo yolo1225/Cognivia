@@ -1,4 +1,4 @@
-import { getData, postData } from './client'
+import { getData, postData, type MutationOptions } from './client'
 
 export interface ManualReviewItem {
   manual_review_id: string
@@ -20,10 +20,11 @@ export function decideManualReview(
   reviewId: string,
   decision: 'approve' | 'request_revision' | 'reject',
   comment: string,
+  options: MutationOptions = {},
 ) {
   return postData(`/manual-reviews/${reviewId}/decision`, {
     decision,
     comment,
     reviewed_by: 'demo_admin',
-  })
+  }, options)
 }

@@ -4,6 +4,7 @@ from app.models.diagnostic import AnswerRecord, DiagnosticQuestion
 from app.models.domain import Domain
 from app.models.evaluation import EvaluationCase
 from app.models.feedback import Feedback
+from app.models.idempotency import IdempotencyRecord
 from app.models.knowledge import KnowledgeItem, KnowledgeRelation
 from app.models.learner import Learner, LearnerProfile, LearningPath
 from app.models.resource import GenerationTask, LearningResource, ReviewReport
@@ -22,6 +23,7 @@ __all__ = [
     "EvaluationCase",
     "Feedback",
     "GenerationTask",
+    "IdempotencyRecord",
     "KnowledgeItem",
     "KnowledgeRelation",
     "Learner",

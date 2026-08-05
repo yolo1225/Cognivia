@@ -1,4 +1,4 @@
-import { getData, postData } from './client'
+import { getData, postData, type MutationOptions } from './client'
 
 export interface LearnerSummary {
   learner_id: string
@@ -72,8 +72,8 @@ export function listLearners() {
   return getData<LearnerSummary[]>('/learners')
 }
 
-export function createLearner(payload: LearnerCreatePayload) {
-  return postData<LearnerSummary>('/learners', payload)
+export function createLearner(payload: LearnerCreatePayload, options: MutationOptions = {}) {
+  return postData<LearnerSummary>('/learners', payload, options)
 }
 
 export function getLearnerProfile(learnerId: string) {

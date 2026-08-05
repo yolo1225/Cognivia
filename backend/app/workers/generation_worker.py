@@ -41,6 +41,7 @@ from app.models import (
 )
 from app.services.generation_service import persist_generated_resources
 from app.services.profile_service import build_learning_path_from_snapshot, public_id
+from app.services.task_lifecycle_service import transition_task
 from app.services.v2_contract_mapping import ability_profile_payload, profile_snapshot
 
 
@@ -451,13 +452,12 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
             return {"task_id": task_id, "status": "not_found"}
         learner, profile = db.get(Learner, task.learner_id), db.get(LearnerProfile, task.profile_id)
         if learner is None or profile is None:
-            task.status = task.decision = "failed"
+            transition_task(task, status="failed", decision="failed")
             db.commit()
             return {"task_id": task_id, "status": "failed"}
         feedback = db.get(Feedback, task.source_feedback_id) if task.source_feedback_id else None
         resume = task.status == "waiting_human"
-        task.status = "running"
-        task.decision = "pending"
+        transition_task(task, status="running", decision="pending")
         db.commit()
         runtime = V2Runtime.production()
         checkpointer = MySQLLangGraphCheckpointer(SessionLocal)
@@ -474,8 +474,11 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
                     .order_by(ManualReviewTask.id.desc())
                 )
                 if manual is None or not manual.decision:
-                    task.status = "waiting_human"
-                    task.decision = "manual_review_required"
+                    transition_task(
+                        task,
+                        status="waiting_human",
+                        decision="manual_review_required",
+                    )
                     db.commit()
                     return {"task_id": task.public_id, "status": task.status}
                 graph_input = Command(
@@ -491,13 +494,12 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
             )
             result = final.get("finalize_task")
             task.revision_count = result.revision_count if result else 0
-            task.decision = result.decision.value if result else "failed"
-            if task.decision in {"completed", "no_change"}:
-                task.status = "completed"
-                task.progress = 100
+            decision = result.decision.value if result else "failed"
+            if decision in {"completed", "no_change"}:
+                transition_task(task, status="completed", decision=decision, progress=100)
                 checkpointer.mark_status(task.public_id, "resolved")
-            elif task.decision == "manual_review_required":
-                task.status = "waiting_human"
+            elif decision == "manual_review_required":
+                transition_task(task, status="waiting_human", decision=decision)
                 checkpointer.mark_status(task.public_id, "waiting_human")
                 if (
                     db.scalar(select(ManualReviewTask).where(ManualReviewTask.task_id == task.id))
@@ -512,7 +514,11 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
                         )
                     )
             else:
-                task.status = "failed" if task.decision == "rejected" else task.decision
+                transition_task(
+                    task,
+                    status="failed" if decision == "rejected" else decision,
+                    decision=decision,
+                )
             db.commit()
             resources = list(
                 db.scalars(
@@ -528,8 +534,7 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
                 "resources": [_resource_summary(item) for item in resources],
             }
         except GraphInterrupt:
-            task.status = "waiting_human"
-            task.decision = "manual_review_required"
+            transition_task(task, status="waiting_human", decision="manual_review_required")
             checkpointer.mark_status(task.public_id, "waiting_human")
             if (
                 db.scalar(select(ManualReviewTask).where(ManualReviewTask.task_id == task.id))
@@ -546,7 +551,7 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
             db.commit()
             return {"task_id": task.public_id, "status": task.status, "decision": task.decision}
         except Exception as exc:
-            task.status = task.decision = "failed"
+            transition_task(task, status="failed", decision="failed")
             _message(
                 db,
                 task,

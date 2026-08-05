@@ -14,7 +14,7 @@ learner profile -> diagnosis -> retrieval -> generation -> review -> decision ->
 backend/      FastAPI + SQLAlchemy + LangGraph 统一八节点工作流
 frontend/     Vue 3 + TypeScript + Vite + Element Plus 演示工作台
 data/         领域包、50 个知识点、60 道诊断题和 50 个评测案例
-docs/         API、部署、环境和演示账号文档
+docs/         API、部署、环境和工程规范文档
 test_script/  baseline/live 评测与七分支验收入口
 storage/      导出文件和运行期本地存储
 ```
@@ -78,6 +78,64 @@ curl "http://localhost:8000/api/v1/knowledge/search?query=RAG文档切片&n_resu
 ```bash
 docker compose up -d
 ```
+
+## 演示账号与现场运行
+
+MVP 使用以下内置演示账号和角色，不提供注册、密码找回或复杂权限审批：
+
+| user_id | role | 用途 |
+| --- | --- | --- |
+| `demo_learner` | learner | 学习者视角 |
+| `demo_instructor` | instructor | 培训者视角 |
+| `demo_admin` | admin | 管理员视角 |
+
+`demo_learner` 是演示账号；`learner_001` 是业务 API 默认使用的演示学习者实体，两者用途不同。
+
+### 真实模型验收
+
+现场真实验收前，保持 `ALLOW_FIXTURE_LLM=false`，依次执行备份、启动和环境校验：
+
+```powershell
+./scripts/demo.ps1 backup
+./scripts/demo.ps1 start
+./scripts/demo.ps1 verify
+```
+
+确认 `live_models_ready=True`、知识点数为 50、诊断题数为 60 后，完成下文的 V2 Candidate 索引验收，再按低成本到高成本的顺序执行：
+
+```powershell
+python test_script/run_live.py --stage smoke
+python test_script/run_live.py --stage regression
+python test_script/run_live.py --stage formal --xlsx
+python test_script/probe_sse.py
+python test_script/demo_acceptance.py
+```
+
+评测结果写入 `reports/evaluation/`，原始运行证据写入 `reports/evaluation/runs/`。SSE 探针会额外创建一个讲义任务并产生模型费用，验证 V2 节点事件顺序、审核仲裁摘要和终态事件；其预检结果写入 `reports/preflight/`。所有 Agent 运行记录必须显示 `provider_mode=live`。
+
+`demo_acceptance.py` 覆盖首次生成、仅解释不更新、多轮证据更新画像、错误复核、挑战任务、两轮修订失败、双模型冲突与原线程人工恢复七类分支，并输出到 `reports/demo/latest.json` 和 `reports/demo/latest.md`。如果异常分支无法在现场稳定复现，可使用历史真实快照：
+
+```powershell
+python test_script/demo_acceptance.py --snapshot reports/demo/live-exception-snapshot.json
+```
+
+快照中的 `revision_exhausted` 和 `manual_review_resume` 必须包含 `task_id`、`recorded_at`、`model_names` 与 `provider_mode=live`；脚本拒绝 fixture 或未标识快照。
+
+### 10 分钟展示路线
+
+1. 诊断与三类画像，1 分钟。
+2. 启动生成任务并观察八节点协作图，2 分钟。
+3. 查看三类资源、知识来源和双模型审核，2 分钟。
+4. 演示导学消息、画像不更新和证据充分更新，2 分钟。
+5. 展示人工复核、资源版本和导出，1.5 分钟。
+6. 展示知识增量重建与 live 评测 P50/P95，1.5 分钟。
+
+### 常见故障
+
+- `ready_for_live_demo=false`：检查五个模型环境变量和 `ALLOW_FIXTURE_LLM`。
+- Chroma 异常：执行 `docker compose restart chromadb backend`，再重建知识索引。
+- 数据不完整：执行 `./scripts/demo.ps1 reset`，输入 `RESET` 后重新初始化。
+- 端口 5173 被占用：停止本机 Vite 服务，避免与 Docker 前端同时运行。
 
 ## V2 Candidate 索引真实验收
 

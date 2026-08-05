@@ -111,6 +111,7 @@ def test_create_knowledge_item_marks_index_without_refreshing_unrelated_paths() 
                 "source_title": "教师手动导入",
                 "license_note": "manual-import",
             },
+            headers={"Idempotency-Key": "knowledge-create-001"},
         )
     finally:
         app.dependency_overrides.clear()
@@ -159,6 +160,7 @@ def test_update_knowledge_item_marks_pending_index() -> None:
         response = TestClient(app).patch(
             "/api/v1/knowledge/items/knowledge_update_target",
             json={"name": "新名称", "content": "这是修改之后的知识点内容，必须重新生成向量。"},
+            headers={"Idempotency-Key": "knowledge-update-001"},
         )
     finally:
         app.dependency_overrides.clear()
@@ -263,7 +265,10 @@ def test_rebuild_index_executes_pending_item_synchronously(monkeypatch) -> None:
         lambda documents: [[0.1, 0.2] for _ in documents],
     )
     try:
-        response = TestClient(app).post("/api/v1/knowledge/rebuild-index")
+        response = TestClient(app).post(
+            "/api/v1/knowledge/rebuild-index",
+            headers={"Idempotency-Key": "knowledge-rebuild-001"},
+        )
     finally:
         app.dependency_overrides.clear()
 

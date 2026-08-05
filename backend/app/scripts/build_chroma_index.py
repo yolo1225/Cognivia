@@ -48,6 +48,7 @@ def build_index(
     only_pending: bool = False,
     db_session=None,
     vector_store: VectorStore | None = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     vector_store = vector_store or VectorStore()
     if reset:
@@ -99,7 +100,8 @@ def build_index(
 
         for item in items:
             item.needs_reembedding = False
-        db.commit()
+        if commit:
+            db.commit()
     finally:
         if owns_session:
             db.close()

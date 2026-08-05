@@ -1,298 +1,43 @@
-from typing import Any
-from uuid import uuid4
-
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.api.dependencies import require_idempotency_key
 from app.core.db import get_db
-from app.models import KnowledgeItem
-from app.rag.embeddings import embed_texts, embedding_model_name
 from app.rag.vector_store import VectorStore, get_vector_store
-from app.scripts.build_chroma_index import build_index
+from app.schemas.api_requests import KnowledgeItemCreateRequest, KnowledgeItemUpdateRequest
 from app.schemas.common import ApiResponse, ok
-from app.services.knowledge_update_service import (
-    mark_affected_content,
-    related_knowledge_ids,
-    replace_item_relations,
-)
+from app.services.idempotency_service import execute_idempotent
+from app.services.knowledge_api_service import KnowledgeApiService
 
 router = APIRouter()
 
 
-class KnowledgeItemCreate(BaseModel):
-    domain_code: str = Field(default="ai_app_dev", min_length=1, max_length=64)
-    name: str = Field(min_length=1, max_length=255)
-    category: str = Field(default="未分类", min_length=1, max_length=64)
-    difficulty: int = Field(default=2, ge=1, le=5)
-    tags: list[str] = Field(default_factory=list)
-    content: str = Field(min_length=10)
-    source_title: str = Field(default="教师手动导入", min_length=1, max_length=255)
-    source_url: str | None = Field(default=None, max_length=512)
-    license_note: str = Field(default="manual-import", max_length=255)
-    prerequisites: list[str] = Field(default_factory=list)
-    related: list[str] = Field(default_factory=list)
-
-
-class KnowledgeItemUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=255)
-    category: str | None = Field(default=None, min_length=1, max_length=64)
-    difficulty: int | None = Field(default=None, ge=1, le=5)
-    tags: list[str] | None = None
-    content: str | None = Field(default=None, min_length=10)
-    source_title: str | None = Field(default=None, min_length=1, max_length=255)
-    source_url: str | None = Field(default=None, max_length=512)
-    license_note: str | None = Field(default=None, max_length=255)
-    prerequisites: list[str] | None = None
-    related: list[str] | None = None
-
-
-def serialize_knowledge_item(item: KnowledgeItem) -> dict[str, Any]:
-    return {
-        "knowledge_id": item.public_id,
-        "domain_code": item.domain_code,
-        "name": item.name,
-        "category": item.category,
-        "difficulty": item.difficulty,
-        "tags": item.tags_json or [],
-        "content": item.content_md,
-        "source_title": item.source_title,
-        "source_url": item.source_url,
-        "license_note": item.license_note,
-        "needs_reembedding": item.needs_reembedding,
-    }
-
-
 @router.get("/items", response_model=ApiResponse)
-def list_knowledge_items(
-    domain_code: str = Query(default="ai_app_dev"),
-    category: str | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    db: Session = Depends(get_db),
-) -> ApiResponse:
-    filters = [KnowledgeItem.domain_code == domain_code]
-    if category:
-        filters.append(KnowledgeItem.category == category)
-
-    total = db.scalar(select(func.count()).select_from(KnowledgeItem).where(*filters)) or 0
-    items = list(
-        db.scalars(
-            select(KnowledgeItem)
-            .where(*filters)
-            .order_by(KnowledgeItem.category, KnowledgeItem.public_id)
-            .offset(offset)
-            .limit(limit)
-        )
-    )
-    return ok(
-        {
-            "domain_code": domain_code,
-            "items": [serialize_knowledge_item(item) for item in items],
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-            "mvp_target": 50,
-        }
-    )
+def list_knowledge_items(domain_code: str = Query("ai_app_dev"), category: str | None = Query(None), limit: int = Query(100, ge=1, le=500), offset: int = Query(0, ge=0), db: Session = Depends(get_db)) -> ApiResponse:
+    return ok(KnowledgeApiService(db).list(domain_code, category, limit, offset))
 
 
 @router.post("/items", response_model=ApiResponse)
-def create_knowledge_item(
-    payload: KnowledgeItemCreate,
-    db: Session = Depends(get_db),
-) -> ApiResponse:
-    duplicate = db.scalar(
-        select(KnowledgeItem).where(
-            KnowledgeItem.domain_code == payload.domain_code,
-            KnowledgeItem.name == payload.name,
-        )
-    )
-    if duplicate is not None:
-        raise HTTPException(status_code=409, detail=f"Knowledge item already exists: {payload.name}")
-
-    item = KnowledgeItem(
-        public_id=f"ki_{uuid4().hex[:12]}",
-        domain_code=payload.domain_code,
-        name=payload.name.strip(),
-        category=payload.category.strip(),
-        difficulty=payload.difficulty,
-        tags_json=[tag.strip() for tag in payload.tags if tag.strip()],
-        content_md=payload.content.strip(),
-        source_title=payload.source_title.strip(),
-        source_url=payload.source_url,
-        license_note=payload.license_note.strip(),
-        needs_reembedding=True,
-    )
-    db.add(item)
-    db.flush()
-    try:
-        replace_item_relations(
-            db, item=item, relation_type="prerequisite", source_public_ids=payload.prerequisites
-        )
-        replace_item_relations(
-            db, item=item, relation_type="related", source_public_ids=payload.related
-        )
-    except ValueError as exc:
-        db.rollback()
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    affected_ids = related_knowledge_ids(db, item)
-    impact = mark_affected_content(
-        db,
-        domain_code=item.domain_code,
-        affected_knowledge_ids=affected_ids,
-        reason="manual_import",
-    )
-
-    db.commit()
-    db.refresh(item)
-    return ok(
-        {
-            "item": serialize_knowledge_item(item),
-            "index_status": "needs_rebuild",
-            "affected_knowledge_ids": sorted(affected_ids),
-            "affected_learning_paths": impact["learning_paths"],
-            "affected_resources": impact["resources"],
-            "next_action": "rebuild_vector_index",
-        }
-    )
+def create_knowledge_item(payload: KnowledgeItemCreateRequest, idempotency_key: str = Depends(require_idempotency_key), db: Session = Depends(get_db)) -> ApiResponse:
+    service = KnowledgeApiService(db)
+    result, _ = execute_idempotent(db, scope="knowledge.create", request_key=idempotency_key, operation=lambda: (service.create(payload), "knowledge_item", None))
+    return ok(result)
 
 
 @router.patch("/items/{knowledge_id}", response_model=ApiResponse)
-def update_knowledge_item(
-    knowledge_id: str,
-    payload: KnowledgeItemUpdate,
-    db: Session = Depends(get_db),
-) -> ApiResponse:
-    item = db.scalar(select(KnowledgeItem).where(KnowledgeItem.public_id == knowledge_id))
-    if item is None:
-        raise HTTPException(status_code=404, detail=f"Knowledge item not found: {knowledge_id}")
-
-    affected_ids = related_knowledge_ids(db, item)
-    values = payload.model_dump(exclude_unset=True)
-    field_mapping = {
-        "name": "name",
-        "category": "category",
-        "difficulty": "difficulty",
-        "content": "content_md",
-        "source_title": "source_title",
-        "source_url": "source_url",
-        "license_note": "license_note",
-    }
-    for payload_name, model_name in field_mapping.items():
-        if payload_name in values:
-            value = values[payload_name]
-            if isinstance(value, str):
-                value = value.strip()
-            setattr(item, model_name, value)
-    if "tags" in values:
-        item.tags_json = [tag.strip() for tag in values["tags"] if tag.strip()]
-
-    try:
-        if payload.prerequisites is not None:
-            replace_item_relations(
-                db,
-                item=item,
-                relation_type="prerequisite",
-                source_public_ids=payload.prerequisites,
-            )
-        if payload.related is not None:
-            replace_item_relations(
-                db,
-                item=item,
-                relation_type="related",
-                source_public_ids=payload.related,
-            )
-    except ValueError as exc:
-        db.rollback()
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    item.needs_reembedding = True
-    db.flush()
-    affected_ids.update(related_knowledge_ids(db, item))
-    impact = mark_affected_content(
-        db,
-        domain_code=item.domain_code,
-        affected_knowledge_ids=affected_ids,
-        reason="knowledge_item_updated",
-    )
-    db.commit()
-    db.refresh(item)
-    return ok(
-        {
-            "item": serialize_knowledge_item(item),
-            "index_status": "needs_rebuild",
-            "affected_knowledge_ids": sorted(affected_ids),
-            "affected_learning_paths": impact["learning_paths"],
-            "affected_resources": impact["resources"],
-            "next_action": "rebuild_vector_index",
-        }
-    )
+def update_knowledge_item(knowledge_id: str, payload: KnowledgeItemUpdateRequest, idempotency_key: str = Depends(require_idempotency_key), db: Session = Depends(get_db)) -> ApiResponse:
+    service = KnowledgeApiService(db)
+    result, _ = execute_idempotent(db, scope=f"knowledge.update:{knowledge_id}", request_key=idempotency_key, operation=lambda: (service.update(knowledge_id, payload), "knowledge_item", knowledge_id))
+    return ok(result)
 
 
 @router.get("/search", response_model=ApiResponse)
-def search_knowledge(
-    query: str = Query(min_length=1),
-    domain_code: str = Query(default="ai_app_dev"),
-    n_results: int = Query(default=5, ge=1, le=20),
-    vector_store: VectorStore = Depends(get_vector_store),
-) -> ApiResponse:
-    result = vector_store.query(
-        domain_code=domain_code,
-        query_embeddings=embed_texts([query]),
-        n_results=n_results,
-    )
-    ids = result.get("ids", [[]])[0]
-    documents = result.get("documents", [[]])[0]
-    metadatas = result.get("metadatas", [[]])[0]
-    distances = result.get("distances", [[]])[0]
-    matches = []
-    for index, item_id in enumerate(ids):
-        metadata = metadatas[index]
-        matches.append(
-            {
-                "id": item_id,
-                "knowledge_id": metadata.get("knowledge_id"),
-                "name": metadata.get("name"),
-                "category": metadata.get("category"),
-                "difficulty": metadata.get("difficulty"),
-                "source_title": metadata.get("source_title"),
-                "distance": distances[index],
-                "preview": documents[index][:180],
-            }
-        )
-
-    return ok(
-        {
-            "domain_code": domain_code,
-            "query": query,
-            "matches": matches,
-            "total": len(matches),
-            "embedding_model": embedding_model_name(),
-        }
-    )
+def search_knowledge(query: str = Query(min_length=1), domain_code: str = Query("ai_app_dev"), n_results: int = Query(5, ge=1, le=20), vector_store: VectorStore = Depends(get_vector_store), db: Session = Depends(get_db)) -> ApiResponse:
+    return ok(KnowledgeApiService(db).search(query, domain_code, n_results, vector_store))
 
 
 @router.post("/rebuild-index", response_model=ApiResponse)
-def rebuild_vector_index(
-    domain_code: str = Query(default="ai_app_dev"),
-    db: Session = Depends(get_db),
-    vector_store: VectorStore = Depends(get_vector_store),
-) -> ApiResponse:
-    try:
-        result = build_index(
-            domain_code=domain_code,
-            only_pending=True,
-            db_session=db,
-            vector_store=vector_store,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Vector index rebuild failed: {exc}") from exc
-    return ok(
-        {
-            "status": "completed",
-            "affected_domain": domain_code,
-            **result,
-        }
-    )
+def rebuild_vector_index(domain_code: str = Query("ai_app_dev"), idempotency_key: str = Depends(require_idempotency_key), db: Session = Depends(get_db), vector_store: VectorStore = Depends(get_vector_store)) -> ApiResponse:
+    service = KnowledgeApiService(db)
+    result, _ = execute_idempotent(db, scope=f"knowledge.rebuild_index:{domain_code}", request_key=idempotency_key, operation=lambda: (service.rebuild_index(domain_code, vector_store), "knowledge_index", domain_code))
+    return ok(result)

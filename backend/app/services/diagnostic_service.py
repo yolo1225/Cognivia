@@ -102,6 +102,7 @@ def submit_diagnostic_session(
     learner_id: str = "learner_001",
     domain_code: str = "ai_app_dev",
     answers: list[dict[str, Any]],
+    commit: bool = True,
 ) -> dict[str, Any]:
     learner = get_or_create_demo_learner(db, learner_id)
     answer_by_question_id = {item["question_id"]: item.get("answer") for item in answers}
@@ -338,7 +339,8 @@ def submit_diagnostic_session(
             message_type="result",
             payload={**output_summary, "status": "completed"},
         )
-        db.commit()
+        if commit:
+            db.commit()
         return {
             **result,
             "agent_run_id": run.id,
@@ -356,5 +358,6 @@ def submit_diagnostic_session(
             message_type="error",
             payload={"session_id": session_id, "status": "failed", "error_code": error_code},
         )
-        db.commit()
+        if commit:
+            db.commit()
         raise

@@ -1,4 +1,4 @@
-import { getData, postData } from './client'
+import { getData, postData, type MutationOptions } from './client'
 
 export interface GenerationTaskResult {
   task_id: string
@@ -50,6 +50,7 @@ export function createGenerationTask(
   profileId?: string,
   learnerId = 'learner_001',
   learningGoal = '个性化学习资源生成',
+  options: MutationOptions = {},
 ) {
   return postData<GenerationTaskResult>('/generation-tasks', {
     learner_id: learnerId,
@@ -59,7 +60,7 @@ export function createGenerationTask(
     execution_mode: 'auto',
     learning_goal: learningGoal,
     resource_types: ['lecture', 'practice_guide', 'graded_quiz'],
-  })
+  }, options)
 }
 
 export function getAgentRuns(taskId: string) {

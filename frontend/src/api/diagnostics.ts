@@ -1,4 +1,4 @@
-import { postData } from './client'
+import { postData, type MutationOptions } from './client'
 
 export interface DiagnosticQuestion {
   question_id: string
@@ -38,22 +38,26 @@ export interface DiagnosticResult {
   next_action: string
 }
 
-export function createDiagnosticSession(learnerId = 'learner_001') {
+export function createDiagnosticSession(
+  learnerId = 'learner_001',
+  options: MutationOptions = {},
+) {
   return postData<DiagnosticSession>('/diagnostics/sessions', {
     learner_id: learnerId,
     domain_code: 'ai_app_dev',
     question_count: 10,
-  })
+  }, options)
 }
 
 export function submitDiagnosticSession(
   sessionId: string,
   answers: Array<{ question_id: string; answer: string | number }>,
   learnerId = 'learner_001',
+  options: MutationOptions = {},
 ) {
   return postData<DiagnosticResult>(`/diagnostics/sessions/${sessionId}/submit`, {
     learner_id: learnerId,
     domain_code: 'ai_app_dev',
     answers,
-  })
+  }, options)
 }

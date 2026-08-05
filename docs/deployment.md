@@ -28,4 +28,4 @@ MySQL keeps port `3306` inside Docker. Host tools and IDE database connections u
 ./scripts/demo.ps1 reset
 ```
 
-完整操作和七分支验收见 `docs/demo-runbook.md`。
+完整操作、七分支验收和现场故障处理见项目根目录的 [README 演示账号与现场运行](../README.md#演示账号与现场运行)。

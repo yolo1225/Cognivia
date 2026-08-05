@@ -9,18 +9,39 @@ export const apiClient = axios.create({
   timeout: 15000,
 })
 
+export interface MutationOptions {
+  /** Reuse this key when retrying the same user action. */
+  idempotencyKey?: string
+}
+
+function createIdempotencyKey(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `web-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 export async function getData<T>(url: string): Promise<T> {
   const response = await apiClient.get<ApiResponse<T>>(url)
   return response.data.data
 }
 
-export async function postData<T>(url: string, body?: unknown): Promise<T> {
-  const response = await apiClient.post<ApiResponse<T>>(url, body ?? {})
+export async function postData<T>(
+  url: string,
+  body?: unknown,
+  options: MutationOptions = {},
+): Promise<T> {
+  const response = await apiClient.post<ApiResponse<T>>(url, body ?? {}, {
+    headers: { 'Idempotency-Key': options.idempotencyKey ?? createIdempotencyKey() },
+  })
   return response.data.data
 }
 
-export async function patchData<T>(url: string, body: unknown): Promise<T> {
-  const response = await apiClient.patch<ApiResponse<T>>(url, body)
+export async function patchData<T>(
+  url: string,
+  body: unknown,
+  options: MutationOptions = {},
+): Promise<T> {
+  const response = await apiClient.patch<ApiResponse<T>>(url, body, {
+    headers: { 'Idempotency-Key': options.idempotencyKey ?? createIdempotencyKey() },
+  })
   return response.data.data
 }
 

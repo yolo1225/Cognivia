@@ -72,6 +72,7 @@ def test_create_learner_returns_not_started_summary_and_is_listed() -> None:
                 "experience_years": 1,
                 "learning_style": "practice",
             },
+            headers={"Idempotency-Key": "learner-create-001"},
         )
         list_response = client.get("/api/v1/learners")
     finally:
@@ -103,11 +104,35 @@ def test_create_learner_rejects_duplicate_public_id() -> None:
                 "experience_years": 0,
                 "learning_style": "mixed",
             },
+            headers={"Idempotency-Key": "learner-duplicate-001"},
         )
     finally:
         app.dependency_overrides.clear()
 
     assert response.status_code == 409
+
+
+def test_create_learner_replays_same_idempotency_key() -> None:
+    testing_session = build_test_session()
+    app.dependency_overrides[get_db] = make_override(testing_session)
+    payload = {
+        "learner_id": "learner_idempotent",
+        "background": "幂等测试学习者",
+        "target_domain": "ai_app_dev",
+        "experience_years": 0,
+        "learning_style": "mixed",
+    }
+    try:
+        client = TestClient(app)
+        first = client.post("/api/v1/learners", json=payload, headers={"Idempotency-Key": "learner-create-001"})
+        second = client.post("/api/v1/learners", json=payload, headers={"Idempotency-Key": "learner-create-001"})
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["data"] == second.json()["data"]
+    with testing_session() as db:
+        assert db.query(Learner).filter_by(public_id="learner_idempotent").count() == 1
 
 
 def test_get_profile_and_report_share_radar_values() -> None:

@@ -1,4 +1,4 @@
-import { getData, postData } from './client'
+import { getData, postData, type MutationOptions } from './client'
 
 export interface ResourceSummary {
   resource_id: string
@@ -39,6 +39,7 @@ export function exportResource(
   resourceId: string,
   format: 'markdown' | 'pdf',
   audience: 'learner' | 'teacher' = 'learner',
+  options: MutationOptions = {},
 ) {
   return postData<{
     resource_version: number
@@ -47,7 +48,7 @@ export function exportResource(
     review_report_id: string | null
     review_status: string
     download_url: string
-  }>(`/resources/${resourceId}/export`, { format, audience })
+  }>(`/resources/${resourceId}/export`, { format, audience }, options)
 }
 
 export function submitFeedback(
@@ -55,10 +56,11 @@ export function submitFeedback(
   feedbackType: string,
   rating = 3,
   learnerId = 'learner_001',
+  options: MutationOptions = {},
 ) {
   return postData(`/resources/${resourceId}/feedback`, {
     learner_id: learnerId,
     feedback_type: feedbackType,
     rating,
-  })
+  }, options)
 }

@@ -1,4 +1,4 @@
-import { getData, postData } from './client'
+import { getData, postData, type MutationOptions } from './client'
 
 export interface TutoringSession {
   session_id: string
@@ -13,14 +13,22 @@ export interface TutoringSession {
   }>
 }
 
-export function createTutoringSession(resourceId: string, learnerId = 'learner_001') {
+export function createTutoringSession(
+  resourceId: string,
+  learnerId = 'learner_001',
+  options: MutationOptions = {},
+) {
   return postData<TutoringSession>('/tutoring/sessions', {
     resource_id: resourceId,
     learner_id: learnerId,
-  })
+  }, options)
 }
 
-export function sendTutoringMessage(sessionId: string, content: string) {
+export function sendTutoringMessage(
+  sessionId: string,
+  content: string,
+  options: MutationOptions = {},
+) {
   return postData<{
     session_id: string
     reply: { message_id: string; message_type: string; content: string }
@@ -29,7 +37,7 @@ export function sendTutoringMessage(sessionId: string, content: string) {
     profile_update_required: boolean
     decision_reason: string
     task_id: string | null
-  }>(`/tutoring/sessions/${sessionId}/messages`, { content })
+  }>(`/tutoring/sessions/${sessionId}/messages`, { content }, options)
 }
 
 export function getTutoringSession(sessionId: string) {

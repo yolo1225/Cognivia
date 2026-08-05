@@ -131,12 +131,15 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
         }
 
         session_response = client.post(
-            "/api/v1/tutoring/sessions", json={"resource_id": "resource_visible"}
+            "/api/v1/tutoring/sessions",
+            json={"resource_id": "resource_visible"},
+            headers={"Idempotency-Key": "tutoring-session-001"},
         )
         session_id = session_response.json()["data"]["session_id"]
         message = client.post(
             f"/api/v1/tutoring/sessions/{session_id}/messages",
             json={"content": "这部分太难，我看不懂"},
+            headers={"Idempotency-Key": "tutoring-message-001"},
         ).json()["data"]
         assert message["profile_update_required"] is False
         assert message["task_id"] is None
@@ -150,6 +153,7 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
         feedback = client.post(
             "/api/v1/resources/resource_visible/feedback",
             json={"feedback_type": "too_hard", "rating": 2},
+            headers={"Idempotency-Key": "resource-feedback-001"},
         ).json()["data"]
         assert feedback["profile_update_required"] is False
         assert feedback["task_id"] is None
@@ -184,6 +188,7 @@ def test_manual_review_resumes_same_thread(monkeypatch) -> None:
         response = TestClient(app).post(
             "/api/v1/manual-reviews/mr_task_visible/decision",
             json={"decision": "approve", "comment": "证据已核验"},
+            headers={"Idempotency-Key": "manual-review-001"},
         )
         assert response.status_code == 200
         data = response.json()["data"]
