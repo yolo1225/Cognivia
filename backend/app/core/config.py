@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     primary_review_model: str | None = None
     secondary_review_model: str | None = None
     embedding_model: str | None = None
-    llm_timeout_seconds: int = 30
+    llm_timeout_seconds: int = 60
     allow_fixture_llm: bool = False
     enable_evaluation_overrides: bool = False
     review_rule_version: str = "review-v1"

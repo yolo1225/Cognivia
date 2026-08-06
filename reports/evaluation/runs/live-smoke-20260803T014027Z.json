@@ -1,0 +1,79 @@
+{
+  "run_id": "live-smoke-20260803T014027Z",
+  "run_mode": "live",
+  "stage": "smoke",
+  "case_count": 6,
+  "valid": false,
+  "model_configuration": {
+    "generation_model": "qwen-plus",
+    "primary_review_model": "qwen-max",
+    "secondary_review_model": "qwen-turbo",
+    "fixture_enabled": false
+  },
+  "knowledge_base_versions": [
+    "ai_app_dev-kb-2026.07"
+  ],
+  "started_at": "2026-08-03T01:45:26.599334+00:00",
+  "results": [
+    {
+      "case_id": "EVAL-001",
+      "error": "task task_0e891b195e23 did not finish within 240s",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "task task_0e891b195e23 did not finish within 240s"
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-002",
+      "error": "Remote end closed connection without response",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "Remote end closed connection without response"
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-003",
+      "error": "POST /generation-tasks failed: <urlopen error [WinError 10053] 你的主机中的软件中止了一个已建立的连接。>",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "POST /generation-tasks failed: <urlopen error [WinError 10053] 你的主机中的软件中止了一个已建立的连接。>"
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-004",
+      "error": "Remote end closed connection without response",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "Remote end closed connection without response"
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-005",
+      "error": "Remote end closed connection without response",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "Remote end closed connection without response"
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-006",
+      "error": "Remote end closed connection without response",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "Remote end closed connection without response"
+        ]
+      }
+    }
+  ]
+}

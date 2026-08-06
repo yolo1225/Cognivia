@@ -199,7 +199,7 @@ def test_full_then_incremental_build_reuses_vectors_and_removes_orphans(
             second_manifest.previous_collection,
             "knowledge_other_domain_candidate_legacy",
         }
-        assert item_a.needs_reembedding is True
+        assert item_a.needs_reembedding is False
         assert "knowledge_ai_app_dev" in client.collections
         assert "knowledge_other_domain_candidate_legacy" in client.collections
 

@@ -1,0 +1,202 @@
+{
+  "run_id": "live-smoke-20260803T081821Z",
+  "run_mode": "live",
+  "stage": "smoke",
+  "case_count": 6,
+  "valid": false,
+  "model_configuration": {
+    "generation_model": "qwen-plus",
+    "primary_review_model": "qwen-max",
+    "secondary_review_model": "qwen-turbo",
+    "fixture_enabled": false
+  },
+  "knowledge_base_versions": [
+    "ai_app_dev-kb-2026.07-v2"
+  ],
+  "started_at": "2026-08-03T08:26:52.164385+00:00",
+  "results": [
+    {
+      "case_id": "V2-EVAL-001",
+      "task_id": "task_a2f8f41be9ad",
+      "task_status": "completed",
+      "observed_result": {
+        "generated_fact_count": 6,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "not_evaluated",
+        "latency_ms": 40106,
+        "agent_latency_ms": {
+          "prepare_task": 39,
+          "analyze_profile": 31,
+          "retrieve_knowledge": 901,
+          "generate_resource": 22405,
+          "review_resource": 15664,
+          "finalize_task": 70
+        },
+        "determinable": true,
+        "unable_to_determine": [],
+        "provider_mode": "live",
+        "model_calls": [
+          {
+            "model_name": "qwen-plus",
+            "role": "generation_model",
+            "duration_ms": 22369,
+            "tokens_input": 5186,
+            "tokens_output": 1236
+          },
+          {
+            "model_name": "qwen-turbo",
+            "role": "secondary_review_model",
+            "duration_ms": 7438,
+            "tokens_input": 6604,
+            "tokens_output": 878
+          },
+          {
+            "model_name": "qwen-max",
+            "role": "primary_review_model",
+            "duration_ms": 15633,
+            "tokens_input": 6600,
+            "tokens_output": 421
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "V2-EVAL-002",
+      "error": "task task_fe2e07fe0439 did not finish within 360s",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "task task_fe2e07fe0439 did not finish within 360s"
+        ]
+      }
+    },
+    {
+      "case_id": "V2-EVAL-003",
+      "task_id": "task_8e677d8ebe69",
+      "task_status": "completed",
+      "observed_result": {
+        "generated_fact_count": 6,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "not_evaluated",
+        "latency_ms": 46286,
+        "agent_latency_ms": {
+          "prepare_task": 58,
+          "analyze_profile": 55,
+          "retrieve_knowledge": 1757,
+          "generate_resource": 30328,
+          "review_resource": 12243,
+          "finalize_task": 149
+        },
+        "determinable": true,
+        "unable_to_determine": [],
+        "provider_mode": "live",
+        "model_calls": [
+          {
+            "model_name": "qwen-plus",
+            "role": "generation_model",
+            "duration_ms": 30042,
+            "tokens_input": 5336,
+            "tokens_output": 1933
+          },
+          {
+            "model_name": "qwen-turbo",
+            "role": "secondary_review_model",
+            "duration_ms": 7262,
+            "tokens_input": 7505,
+            "tokens_output": 870
+          },
+          {
+            "model_name": "qwen-max",
+            "role": "primary_review_model",
+            "duration_ms": 12171,
+            "tokens_input": 7501,
+            "tokens_output": 309
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "V2-EVAL-004",
+      "task_id": "task_0a0e17feae73",
+      "task_status": "failed",
+      "observed_result": {
+        "generated_fact_count": 0,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": false,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "failed",
+        "profile_decision": "not_evaluated",
+        "latency_ms": 41775,
+        "agent_latency_ms": {
+          "prepare_task": 19,
+          "analyze_profile": 19,
+          "retrieve_knowledge": 634,
+          "generate_resource": 40362
+        },
+        "determinable": false,
+        "unable_to_determine": [],
+        "provider_mode": "invalid",
+        "model_calls": []
+      }
+    },
+    {
+      "case_id": "V2-EVAL-005",
+      "task_id": "task_1b727f16791e",
+      "task_status": "failed",
+      "observed_result": {
+        "generated_fact_count": 0,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": false,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "failed",
+        "profile_decision": "not_evaluated",
+        "latency_ms": 11222,
+        "agent_latency_ms": {
+          "prepare_task": 48,
+          "analyze_profile": 21,
+          "retrieve_knowledge": 467,
+          "generate_resource": 9767
+        },
+        "determinable": false,
+        "unable_to_determine": [],
+        "provider_mode": "invalid",
+        "model_calls": []
+      }
+    },
+    {
+      "case_id": "V2-EVAL-006",
+      "task_id": "task_5954a7b90c1b",
+      "task_status": "failed",
+      "observed_result": {
+        "generated_fact_count": 0,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": false,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "failed",
+        "profile_decision": "not_evaluated",
+        "latency_ms": 11260,
+        "agent_latency_ms": {
+          "prepare_task": 49,
+          "analyze_profile": 27,
+          "retrieve_knowledge": 507,
+          "generate_resource": 9719
+        },
+        "determinable": false,
+        "unable_to_determine": [],
+        "provider_mode": "invalid",
+        "model_calls": []
+      }
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.rag.candidate_index_access import CandidateIndexAccess, CandidateIndexUnavailable
 from app.rag.vector_store import VectorStore
 from app.repositories.domain_repo import DomainRepository
 
@@ -23,17 +24,25 @@ class DomainApiService:
     def validate(self, domain_code: str, vector_store: VectorStore) -> dict:
         knowledge_count = self.repository.knowledge_count(domain_code)
         question_count = self.repository.question_count(domain_code)
-        vector_count = vector_store.get_collection(domain_code).count()
+        try:
+            manifest, _ = CandidateIndexAccess(vector_store.client).active(domain_code)
+            vector_count = manifest.indexed_chunk_count
+            candidate_issue = None
+        except CandidateIndexUnavailable as exc:
+            vector_count = 0
+            candidate_issue = str(exc)
         targets = {
             "knowledge_items": 50,
             "diagnostic_questions": 60,
             "vector_chunks": knowledge_count,
         }
         issues = []
+        if candidate_issue:
+            issues.append({"level": "warning", "message": "Candidate V2 索引不可用", "actual": candidate_issue, "target": "ready"})
         for key, message, actual, target in (
             ("knowledge_items", "知识点数量未达到 M1 目标", knowledge_count, targets["knowledge_items"]),
             ("diagnostic_questions", "诊断题数量未达到 M1 目标", question_count, targets["diagnostic_questions"]),
-            ("vector_chunks", "ChromaDB 向量数量少于知识切片数量", vector_count, targets["vector_chunks"]),
+            ("vector_chunks", "Candidate V2 向量数量少于知识点数量", vector_count, targets["vector_chunks"]),
         ):
             if actual < target:
                 issues.append({"level": "warning", "message": message, "actual": actual, "target": target})

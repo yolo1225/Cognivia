@@ -30,7 +30,7 @@ export interface KnowledgeSearchMatch {
   category: string
   difficulty: number
   source_title: string
-  distance: number
+  similarity: number
   preview: string
 }
 
@@ -40,6 +40,7 @@ export interface KnowledgeSearchResponse {
   matches: KnowledgeSearchMatch[]
   total: number
   embedding_model: string
+  index_version: string
 }
 
 export interface KnowledgeItemCreateRequest {
@@ -77,13 +78,26 @@ export interface KnowledgeItemUpdateRequest {
 }
 
 export interface KnowledgeIndexResult {
-  status: 'completed'
+  status: 'built' | 'unchanged'
   affected_domain: string
   indexed_items: number
   indexed_chunks: number
-  deleted_chunks: number
-  collection_count: number
   embedding_model: string
+  active_collection: string
+  index_version: string
+}
+
+export interface CandidateIndexStatus {
+  domain_code: string
+  status: 'ready' | 'missing' | 'invalid' | 'stale'
+  pending_reembedding: number
+  active_collection?: string
+  indexed_items?: number
+  indexed_chunks?: number
+  embedding_model?: string
+  index_version?: string
+  last_successful_sync_at?: string
+  reason?: string
 }
 
 export function listKnowledgeItems(domainCode = 'ai_app_dev', limit = 100) {
@@ -100,7 +114,7 @@ export function searchKnowledge(query: string, domainCode = 'ai_app_dev', nResul
     domain_code: domainCode,
     n_results: String(nResults),
   })
-  return getData<KnowledgeSearchResponse>(`/knowledge/search?${params.toString()}`)
+  return getData<KnowledgeSearchResponse>(`/knowledge/retrieval-preview?${params.toString()}`)
 }
 
 export function createKnowledgeItem(
@@ -119,5 +133,9 @@ export function updateKnowledgeItem(
 }
 
 export function rebuildKnowledgeIndex(options: MutationOptions = {}) {
-  return postData<KnowledgeIndexResult>('/knowledge/rebuild-index?domain_code=ai_app_dev', {}, options)
+  return postData<KnowledgeIndexResult>('/knowledge/reindex?domain_code=ai_app_dev', {}, options)
+}
+
+export function getCandidateIndexStatus(domainCode = 'ai_app_dev') {
+  return getData<CandidateIndexStatus>(`/knowledge/reindex/status?domain_code=${domainCode}`)
 }

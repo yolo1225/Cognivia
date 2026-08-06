@@ -172,7 +172,7 @@ def test_update_knowledge_item_marks_pending_index() -> None:
     assert data["affected_knowledge_ids"] == ["knowledge_update_target"]
 
 
-def test_search_knowledge_returns_vector_matches() -> None:
+def test_legacy_search_endpoint_is_removed() -> None:
     class FakeVectorStore:
         def query(self, **kwargs):
             assert kwargs["domain_code"] == "ai_app_dev"
@@ -201,13 +201,10 @@ def test_search_knowledge_returns_vector_matches() -> None:
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["data"]["matches"][0]["knowledge_id"] == "rag_chunking"
-    assert body["data"]["matches"][0]["distance"] == 0.12
+    assert response.status_code == 404
 
 
-def test_rebuild_index_executes_pending_item_synchronously(monkeypatch) -> None:
+def test_legacy_rebuild_endpoint_is_removed() -> None:
     testing_session = build_test_session()
     with testing_session() as db:
         db.add(
@@ -260,10 +257,6 @@ def test_rebuild_index_executes_pending_item_synchronously(monkeypatch) -> None:
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_vector_store] = lambda: fake_store
-    monkeypatch.setattr(
-        "app.scripts.build_chroma_index.embed_texts",
-        lambda documents: [[0.1, 0.2] for _ in documents],
-    )
     try:
         response = TestClient(app).post(
             "/api/v1/knowledge/rebuild-index",
@@ -272,13 +265,8 @@ def test_rebuild_index_executes_pending_item_synchronously(monkeypatch) -> None:
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["status"] == "completed"
-    assert data["indexed_items"] == 1
-    assert data["deleted_chunks"] == 2
-    assert fake_store.upserted == ["pending_index_item::chunk::0"]
+    assert response.status_code == 404
     with testing_session() as db:
         item = db.scalar(select(KnowledgeItem))
         assert item is not None
-        assert item.needs_reembedding is False
+        assert item.needs_reembedding is True

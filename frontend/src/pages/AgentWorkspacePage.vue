@@ -164,14 +164,15 @@ function latestPayload(key: string) {
 function reviewScore(role: 'primary' | 'secondary') {
   const report = reviewReport.value
   if (!report) return '等待审核'
-  const arbitration = report.arbitration as Record<string, unknown> | undefined
-  const recheck = arbitration?.recheck_scores as Record<string, unknown> | undefined
-  const channel = (recheck?.[role] || report[`${role}_review`]) as Record<string, unknown> | undefined
+  const channel = report[`${role}_review`] as Record<string, unknown> | undefined
   if (!channel) return '未知状态'
-  const scores = ['factual_score', 'source_trace_score', 'difficulty_match_score', 'coverage_score']
-    .map((key) => Number(channel[key]))
+  const scoreValues = channel.scores as Record<string, unknown> | undefined
+  if (!scoreValues) return '评分缺失'
+  const scores = ['factual_accuracy', 'source_traceability', 'difficulty_match', 'core_knowledge_coverage']
+    .map((key) => Number(scoreValues[key]))
     .filter((value) => Number.isFinite(value))
-  const average = scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : 0
+  if (scores.length !== 4) return '评分缺失'
+  const average = scores.reduce((sum, value) => sum + value, 0) / scores.length
   return `${average.toFixed(1)} 分 · ${channel.passed ? '通过' : '未通过'}`
 }
 function stepLabel(step?: string) {

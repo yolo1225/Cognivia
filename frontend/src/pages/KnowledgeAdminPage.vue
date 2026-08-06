@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h1 class="page-title">知识库管理</h1>
-        <p class="page-subtitle">查看 MySQL 知识点，验证 ChromaDB 检索结果，为资源生成提供可追溯来源。</p>
+        <p class="page-subtitle">查看 MySQL 知识点，验证 Candidate V2 检索结果，为资源生成提供可追溯来源。</p>
       </div>
       <div class="toolbar">
         <el-button @click="showImport = !showImport">
@@ -13,6 +13,14 @@
         <el-button :loading="loadingItems" @click="loadItems">刷新列表</el-button>
       </div>
     </div>
+
+    <el-alert
+      v-if="indexStatus"
+      :type="indexStatus.status === 'ready' ? 'success' : 'warning'"
+      show-icon
+      :closable="false"
+      :title="`Candidate V2 索引：${indexStatus.status === 'ready' ? '就绪' : '需处理'}${indexStatus.pending_reembedding ? `，待同步 ${indexStatus.pending_reembedding} 条知识点` : ''}`"
+    />
 
     <div v-if="showImport" class="panel import-panel">
       <div>
@@ -69,7 +77,7 @@
       type="success"
       show-icon
       :closable="false"
-      :title="`索引同步完成：处理 ${lastRebuild.indexed_items} 个知识点，更新 ${lastRebuild.indexed_chunks} 个分块，删除 ${lastRebuild.deleted_chunks} 个旧分块。`"
+      :title="`Candidate V2 索引同步完成：处理 ${lastRebuild.indexed_items} 个知识点，更新 ${lastRebuild.indexed_chunks} 个分块。`"
     />
 
     <div class="metric-grid">
@@ -105,7 +113,7 @@
         />
         <el-button type="primary" :loading="loadingSearch" @click="runSearch">检索知识库</el-button>
       </div>
-      <el-empty v-if="!searchResult.length && !loadingSearch" description="输入关键词后查看 ChromaDB 召回结果" />
+      <el-empty v-if="!searchResult.length && !loadingSearch" description="输入关键词后查看 Candidate V2 召回结果" />
       <div v-else class="search-results">
         <article v-for="match in searchResult" :key="match.id" class="match-item">
           <div class="match-title">
@@ -113,7 +121,7 @@
             <el-tag size="small">{{ match.category }}</el-tag>
           </div>
           <p>{{ match.preview }}</p>
-          <span class="muted">distance: {{ match.distance.toFixed(4) }}</span>
+          <span class="muted">相似度：{{ match.similarity.toFixed(4) }}</span>
         </article>
       </div>
     </div>
@@ -178,6 +186,7 @@ import { ElMessage } from 'element-plus'
 
 import {
   createKnowledgeItem,
+  getCandidateIndexStatus,
   listKnowledgeItems,
   rebuildKnowledgeIndex,
   searchKnowledge,
@@ -186,6 +195,7 @@ import {
   type KnowledgeItemCreateResponse,
   type KnowledgeIndexResult,
   type KnowledgeSearchMatch,
+  type CandidateIndexStatus,
 } from '@/api/knowledge'
 
 const items = ref<KnowledgeItem[]>([])
@@ -198,6 +208,7 @@ const rebuilding = ref(false)
 const showImport = ref(false)
 const lastImport = ref<KnowledgeItemCreateResponse | null>(null)
 const lastRebuild = ref<KnowledgeIndexResult | null>(null)
+const indexStatus = ref<CandidateIndexStatus | null>(null)
 const editVisible = ref(false)
 const editing = ref(false)
 const editForm = ref<KnowledgeItem | null>(null)
@@ -230,6 +241,7 @@ async function loadItems() {
     const data = await listKnowledgeItems('ai_app_dev', 100)
     items.value = data.items
     mvpTarget.value = data.mvp_target
+    indexStatus.value = await getCandidateIndexStatus('ai_app_dev')
   } catch (error) {
     ElMessage.error('知识点列表加载失败，请检查后端服务。')
   } finally {
@@ -248,7 +260,7 @@ async function runSearch() {
     const data = await searchKnowledge(trimmedQuery, 'ai_app_dev', 5)
     searchResult.value = data.matches
   } catch (error) {
-    ElMessage.error('知识库检索失败，请确认 ChromaDB 索引已构建。')
+    ElMessage.error('Candidate V2 检索失败，请确认索引已构建。')
   } finally {
     loadingSearch.value = false
   }

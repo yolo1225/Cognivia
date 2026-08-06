@@ -226,7 +226,8 @@ switch ($Action) {
         Wait-Backend
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "alembic", "upgrade", "head")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.seed_data", "--json")
-        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_index", "--reset", "--json")
+        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.check_embedding_provider", "--live", "--json")
+        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_candidate_index", "--domain-code", "ai_app_dev", "--reset", "--live", "--json")
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "frontend")
         Wait-Frontend
         Test-DemoEnvironment
@@ -247,7 +248,8 @@ switch ($Action) {
         Wait-Backend
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "alembic", "upgrade", "head")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.seed_data", "--json")
-        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_index", "--reset", "--json")
+        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.check_embedding_provider", "--live", "--json")
+        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_candidate_index", "--domain-code", "ai_app_dev", "--reset", "--live", "--json")
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "frontend")
         Wait-Frontend
         Test-DemoEnvironment

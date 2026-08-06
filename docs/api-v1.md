@@ -22,7 +22,9 @@
 | GET | `/api/v1/evaluations/summary?mode=live\|baseline` | 读取 live 或 baseline 评测结果，默认 live |
 | GET | `/api/v1/health/dependencies` | 数据库、Chroma、模型通道和真实演示就绪状态 |
 | PATCH | `/api/v1/knowledge/items/{id}` | 修改知识点、关系并标记局部影响范围 |
-| POST | `/api/v1/knowledge/rebuild-index` | 同步增量重建待处理知识向量 |
+| GET | `/api/v1/knowledge/retrieval-preview` | 查询 active candidate collection 的 V2 检索预览 |
+| POST | `/api/v1/knowledge/reindex` | 首次全量或后续增量重建 Candidate V2 索引 |
+| GET | `/api/v1/knowledge/reindex/status` | 查询 Candidate V2 索引状态、版本和待重嵌入数量 |
 
 学习者资源列表默认仅返回 `is_current=true && review_status=passed`；管理员使用 `include_unpublished=true` 查看未发布版本。
 

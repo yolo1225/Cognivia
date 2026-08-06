@@ -54,7 +54,8 @@ docker compose up -d --build
 ```bash
 docker compose exec backend alembic upgrade head
 docker compose exec backend python -m app.scripts.seed_data --json
-docker compose exec backend python -m app.scripts.build_chroma_index --reset --json
+docker compose exec backend python -m app.scripts.check_embedding_provider --live --json
+docker compose exec backend python -m app.scripts.build_chroma_candidate_index --domain-code ai_app_dev --reset --live --json
 ```
 
 4. 验证：
@@ -63,7 +64,7 @@ docker compose exec backend python -m app.scripts.build_chroma_index --reset --j
 curl "http://localhost:8000/api/v1/health"
 curl "http://localhost:8000/api/v1/health/dependencies"
 curl "http://localhost:8000/api/v1/knowledge/items?domain_code=ai_app_dev&limit=60"
-curl "http://localhost:8000/api/v1/knowledge/search?query=RAG文档切片&n_results=3"
+curl "http://localhost:8000/api/v1/knowledge/retrieval-preview?query=RAG文档切片&n_results=3"
 ```
 
 5. 访问：

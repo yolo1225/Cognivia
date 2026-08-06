@@ -1,15 +1,16 @@
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import conflict, not_found, unavailable, validation_error
 from app.models import KnowledgeItem
-from app.rag.embeddings import embed_texts, embedding_model_name
-from app.rag.vector_store import VectorStore
+from app.rag.candidate_index import CandidateIndexBuilder
+from app.rag.candidate_index_access import CandidateIndexAccess, CandidateIndexUnavailable
+from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.repositories.knowledge_repo import KnowledgeRepository
 from app.schemas.api_requests import KnowledgeItemCreateRequest, KnowledgeItemUpdateRequest
-from app.scripts.build_chroma_index import build_index
 from app.services.knowledge_update_service import (
     mark_affected_content,
     related_knowledge_ids,
@@ -87,29 +88,86 @@ class KnowledgeApiService:
         impact = mark_affected_content(self.db, domain_code=item.domain_code, affected_knowledge_ids=affected_ids, reason="knowledge_item_updated")
         return self._write_result(item, affected_ids, impact)
 
-    def search(self, query: str, domain_code: str, n_results: int, vector_store: VectorStore) -> dict[str, Any]:
-        result = vector_store.query(domain_code=domain_code, query_embeddings=embed_texts([query]), n_results=n_results)
+    def retrieval_preview(self, query: str, domain_code: str, n_results: int, chroma_client: Any) -> dict[str, Any]:
+        try:
+            manifest, collection = CandidateIndexAccess(chroma_client).active(domain_code)
+            vectors = OpenAICompatibleEmbeddingProvider().embed_texts([query])
+            if len(vectors) != 1 or len(vectors[0]) != manifest.embedding_dimensions:
+                raise CandidateIndexUnavailable("candidate query embedding dimensions do not match manifest")
+            result = collection.query(
+                query_embeddings=vectors,
+                n_results=min(collection.count(), n_results),
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception as exc:
+            raise unavailable("CANDIDATE_RETRIEVAL_UNAVAILABLE", "Candidate V2 检索不可用") from exc
         ids, documents = result.get("ids", [[]])[0], result.get("documents", [[]])[0]
         metadatas, distances = result.get("metadatas", [[]])[0], result.get("distances", [[]])[0]
         matches = [
-            {"id": item_id, "knowledge_id": metadatas[index].get("knowledge_id"), "name": metadatas[index].get("name"), "category": metadatas[index].get("category"), "difficulty": metadatas[index].get("difficulty"), "source_title": metadatas[index].get("source_title"), "distance": distances[index], "preview": documents[index][:180]}
+            {
+                "id": str(item_id),
+                "knowledge_id": metadatas[index].get("knowledge_id"),
+                "name": metadatas[index].get("name"),
+                "category": metadatas[index].get("category"),
+                "difficulty": metadatas[index].get("difficulty"),
+                "source_title": metadatas[index].get("source_title"),
+                "similarity": max(0.0, min(1.0, 1.0 - float(distances[index]))),
+                "preview": str(documents[index])[:180],
+            }
             for index, item_id in enumerate(ids)
         ]
-        return {"domain_code": domain_code, "query": query, "matches": matches, "total": len(matches), "embedding_model": embedding_model_name()}
+        return {"domain_code": domain_code, "query": query, "matches": matches, "total": len(matches), "embedding_model": manifest.embedding_model, "index_version": manifest.index_version}
 
-    def rebuild_index(self, domain_code: str, vector_store: VectorStore) -> dict[str, Any]:
+    def reindex(self, domain_code: str, chroma_client: Any) -> dict[str, Any]:
         try:
-            result = build_index(
-                domain_code=domain_code,
-                only_pending=True,
-                db_session=self.db,
-                vector_store=vector_store,
-                commit=False,
+            access = CandidateIndexAccess(chroma_client)
+            try:
+                access.active(domain_code)
+                reset = False
+            except CandidateIndexUnavailable:
+                reset = True
+            result = CandidateIndexBuilder(
+                db=self.db,
+                chroma_client=chroma_client,
+                embedding_provider=OpenAICompatibleEmbeddingProvider(),
+            ).build(
+                domain_code=domain_code, reset=reset, commit=False
             )
         except Exception as exc:
-            raise unavailable("VECTOR_INDEX_REBUILD_FAILED", "向量索引重建失败") from exc
-        return {"status": "completed", "affected_domain": domain_code, **result}
+            raise unavailable("CANDIDATE_INDEX_REBUILD_FAILED", "Candidate V2 索引重建失败") from exc
+        return {"affected_domain": domain_code, **result}
+
+    def reindex_status(self, domain_code: str, chroma_client: Any) -> dict[str, Any]:
+        pending = int(
+            self.db.scalar(
+                select(func.count()).select_from(KnowledgeItem).where(
+                    KnowledgeItem.domain_code == domain_code,
+                    KnowledgeItem.needs_reembedding.is_(True),
+                )
+            )
+            or 0
+        )
+        try:
+            manifest, _ = CandidateIndexAccess(chroma_client).active(domain_code)
+        except CandidateIndexUnavailable as exc:
+            message = str(exc)
+            return {"domain_code": domain_code, "status": "missing" if "missing" in message else "invalid", "pending_reembedding": pending, "reason": message}
+        item_count = int(
+            self.db.scalar(select(func.count()).select_from(KnowledgeItem).where(KnowledgeItem.domain_code == domain_code)) or 0
+        )
+        stale = pending > 0 or manifest.indexed_item_count != item_count
+        return {
+            "domain_code": domain_code,
+            "status": "stale" if stale else "ready",
+            "pending_reembedding": pending,
+            "active_collection": manifest.active_collection,
+            "indexed_items": manifest.indexed_item_count,
+            "indexed_chunks": manifest.indexed_chunk_count,
+            "embedding_model": manifest.embedding_model,
+            "index_version": manifest.index_version,
+            "last_successful_sync_at": manifest.last_successful_sync_at,
+        }
 
     @staticmethod
     def _write_result(item: KnowledgeItem, affected_ids: set[str], impact: dict[str, int]) -> dict[str, Any]:
-        return {"item": serialize_knowledge_item(item), "index_status": "needs_rebuild", "affected_knowledge_ids": sorted(affected_ids), "affected_learning_paths": impact["learning_paths"], "affected_resources": impact["resources"], "next_action": "rebuild_vector_index"}
+        return {"item": serialize_knowledge_item(item), "index_status": "needs_rebuild", "affected_knowledge_ids": sorted(affected_ids), "affected_learning_paths": impact["learning_paths"], "affected_resources": impact["resources"], "next_action": "reindex_candidate"}

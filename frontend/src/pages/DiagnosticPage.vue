@@ -281,7 +281,10 @@ async function submitSession() {
   if (!session.value) return
   const payload = session.value.questions.map((question) => ({
     question_id: question.question_id,
-    answer: answers.value[question.question_id] ?? '',
+    // The API contract stores both choice and short-answer responses as text.
+    // Element Plus radio groups return numeric option indexes, so normalize at
+    // the request boundary while keeping the local UI state type intact.
+    answer: String(answers.value[question.question_id] ?? ''),
   }))
   loadingSubmit.value = true
   try {

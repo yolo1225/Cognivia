@@ -31,13 +31,33 @@ def update_knowledge_item(knowledge_id: str, payload: KnowledgeItemUpdateRequest
     return ok(result)
 
 
-@router.get("/search", response_model=ApiResponse)
-def search_knowledge(query: str = Query(min_length=1), domain_code: str = Query("ai_app_dev"), n_results: int = Query(5, ge=1, le=20), vector_store: VectorStore = Depends(get_vector_store), db: Session = Depends(get_db)) -> ApiResponse:
-    return ok(KnowledgeApiService(db).search(query, domain_code, n_results, vector_store))
+@router.get("/retrieval-preview", response_model=ApiResponse)
+def retrieval_preview(
+    query: str = Query(min_length=1),
+    domain_code: str = Query("ai_app_dev"),
+    n_results: int = Query(5, ge=1, le=20),
+    vector_store: VectorStore = Depends(get_vector_store),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    return ok(KnowledgeApiService(db).retrieval_preview(query, domain_code, n_results, vector_store.client))
 
 
-@router.post("/rebuild-index", response_model=ApiResponse)
-def rebuild_vector_index(domain_code: str = Query("ai_app_dev"), idempotency_key: str = Depends(require_idempotency_key), db: Session = Depends(get_db), vector_store: VectorStore = Depends(get_vector_store)) -> ApiResponse:
+@router.post("/reindex", response_model=ApiResponse)
+def reindex_candidate(
+    domain_code: str = Query("ai_app_dev"),
+    idempotency_key: str = Depends(require_idempotency_key),
+    db: Session = Depends(get_db),
+    vector_store: VectorStore = Depends(get_vector_store),
+) -> ApiResponse:
     service = KnowledgeApiService(db)
-    result, _ = execute_idempotent(db, scope=f"knowledge.rebuild_index:{domain_code}", request_key=idempotency_key, operation=lambda: (service.rebuild_index(domain_code, vector_store), "knowledge_index", domain_code))
+    result, _ = execute_idempotent(db, scope=f"knowledge.reindex:{domain_code}", request_key=idempotency_key, operation=lambda: (service.reindex(domain_code, vector_store.client), "candidate_index", domain_code))
     return ok(result)
+
+
+@router.get("/reindex/status", response_model=ApiResponse)
+def candidate_reindex_status(
+    domain_code: str = Query("ai_app_dev"),
+    db: Session = Depends(get_db),
+    vector_store: VectorStore = Depends(get_vector_store),
+) -> ApiResponse:
+    return ok(KnowledgeApiService(db).reindex_status(domain_code, vector_store.client))

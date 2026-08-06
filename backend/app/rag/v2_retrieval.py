@@ -17,7 +17,8 @@ from app.agents.contracts import (
     SourceRef,
 )
 from app.models import KnowledgeItem, KnowledgeRelation
-from app.rag.candidate_manifest import CandidateIndexManifest, CandidateManifestError, CandidateManifestStore
+from app.rag.candidate_manifest import CandidateIndexManifest, CandidateManifestStore
+from app.rag.candidate_index_access import CandidateIndexAccess, CandidateIndexUnavailable
 from app.rag.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 
 
@@ -200,42 +201,9 @@ class V2CandidateRetriever:
 
     def _active_collection(self, domain_code: str) -> tuple[CandidateIndexManifest, Any]:
         try:
-            manifest = self.manifests.load(
-                domain_code,
-                collection_exists=lambda name: self._collection_exists(name),
-            )
-        except CandidateManifestError as exc:
-            raise V2RetrievalError(f"candidate manifest is invalid: {exc}") from exc
-        if manifest is None:
-            raise V2RetrievalError("candidate manifest is missing")
-        try:
-            collection = self.client.get_collection(name=manifest.active_collection)
-        except Exception as exc:
-            raise V2RetrievalError("candidate active collection is unavailable") from exc
-        if collection.count() != manifest.indexed_chunk_count:
-            raise V2RetrievalError("candidate collection count does not match manifest")
-        metadata = dict(getattr(collection, "metadata", None) or {})
-        expected = {
-            "domain_code": manifest.domain_code,
-            "embedding_model": manifest.embedding_model,
-            "embedding_dimensions": manifest.embedding_dimensions,
-            "distance_metric": manifest.distance_metric,
-            "index_version": manifest.index_version,
-            "chunker_version": manifest.chunker_version,
-        }
-        for metadata_field, value in expected.items():
-            if metadata.get(metadata_field) != value:
-                raise V2RetrievalError(
-                    f"candidate collection metadata mismatch: {metadata_field}"
-                )
-        return manifest, collection
-
-    def _collection_exists(self, name: str) -> bool:
-        try:
-            self.client.get_collection(name=name)
-        except Exception:
-            return False
-        return True
+            return CandidateIndexAccess(self.client, self.manifests).active(domain_code)
+        except CandidateIndexUnavailable as exc:
+            raise V2RetrievalError(str(exc)) from exc
 
     def _build_query(self, request: RetrieveKnowledgeInput) -> str:
         base_terms = [request.context.learning_goal, *request.retrieval_plan.query_terms]

@@ -30,6 +30,7 @@ from app.services.llm_service import OpenAICompatibleGateway, gateway
 
 
 GENERATION_AGENT_NAME = "content_generation_agent_v2"
+MAX_CONCURRENT_RESOURCES = 2
 SYSTEM_PROMPT = (
     "你是 V2 内容生成智能体。必须仅使用输入中的检索证据和来源白名单，按指定资源类型"
     "生成结构化教学内容。不得编造来源、知识点或学习者信息；所有事实性内容必须关联"
@@ -152,7 +153,12 @@ class V2ContentGenerationAgent:
             # ContextVars do not automatically cross executor threads.  Copy the
             # task-scoped collector so every resource generation is recorded.
             contexts = [copy_context() for _ in resource_types]
-            with ThreadPoolExecutor(max_workers=len(resource_types)) as executor:
+            # Providers can accept small probes while timing out under three large
+            # concurrent generation payloads. Keep one slot available for the
+            # third resource without serializing the whole learning package.
+            with ThreadPoolExecutor(
+                max_workers=min(MAX_CONCURRENT_RESOURCES, len(resource_types))
+            ) as executor:
                 futures = [
                     executor.submit(context.run, generate_one, resource_type)
                     for context, resource_type in zip(contexts, resource_types, strict=True)

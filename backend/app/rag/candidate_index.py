@@ -332,7 +332,9 @@ class CandidateIndexBuilder:
                 deleted += 1
         return deleted
 
-    def build(self, *, domain_code: str = "ai_app_dev", reset: bool = False) -> dict[str, Any]:
+    def build(
+        self, *, domain_code: str = "ai_app_dev", reset: bool = False, commit: bool = True
+    ) -> dict[str, Any]:
         started = perf_counter()
         sync_time = _as_utc(self._now())
         items = list(
@@ -422,6 +424,7 @@ class CandidateIndexBuilder:
         )
         collection_name = f"knowledge_{domain_code}_candidate_{self._build_id()}"
         collection = None
+        manifest_published = False
         try:
             collection = self._create_collection(
                 name=collection_name,
@@ -479,8 +482,16 @@ class CandidateIndexBuilder:
                 indexed_chunk_count=collection.count(),
             )
             self.manifests.write(new_manifest)
+            manifest_published = True
+            for knowledge_id in changed_ids:
+                item_by_id[knowledge_id].needs_reembedding = False
+            self.db.flush()
+            if commit:
+                self.db.commit()
         except Exception:
-            if collection is not None:
+            if commit:
+                self.db.rollback()
+            if collection is not None and not manifest_published:
                 try:
                     self.client.delete_collection(name=collection_name)
                 except Exception:
