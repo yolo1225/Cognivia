@@ -1,0 +1,110 @@
+{
+  "run_id": "live-smoke-20260803T013736Z",
+  "run_mode": "live",
+  "stage": "smoke",
+  "case_count": 6,
+  "valid": false,
+  "model_configuration": {
+    "generation_model": "qwen-plus",
+    "primary_review_model": "qwen-max",
+    "secondary_review_model": "qwen-turbo",
+    "fixture_enabled": false
+  },
+  "knowledge_base_versions": [
+    "ai_app_dev-kb-2026.07"
+  ],
+  "started_at": "2026-08-03T01:39:57.261292+00:00",
+  "results": [
+    {
+      "case_id": "EVAL-001",
+      "task_id": "task_5d8badfcdaa3",
+      "task_status": "failed",
+      "observed_result": {
+        "generated_fact_count": 0,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": false,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "failed",
+        "profile_decision": "not_evaluated",
+        "latency_ms": 129793,
+        "agent_latency_ms": {
+          "prepare_task": 26,
+          "analyze_profile": 23,
+          "retrieve_knowledge": 761,
+          "generate_resource": 22505,
+          "review_resource": 105449
+        },
+        "determinable": false,
+        "unable_to_determine": [],
+        "provider_mode": "live",
+        "model_calls": [
+          {
+            "model_name": "qwen-plus",
+            "role": "generation_model",
+            "duration_ms": 22481,
+            "tokens_input": 6112,
+            "tokens_output": 1435
+          },
+          {
+            "model_name": "qwen-turbo",
+            "role": "secondary_review_model",
+            "duration_ms": 6433,
+            "tokens_input": 7600,
+            "tokens_output": 695
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-002",
+      "error": "Remote end closed connection without response",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "Remote end closed connection without response"
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-003",
+      "error": "POST /generation-tasks failed: <urlopen error [WinError 10053] 你的主机中的软件中止了一个已建立的连接。>",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "POST /generation-tasks failed: <urlopen error [WinError 10053] 你的主机中的软件中止了一个已建立的连接。>"
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-004",
+      "error": "Remote end closed connection without response",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "Remote end closed connection without response"
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-005",
+      "error": "Remote end closed connection without response",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "Remote end closed connection without response"
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-006",
+      "error": "Remote end closed connection without response",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "Remote end closed connection without response"
+        ]
+      }
+    }
+  ]
+}

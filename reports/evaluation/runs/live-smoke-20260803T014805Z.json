@@ -1,0 +1,316 @@
+{
+  "run_id": "live-smoke-20260803T014805Z",
+  "run_mode": "live",
+  "stage": "smoke",
+  "case_count": 6,
+  "valid": false,
+  "model_configuration": {
+    "generation_model": "qwen-plus",
+    "primary_review_model": "qwen-max",
+    "secondary_review_model": "qwen-turbo",
+    "fixture_enabled": false
+  },
+  "knowledge_base_versions": [
+    "ai_app_dev-kb-2026.07"
+  ],
+  "started_at": "2026-08-03T02:01:08.941688+00:00",
+  "results": [
+    {
+      "case_id": "EVAL-001",
+      "task_id": "task_f6f925ce7b64",
+      "task_status": "failed",
+      "observed_result": {
+        "generated_fact_count": 5,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": false,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "revision_required",
+        "profile_decision": "not_evaluated",
+        "latency_ms": 143881,
+        "agent_latency_ms": {
+          "prepare_task": 31,
+          "analyze_profile": 27,
+          "retrieve_knowledge": 1624,
+          "generate_resource": 97821,
+          "review_resource": 42811,
+          "finalize_task": 76
+        },
+        "determinable": true,
+        "unable_to_determine": [],
+        "provider_mode": "live",
+        "model_calls": [
+          {
+            "model_name": "qwen-plus",
+            "role": "generation_model",
+            "duration_ms": 21183,
+            "tokens_input": 6114,
+            "tokens_output": 1348
+          },
+          {
+            "model_name": "qwen-turbo",
+            "role": "secondary_review_model",
+            "duration_ms": 7470,
+            "tokens_input": 7500,
+            "tokens_output": 759
+          },
+          {
+            "model_name": "qwen-max",
+            "role": "primary_review_model",
+            "duration_ms": 14444,
+            "tokens_input": 7496,
+            "tokens_output": 380
+          },
+          {
+            "model_name": "qwen-plus",
+            "role": "generation_model",
+            "duration_ms": 26122,
+            "tokens_input": 6184,
+            "tokens_output": 1690
+          },
+          {
+            "model_name": "qwen-turbo",
+            "role": "secondary_review_model",
+            "duration_ms": 6680,
+            "tokens_input": 8747,
+            "tokens_output": 766
+          },
+          {
+            "model_name": "qwen-max",
+            "role": "primary_review_model",
+            "duration_ms": 17771,
+            "tokens_input": 8743,
+            "tokens_output": 433
+          },
+          {
+            "model_name": "qwen-plus",
+            "role": "generation_model",
+            "duration_ms": 50407,
+            "tokens_input": 6184,
+            "tokens_output": 1274
+          },
+          {
+            "model_name": "qwen-turbo",
+            "role": "secondary_review_model",
+            "duration_ms": 5780,
+            "tokens_input": 7384,
+            "tokens_output": 654
+          },
+          {
+            "model_name": "qwen-max",
+            "role": "primary_review_model",
+            "duration_ms": 10486,
+            "tokens_input": 7380,
+            "tokens_output": 383
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-002",
+      "task_id": "task_2c64cb69f17e",
+      "task_status": "completed",
+      "observed_result": {
+        "generated_fact_count": 6,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "not_evaluated",
+        "latency_ms": 101598,
+        "agent_latency_ms": {
+          "prepare_task": 25,
+          "analyze_profile": 26,
+          "retrieve_knowledge": 445,
+          "generate_resource": 88887,
+          "review_resource": 10756,
+          "finalize_task": 99
+        },
+        "determinable": true,
+        "unable_to_determine": [],
+        "provider_mode": "live",
+        "model_calls": [
+          {
+            "model_name": "qwen-plus",
+            "role": "generation_model",
+            "duration_ms": 88849,
+            "tokens_input": 5156,
+            "tokens_output": 1762
+          },
+          {
+            "model_name": "qwen-turbo",
+            "role": "secondary_review_model",
+            "duration_ms": 7735,
+            "tokens_input": 7807,
+            "tokens_output": 932
+          },
+          {
+            "model_name": "qwen-max",
+            "role": "primary_review_model",
+            "duration_ms": 10712,
+            "tokens_input": 7803,
+            "tokens_output": 466
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-003",
+      "task_id": "task_f2c3645ea2ff",
+      "task_status": "completed",
+      "observed_result": {
+        "generated_fact_count": 6,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": false,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "not_evaluated",
+        "latency_ms": 144919,
+        "agent_latency_ms": {
+          "prepare_task": 35,
+          "analyze_profile": 26,
+          "retrieve_knowledge": 462,
+          "generate_resource": 121168,
+          "review_resource": 22342,
+          "finalize_task": 31
+        },
+        "determinable": true,
+        "unable_to_determine": [],
+        "provider_mode": "live",
+        "model_calls": [
+          {
+            "model_name": "qwen-plus",
+            "role": "generation_model",
+            "duration_ms": 121129,
+            "tokens_input": 5138,
+            "tokens_output": 1835
+          },
+          {
+            "model_name": "qwen-turbo",
+            "role": "secondary_review_model",
+            "duration_ms": 6358,
+            "tokens_input": 8045,
+            "tokens_output": 745
+          },
+          {
+            "model_name": "qwen-max",
+            "role": "primary_review_model",
+            "duration_ms": 22297,
+            "tokens_input": 8041,
+            "tokens_output": 594
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-004",
+      "error": "task task_373f52e208b7 did not finish within 240s",
+      "observed_result": {
+        "determinable": false,
+        "unable_to_determine": [
+          "task task_373f52e208b7 did not finish within 240s"
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-005",
+      "task_id": "task_c78ac2c557a5",
+      "task_status": "completed",
+      "observed_result": {
+        "generated_fact_count": 6,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "not_evaluated",
+        "latency_ms": 42548,
+        "agent_latency_ms": {
+          "prepare_task": 32,
+          "analyze_profile": 31,
+          "retrieve_knowledge": 449,
+          "generate_resource": 25404,
+          "review_resource": 15329,
+          "finalize_task": 33
+        },
+        "determinable": true,
+        "unable_to_determine": [],
+        "provider_mode": "live",
+        "model_calls": [
+          {
+            "model_name": "qwen-plus",
+            "role": "generation_model",
+            "duration_ms": 25368,
+            "tokens_input": 5186,
+            "tokens_output": 1637
+          },
+          {
+            "model_name": "qwen-turbo",
+            "role": "secondary_review_model",
+            "duration_ms": 7559,
+            "tokens_input": 7733,
+            "tokens_output": 867
+          },
+          {
+            "model_name": "qwen-max",
+            "role": "primary_review_model",
+            "duration_ms": 15299,
+            "tokens_input": 7729,
+            "tokens_output": 482
+          }
+        ]
+      }
+    },
+    {
+      "case_id": "EVAL-006",
+      "task_id": "task_e94147db0d31",
+      "task_status": "completed",
+      "observed_result": {
+        "generated_fact_count": 6,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": false,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "not_evaluated",
+        "latency_ms": 110350,
+        "agent_latency_ms": {
+          "prepare_task": 21,
+          "analyze_profile": 33,
+          "retrieve_knowledge": 390,
+          "generate_resource": 87522,
+          "review_resource": 21669,
+          "finalize_task": 31
+        },
+        "determinable": true,
+        "unable_to_determine": [],
+        "provider_mode": "live",
+        "model_calls": [
+          {
+            "model_name": "qwen-plus",
+            "role": "generation_model",
+            "duration_ms": 87482,
+            "tokens_input": 5125,
+            "tokens_output": 1678
+          },
+          {
+            "model_name": "qwen-turbo",
+            "role": "secondary_review_model",
+            "duration_ms": 6220,
+            "tokens_input": 7698,
+            "tokens_output": 666
+          },
+          {
+            "model_name": "qwen-max",
+            "role": "primary_review_model",
+            "duration_ms": 21640,
+            "tokens_input": 7694,
+            "tokens_output": 823
+          }
+        ]
+      }
+    }
+  ]
+}
