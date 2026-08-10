@@ -1,0 +1,1657 @@
+{
+  "schema_version": "v2",
+  "knowledge_base_version": "ai_app_dev-kb-2026.07-v2",
+  "script_version": "v2-live-evaluator-1.0",
+  "cases": [
+    {
+      "case_id": "V2-EVAL-001",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-001",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "ai_app_dev_overview",
+        "python_api_basics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "ai_app_dev_overview"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-002",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-002",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "python_api_basics",
+          "http_rest_basics"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "python_api_basics",
+        "http_rest_basics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "python_api_basics"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-003",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-003",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "http_rest_basics",
+          "git_collaboration"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "http_rest_basics",
+        "git_collaboration"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "http_rest_basics"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-004",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-004",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "git_collaboration",
+          "data_schema_design"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "git_collaboration",
+        "data_schema_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "git_collaboration"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-005",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-005",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "data_schema_design",
+          "prompt_basic"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "data_schema_design",
+        "prompt_basic"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "data_schema_design"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-006",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-006",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "prompt_basic",
+          "prompt_context_design"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "prompt_basic",
+        "prompt_context_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_basic"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-007",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-007",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "prompt_context_design",
+          "prompt_output_format"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "prompt_context_design",
+        "prompt_output_format"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_context_design"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-008",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-008",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "prompt_output_format",
+          "prompt_evaluation"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "prompt_output_format",
+        "prompt_evaluation"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_output_format"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-009",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-009",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "prompt_evaluation",
+          "llm_api_calling"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "prompt_evaluation",
+        "llm_api_calling"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_evaluation"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-010",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-010",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "llm_api_calling",
+          "openai_compatible_api"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "llm_api_calling",
+        "openai_compatible_api"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "llm_api_calling"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-011",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-011",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "openai_compatible_api",
+          "token_context_budget"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "openai_compatible_api",
+        "token_context_budget"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "openai_compatible_api"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-012",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-012",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "token_context_budget",
+          "streaming_responses"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "token_context_budget",
+        "streaming_responses"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "token_context_budget"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-013",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-013",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "streaming_responses",
+          "function_calling_tools"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "streaming_responses",
+        "function_calling_tools"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "streaming_responses"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-014",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-014",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "function_calling_tools",
+          "structured_output_validation"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "function_calling_tools",
+        "structured_output_validation"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "function_calling_tools"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-015",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-015",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "structured_output_validation",
+          "embedding_basics"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "structured_output_validation",
+        "embedding_basics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "structured_output_validation"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-016",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-016",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "embedding_basics",
+          "vector_similarity"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "embedding_basics",
+        "vector_similarity"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "embedding_basics"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-017",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-017",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "vector_similarity",
+          "rag_pipeline_overview"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "vector_similarity",
+        "rag_pipeline_overview"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "vector_similarity"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-018",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-018",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "rag_pipeline_overview",
+          "rag_chunking"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "rag_pipeline_overview",
+        "rag_chunking"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "rag_pipeline_overview"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-019",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-019",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "rag_chunking",
+          "metadata_filtering"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "rag_chunking",
+        "metadata_filtering"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "rag_chunking"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-020",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-020",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "metadata_filtering",
+          "retrieval_reranking"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "metadata_filtering",
+        "retrieval_reranking"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "metadata_filtering"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-021",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-021",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "retrieval_reranking",
+          "citation_traceability"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "retrieval_reranking",
+        "citation_traceability"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "retrieval_reranking"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-022",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-022",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "citation_traceability",
+          "hallucination_guardrails"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "citation_traceability",
+        "hallucination_guardrails"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "citation_traceability"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-023",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-023",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "hallucination_guardrails",
+          "knowledge_base_ingestion"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "hallucination_guardrails",
+        "knowledge_base_ingestion"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "hallucination_guardrails"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-024",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-024",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "knowledge_base_ingestion",
+          "document_parsing"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "knowledge_base_ingestion",
+        "document_parsing"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "knowledge_base_ingestion"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-025",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-025",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "document_parsing",
+          "fastapi_endpoint_design"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "document_parsing",
+        "fastapi_endpoint_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "document_parsing"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-026",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-026",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "fastapi_endpoint_design",
+          "pydantic_schema_validation"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "fastapi_endpoint_design",
+        "pydantic_schema_validation"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "fastapi_endpoint_design"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-027",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-027",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "pydantic_schema_validation",
+          "sqlalchemy_modeling"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "pydantic_schema_validation",
+        "sqlalchemy_modeling"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "pydantic_schema_validation"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-028",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-028",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "sqlalchemy_modeling",
+          "alembic_migrations"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "sqlalchemy_modeling",
+        "alembic_migrations"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "sqlalchemy_modeling"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-029",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-029",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "alembic_migrations",
+          "mysql_indexing"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "alembic_migrations",
+        "mysql_indexing"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "alembic_migrations"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-030",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-030",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "mysql_indexing",
+          "chromadb_collections"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "mysql_indexing",
+        "chromadb_collections"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "mysql_indexing"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-031",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-031",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "chromadb_collections",
+          "frontend_vue_state"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "chromadb_collections",
+        "frontend_vue_state"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "chromadb_collections"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-032",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-032",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "frontend_vue_state",
+          "frontend_api_client"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "frontend_vue_state",
+        "frontend_api_client"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "frontend_vue_state"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-033",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-033",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "frontend_api_client",
+          "agent_role_design"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "frontend_api_client",
+        "agent_role_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "frontend_api_client"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-034",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-034",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "agent_role_design",
+          "langgraph_stategraph"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "agent_role_design",
+        "langgraph_stategraph"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "agent_role_design"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-035",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-035",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "langgraph_stategraph",
+          "orchestrator_workflow"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "langgraph_stategraph",
+        "orchestrator_workflow"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "langgraph_stategraph"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-036",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-036",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "orchestrator_workflow",
+          "python_async_concurrency"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "orchestrator_workflow",
+        "python_async_concurrency"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "orchestrator_workflow"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-037",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-037",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "python_async_concurrency",
+          "knowledge_retrieval_agent"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "python_async_concurrency",
+        "knowledge_retrieval_agent"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "python_async_concurrency"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-038",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-038",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "knowledge_retrieval_agent",
+          "content_generation_agent"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "knowledge_retrieval_agent",
+        "content_generation_agent"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "knowledge_retrieval_agent"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-039",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-039",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "content_generation_agent",
+          "review_validation_agent"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "content_generation_agent",
+        "review_validation_agent"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "content_generation_agent"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-040",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-040",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "review_validation_agent",
+          "automated_testing"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "review_validation_agent",
+        "automated_testing"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "review_validation_agent"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-041",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-041",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "automated_testing",
+          "docker_containerization"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "automated_testing",
+        "docker_containerization"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "automated_testing"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-042",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-042",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "docker_containerization",
+          "secret_management"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "docker_containerization",
+        "secret_management"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "docker_containerization"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-043",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-043",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "secret_management",
+          "observability_tracing"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "secret_management",
+        "observability_tracing"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "secret_management"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-044",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-044",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "observability_tracing",
+          "prompt_injection_defense"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "observability_tracing",
+        "prompt_injection_defense"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "observability_tracing"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-045",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-045",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "prompt_injection_defense",
+          "api_resilience_retry"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "prompt_injection_defense",
+        "api_resilience_retry"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_injection_defense"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-046",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-046",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "api_resilience_retry",
+          "evaluation_metrics"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "api_resilience_retry",
+        "evaluation_metrics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "api_resilience_retry"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-047",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-047",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "evaluation_metrics",
+          "privacy_log_policy"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "evaluation_metrics",
+        "privacy_log_policy"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "evaluation_metrics"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-048",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-048",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "privacy_log_policy",
+          "sse_progress_events"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "privacy_log_policy",
+        "sse_progress_events"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "privacy_log_policy"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-049",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-049",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "sse_progress_events",
+          "llm_judge_reliability"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "sse_progress_events",
+        "llm_judge_reliability"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "sse_progress_events"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    },
+    {
+      "case_id": "V2-EVAL-050",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-050",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "llm_judge_reliability",
+          "ai_app_dev_overview"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "llm_judge_reliability",
+        "ai_app_dev_overview"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "llm_judge_reliability"
+        ],
+        "acceptance_note": "验证真实 V2 检索、生成、双模型审核与来源闭环。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.07-v2"
+    }
+  ]
+}
