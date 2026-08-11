@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.models import GenerationTask, LearningResource
+from app.models import GenerationTask, Learner, LearningResource
 from app.schemas.common import ApiResponse, ok
 from app.services.demo_flow_service import serialize_resource
 from app.services.feedback_service import record_quick_feedback, serialize_feedback_decision
@@ -21,6 +21,9 @@ router = APIRouter()
 @router.get("", response_model=ApiResponse)
 def list_resources(
     include_unpublished: bool = Query(False, description="Administrator view"),
+    task_id: str | None = Query(None),
+    learner_id: str | None = Query(None),
+    domain_code: str | None = Query(None),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
     statement = (
@@ -34,6 +37,14 @@ def list_resources(
             LearningResource.is_current.is_(True),
             LearningResource.review_status == "passed",
         )
+    if task_id:
+        statement = statement.where(GenerationTask.public_id == task_id)
+    if learner_id:
+        statement = statement.join(Learner, Learner.id == GenerationTask.learner_id).where(
+            Learner.public_id == learner_id
+        )
+    if domain_code:
+        statement = statement.where(GenerationTask.domain_code == domain_code)
     rows = list(db.execute(statement))
     return ok([serialize_resource(resource, task) for resource, task in rows])
 

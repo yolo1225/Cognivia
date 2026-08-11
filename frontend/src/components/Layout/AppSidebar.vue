@@ -57,7 +57,7 @@ const allNavGroups: NavGroup[] = [
     label: '学习体验',
     items: [
       { page: 'dashboard', label: '首页', icon: '⌂', route: '/dashboard' },
-      { page: 'diagnostic', label: '诊断与画像', icon: '◎', route: '/diagnostic' },
+      { page: 'diagnostic', label: '诊断训练', icon: '◎', route: '/diagnostic' },
       { page: 'resources', label: '学习资源', icon: '▤', route: '/resources' },
       { page: 'report', label: '学习报告', icon: '⌁', route: '/report' },
       { page: 'metrics', label: '任务记录', icon: '▥', route: '/metrics' },
@@ -78,7 +78,7 @@ const visibleNavGroups = computed(() => {
   return allNavGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter(() => role === 'admin'), // simplified: admin sees all
+      items: group.label === '管理与质量' && role !== 'admin' ? [] : group.items,
     }))
     .filter((group) => group.items.length > 0)
 })

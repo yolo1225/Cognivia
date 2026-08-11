@@ -5,7 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -102,6 +102,8 @@ def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
         **_profile_summary(db, task),
         "revision_count": task.revision_count,
         "decision": task.decision,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         "resources": [_resource_summary(item) for item in resources],
     }
 
@@ -181,6 +183,29 @@ def get_active_generation_task(
         .order_by(GenerationTask.created_at.desc(), GenerationTask.id.desc())
     )
     return ok(_task_detail_summary(db, task) if task is not None else None)
+
+
+@router.get("", response_model=ApiResponse)
+def list_generation_tasks(
+    learner_id: str | None = Query(None),
+    domain_code: str | None = Query(None),
+    status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    statement = select(GenerationTask).order_by(
+        GenerationTask.created_at.desc(), GenerationTask.id.desc()
+    )
+    if learner_id:
+        statement = statement.join(Learner, Learner.id == GenerationTask.learner_id).where(
+            Learner.public_id == learner_id
+        )
+    if domain_code:
+        statement = statement.where(GenerationTask.domain_code == domain_code)
+    if status:
+        statement = statement.where(GenerationTask.status == status)
+    tasks = list(db.scalars(statement.limit(limit)))
+    return ok([_task_detail_summary(db, task) for task in tasks])
 
 
 @router.get("/{task_id}", response_model=ApiResponse)

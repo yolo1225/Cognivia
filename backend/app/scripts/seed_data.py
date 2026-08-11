@@ -14,11 +14,13 @@ from app.models import (
     DiagnosticQuestion,
     Domain,
     KnowledgeItem,
+    KnowledgeDocument,
     KnowledgeRelation,
     Learner,
     LearnerProfile,
     LearningPath,
 )
+from app.rag.chunker import chunk_markdown
 
 
 SEED_DIR = Path("/app/data/seed")
@@ -72,6 +74,29 @@ def seed_domain(db: Session) -> Domain:
 
 def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
     payloads = load_json("knowledge_items.json")
+    seed_document = upsert_by_field(
+        db,
+        KnowledgeDocument,
+        "public_id",
+        "kdoc_ai_app_dev_seed",
+        {
+            "public_id": "kdoc_ai_app_dev_seed",
+            "domain_code": "ai_app_dev",
+            "original_name": "AI应用开发核心知识包.json",
+            "stored_path": None,
+            "file_type": "seed_package",
+            "mime_type": "application/json",
+            "size_bytes": 0,
+            "sha256": "seed-ai-app-dev-core-v1",
+            "status": "ready",
+            "knowledge_item_count": len(payloads),
+            "chunk_count": sum(len(chunk_markdown(str(item["content"]))) for item in payloads),
+            "source_title": "AI 应用开发核心知识包",
+            "license_note": "项目内置种子知识",
+            "uploaded_by": "system",
+        },
+    )
+    db.flush()
     items: dict[str, KnowledgeItem] = {}
     for payload in payloads:
         public_id = payload["knowledge_id"]
@@ -92,6 +117,7 @@ def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
                 "source_url": payload.get("source_url"),
                 "license_note": payload.get("license_note", "team-authored"),
                 "needs_reembedding": True,
+                "source_document_id": seed_document.id,
             },
         )
         items[public_id] = item

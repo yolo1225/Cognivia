@@ -120,7 +120,7 @@ AI_APP_DEV_ABILITY_WEIGHTS: dict[str, dict[str, float]] = {
 }
 
 
-AI_APP_DEV_PROFILE_V1_SEED_SHA256 = "38ec13b4bd3dae1c6877a0c65c63b1e7bc42db7cb1bd6ec4cc05da2ef88878ec"
+AI_APP_DEV_PROFILE_V1_SEED_SHA256 = "983bb0404433259345eafe17b0f24a8ea743379b4010174e46bcf3fd649ab7ab"
 MASTERY_BASELINES = {
     "known": 0.90,
     "partial_mastery": 0.70,

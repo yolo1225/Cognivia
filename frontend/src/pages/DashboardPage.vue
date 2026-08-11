@@ -3,7 +3,7 @@
     <div class="head">
       <div><h1>首页</h1></div>
       <div class="actions">
-        <button class="btn" @click="router.push('/diagnostic')">诊断测评</button>
+        <button class="btn" @click="router.push('/diagnostic')">诊断训练</button>
         <button class="btn primary" :disabled="creating" @click="handleCreateTask">
           {{ creating ? '正在创建...' : '生成个性化资源' }}
         </button>
@@ -36,7 +36,7 @@
         <span>当前任务</span>
         <strong>{{ activeTask.task_id }}</strong>
         <p>决策：{{ activeTask.decision }} · 版本：v{{ activeTask.profile_version || '-' }}</p>
-        <button class="btn" @click="router.push('/agents')">查看进度</button>
+        <button class="btn" @click="openTask(activeTask.task_id)">查看进度</button>
       </div>
     </div>
 
@@ -56,7 +56,7 @@
             <td>{{ task.task_id }}</td>
             <td>{{ task.learner_id || '-' }}</td>
             <td><span class="status" :class="task.status === 'completed' ? 'ok' : 'wait'">{{ task.status }}</span></td>
-            <td><button class="btn text" @click="router.push(task.status === 'completed' ? '/resources' : '/agents')">查看详情</button></td>
+            <td><button class="btn text" @click="openTask(task.task_id)">查看详情</button></td>
           </tr>
         </tbody>
       </table>
@@ -68,9 +68,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
-import { listKnowledgeItems } from '@/api/knowledge'
-import { createGenerationTask, getActiveGenerationTask, type GenerationTaskDetail } from '@/api/generation'
+import { getDomainStats } from '@/api/domains'
+import { createGenerationTask, getActiveGenerationTask, listGenerationTasks, type GenerationTaskDetail } from '@/api/generation'
 import { getEvaluationSummary } from '@/api/evaluations'
+import { formatBeijingDate } from '@/utils/dateTime'
 
 const router = useRouter()
 const { showToast } = useToast()
@@ -93,14 +94,20 @@ const activeStep = computed(() => {
 
 onMounted(async () => {
   try {
-    const [items, task, evalSummary] = await Promise.allSettled([
-      listKnowledgeItems('ai_app_dev', 100),
+    const [items, task, evalSummary, recent] = await Promise.allSettled([
+      getDomainStats('ai_app_dev'),
       getActiveGenerationTask('learner_001'),
       getEvaluationSummary('live'),
+      listGenerationTasks({ learnerId: 'learner_001', limit: 5 }),
     ])
-    if (items.status === 'fulfilled') { knowledgeTotal.value = items.value.total; resourceCount.value = Math.floor(items.value.total * 0.13) }
-    if (task.status === 'fulfilled' && task.value) { activeTask.value = task.value; recentTasks.value = [task.value] }
-    if (evalSummary.status === 'fulfilled') { evalCaseCount.value = evalSummary.value.case_count; evalDate.value = evalSummary.value.evaluated_at?.slice(0, 10) || '-' }
+    if (items.status === 'fulfilled') {
+      knowledgeTotal.value = items.value.knowledge_items
+      questionCount.value = items.value.diagnostic_questions
+      resourceCount.value = items.value.published_resources
+    }
+    if (task.status === 'fulfilled' && task.value) activeTask.value = task.value
+    if (evalSummary.status === 'fulfilled') { evalCaseCount.value = evalSummary.value.case_count; evalDate.value = formatBeijingDate(evalSummary.value.evaluated_at) }
+    if (recent.status === 'fulfilled') recentTasks.value = recent.value
   } catch { /* empty state */ }
 })
 
@@ -109,8 +116,12 @@ async function handleCreateTask() {
   try {
     const result = await createGenerationTask('', 'learner_001', '个性化学习资源生成')
     showToast(`已创建任务 ${result.task_id}`)
-    router.push('/agents')
+    router.push({ path: '/metrics', query: { task_id: result.task_id } })
   } catch { showToast('创建失败，请检查后端服务') }
   finally { creating.value = false }
+}
+
+function openTask(taskId: string) {
+  router.push({ path: '/metrics', query: { task_id: taskId } })
 }
 </script>

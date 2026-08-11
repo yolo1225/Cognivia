@@ -1,87 +1,27 @@
 <template>
   <section class="page">
-    <div class="head"><div><h1>人工复核</h1><p class="sub">仅管理员查看未发布资源、双通道分歧与重新检索证据。</p></div></div>
-
-    <div v-if="pendingCount > 0" class="review-banner">
-      <div><strong>{{ pendingCount }} 项等待人工决定</strong><p style="margin-top:5px;font-size:12px">请在详情中逐一复核。</p></div>
-      <span class="status wait">待处理</span>
+    <div class="head"><div><h1>人工复核</h1><p class="sub">核对双通道审核分歧和重新检索证据，再决定发布、修订或驳回。</p></div></div>
+    <div v-if="pendingCount" class="review-banner"><div><strong>{{ pendingCount }} 项等待人工决定</strong><p>未解决资源不会向学习者发布。</p></div><span class="status wait">待处理</span></div>
+    <div class="panel"><div class="panel-head"><h2>复核列表</h2><div class="filterbar"><select v-model="statusFilter" class="field" @change="load"><option value="">全部状态</option><option value="pending">待处理</option><option value="resolved">已处理</option></select><button class="btn" :disabled="loading" @click="load">刷新</button></div></div>
+      <div v-if="errorMessage" class="error-state"><strong>复核列表加载失败</strong><p>{{ errorMessage }}</p><button class="btn" @click="load">重新加载</button></div>
+      <div v-else class="table-wrap"><table><thead><tr><th>复核 ID</th><th>任务 ID</th><th>触发原因</th><th>状态</th><th>决定</th><th>操作</th></tr></thead><tbody><tr v-if="!loading&&!reviews.length"><td colspan="6" class="empty-cell">暂无复核任务</td></tr><tr v-for="item in reviews" :key="item.manual_review_id" :class="{selected:detail?.manual_review_id===item.manual_review_id}"><td>{{ item.manual_review_id }}</td><td>{{ item.task_id }}</td><td>{{ reasonLabel(item.trigger_reason) }}</td><td><span class="status" :class="item.status==='pending'?'wait':'ok'">{{ item.status==='pending'?'待处理':'已处理' }}</span></td><td>{{ decisionLabel(item.decision) }}</td><td><button class="btn text" @click="openDetail(item)">{{ item.status==='pending'?'开始复核':'查看详情' }}</button></td></tr></tbody></table></div>
     </div>
-
-    <div class="panel">
-      <div class="panel-head"><div><h2>复核列表</h2></div><div class="filterbar">
-          <select class="field" v-model="statusFilter" @change="load"><option value="">全部状态</option><option value="pending">待处理</option><option value="approved">已批准</option><option value="rejected">已驳回</option></select>
-          <button class="btn" @click="load" :disabled="loading">刷新</button>
-      </div></div>
-      <table><thead><tr><th>复核ID</th><th>任务ID</th><th>原因</th><th>状态</th><th>决定</th><th>操作</th></tr></thead>
-        <tbody>
-          <tr v-if="loading"><td colspan="6" style="text-align:center;color:var(--muted)">加载中...</td></tr>
-          <tr v-else-if="reviews.length === 0"><td colspan="6" style="text-align:center;color:var(--muted)">暂无数据</td></tr>
-          <tr v-for="r in reviews" :key="r.manual_review_id">
-            <td>{{ r.manual_review_id?.slice(0,8) }}</td>
-            <td>{{ r.task_id?.slice(0,12) }}</td>
-            <td>{{ r.trigger_reason }}</td>
-            <td><span class="status" :class="r.status === 'pending' ? 'wait' : 'ok'">{{ r.status }}</span></td>
-            <td>{{ r.decision || '-' }}</td>
-            <td>
-              <button v-if="r.status === 'pending'" class="btn primary small" @click="openDecision(r)">复核</button>
-              <span v-else>{{ r.reviewed_by || '-' }}</span>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div v-if="deciding" class="panel cols" style="margin-top:14px">
-      <div class="panel">
-        <h2>管理员决定</h2>
-        <p class="sub">复核意见将写入原任务并沿同一 task_id 恢复执行。</p>
-        <textarea v-model="comment" placeholder="填写复核依据，必填"></textarea>
-        <div class="actions" style="margin-top:10px">
-          <button class="btn" @click="decide('reject')" :disabled="submitting">驳回资源</button>
-          <button class="btn" @click="decide('request_revision')" :disabled="submitting">要求修订</button>
-          <button class="btn primary" @click="decide('approve')" :disabled="submitting">批准发布</button>
-        </div>
-      </div>
+    <div v-if="detailLoading" class="panel">正在加载复核证据...</div>
+    <div v-else-if="detail" class="panel task-detail-panel"><div class="panel-head"><div><h2>{{ detail.resource?.title || '待复核资源' }}</h2><p class="sub">任务 {{ detail.task_id }}</p></div><span class="status wait">{{ reasonLabel(detail.trigger_reason) }}</span></div>
+      <div v-if="!detail.review" class="error-state"><strong>缺少审核证据</strong><p>当前记录没有可供决策的双通道审核报告，因此不能提交决定。</p></div>
+      <template v-else><div class="review-grid"><div class="review-box"><div class="panel-head"><h3>主审核通道</h3><span class="tag">{{ channelConclusion(detail.review.primary) }}</span></div><p class="sub">{{ channelSummary(detail.review.primary) }}</p></div><div class="review-box fail"><div class="panel-head"><h3>次审核通道</h3><span class="tag">{{ channelConclusion(detail.review.secondary) }}</span></div><p class="sub">{{ channelSummary(detail.review.secondary) }}</p></div></div>
+        <div class="cols" style="margin-top:14px"><div class="panel"><h3>审核评分</h3><div class="quality-list"><div v-for="(score,key) in detail.review.scores" :key="key" class="quality-row"><span>{{ scoreLabel(key) }}</span><strong>{{ score }}</strong><div class="bar"><i :style="{width:`${score}%`}"></i></div></div></div><h3 style="margin-top:16px">重新检索证据</h3><div v-if="detail.review.evidence_refs.length"><div v-for="(e,index) in detail.review.evidence_refs" :key="index" class="source"><strong>证据 {{ index+1 }}</strong><span>{{ evidenceText(e) }}</span></div></div><div v-else class="empty-hint">没有重新检索证据。</div></div><div class="panel"><h3>管理员决定</h3><p class="sub">复核意见将写入原任务并恢复执行。</p><textarea v-model="comment" aria-label="复核依据" placeholder="填写复核依据，必填"></textarea><div class="actions" style="margin-top:10px"><button class="btn danger-action" :disabled="submitting||detail.status!=='pending'" @click="submitDecision('reject')">驳回资源</button><button class="btn" :disabled="submitting||detail.status!=='pending'" @click="submitDecision('request_revision')">要求修订</button><button class="btn primary" :disabled="submitting||detail.status!=='pending'" @click="submitDecision('approve')">批准发布</button></div></div></div>
+      </template>
     </div>
   </section>
 </template>
-
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useToast } from '@/composables/useToast'
-import { listManualReviews, decideManualReview, type ManualReviewItem } from '@/api/manualReviews'
-
-const { showToast } = useToast()
-const reviews = ref<ManualReviewItem[]>([])
-const loading = ref(false)
-const submitting = ref(false)
-const statusFilter = ref('')
-const deciding = ref<ManualReviewItem | null>(null)
-const comment = ref('')
-const pendingCount = ref(0)
-
-async function load() {
-  loading.value = true
-  try {
-    reviews.value = await listManualReviews(statusFilter.value || undefined)
-    pendingCount.value = reviews.value.filter(r => r.status === 'pending').length
-  } catch { showToast('加载复核列表失败') }
-  finally { loading.value = false }
-}
-
-function openDecision(r: ManualReviewItem) { deciding.value = r; comment.value = '' }
-
-async function decide(d: 'approve' | 'request_revision' | 'reject') {
-  if (!deciding.value || !comment.value) { showToast('请填写复核依据'); return }
-  submitting.value = true
-  try {
-    await decideManualReview(deciding.value.manual_review_id, d, comment.value)
-    showToast('复核决定已保存，原任务正在恢复执行')
-    deciding.value = null
-    await load()
-  } catch { showToast('操作失败') }
-  finally { submitting.value = false }
-}
-
+import { computed,onMounted,ref } from 'vue'; import { decideManualReview,getManualReview,listManualReviews,type ManualReviewDetail,type ManualReviewItem } from '@/api/manualReviews'; import { useToast } from '@/composables/useToast'
+const {showToast}=useToast(); const reviews=ref<ManualReviewItem[]>([]);const detail=ref<ManualReviewDetail|null>(null);const loading=ref(false);const detailLoading=ref(false);const submitting=ref(false);const statusFilter=ref('');const comment=ref('');const errorMessage=ref('');const pendingCount=computed(()=>reviews.value.filter(r=>r.status==='pending').length)
+async function load(){loading.value=true;errorMessage.value='';try{reviews.value=await listManualReviews(statusFilter.value||undefined)}catch{errorMessage.value='无法读取人工复核记录。'}finally{loading.value=false}}
+async function openDetail(item:ManualReviewItem){detailLoading.value=true;comment.value='';try{detail.value=await getManualReview(item.manual_review_id)}catch{showToast('复核证据加载失败')}finally{detailLoading.value=false}}
+async function submitDecision(decision:'approve'|'request_revision'|'reject'){if(!detail.value?.review||!comment.value.trim()){showToast('请确认审核证据并填写复核依据');return}if(decision==='reject'&&!window.confirm('确认驳回该资源？资源将不会发布。'))return;submitting.value=true;try{await decideManualReview(detail.value.manual_review_id,decision,comment.value.trim());showToast('复核决定已保存，任务正在恢复执行');detail.value=await getManualReview(detail.value.manual_review_id);await load()}catch{showToast('复核决定提交失败')}finally{submitting.value=false}}
+function reasonLabel(v:string){return({model_disagreement:'双通道结论分歧',score_gap:'审核分差过大',manual_review_required:'需要人工复核'} as Record<string,string>)[v]||v}function decisionLabel(v:string|null){return v?({approve:'已批准',request_revision:'要求修订',reject:'已驳回'} as Record<string,string>)[v]||v:'-'}
+function channelConclusion(v:Record<string,unknown>){return String(v.decision||v.conclusion||v.status||'未给出结论')}function channelSummary(v:Record<string,unknown>){return String(v.summary||v.reason||v.comment||'该通道未提供文字摘要。')}function evidenceText(v:unknown){return typeof v==='string'?v:JSON.stringify(v)}function scoreLabel(v:string){return({factual_accuracy:'事实准确',source_traceability:'来源追溯',difficulty_match:'难度匹配',core_coverage:'核心覆盖'} as Record<string,string>)[v]||v}
 onMounted(load)
 </script>

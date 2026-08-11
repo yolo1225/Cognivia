@@ -12,7 +12,18 @@ class ReportRepository(Repository):
         return self.db.scalar(select(LearningPath).where(LearningPath.learner_id == learner_id).order_by(LearningPath.id.desc()))
 
     def resources(self, learner_id: int) -> list[tuple[LearningResource, GenerationTask]]:
-        return list(self.db.execute(select(LearningResource, GenerationTask).join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id).where(GenerationTask.learner_id == learner_id).order_by(LearningResource.id.desc())))
+        return list(
+            self.db.execute(
+                select(LearningResource, GenerationTask)
+                .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
+                .where(
+                    GenerationTask.learner_id == learner_id,
+                    LearningResource.is_current.is_(True),
+                    LearningResource.review_status == "passed",
+                )
+                .order_by(LearningResource.id.desc())
+            )
+        )
 
     def reviews(self, learner_id: int) -> list[ReviewReport]:
         return list(self.db.scalars(select(ReviewReport).join(LearningResource, LearningResource.id == ReviewReport.resource_id).join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id).where(GenerationTask.learner_id == learner_id).order_by(ReviewReport.id.desc())))

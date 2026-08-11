@@ -16,7 +16,7 @@ from app.models import (
     LearnerProfile,
     LearningPath,
 )
-from app.services.diagnostic_service import submit_diagnostic_session
+from app.services.diagnostic_service import create_diagnostic_session, submit_diagnostic_session
 
 
 def build_test_session() -> sessionmaker[Session]:
@@ -120,6 +120,58 @@ def _submit(
         ],
     )
 
+
+def test_create_diagnostic_session_randomly_samples_from_full_domain_pool(monkeypatch) -> None:
+    testing_session = build_test_session()
+    with testing_session() as db:
+        learner, choice, _ = seed_diagnostic_fixture(db)
+        extra = DiagnosticQuestion(
+            public_id="q_extra",
+            domain_code="ai_app_dev",
+            knowledge_item_id=choice.knowledge_item_id,
+            question_type="single_choice",
+            stem="Which question is sampled from beyond the old fixed prefix?",
+            options_json=["A", "B"],
+            answer_key_json={"correct_option": 0},
+            difficulty=5,
+        )
+        db.add(extra)
+        db.flush()
+        sampled_pool: list[str] = []
+
+        def select_last_question(population, *, k):
+            sampled_pool.extend(question.public_id for question in population)
+            return population[-k:]
+
+        monkeypatch.setattr("app.services.diagnostic_service.random.sample", select_last_question)
+        result = create_diagnostic_session(
+            db,
+            learner_id=learner.public_id,
+            domain_code="ai_app_dev",
+            question_count=1,
+        )
+
+    assert sampled_pool == ["q_short", "q_choice", "q_extra"]
+    assert [question["question_id"] for question in result["questions"]] == ["q_extra"]
+    assert result["question_count"] == 1
+
+
+def test_create_diagnostic_session_caps_sample_size_to_available_questions() -> None:
+    testing_session = build_test_session()
+    with testing_session() as db:
+        learner, choice, short = seed_diagnostic_fixture(db)
+        result = create_diagnostic_session(
+            db,
+            learner_id=learner.public_id,
+            domain_code="ai_app_dev",
+            question_count=10,
+        )
+
+    assert result["question_count"] == 2
+    assert {question["question_id"] for question in result["questions"]} == {
+        choice.public_id,
+        short.public_id,
+    }
 
 def test_diagnostic_entrypoint_persists_v2_profile_path_and_safe_observability() -> None:
     testing_session = build_test_session()

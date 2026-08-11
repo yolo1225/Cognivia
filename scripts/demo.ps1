@@ -31,9 +31,21 @@ function Wait-Backend {
                 return
             }
         } catch {
-            Start-Sleep -Seconds 2
+            # The service-state check below distinguishes startup delay from a crashed process.
         }
+
+        $exitedServices = @(& docker compose ps --all --status exited --services backend 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $exitedServices -contains "backend") {
+            Write-Host "Backend container exited before becoming healthy. Recent logs:"
+            & docker compose logs --tail 100 backend
+            throw "Backend container exited before becoming healthy."
+        }
+
+        Start-Sleep -Seconds 2
     }
+
+    Write-Host "Backend health check timed out. Recent logs:"
+    & docker compose logs --tail 100 backend
     throw "Backend did not become healthy within 120 seconds."
 }
 

@@ -153,7 +153,11 @@ def get_learning_report(learner_id: str, db: Session = Depends(get_db)) -> ApiRe
         db.execute(
             select(LearningResource, GenerationTask)
             .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
-            .where(GenerationTask.learner_id == learner.id)
+            .where(
+                GenerationTask.learner_id == learner.id,
+                LearningResource.is_current.is_(True),
+                LearningResource.review_status == "passed",
+            )
             .order_by(LearningResource.id.desc())
         )
     )

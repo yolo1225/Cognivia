@@ -19,8 +19,13 @@ export interface ResourceSummary {
   task_created_at?: string | null
 }
 
-export function listResources() {
-  return getData<ResourceSummary[]>('/resources')
+export function listResources(filters: { taskId?: string; learnerId?: string; domainCode?: string } = {}) {
+  const params = new URLSearchParams()
+  if (filters.taskId) params.set('task_id', filters.taskId)
+  if (filters.learnerId) params.set('learner_id', filters.learnerId)
+  if (filters.domainCode) params.set('domain_code', filters.domainCode)
+  const query = params.toString()
+  return getData<ResourceSummary[]>(`/resources${query ? `?${query}` : ''}`)
 }
 
 export function listResourceVersions(resourceId: string) {

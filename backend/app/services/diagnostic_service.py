@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from hashlib import sha256
+import random
 import time
 from typing import Any
 
@@ -77,14 +78,16 @@ def create_diagnostic_session(
     question_count: int = 10,
 ) -> dict[str, Any]:
     learner = get_or_create_demo_learner(db, learner_id)
-    questions = list(
+    available_questions = list(
         db.scalars(
             select(DiagnosticQuestion)
             .where(DiagnosticQuestion.domain_code == domain_code)
             .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.public_id)
-            .limit(question_count)
         )
     )
+    requested_count = max(0, int(question_count))
+    selected_count = min(requested_count, len(available_questions))
+    questions = random.sample(available_questions, k=selected_count)
     return {
         "session_id": public_id("diag"),
         "learner_id": learner.public_id,

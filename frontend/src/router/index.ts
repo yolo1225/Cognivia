@@ -9,10 +9,12 @@ const routes = [
   { path: '/metrics', component: () => import('@/pages/MetricsPage.vue') },
   { path: '/learners', component: () => import('@/pages/LearnersPage.vue') },
   { path: '/domain-hub', component: () => import('@/pages/DomainHubPage.vue') },
-  { path: '/knowledge', component: () => import('@/pages/KnowledgeAdminPage.vue') },
-  { path: '/domain', component: () => import('@/pages/DomainConfigPage.vue') },
   { path: '/review', component: () => import('@/pages/ManualReviewPage.vue') },
-  { path: '/agents', component: () => import('@/pages/AgentWorkspacePage.vue') },
+  { path: '/agents', redirect: '/metrics' },
+  { path: '/diagnostics', redirect: '/diagnostic' },
+  { path: '/domain', redirect: { path: '/domain-hub', query: { tab: 'config' } } },
+  { path: '/knowledge', redirect: { path: '/domain-hub', query: { tab: 'knowledge' } } },
+  { path: '/:pathMatch(.*)*', redirect: '/dashboard' },
 ]
 
 export const router = createRouter({

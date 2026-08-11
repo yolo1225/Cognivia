@@ -5,7 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.models import GenerationTask, GraphCheckpoint, ManualReviewTask
+from app.models import (
+    GenerationTask,
+    GraphCheckpoint,
+    LearningResource,
+    ManualReviewTask,
+    ReviewReport,
+)
 from app.schemas.common import ApiResponse, ok
 from app.workers.generation_worker import run_generation_task
 
@@ -50,7 +56,42 @@ def get_manual_review(review_id: str, db: Session = Depends(get_db)) -> ApiRespo
     ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Manual review not found")
-    return ok(_serialize(row[0], row[1]))
+    item, task = row
+    report = db.scalar(
+        select(ReviewReport)
+        .where(ReviewReport.task_id == task.id)
+        .order_by(ReviewReport.id.desc())
+    )
+    resource = db.get(LearningResource, report.resource_id) if report else None
+    return ok(
+        {
+            **_serialize(item, task),
+            "resource": {
+                "resource_id": resource.public_id,
+                "title": resource.title,
+                "resource_type": resource.resource_type,
+                "review_status": resource.review_status,
+            }
+            if resource
+            else None,
+            "review": {
+                "primary": report.primary_review_json or {},
+                "secondary": report.secondary_review_json or {},
+                "arbitration": report.arbitration_json or {},
+                "scores": {
+                    "factual_accuracy": report.factual_score,
+                    "source_traceability": report.source_trace_score,
+                    "difficulty_match": report.difficulty_match_score,
+                    "core_coverage": report.coverage_score,
+                },
+                "evidence_refs": report.evidence_refs_json or [],
+                "disagreement": report.disagreement_summary_json or {},
+                "issues": report.issues_json or [],
+            }
+            if report
+            else None,
+        }
+    )
 
 
 @router.post("/{review_id}/decision", response_model=ApiResponse)

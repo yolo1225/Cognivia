@@ -8,6 +8,7 @@ from app.api.v1 import (
     generation_tasks,
     health,
     knowledge,
+    knowledge_documents,
     learners,
     manual_reviews,
     reports,
@@ -21,6 +22,9 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(learners.router, prefix="/learners", tags=["learners"])
 api_router.include_router(diagnostics.router, prefix="/diagnostics", tags=["diagnostics"])
 api_router.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"])
+api_router.include_router(
+    knowledge_documents.router, prefix="/knowledge/documents", tags=["knowledge-documents"]
+)
 api_router.include_router(generation_tasks.router, prefix="/generation-tasks", tags=["generation-tasks"])
 api_router.include_router(resources.router, prefix="/resources", tags=["resources"])
 api_router.include_router(tutoring.router, prefix="/tutoring", tags=["tutoring"])
