@@ -1,6 +1,7 @@
 \
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,18 @@ def test_ai_app_dev_profile_config_maps_every_seed_knowledge_item() -> None:
     assert config.difficulty_weight(1) == pytest.approx(0.7)
     assert config.difficulty_weight(5) == pytest.approx(1.3)
 
+
+def test_profile_seed_fingerprint_is_independent_of_line_endings() -> None:
+    seed_path = PROJECT_ROOT / "data" / "seed" / "knowledge_items.json"
+    payload = json.loads(seed_path.read_text(encoding="utf-8"))
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    assert hashlib.sha256(canonical).hexdigest() == AI_APP_DEV_PROFILE_V1.seed_sha256
 
 def test_profile_v2_case_distribution_and_unique_ids() -> None:
     documents = _all_case_documents()
