@@ -4,7 +4,6 @@
       <div class="mark">域</div>
       <div>
         <strong>云川智汇</strong>
-        <small>{{ domainStore.currentDomainName }}</small>
       </div>
     </div>
     <nav class="nav">
@@ -33,12 +32,10 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
-import { useDomainStore } from '@/stores/domainStore'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-const domainStore = useDomainStore()
 
 interface NavItem {
   page: string

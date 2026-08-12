@@ -8,7 +8,7 @@ from app.models.knowledge import KnowledgeDocument, KnowledgeItem, KnowledgeRela
 from app.models.learner import Learner, LearnerProfile, LearningPath
 from app.models.resource import GenerationTask, LearningResource, ReviewReport
 from app.models.tutoring import ManualReviewTask, TutoringMessage, TutoringSession
-from app.models.user import DemoUser
+from app.models.user import DemoUser, User
 
 __all__ = [
     "AgentMessageRecord",
@@ -17,6 +17,7 @@ __all__ = [
     "AnswerRecord",
     "Base",
     "DemoUser",
+    "User",
     "DiagnosticQuestion",
     "Domain",
     "EvaluationCase",

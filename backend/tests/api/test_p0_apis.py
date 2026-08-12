@@ -134,6 +134,10 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
             "/api/v1/tutoring/sessions", json={"resource_id": "resource_visible"}
         )
         session_id = session_response.json()["data"]["session_id"]
+        reused_session = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_visible"}
+        ).json()["data"]
+        assert reused_session["session_id"] == session_id
         message = client.post(
             f"/api/v1/tutoring/sessions/{session_id}/messages",
             json={"content": "这部分太难，我看不懂"},

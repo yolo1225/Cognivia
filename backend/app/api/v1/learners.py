@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.security import Principal, assert_learner_access, get_current_user, require_admin
 from app.models import Learner
 from app.schemas.common import ApiResponse, ok
 from app.services.learner_service import get_or_create_demo_learner
@@ -46,7 +47,10 @@ def serialize_learner_summary(db: Session, learner: Learner) -> dict[str, Any]:
 
 
 @router.get("", response_model=ApiResponse)
-def list_learners(db: Session = Depends(get_db)) -> ApiResponse:
+def list_learners(db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+    if principal.role != "admin" and principal.learner_id:
+        learner = db.scalar(select(Learner).where(Learner.public_id == principal.learner_id))
+        return ok([serialize_learner_summary(db, learner)] if learner else [])
     learners = list(db.scalars(select(Learner).order_by(Learner.public_id)))
     if not learners:
         learners = [get_or_create_demo_learner(db, "learner_001")]
@@ -56,7 +60,7 @@ def list_learners(db: Session = Depends(get_db)) -> ApiResponse:
 
 
 @router.post("", response_model=ApiResponse)
-def create_learner(payload: LearnerCreate, db: Session = Depends(get_db)) -> ApiResponse:
+def create_learner(payload: LearnerCreate, db: Session = Depends(get_db), _principal: Principal = Depends(require_admin)) -> ApiResponse:
     duplicate = db.scalar(select(Learner).where(Learner.public_id == payload.learner_id))
     if duplicate is not None:
         raise HTTPException(status_code=409, detail=f"Learner already exists: {payload.learner_id}")
@@ -75,7 +79,8 @@ def create_learner(payload: LearnerCreate, db: Session = Depends(get_db)) -> Api
 
 
 @router.get("/{learner_id}/profile", response_model=ApiResponse)
-def get_learner_profile(learner_id: str, db: Session = Depends(get_db)) -> ApiResponse:
+def get_learner_profile(learner_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+    assert_learner_access(principal, learner_id)
     learner = db.scalar(select(Learner).where(Learner.public_id == learner_id))
     if learner is None:
         if learner_id == "learner_001":

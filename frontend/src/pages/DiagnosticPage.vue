@@ -95,6 +95,7 @@ const learnerId = computed(() => routeLearnerId || learnerStore.selectedLearnerI
 const accuracyPercent = computed(() => result.value ? Math.round((result.value.correct_count / Math.max(1, result.value.question_count)) * 100) : 0)
 
 async function startSession() {
+  if (!learnerId.value) { showToast('当前账号未关联学习者'); return }
   creatingSession.value = true
   try {
     session.value = await createDiagnosticSession(learnerId.value)
@@ -106,7 +107,7 @@ async function startSession() {
 }
 
 async function submitAll() {
-  if (!session.value) return
+  if (!session.value || !learnerId.value) return
   submitting.value = true
   try {
     const list = Object.entries(answers.value).map(([idx, answer]) => ({
@@ -120,7 +121,7 @@ async function submitAll() {
 }
 
 async function generateResources() {
-  if (!result.value) return
+  if (!result.value || !learnerId.value) return
   generating.value = true
   try {
     const task = await createGenerationTask(result.value.profile_id, learnerId.value)

@@ -70,6 +70,43 @@ def _message(
     )
 
 
+def _sample_diagnostic_questions(
+    available_questions: list[DiagnosticQuestion], question_count: int
+) -> list[DiagnosticQuestion]:
+    selected_count = min(max(0, int(question_count)), len(available_questions))
+    if selected_count == 0:
+        return []
+
+    single_choice_questions = [
+        question for question in available_questions if question.question_type == "single_choice"
+    ]
+    short_answer_questions = [
+        question for question in available_questions if question.question_type == "short_answer"
+    ]
+
+    short_answer_target = round(selected_count * 0.2)
+    if selected_count >= 2 and single_choice_questions and short_answer_questions:
+        short_answer_target = max(1, short_answer_target)
+    short_answer_target = min(short_answer_target, len(short_answer_questions))
+    single_choice_target = min(
+        selected_count - short_answer_target, len(single_choice_questions)
+    )
+
+    questions = random.sample(single_choice_questions, k=single_choice_target)
+    questions.extend(random.sample(short_answer_questions, k=short_answer_target))
+
+    if len(questions) < selected_count:
+        selected_ids = {id(question) for question in questions}
+        remaining_questions = [
+            question for question in available_questions if id(question) not in selected_ids
+        ]
+        questions.extend(
+            random.sample(remaining_questions, k=selected_count - len(questions))
+        )
+
+    random.shuffle(questions)
+    return questions
+
 def create_diagnostic_session(
     db: Session,
     *,
@@ -85,9 +122,7 @@ def create_diagnostic_session(
             .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.public_id)
         )
     )
-    requested_count = max(0, int(question_count))
-    selected_count = min(requested_count, len(available_questions))
-    questions = random.sample(available_questions, k=selected_count)
+    questions = _sample_diagnostic_questions(available_questions, question_count)
     return {
         "session_id": public_id("diag"),
         "learner_id": learner.public_id,

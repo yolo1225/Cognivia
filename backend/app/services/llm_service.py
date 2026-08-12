@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any, TypeVar
 
 from openai import OpenAI
@@ -136,6 +136,64 @@ class OpenAICompatibleGateway:
         if isinstance(last_error, ModelResponseError):
             raise last_error
         raise ModelCallError(f"model call failed after 3 retries: {last_error}")
+
+    def complete_text(
+        self,
+        *,
+        model: str | None,
+        system_prompt: str,
+        payload: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        """Call the configured compatible chat model for bounded tutoring prose."""
+        started_at = time.perf_counter()
+        if not model or not settings.openai_api_key:
+            raise ModelConfigurationError("model channel is not configured")
+        last_error: Exception | None = None
+        client = self._client()
+        for attempt in range(1, len(self.RETRY_DELAYS) + 2):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    ],
+                )
+                content = (response.choices[0].message.content or "").strip()
+                if not content:
+                    raise ModelResponseError("model returned empty text")
+                usage = response.usage
+                return content, {
+                    "provider_mode": "live", "model_name": model,
+                    "tokens_input": int(getattr(usage, "prompt_tokens", 0) or 0),
+                    "tokens_output": int(getattr(usage, "completion_tokens", 0) or 0),
+                    "attempt": attempt,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000),
+                }
+            except Exception as exc:
+                last_error = exc
+                if attempt <= len(self.RETRY_DELAYS):
+                    time.sleep(self.RETRY_DELAYS[attempt - 1])
+        raise ModelCallError(f"model text call failed after 3 retries: {last_error}")
+
+    def stream_text(
+        self, *, model: str | None, system_prompt: str, payload: dict[str, Any]
+    ) -> Iterator[str]:
+        """Yield OpenAI-compatible text chunks; callers persist partial output."""
+        if not model or not settings.openai_api_key:
+            raise ModelConfigurationError("model channel is not configured")
+        stream = self._client().chat.completions.create(
+            model=model,
+            stream=True,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+        )
+        for event in stream:
+            content = event.choices[0].delta.content if event.choices else None
+            if content:
+                yield content
 
     @staticmethod
     def _validate(

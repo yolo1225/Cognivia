@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import JSON, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -24,6 +24,7 @@ class TutoringMessage(TimestampMixin, Base):
     sender: Mapped[str] = mapped_column(String(32))
     message_type: Mapped[str] = mapped_column(String(32))
     content: Mapped[str] = mapped_column(Text)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
     feedback_id: Mapped[int | None] = mapped_column(
         ForeignKey("resource_feedback.id", use_alter=True), nullable=True
     )

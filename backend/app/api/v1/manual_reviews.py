@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.security import Principal, require_admin
 from app.models import (
     GenerationTask,
     GraphCheckpoint,
@@ -100,6 +101,7 @@ def decide_manual_review(
     background_tasks: BackgroundTasks,
     payload: dict[str, Any] | None = None,
     db: Session = Depends(get_db),
+    principal: Principal = Depends(require_admin),
 ) -> ApiResponse:
     item = db.scalar(
         select(ManualReviewTask).where(ManualReviewTask.public_id == review_id)
@@ -124,7 +126,7 @@ def decide_manual_review(
     item.status = "resolved"
     item.decision = decision
     item.review_comment = review_comment
-    item.reviewed_by = str((payload or {}).get("reviewed_by") or "demo_admin")[:64]
+    item.reviewed_by = principal.user_id[:64]
     db.commit()
     background_tasks.add_task(run_generation_task, task.public_id)
     return ok(

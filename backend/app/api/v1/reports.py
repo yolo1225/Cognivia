@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.security import Principal, assert_learner_access, get_current_user
 from app.models import Feedback, GenerationTask, Learner, LearningPath, LearningResource, ReviewReport
 from app.schemas.common import ApiResponse, ok
 from app.services.profile_service import latest_profile_for_learner, serialize_profile_detail
@@ -128,7 +129,8 @@ def _next_actions(
 
 
 @router.get("/learners/{learner_id}", response_model=ApiResponse)
-def get_learning_report(learner_id: str, db: Session = Depends(get_db)) -> ApiResponse:
+def get_learning_report(learner_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+    assert_learner_access(principal,learner_id)
     learner = db.scalar(select(Learner).where(Learner.public_id == learner_id))
     if learner is None:
         raise HTTPException(status_code=404, detail=f"Learner not found: {learner_id}")

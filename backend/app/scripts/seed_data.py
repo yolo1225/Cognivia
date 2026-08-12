@@ -10,15 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
 from app.models import (
-    DemoUser,
     DiagnosticQuestion,
     Domain,
     KnowledgeItem,
     KnowledgeDocument,
     KnowledgeRelation,
-    Learner,
-    LearnerProfile,
-    LearningPath,
 )
 from app.rag.chunker import chunk_markdown
 
@@ -178,111 +174,10 @@ def seed_diagnostic_questions(
     return questions
 
 
-PROFILE_PRESETS = {
-    "beginner": {
-        "ability_profile_json": {
-            "theory": 35,
-            "practice": 25,
-            "problem_solving": 30,
-            "breadth": 25,
-            "learning_speed": 45,
-        },
-        "weak_knowledge_json": ["http_rest_basics", "prompt_output_format", "rag_pipeline_overview"],
-    },
-    "advanced": {
-        "ability_profile_json": {
-            "theory": 65,
-            "practice": 75,
-            "problem_solving": 70,
-            "breadth": 60,
-            "learning_speed": 70,
-        },
-        "weak_knowledge_json": [
-            "llm_judge_reliability",
-            "evaluation_metrics",
-            "observability_tracing",
-        ],
-    },
-    "practice_oriented": {
-        "ability_profile_json": {
-            "theory": 45,
-            "practice": 70,
-            "problem_solving": 60,
-            "breadth": 40,
-            "learning_speed": 60,
-        },
-        "weak_knowledge_json": ["prompt_evaluation", "citation_traceability", "privacy_log_policy"],
-    },
-}
-
-
-def seed_learners(db: Session) -> None:
-    payloads = load_json("sample_learners.json")
-    for payload in payloads:
-        learner = upsert_by_field(
-            db,
-            Learner,
-            "public_id",
-            payload["learner_id"],
-            {
-                "public_id": payload["learner_id"],
-                "background": payload.get("background", ""),
-                "target_domain": payload.get("target_domain", "ai_app_dev"),
-                "experience_years": payload.get("experience_years", 0),
-                "learning_style": payload.get("learning_style", "mixed"),
-            },
-        )
-        db.flush()
-        profile_type = payload.get("profile_type", "beginner")
-        preset = PROFILE_PRESETS.get(profile_type, PROFILE_PRESETS["beginner"])
-        profile_public_id = f"profile_{payload['learner_id']}"
-        profile = upsert_by_field(
-            db,
-            LearnerProfile,
-            "public_id",
-            profile_public_id,
-            {
-                "public_id": profile_public_id,
-                "learner_id": learner.id,
-                "domain_code": payload.get("target_domain", "ai_app_dev"),
-                "ability_profile_json": {
-                    **preset["ability_profile_json"],
-                    "profile_type": profile_type,
-                },
-                "weak_knowledge_json": preset["weak_knowledge_json"],
-            },
-        )
-        db.flush()
-        upsert_by_field(
-            db,
-            LearningPath,
-            "public_id",
-            f"path_{payload['learner_id']}",
-            {
-                "public_id": f"path_{payload['learner_id']}",
-                "learner_id": learner.id,
-                "profile_id": profile.id,
-                "domain_code": payload.get("target_domain", "ai_app_dev"),
-                "status": "active",
-                "path_json": {
-                    "profile_type": profile_type,
-                    "stages": [
-                        {"name": "基础补齐", "knowledge_ids": preset["weak_knowledge_json"][:2]},
-                        {"name": "任务实作", "resource_types": ["practice_guide", "graded_quiz"]},
-                    ],
-                },
-                "needs_refresh": False,
-            },
-        )
-
-
 def seed_demo_users(db: Session) -> None:
-    users = [
-        {"public_id": "demo_instructor", "role": "instructor", "display_name": "演示教师"},
-        {"public_id": "demo_learner", "role": "learner", "display_name": "演示学员"},
-    ]
-    for user in users:
-        upsert_by_field(db, DemoUser, "public_id", user["public_id"], user)
+    # Authentication users are created by registration or init_admin.py.
+    # Legacy demo learner records remain seeded separately as business fixtures.
+    return None
 
 
 def run_seed() -> dict[str, int]:
@@ -290,7 +185,6 @@ def run_seed() -> dict[str, int]:
         seed_domain(db)
         knowledge_items = seed_knowledge_items(db)
         questions = seed_diagnostic_questions(db, knowledge_items)
-        seed_learners(db)
         seed_demo_users(db)
         db.commit()
 
@@ -298,7 +192,7 @@ def run_seed() -> dict[str, int]:
             "domains": db.scalar(select(Domain).where(Domain.domain_code == "ai_app_dev")) is not None,
             "knowledge_items": len(knowledge_items),
             "diagnostic_questions": len(questions),
-            "learners": len(load_json("sample_learners.json")),
+            "learners": 0,
         }
 
 

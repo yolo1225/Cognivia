@@ -142,10 +142,7 @@ function Sync-FrontendDependencies {
 function Test-DemoEnvironment {
     Wait-Backend
     $dependencies = Invoke-RestMethod -Uri "http://localhost:8000/api/v1/health/dependencies" -TimeoutSec 10
-    $knowledge = Invoke-RestMethod -Uri "http://localhost:8000/api/v1/knowledge/items?domain_code=ai_app_dev&limit=60" -TimeoutSec 10
-    if ($knowledge.data.total -lt 50) {
-        throw "Knowledge seed validation failed: expected at least 50 items."
-    }
+    Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.validate_rag_seed")
     $questionFile = Get-Content "data/seed/diagnostic_questions.json" -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($questionFile.Length -lt 60) {
         throw "Diagnostic seed validation failed: expected at least 60 questions."
@@ -156,7 +153,7 @@ function Test-DemoEnvironment {
         chroma = $dependencies.data.chroma.status
         live_models_ready = $dependencies.data.ready_for_live_demo
         fixture_enabled = $dependencies.data.fixture_enabled
-        knowledge_items = $knowledge.data.total
+        knowledge_items = "validated"
         diagnostic_questions = $questionFile.Length
     } | Format-List
     if (-not $dependencies.data.ready_for_live_demo) {
@@ -237,6 +234,7 @@ switch ($Action) {
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "backend")
         Wait-Backend
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "alembic", "upgrade", "head")
+        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.init_admin")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.seed_data", "--json")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_index", "--reset", "--json")
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "frontend")
@@ -258,6 +256,7 @@ switch ($Action) {
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "backend")
         Wait-Backend
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "alembic", "upgrade", "head")
+        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.init_admin")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.seed_data", "--json")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_index", "--reset", "--json")
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "frontend")
