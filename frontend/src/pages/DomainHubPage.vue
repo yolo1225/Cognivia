@@ -1,6 +1,6 @@
 <template>
   <section class="page">
-    <div class="head"><div><h1>领域管理</h1><p class="sub">在同一个领域上下文中维护知识数据、诊断题、关系和必要的差异规则。</p></div></div>
+    <div class="head"><div><h1>领域管理</h1></div></div>
 
     <div class="hub-context">
       <div class="hub-current">

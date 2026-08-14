@@ -1,6 +1,6 @@
 <template>
   <section class="page">
-    <div class="head"><div><h1>Agent 协同工作台</h1><p class="sub">实时查看多智能体协作流程，展示每个节点的职责和运行状态。</p></div>
+    <div class="head"><div><h1>Agent 协同工作台</h1></div>
       <div class="actions">
         <button class="btn" @click="loadTask">刷新任务</button>
         <button class="btn primary" v-if="taskResult" @click="router.push('/resources')">查看本次资源</button>

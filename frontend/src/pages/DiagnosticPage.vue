@@ -1,7 +1,7 @@
 <template>
   <section class="page">
     <div class="head">
-      <div><h1>诊断与画像</h1><p class="sub">测评结果与答题证据共同形成画像，"未掌握"和"尚未测评"严格区分。</p></div>
+      <div><h1>诊断与画像</h1></div>
       <div class="actions">
         <button class="btn" @click="showProfile = !showProfile">{{ showProfile ? '返回诊断题' : '查看画像结果' }}</button>
         <button class="btn primary" @click="startSession" :disabled="creatingSession">{{ creatingSession ? '创建中...' : session ? '继续答题' : '创建 10 题测评' }}</button>

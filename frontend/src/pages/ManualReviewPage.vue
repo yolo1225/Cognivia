@@ -1,6 +1,6 @@
 <template>
   <section class="page">
-    <div class="head"><div><h1>人工复核</h1><p class="sub">仅管理员查看未发布资源、双通道分歧与重新检索证据。</p></div></div>
+    <div class="head"><div><h1>人工复核</h1></div></div>
 
     <div v-if="pendingCount > 0" class="review-banner">
       <div><strong>{{ pendingCount }} 项等待人工决定</strong><p style="margin-top:5px;font-size:12px">请在详情中逐一复核。</p></div>

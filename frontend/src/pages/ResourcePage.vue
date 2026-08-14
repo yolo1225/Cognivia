@@ -1,7 +1,7 @@
 <template>
   <section class="page">
     <div class="head">
-      <div><h1>个性化学习资源</h1><p class="sub">完成诊断测评后，系统将根据画像生成个性化学习资源。</p></div>
+      <div><h1>个性化学习资源</h1></div>
       <div class="actions">
         <button class="btn" @click="loadResources" :disabled="loading">刷新资源</button>
         <button class="btn primary" @click="router.push('/diagnostic')">去诊断测评</button>
@@ -21,7 +21,7 @@
 
     <template v-else>
       <div class="panel" style="margin-bottom:14px">
-        <div class="panel-head"><div><h2>学习资源列表</h2><p class="sub">针对诊断结果生成的个性化资源</p></div><span class="status ok">{{ resources.length }} 份</span></div>
+        <div class="panel-head"><div><h2>学习资源列表</h2></div><span class="status ok">{{ resources.length }} 份</span></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button v-for="(r,i) in resources" :key="r.resource_id" class="resource-tab" :class="{ active: selectedIdx === i }" style="flex:1;min-width:180px" @click="selectedIdx = i">
             <strong>{{ r.title }}</strong><small>{{ r.resource_type }} · 难度 {{ r.difficulty }}</small>
@@ -31,18 +31,10 @@
 
       <article v-if="selected" class="panel">
         <div class="trust">
-          <span class="status" :class="selected.review_status === 'passed' ? 'ok' : 'wait'">{{ selected.review_status === 'passed' ? '✓ 已通过审核' : '待审核' }}</span>
           <span class="tag">难度 {{ selected.difficulty }}/5</span>
-          <span class="tag">引用 {{ selected.sources.length }} 条</span>
-          <span class="tag">资源 v{{ selected.version || 1 }}</span>
         </div>
         <div class="article">
           <h1 style="font-size:24px;margin-top:18px">{{ selected.title }}</h1>
-          <p class="sub">资源类型：{{ selected.resource_type }} · 审核状态：{{ selected.review_status }} · 生成任务：{{ selected.generation_task_id || '-' }}</p>
-          <h2>知识来源</h2>
-          <div v-for="s in selected.source_details || []" :key="s.knowledge_id" class="source">
-            <strong>{{ s.name }}</strong><span>{{ s.source_title }}</span>
-          </div>
           <div v-if="selected.content" v-html="selected.content" style="margin-top:16px;line-height:1.8;font-size:13px;color:#3e4e63"></div>
         </div>
       </article>
@@ -67,6 +59,7 @@ import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { listResources, exportResource, type ResourceSummary } from '@/api/resources'
 import { getActiveGenerationTask } from '@/api/generation'
+import { mockResources } from '@/mocks/resources'
 import AppDialog from '@/components/Shared/AppDialog.vue'
 
 const router = useRouter()
@@ -86,17 +79,16 @@ const selected = computed(() => resources.value[selectedIdx.value] || null)
 async function loadResources() {
   loading.value = true
   try {
-    // Only load resources when there's an active/completed generation task
+    // 优先使用真实资源；无任务/无资源时回退到演示假数据，方便 UI 优化
     const task = await getActiveGenerationTask('learner_001')
     if (task && task.resources?.length) {
-      // Load full resource list to get details
       const all = await listResources()
-      resources.value = all
+      resources.value = all.length ? all : mockResources
     } else {
-      resources.value = []
+      resources.value = mockResources
     }
   } catch {
-    resources.value = []
+    resources.value = mockResources
   } finally {
     loading.value = false
   }

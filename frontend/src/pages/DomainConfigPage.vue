@@ -1,6 +1,6 @@
 <template>
   <section class="page">
-    <div class="head"><div><h1>领域管理与配置</h1><p class="sub">创建和维护多个垂直领域；每个领域拥有独立的数据包、能力模型、难度标准、审核规则和资源模板。</p></div></div>
+    <div class="head"><div><h1>领域管理与配置</h1></div></div>
 
     <div class="domain-workspace">
       <aside class="panel">

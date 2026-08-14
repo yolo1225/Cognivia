@@ -1,7 +1,7 @@
 <template>
   <section class="page">
     <div class="head">
-      <div><h1>用户管理</h1><p class="sub">维护系统用户及其领域学习档案。</p></div>
+      <div><h1>用户管理</h1></div>
     </div>
 
     <div class="metrics">

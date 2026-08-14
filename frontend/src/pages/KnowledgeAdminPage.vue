@@ -1,6 +1,6 @@
 <template>
   <section class="page">
-    <div class="head"><div><h1>知识库管理</h1><p class="sub">维护 ai_app_dev 领域知识、来源和关系，并控制向量索引重建与学习路径影响。</p></div>
+    <div class="head"><div><h1>知识库管理</h1></div>
       <div class="actions">
         <button class="btn" @click="showImport = !showImport">{{ showImport ? '取消' : '新增知识点' }}</button>
         <button class="btn primary" @click="loadItems" :disabled="loading">刷新列表</button>
