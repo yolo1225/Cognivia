@@ -7,23 +7,6 @@ const fallbackBaseUrl = '/api/v1'
 export const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || fallbackBaseUrl,
   timeout: 15000,
-  withCredentials: true,
-})
-
-apiClient.interceptors.request.use((config) => {
-  const csrf = document.cookie.split('; ').find(item => item.startsWith('csrf_token='))?.split('=')[1]
-  if (csrf && !['get','head','options'].includes(String(config.method).toLowerCase())) config.headers['X-CSRF-Token'] = decodeURIComponent(csrf)
-  return config
-})
-
-let refreshPromise: Promise<unknown> | null = null
-apiClient.interceptors.response.use(undefined, async (error) => {
-  const config = error.config
-  if (error.response?.status !== 401 || config?._retried || String(config?.url).includes('/auth/')) throw error
-  config._retried = true
-  refreshPromise ||= apiClient.post('/auth/refresh').finally(() => { refreshPromise = null })
-  await refreshPromise
-  return apiClient.request(config)
 })
 
 export async function getData<T>(url: string): Promise<T> {
@@ -46,7 +29,7 @@ export function subscribeTaskEvents(
   onEvent: (event: AgentStatusEvent) => void,
 ): EventSource {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || fallbackBaseUrl
-  const source = new EventSource(`${baseUrl}/generation-tasks/${taskId}/events`, { withCredentials: true })
+  const source = new EventSource(`${baseUrl}/generation-tasks/${taskId}/events`)
   const eventTypes = [
     'trigger_routed',
     'agent_status',

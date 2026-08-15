@@ -1,6 +1,5 @@
 <template>
-  <router-view v-if="$route.meta.guest" />
-  <AppLayout v-else />
+  <AppLayout />
 </template>
 
 <script setup lang="ts">
