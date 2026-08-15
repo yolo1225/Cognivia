@@ -1,7 +1,7 @@
 <template>
   <header class="top">
     <div>
-      <strong>个性化实训工作区</strong>
+      <strong class="workspace-name">个性化实训工作区</strong>
       <span class="sep"></span>
       <span class="crumb">{{ pageLabel }}</span>
     </div>

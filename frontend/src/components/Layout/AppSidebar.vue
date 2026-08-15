@@ -4,6 +4,7 @@
       <div class="mark">域</div>
       <div>
         <strong>云川智汇</strong>
+        <small>学习决策工作台</small>
       </div>
     </div>
     <nav class="nav">
@@ -12,7 +13,10 @@
         <button
           v-for="item in group.items"
           :key="item.page"
+          type="button"
           :class="{ active: route.path === item.route }"
+          :aria-current="route.path === item.route ? 'page' : undefined"
+          :title="item.label"
           @click="router.push(item.route)"
         >
           <span class="nav-icon">{{ item.icon }}</span>
