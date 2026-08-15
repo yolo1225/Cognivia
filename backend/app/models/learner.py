@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -27,6 +27,8 @@ class LearnerProfile(TimestampMixin, Base):
     ability_profile_json: Mapped[dict] = mapped_column(JSON, default=dict)
     weak_knowledge_json: Mapped[list] = mapped_column(JSON, default=list)
     profile_version: Mapped[int] = mapped_column(default=1)
+    profile_source: Mapped[str] = mapped_column(String(32), default="default_seed", index=True)
+    diagnosis_completed: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     previous_profile_id: Mapped[int | None] = mapped_column(
         ForeignKey("learner_profiles.id"), nullable=True
     )

@@ -9,11 +9,8 @@ import pytest
 
 from app.scripts.evaluate_rag import (
     _markdown_report,
-    aggregate_v2_reports,
-    build_legacy_corpus,
-    evaluate_v2_cases,
-    legacy_hash_query,
-    run_evaluation,
+    aggregate_candidate_reports,
+    evaluate_candidate_cases,
 )
 from app.agents.contracts import RetrieveKnowledgeOutput, RetrievedChunk, RetrievalMatchType, RetrievalPurpose, SourceRef
 from app.scripts.validate_rag_evaluation import (
@@ -100,29 +97,6 @@ def test_canonical_case_hash_does_not_depend_on_file_order() -> None:
     assert canonical_cases_sha256(cases) == canonical_cases_sha256(list(reversed(cases)))
 
 
-def test_legacy_hash_ranking_is_deterministic() -> None:
-    corpus = build_legacy_corpus(load_knowledge_items(DEFAULT_KNOWLEDGE_PATH))
-
-    first = legacy_hash_query(corpus, "RAG 文档切片 标题 重叠上下文", n_results=12)
-    second = legacy_hash_query(corpus, "RAG 文档切片 标题 重叠上下文", n_results=12)
-
-    assert [item["chunk_id"] for item in first] == [item["chunk_id"] for item in second]
-    assert [item["distance"] for item in first] == [item["distance"] for item in second]
-
-
-def test_legacy_hash_evaluation_outcomes_are_deterministic() -> None:
-    first = run_evaluation(split="acceptance")
-    second = run_evaluation(split="acceptance")
-
-    assert first["metrics"]["recall_at_12"] == second["metrics"]["recall_at_12"]
-    assert first["metrics"]["priority_top_12_coverage"] == second["metrics"][
-        "priority_top_12_coverage"
-    ]
-    assert [case["retrieved_knowledge_ids"] for case in first["cases"]] == [
-        case["retrieved_knowledge_ids"] for case in second["cases"]
-    ]
-
-
 def test_rag_dataset_is_isolated_from_existing_p0_loader_directory() -> None:
     p0_path = PROJECT_ROOT / "data" / "evaluation_cases" / "p0_cases.json"
     p0_payload = json.loads(p0_path.read_text(encoding="utf-8"))
@@ -135,22 +109,22 @@ def test_rag_dataset_is_isolated_from_existing_p0_loader_directory() -> None:
 
     assert len(p0_payload["cases"]) == 50
     assert len(loaded_p0_cases) == 50
-    assert manifest["active_file"] == "v2/p0_cases.json"
+    assert manifest["active_file"] == "v3/p0_cases.json"
     assert DEFAULT_DATA_DIR.parent != p0_path.parent
 
 
-def test_v2_evaluation_records_contract_and_index_metadata() -> None:
+def test_candidate_evaluation_records_contract_and_index_metadata() -> None:
     datasets, metadata = load_evaluation_data()
     case = next(
         item for item in datasets["development"] if item["retrieval_plan"]["priority_knowledge_ids"]
     )
     knowledge_id = case["retrieval_plan"]["priority_knowledge_ids"][0]
 
-    class StubV2Agent:
+    class StubAgent:
         def execute(self, request):
             return RetrieveKnowledgeOutput(
                 task_id=request.task_id,
-                query_text="validated V2 query",
+                query_text="validated candidate query",
                 chunks=[
                     RetrievedChunk(
                         chunk_id=f"{knowledge_id}::chunk::0",
@@ -175,9 +149,9 @@ def test_v2_evaluation_records_contract_and_index_metadata() -> None:
             )
 
     items = load_knowledge_items(DEFAULT_KNOWLEDGE_PATH)
-    result = evaluate_v2_cases(
+    result = evaluate_candidate_cases(
         [case],
-        StubV2Agent(),
+        StubAgent(),
         split="development",
         knowledge_ids={item["knowledge_id"] for item in items},
         knowledge_version="test-version",
@@ -187,16 +161,16 @@ def test_v2_evaluation_records_contract_and_index_metadata() -> None:
         mode="full",
     )
 
-    assert result["engine"] == "v2-candidate"
-    assert result["metrics"]["v2_contract_illegal_outputs"] == 0
+    assert result["engine"] == "candidate-rag"
+    assert result["metrics"]["contract_illegal_outputs"] == 0
     assert result["index_version"] == "test-index"
 
 
-def test_v2_report_renders_metadata_and_failure_attribution() -> None:
+def test_candidate_report_renders_metadata_and_failure_attribution() -> None:
     datasets, metadata = load_evaluation_data()
     case = datasets["development"][0]
 
-    class EmptyV2Agent:
+    class EmptyAgent:
         def execute(self, request):
             return RetrieveKnowledgeOutput(
                 task_id=request.task_id,
@@ -206,9 +180,9 @@ def test_v2_report_renders_metadata_and_failure_attribution() -> None:
                 warnings=["explicit_knowledge_unavailable:missing"],
             )
 
-    result = evaluate_v2_cases(
+    result = evaluate_candidate_cases(
         [case],
-        EmptyV2Agent(),
+        EmptyAgent(),
         split="development",
         knowledge_ids={item["knowledge_id"] for item in load_knowledge_items(DEFAULT_KNOWLEDGE_PATH)},
         knowledge_version="test-version",
@@ -220,13 +194,12 @@ def test_v2_report_renders_metadata_and_failure_attribution() -> None:
 
     assert "index" in result["cases"][0]["failure_attributions"]
     markdown = _markdown_report(result)
-    assert "# V2 Candidate RAG Evaluation" in markdown
+    assert "# Candidate RAG Evaluation" in markdown
     assert "Candidate 索引版本：`test-index`" in markdown
-    assert "V2 契约非法输出：0" in markdown
-    assert "# RAG Legacy Hash Baseline" not in markdown
+    assert "contract_illegal_outputs" in markdown
 
 
-def test_aggregate_v2_reports_preserves_frozen_run_metadata() -> None:
+def test_aggregate_candidate_reports_preserves_frozen_run_metadata() -> None:
     datasets, metadata = load_evaluation_data()
     case = next(
         item
@@ -235,11 +208,11 @@ def test_aggregate_v2_reports_preserves_frozen_run_metadata() -> None:
     )
     knowledge_id = case["retrieval_plan"]["priority_knowledge_ids"][0]
 
-    class PriorityOnlyV2Agent:
+    class PriorityOnlyAgent:
         def execute(self, request):
             return RetrieveKnowledgeOutput(
                 task_id=request.task_id,
-                query_text="aggregated V2 query",
+                query_text="aggregated V3 query",
                 chunks=[
                     RetrievedChunk(
                         chunk_id=f"{knowledge_id}::chunk::0",
@@ -263,9 +236,9 @@ def test_aggregate_v2_reports_preserves_frozen_run_metadata() -> None:
                 covered_knowledge_ids=[knowledge_id],
             )
 
-    result = evaluate_v2_cases(
+    result = evaluate_candidate_cases(
         [case],
-        PriorityOnlyV2Agent(),
+        PriorityOnlyAgent(),
         split="development",
         knowledge_ids={item["knowledge_id"] for item in load_knowledge_items(DEFAULT_KNOWLEDGE_PATH)},
         knowledge_version="test-version",
@@ -280,7 +253,7 @@ def test_aggregate_v2_reports_preserves_frozen_run_metadata() -> None:
     for values in acceptance["failed_case_ids"].values():
         values[:] = ["RAG-ACC-TEST"]
 
-    aggregate = aggregate_v2_reports(result, acceptance)
+    aggregate = aggregate_candidate_reports(result, acceptance)
 
     assert aggregate["status"] == "aggregated"
     assert aggregate["split"] == "all"

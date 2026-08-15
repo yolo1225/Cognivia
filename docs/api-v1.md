@@ -1,6 +1,6 @@
 # API v1 契约
 
-所有 JSON 响应统一包含 `schema_version`、`request_id`、`data` 或 `error`、`timestamp`。生成任务的 `task_id` 同时作为 LangGraph `thread_id`，首次生成、反馈触发和人工恢复不更换 ID。
+所有 JSON 响应统一包含 `schema_version`、`request_id`、`data` 或 `error`、`timestamp`。生成任务的 `task_id` 同时作为 LangGraph `thread_id`，首次生成和反馈触发不更换 ID。
 
 ## 核心接口
 
@@ -16,9 +16,6 @@
 | POST | `/api/v1/resources/{id}/feedback` | 快捷标签、评分或选中文本反馈 |
 | GET | `/api/v1/resources/{id}/versions` | 获取资源系列版本链 |
 | POST | `/api/v1/resources/{id}/export` | 生成 Markdown/PDF 导出并返回哈希和审核信息 |
-| GET | `/api/v1/manual-reviews` | 管理员人工复核列表 |
-| GET | `/api/v1/manual-reviews/{id}` | 人工复核详情 |
-| POST | `/api/v1/manual-reviews/{id}/decision` | `approve/request_revision/reject` 并恢复原 Thread |
 | GET | `/api/v1/evaluations/summary?mode=live\|baseline` | 读取 live 或 baseline 评测结果，默认 live |
 | GET | `/api/v1/health/dependencies` | 数据库、Chroma、模型通道和真实演示就绪状态 |
 | PATCH | `/api/v1/knowledge/items/{id}` | 修改知识点、关系并标记局部影响范围 |
@@ -40,8 +37,6 @@ profile_update_decided
 profile_updated | profile_unchanged
 review_disagreement
 review_retrieval_started
-manual_review_required
-manual_review_resolved
 path_refresh_started
 path_refresh_completed
 resource_created

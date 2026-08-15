@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 
 from app.agents.contract_adapters import render_resource_markdown
@@ -15,6 +16,7 @@ from app.agents.contracts import (
     ConversationSummary,
     DiagnosticSummary,
     EvidenceRef,
+    EvidenceVerdict,
     EvidenceType,
     ExecutionMode,
     FactCheck,
@@ -26,11 +28,9 @@ from app.agents.contracts import (
     GenerateResourceOutput,
     GeneratedResourceArtifact,
     GenerationRequirements,
+    GenerationPackageQuality,
     GenerationStrategy,
     GradedQuizContent,
-    HumanDecision,
-    HumanReviewInput,
-    HumanReviewOutput,
     InterpretFeedbackInput,
     InterpretFeedbackOutput,
     KnowledgeAssessment,
@@ -61,6 +61,7 @@ from app.agents.contracts import (
     ReviewCriterionScores,
     ReviewDecision,
     ReviewReport,
+    ResourceQualityMetrics,
     ReviewResourceInput,
     ReviewResourceOutput,
     RetrievedChunk,
@@ -77,6 +78,13 @@ TASK_ID = "task_contract_example"
 SOURCE = SourceRef(
     source_ref_id="AIAPP-K029::chunk::0",
     knowledge_id="AIAPP-K029",
+    source_title="自建 AI 应用开发实训知识库",
+    source_url=None,
+    license_note="team-authored",
+)
+PREREQUISITE_SOURCE = SourceRef(
+    source_ref_id="AIAPP-K028::chunk::0",
+    knowledge_id="AIAPP-K028",
     source_title="自建 AI 应用开发实训知识库",
     source_url=None,
     license_note="team-authored",
@@ -109,7 +117,7 @@ PROFILE = ProfileSnapshot(
 PLAN = RetrievalPlan(
     strategy=GenerationStrategy.REMEDIAL,
     target_difficulty=2,
-    resource_types=[ResourceType.LECTURE],
+    resource_types=list(ResourceType),
     priority_knowledge_ids=["AIAPP-K029"],
     prerequisite_knowledge_ids=["AIAPP-K028"],
     query_terms=["RAG 检索", "来源追溯"],
@@ -143,7 +151,7 @@ def _initial_context() -> TaskContext:
         learner_id="learner_001",
         profile_id=PROFILE.profile_id,
         domain_code="ai_app_dev",
-        resource_types=[ResourceType.LECTURE],
+        resource_types=list(ResourceType),
         learning_goal="掌握 RAG 检索与来源追溯",
     )
 
@@ -167,17 +175,38 @@ def _feedback_context() -> TaskContext:
 
 
 def _chunk() -> RetrievedChunk:
+    content = "RAG 检索需要保留知识片段与来源标识，生成内容只能引用已检索证据。"
     return RetrievedChunk(
         chunk_id="AIAPP-K029::chunk::0",
         knowledge_id="AIAPP-K029",
         name="RAG 检索与来源追溯",
         category="RAG",
         difficulty=2,
-        content="RAG 检索需要保留知识片段与来源标识，生成内容只能引用已检索证据。",
+        content=content,
         similarity=0.92,
         matched_by=RetrievalMatchType.PRIORITY,
         used_for=RetrievalPurpose.REMEDIAL_EXPLANATION,
         source=SOURCE,
+        content_checksum=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        source_locator="knowledge:AIAPP-K029#chunk=0",
+    )
+
+
+def _prerequisite_chunk() -> RetrievedChunk:
+    content = "文本向量将语义映射为可比较的数值表示，相似度用于召回候选知识片段。"
+    return RetrievedChunk(
+        chunk_id="AIAPP-K028::chunk::0",
+        knowledge_id="AIAPP-K028",
+        name="文本向量与语义相似度",
+        category="RAG",
+        difficulty=2,
+        content=content,
+        similarity=0.88,
+        matched_by=RetrievalMatchType.PREREQUISITE,
+        used_for=RetrievalPurpose.REMEDIAL_EXPLANATION,
+        source=PREREQUISITE_SOURCE,
+        content_checksum=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        source_locator="knowledge:AIAPP-K028#chunk=0",
     )
 
 
@@ -186,8 +215,8 @@ def _requirements(resource_types: list[ResourceType]) -> GenerationRequirements:
         resource_types=resource_types,
         target_difficulty=2,
         strategy=GenerationStrategy.REMEDIAL,
-        required_knowledge_ids=["AIAPP-K029"],
-        source_whitelist=[SOURCE.source_ref_id],
+        required_knowledge_ids=["AIAPP-K029", "AIAPP-K028"],
+        source_whitelist=[SOURCE.source_ref_id, PREREQUISITE_SOURCE.source_ref_id],
         adaptation_notes=["使用小步解释和明确检查点"],
     )
 
@@ -199,6 +228,12 @@ def _lecture_artifact() -> GeneratedResourceArtifact:
         learning_objectives=["能说明检索片段与来源引用的关系"],
         prerequisite_knowledge=["文本向量基础"],
         core_concepts=[
+            ConceptBlock(
+                title="向量相似度召回",
+                explanation="文本向量和相似度计算为候选知识片段召回提供基础。",
+                example="先用语义相似度召回候选片段，再检查片段来源。",
+                source_ref_ids=[PREREQUISITE_SOURCE.source_ref_id],
+            ),
             ConceptBlock(
                 title="可追溯检索",
                 explanation="检索结果必须携带稳定的来源标识。",
@@ -218,9 +253,13 @@ def _lecture_artifact() -> GeneratedResourceArtifact:
     return GeneratedResourceArtifact(
         resource_type=ResourceType.LECTURE,
         structured_content=content,
-        content_md=render_resource_markdown(content, [SOURCE]),
+        content_md=render_resource_markdown(content, [SOURCE, PREREQUISITE_SOURCE]),
         difficulty=2,
-        source_refs=[SOURCE],
+        source_refs=[SOURCE, PREREQUISITE_SOURCE],
+        knowledge_coverage={
+            "AIAPP-K029": [SOURCE.source_ref_id],
+            "AIAPP-K028": [PREREQUISITE_SOURCE.source_ref_id],
+        },
     )
 
 
@@ -235,7 +274,7 @@ def _practice_artifact() -> GeneratedResourceArtifact:
                 order=1,
                 title="执行检索",
                 instruction="使用学习目标构造查询并保留来源标识。",
-                code_or_command="python -m app.scripts.build_chroma_index --json",
+                code_or_command="检查 candidate index 的 active collection 和来源标识。",
                 expected_result="返回知识点 ID 和来源标题。",
                 troubleshooting="无结果时检查索引状态。",
                 source_ref_ids=[SOURCE.source_ref_id],
@@ -305,8 +344,10 @@ def _passed_review(resource_type: ResourceType) -> ReviewReport:
         core_knowledge_coverage=94,
     )
     fact_check = FactCheck(
+        claim_id="clm_contract_supported_001",
+        field_path="core_concepts[0].explanation[0]",
         claim="RAG 资源需保留来源标识。",
-        supported=True,
+        verdict=EvidenceVerdict.SUPPORTED,
         source_ref_ids=[SOURCE.source_ref_id],
         reason="检索证据明确支持该声明。",
     )
@@ -337,7 +378,21 @@ def _passed_review(resource_type: ResourceType) -> ReviewReport:
         evidence_ref_ids=[SOURCE.source_ref_id],
         decision=ReviewDecision.PASSED,
         passed=True,
-        manual_review_required=False,
+        quality_metrics=ResourceQualityMetrics(
+            verifiable_claim_count=1,
+            hallucinated_claim_count=0,
+            hallucination_rate=0,
+            difficulty_match_score=92,
+            covered_core_knowledge_count=1,
+            target_core_knowledge_count=1,
+            core_knowledge_coverage=100,
+            passed=True,
+            revision_count=0,
+        ),
+        claim_set_hash=hashlib.sha256(
+            fact_check.claim_id.encode("utf-8")
+        ).hexdigest(),
+        supported_claim_ids=[fact_check.claim_id],
     )
 
 
@@ -395,6 +450,7 @@ def initial_generation_flow_example() -> dict[str, object]:
         needs_generation=True,
     )
     chunk = _chunk()
+    prerequisite_chunk = _prerequisite_chunk()
     retrieve_input = RetrieveKnowledgeInput(
         task_id=TASK_ID,
         context=context,
@@ -405,43 +461,56 @@ def initial_generation_flow_example() -> dict[str, object]:
     retrieve_output = RetrieveKnowledgeOutput(
         task_id=TASK_ID,
         query_text="RAG 检索 来源追溯",
-        chunks=[chunk],
-        covered_knowledge_ids=["AIAPP-K029"],
-        missing_knowledge_ids=["AIAPP-K028"],
-        warnings=["前置知识将在后续关系扩展中补充"],
+        chunks=[chunk, prerequisite_chunk],
+        covered_knowledge_ids=["AIAPP-K029", "AIAPP-K028"],
+        missing_knowledge_ids=[],
+        warnings=[],
     )
-    requirements = _requirements([ResourceType.LECTURE])
+    requirements = _requirements(list(ResourceType))
     generate_input = GenerateResourceInput(
         task_id=TASK_ID,
         context=context,
         profile=PROFILE,
-        retrieved_chunks=[chunk],
+        retrieved_chunks=[chunk, prerequisite_chunk],
         requirements=requirements,
     )
-    lecture = _lecture_artifact()
-    generate_output = GenerateResourceOutput(task_id=TASK_ID, resources=[lecture])
+    resources = resource_examples()
+    generate_output = GenerateResourceOutput(task_id=TASK_ID, resources=resources)
     review_input = ReviewResourceInput(
         task_id=TASK_ID,
         context=context,
-        resources=[lecture],
+        resources=resources,
         requirements=requirements,
-        evidence=[chunk],
+        evidence=[chunk, prerequisite_chunk],
     )
-    report = _passed_review(ResourceType.LECTURE)
-    review_output = ReviewResourceOutput(task_id=TASK_ID, reports=[report])
+    reports = [_passed_review(resource_type) for resource_type in ResourceType]
+    package_quality = GenerationPackageQuality(
+        verifiable_claim_count=3,
+        hallucinated_claim_count=0,
+        hallucination_rate=0,
+        difficulty_match_score=92,
+        covered_core_knowledge_count=3,
+        target_core_knowledge_count=3,
+        core_knowledge_coverage=100,
+        passed=True,
+        revision_count=0,
+    )
+    review_output = ReviewResourceOutput(
+        task_id=TASK_ID, reports=reports, package_quality=package_quality
+    )
     finalize_input = FinalizeTaskInput(
         task_id=TASK_ID,
         context=context,
-        resources=[lecture],
-        review_reports=[report],
+        resources=resources,
+        review_reports=reports,
         revision_count=0,
+        package_quality=package_quality,
     )
     finalize_output = FinalizeTaskOutput(
         task_id=TASK_ID,
         decision=TaskDecision.COMPLETED,
         revision_count=0,
-        passed_resource_types=[ResourceType.LECTURE],
-        manual_review_required=False,
+        passed_resource_types=list(ResourceType),
         decision_reason="两路审核通过",
     )
     return {
@@ -528,7 +597,6 @@ def feedback_flow_example() -> dict[str, object]:
         task_id=context.task_id,
         decision=TaskDecision.NO_CHANGE,
         revision_count=0,
-        manual_review_required=False,
         decision_reason="证据不足，仅继续追问",
     )
     return {
@@ -537,26 +605,6 @@ def feedback_flow_example() -> dict[str, object]:
         "analyze_profile": {"input": analyze_input, "output": analyze_output},
         "finalize_task": {"input": finalize_input, "output": finalize_output},
     }
-
-
-def human_review_example() -> dict[str, object]:
-    context = _initial_context().model_copy(update={"execution_mode": ExecutionMode.ASSISTED})
-    report = _passed_review(ResourceType.LECTURE)
-    node_input = HumanReviewInput(
-        task_id=TASK_ID,
-        context=context,
-        review_reports=[report],
-        allowed_decisions=list(HumanDecision),
-    )
-    node_output = HumanReviewOutput(
-        task_id=TASK_ID,
-        decision=HumanDecision.APPROVE,
-        review_comment="人工核对来源后批准。",
-        operator_id="admin_demo",
-        reviewed_at=datetime(2026, 7, 17, 12, 0, tzinfo=UTC),
-        task_decision=TaskDecision.COMPLETED,
-    )
-    return {"human_review": {"input": node_input, "output": node_output}}
 
 
 def dump_example(value):

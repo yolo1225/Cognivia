@@ -100,7 +100,7 @@ class KnowledgeApiService:
                 include=["documents", "metadatas", "distances"],
             )
         except Exception as exc:
-            raise unavailable("CANDIDATE_RETRIEVAL_UNAVAILABLE", "Candidate V2 检索不可用") from exc
+            raise unavailable("CANDIDATE_RETRIEVAL_UNAVAILABLE", "Candidate V3 检索不可用") from exc
         ids, documents = result.get("ids", [[]])[0], result.get("documents", [[]])[0]
         metadatas, distances = result.get("metadatas", [[]])[0], result.get("distances", [[]])[0]
         matches = [
@@ -134,7 +134,7 @@ class KnowledgeApiService:
                 domain_code=domain_code, reset=reset, commit=False
             )
         except Exception as exc:
-            raise unavailable("CANDIDATE_INDEX_REBUILD_FAILED", "Candidate V2 索引重建失败") from exc
+            raise unavailable("CANDIDATE_INDEX_REBUILD_FAILED", "Candidate V3 索引重建失败") from exc
         return {"affected_domain": domain_code, **result}
 
     def reindex_status(self, domain_code: str, chroma_client: Any) -> dict[str, Any]:

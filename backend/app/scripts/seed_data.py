@@ -16,7 +16,7 @@ from app.models import (
     KnowledgeDocument,
     KnowledgeRelation,
 )
-from app.rag.chunker import chunk_markdown
+from app.rag.candidate_chunker import chunk_knowledge_item
 
 
 SEED_DIR = Path("/app/data/seed")
@@ -28,6 +28,19 @@ def load_json(filename: str) -> Any:
         fallback = Path(__file__).resolve().parents[3] / "data" / "seed" / filename
         path = fallback if fallback.exists() else path
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _candidate_chunk_count(payload: dict[str, Any]) -> int:
+    return len(
+        chunk_knowledge_item(
+            knowledge_id=str(payload["knowledge_id"]),
+            name=str(payload["name"]),
+            category=str(payload["category"]),
+            difficulty=int(payload.get("difficulty", 1)),
+            tags=list(payload.get("tags", [])),
+            content_md=str(payload["content"]),
+        )
+    )
 
 
 def upsert_by_field(
@@ -86,7 +99,7 @@ def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
             "sha256": "seed-ai-app-dev-core-v1",
             "status": "ready",
             "knowledge_item_count": len(payloads),
-            "chunk_count": sum(len(chunk_markdown(str(item["content"]))) for item in payloads),
+            "chunk_count": sum(_candidate_chunk_count(item) for item in payloads),
             "source_title": "AI 应用开发核心知识包",
             "license_note": "项目内置种子知识",
             "uploaded_by": "system",
@@ -154,6 +167,21 @@ def seed_diagnostic_questions(
     questions: list[DiagnosticQuestion] = []
     for payload in payloads:
         item = knowledge_items[payload["knowledge_id"]]
+        options = payload.get("options", [])
+        answer_key = dict(payload.get("answer_key", {}))
+        correct_option = answer_key.get("correct_option")
+        correct_text = (
+            options[correct_option]
+            if isinstance(correct_option, int) and 0 <= correct_option < len(options)
+            else "参考答案中的关键要点"
+        )
+        answer_key.setdefault(
+            "explanation",
+            f"正确答案为“{correct_text}”，对应知识点“{item.name}”的核心要求。",
+        )
+        answer_key.setdefault(
+            "source_locator", f"knowledge:{item.public_id}#chunk=0"
+        )
         question = upsert_by_field(
             db,
             DiagnosticQuestion,
@@ -165,8 +193,8 @@ def seed_diagnostic_questions(
                 "knowledge_item_id": item.id,
                 "question_type": payload["question_type"],
                 "stem": payload["stem"],
-                "options_json": payload.get("options", []),
-                "answer_key_json": payload.get("answer_key", {}),
+                "options_json": options,
+                "answer_key_json": answer_key,
                 "difficulty": payload.get("difficulty", item.difficulty),
             },
         )

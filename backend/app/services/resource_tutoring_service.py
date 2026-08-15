@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agents.v2_observability import record_model_call
+from app.agents.observability import record_model_call
 from app.core.config import settings
 from app.models import KnowledgeItem, LearningResource, TutoringMessage, TutoringSession
 from app.services.llm_service import ModelGatewayError, gateway

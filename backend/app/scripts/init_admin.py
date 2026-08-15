@@ -22,6 +22,7 @@ def ensure_admin_learner(db, user: User) -> None:
         db.flush()
     user.learner_id = learner.id
 
+
 def main() -> None:
     if not settings.initial_admin_password:
         raise SystemExit("INITIAL_ADMIN_PASSWORD is required")
@@ -33,11 +34,21 @@ def main() -> None:
             db.commit()
             print("Initial administrator already exists; learner profile ensured.")
             return
-        user = User(public_id="admin_initial", username=username,
+        user = User(
+            public_id="admin_initial",
+            username=username,
             password_hash=hash_password(settings.initial_admin_password),
-            display_name=settings.initial_admin_display_name, role="admin", status="active",
-            password_changed_at=datetime.now(UTC))
-        db.add(user); db.flush(); ensure_admin_learner(db, user); db.commit()
+            display_name=settings.initial_admin_display_name,
+            role="admin",
+            status="active",
+            password_changed_at=datetime.now(UTC),
+        )
+        db.add(user)
+        db.flush()
+        ensure_admin_learner(db, user)
+        db.commit()
         print("Initial administrator created with learner profile.")
 
-if __name__ == "__main__": main()
+
+if __name__ == "__main__":
+    main()

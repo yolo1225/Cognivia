@@ -10,7 +10,7 @@ from app.core.db import get_db
 from app.core.config import settings
 from app.core.security import Principal, get_current_user, principal_learner, require_resource, require_tutoring
 from app.core.db import SessionLocal
-from app.models import Learner, LearningResource, TutoringMessage, TutoringSession
+from app.models import Learner, TutoringMessage
 from app.schemas.common import ApiResponse, ok
 from app.services.learner_service import get_or_create_demo_learner
 from app.services.profile_service import default_profile_for_learner

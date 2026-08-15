@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.core.db import check_database_connection
 from app.rag.vector_store import get_vector_store
+from app.rag.readiness import candidate_rag_status
 from app.schemas.common import ApiResponse, ok
 from app.services.llm_service import gateway
 
@@ -18,6 +19,7 @@ def dependency_health_check() -> ApiResponse:
     database = _check_dependency("database", check_database_connection)
     chroma = _check_dependency("chroma", get_vector_store().health_check)
     models = gateway.configuration_status()
+    rag = candidate_rag_status("ai_app_dev")
     overall_status = (
         "ok"
         if database["status"] == chroma["status"] == models["status"] == "ok"
@@ -28,6 +30,7 @@ def dependency_health_check() -> ApiResponse:
             "status": overall_status,
             "database": database,
             "chroma": chroma,
+            "rag": rag,
             **models,
         }
     )

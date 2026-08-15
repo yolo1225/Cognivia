@@ -8,9 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.models import KnowledgeItem, KnowledgeRelation
-from app.rag.embeddings import embed_texts, embedding_model_name
-from app.rag.vector_store import VectorStore, get_vector_store
-from app.scripts.build_chroma_index import build_index
+from app.rag.readiness import candidate_rag_status
 from app.schemas.common import ApiResponse, ok
 from app.services.knowledge_update_service import (
     mark_affected_content,
@@ -271,32 +269,28 @@ def search_knowledge(
     query: str = Query(min_length=1),
     domain_code: str = Query(default="ai_app_dev"),
     n_results: int = Query(default=5, ge=1, le=20),
-    vector_store: VectorStore = Depends(get_vector_store),
+    db: Session = Depends(get_db),
 ) -> ApiResponse:
-    result = vector_store.query(
-        domain_code=domain_code,
-        query_embeddings=embed_texts([query]),
-        n_results=n_results,
+    statement = (
+        select(KnowledgeItem)
+        .where(KnowledgeItem.domain_code == domain_code)
+        .where(KnowledgeItem.name.contains(query) | KnowledgeItem.content_md.contains(query))
+        .order_by(KnowledgeItem.public_id)
+        .limit(n_results)
     )
-    ids = result.get("ids", [[]])[0]
-    documents = result.get("documents", [[]])[0]
-    metadatas = result.get("metadatas", [[]])[0]
-    distances = result.get("distances", [[]])[0]
-    matches = []
-    for index, item_id in enumerate(ids):
-        metadata = metadatas[index]
-        matches.append(
-            {
-                "id": item_id,
-                "knowledge_id": metadata.get("knowledge_id"),
-                "name": metadata.get("name"),
-                "category": metadata.get("category"),
-                "difficulty": metadata.get("difficulty"),
-                "source_title": metadata.get("source_title"),
-                "distance": distances[index],
-                "preview": documents[index][:180],
-            }
-        )
+    matches = [
+        {
+            "id": item.public_id,
+            "knowledge_id": item.public_id,
+            "name": item.name,
+            "category": item.category,
+            "difficulty": item.difficulty,
+            "source_title": item.source_title,
+            "distance": None,
+            "preview": item.content_md[:180],
+        }
+        for item in db.scalars(statement)
+    ]
 
     return ok(
         {
@@ -304,30 +298,18 @@ def search_knowledge(
             "query": query,
             "matches": matches,
             "total": len(matches),
-            "embedding_model": embedding_model_name(),
+            "search_mode": "metadata_keyword",
+            "rag": candidate_rag_status(domain_code),
         }
     )
 
 
 @router.post("/rebuild-index", response_model=ApiResponse)
-def rebuild_vector_index(
-    domain_code: str = Query(default="ai_app_dev"),
-    db: Session = Depends(get_db),
-    vector_store: VectorStore = Depends(get_vector_store),
-) -> ApiResponse:
-    try:
-        result = build_index(
-            domain_code=domain_code,
-            only_pending=True,
-            db_session=db,
-            vector_store=vector_store,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Vector index rebuild failed: {exc}") from exc
-    return ok(
-        {
-            "status": "completed",
-            "affected_domain": domain_code,
-            **result,
-        }
+def rebuild_vector_index(domain_code: str = Query(default="ai_app_dev")) -> ApiResponse:
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            "CANDIDATE_INDEX_REBUILD_REQUIRES_LIVE_COMMAND: "
+            f"run python -m app.scripts.build_chroma_candidate_index --domain-code {domain_code} --live"
+        ),
     )

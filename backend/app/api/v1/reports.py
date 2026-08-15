@@ -8,7 +8,7 @@ from app.core.db import get_db
 from app.core.security import Principal, assert_learner_access, get_current_user
 from app.models import Feedback, GenerationTask, Learner, LearningPath, LearningResource, ReviewReport
 from app.schemas.common import ApiResponse, ok
-from app.services.profile_service import latest_profile_for_learner, serialize_profile_detail
+from app.services.profile_service import latest_profile_for_learner, profile_source, serialize_profile_detail
 from app.services.report_service import build_metric_summary, refresh_learning_path
 
 router = APIRouter()
@@ -88,7 +88,7 @@ def _next_actions(
                 "type": "diagnosis",
                 "label": "完成诊断测评",
                 "description": "先生成学习者画像，再进入资源生成与反馈闭环。",
-                "route": "/diagnostics",
+                "route": "/diagnostic",
             }
         ]
     if not resources:
@@ -97,7 +97,7 @@ def _next_actions(
                 "type": "generation",
                 "label": "生成个性化资源",
                 "description": "基于当前画像生成讲义、实训指导和分级测验。",
-                "route": "/learners",
+                "route": "/dashboard?intent=generate",
             }
         ]
     if feedback_count == 0:
@@ -115,7 +115,7 @@ def _next_actions(
                 "type": "path_refresh",
                 "label": "刷新学习路径",
                 "description": "反馈已触发辅导动作，下一次打开画像或报告时应更新路径。",
-                "route": "/reports",
+                "route": "/report",
             }
         ]
     return [
@@ -201,7 +201,6 @@ def get_learning_report(learner_id: str, db: Session = Depends(get_db), principa
     has_diagnosis = int(diagnostic_summary.get("answer_count") or 0) > 0
     has_profile = detail.get("profile_status") == "ready"
     passed_reviews = sum(1 for report in review_reports if report.passed)
-    manual_review_required = sum(1 for report in review_reports if report.manual_review_required)
     reviewed_resource_count = len(review_reports)
     feedback_count = len(feedback_rows)
 
@@ -210,6 +209,8 @@ def get_learning_report(learner_id: str, db: Session = Depends(get_db), principa
             "learner_id": learner.public_id,
             "profile_id": detail.get("profile_id"),
             "profile_type": detail.get("profile_type"),
+            "profile_source": profile_source(profile) if profile else None,
+            "diagnosis_completed": bool(profile and profile.diagnosis_completed),
             "radar": detail.get("radar", [0, 0, 0, 0, 0]),
             "path": [stage.get("name", "") for stage in stages],
             "path_detail": stages,
@@ -242,7 +243,6 @@ def get_learning_report(learner_id: str, db: Session = Depends(get_db), principa
             "review_summary": {
                 "total_reports": reviewed_resource_count,
                 "passed": passed_reviews,
-                "manual_review_required": manual_review_required,
                 "review_status_counts": _review_status_counts(resources),
                 "source_coverage": _source_coverage(resources),
             },

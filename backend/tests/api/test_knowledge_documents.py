@@ -84,7 +84,7 @@ def test_document_upload_rejects_invalid_and_oversized_files(tmp_path, monkeypat
         pass
 
 
-def test_text_document_is_parsed_into_internal_knowledge_and_marked_ready(
+def test_text_document_is_parsed_and_marked_for_candidate_rebuild(
     tmp_path, monkeypatch
 ) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", poolclass=StaticPool)
@@ -92,11 +92,6 @@ def test_text_document_is_parsed_into_internal_knowledge_and_marked_ready(
     testing_session = sessionmaker(bind=engine, autocommit=False, autoflush=False)
     monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
     monkeypatch.setattr(knowledge_document_service, "SessionLocal", testing_session)
-    monkeypatch.setattr(knowledge_document_service, "build_index", lambda **_kwargs: {})
-    monkeypatch.setattr(
-        knowledge_document_service, "_rebuild_candidate_index", lambda *_args: {}
-    )
-    monkeypatch.setattr(knowledge_document_service, "embedding_model_name", lambda: "test-embed")
     with testing_session() as db:
         document = knowledge_document_service.create_document(
             db,
@@ -119,9 +114,10 @@ def test_text_document_is_parsed_into_internal_knowledge_and_marked_ready(
         item = db.scalar(
             select(KnowledgeItem).where(KnowledgeItem.source_document_id == stored.id)
         )
-        assert stored.status == "ready"
+        assert stored.status == "queued"
         assert stored.chunk_count >= 1
-        assert stored.embedding_model == "test-embed"
+        assert stored.embedding_model is None
+        assert "candidate" in stored.error_summary
         assert item is not None
         assert item.domain_code == "domain_a"
         assert item.source_title == "RAG Guide"

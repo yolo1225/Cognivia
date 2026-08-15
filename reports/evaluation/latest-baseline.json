@@ -5,19 +5,19 @@
   "evaluated_case_count": 50,
   "metrics": {
     "hallucination_rate": {
-      "numerator": 2,
+      "numerator": 0,
       "denominator": 200,
-      "ratio": 0.01
+      "ratio": 0.0
     },
     "difficulty_match_accuracy": {
-      "numerator": 44,
+      "numerator": 50,
       "denominator": 50,
-      "ratio": 0.88
+      "ratio": 1.0
     },
     "core_knowledge_coverage": {
-      "numerator": 96,
+      "numerator": 100,
       "denominator": 100,
-      "ratio": 0.96
+      "ratio": 1.0
     },
     "review_decision_accuracy": {
       "numerator": 50,
@@ -30,30 +30,28 @@
       "ratio": 1.0
     },
     "latency_ms": {
-      "p50": 3875,
-      "p95": 5701
+      "p50": 1590,
+      "p95": 1920
     },
-    "agent_latency_ms": {}
+    "agent_latency_ms": {
+      "content_generation_agent": {
+        "p50": 572,
+        "p95": 616
+      },
+      "knowledge_retrieval_agent": {
+        "p50": 146,
+        "p95": 168
+      },
+      "review_validation_agent": {
+        "p50": 482,
+        "p95": 526
+      }
+    }
   },
   "failed_case_ids": {
-    "hallucination": [
-      "EVAL-007",
-      "EVAL-031"
-    ],
-    "difficulty": [
-      "EVAL-006",
-      "EVAL-013",
-      "EVAL-020",
-      "EVAL-027",
-      "EVAL-034",
-      "EVAL-041"
-    ],
-    "coverage": [
-      "EVAL-009",
-      "EVAL-019",
-      "EVAL-029",
-      "EVAL-039"
-    ],
+    "hallucination": [],
+    "difficulty": [],
+    "coverage": [],
     "review_decision": [],
     "profile_decision": []
   },
@@ -63,12 +61,12 @@
     "statement": "Cases without a determinable observed result are excluded from metric denominators."
   },
   "knowledge_base_versions": [
-    "ai_app_dev-kb-2026.07"
+    "ai_app_dev-kb-2026.07-v3"
   ],
   "run_mode": "baseline",
   "run_id": null,
   "stage": null,
   "model_configuration": {},
   "script_version": "live-evaluator-2.0",
-  "evaluated_at": "2026-07-17T06:47:13.638410+00:00"
+  "evaluated_at": "2026-08-14T07:25:33.949493+00:00"
 }

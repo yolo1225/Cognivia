@@ -17,7 +17,7 @@ from app.agents.contracts import (
     KnowledgeAssessment,
     TaskContext,
 )
-from app.agents.v2_profile_analysis_agent import V2ProfileAnalysisAgent
+from app.agents.profile_analysis_agent import ProfileAnalysisAgent
 from app.models import (
     AgentMessageRecord,
     AgentRun,
@@ -35,7 +35,7 @@ from app.services.profile_service import (
     public_id,
     score_answer,
 )
-from app.services.v2_contract_mapping import ability_profile_payload, profile_snapshot
+from app.services.contract_mapping import ability_profile_payload, profile_snapshot
 
 PROFILE_AGENT_NAME = "profile_analysis_agent"
 
@@ -171,7 +171,7 @@ def submit_diagnostic_session(
         llm_calls=0,
         tokens_used=0,
         duration_ms=0,
-        prompt_version="v2",
+        prompt_version="v3",
     )
     db.add(run)
     _message(
@@ -269,7 +269,7 @@ def submit_diagnostic_session(
             resource_types=["lecture", "practice_guide", "graded_quiz"],
             learning_goal="根据诊断结果形成学习画像和个性化学习路径",
         )
-        analysis = V2ProfileAnalysisAgent().execute(
+        analysis = ProfileAnalysisAgent().execute(
             AnalyzeProfileInput(
                 task_id=session_id,
                 context=context,
@@ -305,6 +305,8 @@ def submit_diagnostic_session(
                 ],
                 profile_version=analysis.profile.profile_version,
                 previous_profile_id=current_profile.id,
+                profile_source="diagnostic",
+                diagnosis_completed=True,
                 changed_dimensions_json=analysis.changed_dimensions,
                 evidence_refs_json=[
                     item.model_dump(mode="json") for item in analysis.evidence_refs

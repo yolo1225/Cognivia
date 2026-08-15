@@ -1,3 +1,10 @@
+"""Experimental document staging.
+
+This module currently turns a whole uploaded document into one provisional
+knowledge item. It does not extract normalized knowledge points or assessment
+questions and is not the completed knowledge-base import capability.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -12,12 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
 from app.models import KnowledgeDocument, KnowledgeItem, KnowledgeRelation
-from app.rag.chunker import chunk_markdown
-from app.rag.candidate_index import CandidateIndexBuilder, CandidateIndexError
-from app.rag.embeddings import embedding_model_name
-from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
-from app.rag.vector_store import VectorStore
-from app.scripts.build_chroma_index import build_index
+from app.rag.candidate_chunker import chunk_knowledge_item
 from app.services.knowledge_update_service import mark_affected_content
 
 KNOWLEDGE_STORAGE_ROOT = Path(__file__).resolve().parents[3] / "storage" / "knowledge"
@@ -138,7 +140,6 @@ def process_knowledge_document(document_id: str) -> None:
             document.error_summary = None
             db.commit()
             text = extract_text(document)
-            chunks = chunk_markdown(text)
             item = db.scalar(
                 select(KnowledgeItem).where(KnowledgeItem.source_document_id == document.id)
             )
@@ -164,22 +165,25 @@ def process_knowledge_document(document_id: str) -> None:
                 item.license_note = document.license_note
                 item.needs_reembedding = True
             db.flush()
+            chunks = chunk_knowledge_item(
+                knowledge_id=item.public_id,
+                name=item.name,
+                category=item.category,
+                difficulty=item.difficulty,
+                tags=list(item.tags_json or []),
+                content_md=item.content_md,
+            )
             mark_affected_content(
                 db,
                 domain_code=document.domain_code,
                 affected_knowledge_ids={item.public_id},
                 reason="knowledge_document_uploaded",
             )
-            document.status = "indexing"
+            document.status = "queued"
             document.knowledge_item_count = 1
             document.chunk_count = len(chunks)
             db.commit()
-            build_index(domain_code=document.domain_code, only_pending=True, db_session=db)
-            _rebuild_candidate_index(db, document.domain_code)
-            document.status = "ready"
-            document.embedding_model = embedding_model_name()
-            document.indexed_at = datetime.now(UTC)
-            document.error_summary = None
+            document.error_summary = "等待管理员执行真实 candidate 索引重建"
             db.commit()
         except Exception as exc:
             db.rollback()
@@ -211,10 +215,6 @@ def delete_document(db: Session, document: KnowledgeDocument) -> None:
         db.scalars(select(KnowledgeItem).where(KnowledgeItem.source_document_id == document.id))
     )
     if items:
-        VectorStore().delete_knowledge_chunks(
-            domain_code=document.domain_code,
-            knowledge_ids=[item.public_id for item in items],
-        )
         item_ids = [item.id for item in items]
         db.execute(
             delete(KnowledgeRelation).where(
@@ -231,7 +231,6 @@ def delete_document(db: Session, document: KnowledgeDocument) -> None:
         for item in items:
             db.delete(item)
         db.flush()
-        _rebuild_candidate_index(db, document.domain_code)
     path = _document_path(document)
     if path.exists():
         path.unlink()
@@ -241,20 +240,6 @@ def delete_document(db: Session, document: KnowledgeDocument) -> None:
     document.deleted_at = datetime.now(UTC)
     document.error_summary = None
     db.commit()
-
-
-def _rebuild_candidate_index(db: Session, domain_code: str) -> dict[str, object]:
-    builder = CandidateIndexBuilder(
-        db=db,
-        chroma_client=VectorStore().client,
-        embedding_provider=OpenAICompatibleEmbeddingProvider(),
-    )
-    try:
-        return builder.build(domain_code=domain_code, reset=False)
-    except CandidateIndexError as exc:
-        if "manifest is missing" not in str(exc):
-            raise
-        return builder.build(domain_code=domain_code, reset=True)
 
 
 def serialize_document(document: KnowledgeDocument) -> dict[str, object]:

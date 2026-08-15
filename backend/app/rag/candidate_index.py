@@ -6,6 +6,7 @@ import logging
 import math
 import uuid
 from collections import defaultdict
+from dataclasses import replace
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
@@ -14,13 +15,12 @@ from chromadb.errors import NotFoundError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import KnowledgeItem, KnowledgeRelation
+from app.models import DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.rag.candidate_chunker import CHUNKER_VERSION, CandidateChunk, chunk_knowledge_item
 from app.rag.candidate_manifest import (
     DISTANCE_METRIC,
     MANIFEST_SCHEMA_VERSION,
     CandidateIndexManifest,
-    CandidateManifestError,
     CandidateManifestStore,
     compute_index_version,
 )
@@ -76,6 +76,86 @@ def database_source_snapshot(
         if field is not None:
             owner.setdefault(field, []).append(referenced["knowledge_id"])
     return sorted(payloads.values(), key=lambda payload: payload["knowledge_id"])
+
+
+def validate_knowledge_integrity(
+    db: Session,
+    *,
+    domain_code: str,
+    items: list[KnowledgeItem],
+    chunks_by_id: dict[str, list[CandidateChunk]],
+) -> None:
+    """Validate seed/manual records at the one shared indexing boundary."""
+    item_db_ids = {item.id for item in items}
+    item_by_db_id = {item.id: item for item in items}
+    seen_checksums: dict[str, str] = {}
+    for item in items:
+        if not item.content_md.strip():
+            raise CandidateIndexError(f"knowledge item has empty content: {item.public_id}")
+        if not item.source_title.strip() or not item.license_note.strip():
+            raise CandidateIndexError(f"knowledge item has no source: {item.public_id}")
+        chunks = chunks_by_id.get(item.public_id) or []
+        if not chunks:
+            raise CandidateIndexError(f"knowledge item has no content chunks: {item.public_id}")
+        for chunk in chunks:
+            if not chunk.embedding_text.strip():
+                raise CandidateIndexError(f"candidate chunk is empty: {chunk.chunk_id}")
+            checksum = hashlib.sha256(
+                " ".join(chunk.content.split()).encode("utf-8")
+            ).hexdigest()
+            previous = seen_checksums.get(checksum)
+            if previous is not None:
+                raise CandidateIndexError(
+                    f"duplicate candidate chunk content: {previous}, {chunk.chunk_id}"
+                )
+            seen_checksums[checksum] = chunk.chunk_id
+
+    relations = list(db.scalars(select(KnowledgeRelation).order_by(KnowledgeRelation.id)))
+    for relation in relations:
+        touches_domain = (
+            relation.source_item_id in item_db_ids or relation.target_item_id in item_db_ids
+        )
+        if touches_domain and not {
+            relation.source_item_id, relation.target_item_id
+        }.issubset(item_db_ids):
+            raise CandidateIndexError(
+                f"orphan or cross-domain knowledge relation: {relation.id}"
+            )
+
+    questions = list(
+        db.scalars(
+            select(DiagnosticQuestion)
+            .where(DiagnosticQuestion.domain_code == domain_code)
+            .order_by(DiagnosticQuestion.id)
+        )
+    )
+    for question in questions:
+        item = item_by_db_id.get(question.knowledge_item_id)
+        if item is None:
+            raise CandidateIndexError(
+                f"diagnostic question has no domain knowledge item: {question.public_id}"
+            )
+        answer = question.answer_key_json or {}
+        answer_payload = {
+            key: value
+            for key, value in answer.items()
+            if key not in {"explanation", "source_locator", "source_ref_ids"}
+        }
+        if not question.stem.strip() or not any(
+            value not in (None, "", [], {}) for value in answer_payload.values()
+        ):
+            raise CandidateIndexError(
+                f"diagnostic question has no stem or answer: {question.public_id}"
+            )
+        if not str(answer.get("explanation") or "").strip():
+            raise CandidateIndexError(
+                f"diagnostic question has no explanation: {question.public_id}"
+            )
+        expected_locator = f"knowledge:{item.public_id}#chunk="
+        if not str(answer.get("source_locator") or "").startswith(expected_locator):
+            raise CandidateIndexError(
+                f"diagnostic question has no valid source locator: {question.public_id}"
+            )
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -154,6 +234,14 @@ class CandidateIndexBuilder:
             "chunk_index": chunk.chunk_index,
             "chunk_count": chunk_count,
             "heading_path": json.dumps(chunk.heading_path, ensure_ascii=False),
+            "content_checksum": hashlib.sha256(
+                chunk.embedding_text.encode("utf-8")
+            ).hexdigest(),
+            "source_locator": (
+                f"document:{item.source_document_id}#chunk={chunk.chunk_index}"
+                if item.source_document_id
+                else f"knowledge:{item.public_id}#chunk={chunk.chunk_index}"
+            ),
             "item_content_hash": item_hash,
             "embedding_model": model,
             "embedding_dimensions": dimensions,
@@ -202,7 +290,6 @@ class CandidateIndexBuilder:
         *,
         items: list[KnowledgeItem],
         old_records: list[dict[str, Any]],
-        manifest: CandidateIndexManifest,
     ) -> set[str]:
         old_hashes: dict[str, set[str]] = defaultdict(set)
         for record in old_records:
@@ -210,24 +297,11 @@ class CandidateIndexBuilder:
             old_hashes[str(metadata.get("knowledge_id", ""))].add(
                 str(metadata.get("item_content_hash", ""))
             )
-        try:
-            watermark = datetime.fromisoformat(manifest.last_successful_sync_at)
-        except ValueError as exc:
-            raise CandidateManifestError("last_successful_sync_at is not ISO-8601") from exc
-        watermark = _as_utc(watermark)
-
         changed: set[str] = set()
         for item in items:
             item_hash = self._item_hash(item)
             hashes = old_hashes.get(item.public_id, set())
-            updated_after_watermark = bool(
-                item.updated_at and _as_utc(item.updated_at) > watermark
-            )
-            if (
-                item.needs_reembedding
-                or updated_after_watermark
-                or hashes != {item_hash}
-            ):
+            if item.needs_reembedding or hashes != {item_hash}:
                 changed.add(item.public_id)
         return changed
 
@@ -306,6 +380,13 @@ class CandidateIndexBuilder:
             for field in ("source_title", "license_note"):
                 if not str(metadata.get(field, "")).strip():
                     raise CandidateIndexError(f"candidate chunk is missing {field}")
+            expected_checksum = hashlib.sha256(
+                str(record["document"]).encode("utf-8")
+            ).hexdigest()
+            if metadata.get("content_checksum") != expected_checksum:
+                raise CandidateIndexError("candidate chunk content checksum is inconsistent")
+            if not str(metadata.get("source_locator", "")).strip():
+                raise CandidateIndexError("candidate chunk is missing source_locator")
             if metadata.get("embedding_model") != self.provider.model_name:
                 raise CandidateIndexError("candidate chunk embedding_model is inconsistent")
             if int(metadata.get("embedding_dimensions", 0)) != dimensions:
@@ -346,6 +427,12 @@ class CandidateIndexBuilder:
         if not items:
             raise CandidateIndexError(f"no knowledge items found for domain_code={domain_code}")
         chunks_by_id = self._chunks_for(items)
+        validate_knowledge_integrity(
+            self.db,
+            domain_code=domain_code,
+            items=items,
+            chunks_by_id=chunks_by_id,
+        )
         snapshot = database_source_snapshot(self.db, items)
         source_version = source_data_version(snapshot)
         manifest = self._load_manifest(domain_code)
@@ -360,7 +447,7 @@ class CandidateIndexBuilder:
             active = self.client.get_collection(name=manifest.active_collection)
             old_records = self._records(active)
             changed_ids = self._changed_ids(
-                items=items, old_records=old_records, manifest=manifest
+                items=items, old_records=old_records
             )
             current_ids = {item.public_id for item in items}
             old_ids = {
@@ -423,6 +510,7 @@ class CandidateIndexBuilder:
         )
         collection_name = f"knowledge_{domain_code}_candidate_{self._build_id()}"
         collection = None
+        manifest_written = False
         try:
             collection = self._create_collection(
                 name=collection_name,
@@ -479,9 +567,22 @@ class CandidateIndexBuilder:
                 indexed_item_count=len(items),
                 indexed_chunk_count=collection.count(),
             )
+            # Clear re-embedding markers only after the new collection itself
+            # has passed validation. Flush first so its timestamp precedes the
+            # manifest watermark used by the next incremental build.
+            for knowledge_id in changed_ids:
+                item_by_id[knowledge_id].needs_reembedding = False
+            self.db.flush()
+            new_manifest = replace(
+                new_manifest,
+                last_successful_sync_at=_as_utc(self._now()).isoformat(),
+            )
             self.manifests.write(new_manifest)
+            manifest_written = True
+            self.db.commit()
         except Exception:
-            if collection is not None:
+            self.db.rollback()
+            if collection is not None and not manifest_written:
                 try:
                     self.client.delete_collection(name=collection_name)
                 except Exception:

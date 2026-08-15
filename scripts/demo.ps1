@@ -153,11 +153,16 @@ function Test-DemoEnvironment {
         chroma = $dependencies.data.chroma.status
         live_models_ready = $dependencies.data.ready_for_live_demo
         fixture_enabled = $dependencies.data.fixture_enabled
+        rag_ready = $dependencies.data.rag.ready
+        rag_reason = $dependencies.data.rag.reason
         knowledge_items = "validated"
         diagnostic_questions = $questionFile.Length
     } | Format-List
     if (-not $dependencies.data.ready_for_live_demo) {
         Write-Warning "Infrastructure is ready, but real-model acceptance is blocked until .env is configured."
+    }
+    if (-not $dependencies.data.rag.ready) {
+        Write-Warning "Candidate RAG is not ready: $($dependencies.data.rag.reason). Configure DashScope and rebuild the candidate index before generating resources."
     }
 }
 
@@ -236,7 +241,6 @@ switch ($Action) {
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "alembic", "upgrade", "head")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.init_admin")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.seed_data", "--json")
-        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_index", "--reset", "--json")
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "frontend")
         Wait-Frontend
         Test-DemoEnvironment
@@ -258,7 +262,6 @@ switch ($Action) {
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "alembic", "upgrade", "head")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.init_admin")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.seed_data", "--json")
-        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_index", "--reset", "--json")
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "frontend")
         Wait-Frontend
         Test-DemoEnvironment

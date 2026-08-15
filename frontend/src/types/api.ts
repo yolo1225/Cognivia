@@ -23,8 +23,6 @@ export type GenerationEventType =
   | 'profile_unchanged'
   | 'review_disagreement'
   | 'review_retrieval_started'
-  | 'manual_review_required'
-  | 'manual_review_resolved'
   | 'path_refresh_started'
   | 'path_refresh_completed'
   | 'resource_created'

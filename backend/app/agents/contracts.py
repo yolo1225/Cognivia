@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION = "agent-contract-v2"
+CONTRACT_VERSION = "agent-contract-v5"
 
 
 class ContractModel(BaseModel):
@@ -13,7 +13,7 @@ class ContractModel(BaseModel):
 
 
 class NodeContract(ContractModel):
-    contract_version: Literal["agent-contract-v2"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v5"] = CONTRACT_VERSION
     task_id: str = Field(min_length=1, max_length=64)
 
 
@@ -34,7 +34,6 @@ class NodeName(StrEnum):
     GENERATE_RESOURCE = "generate_resource"
     REVIEW_RESOURCE = "review_resource"
     FINALIZE_TASK = "finalize_task"
-    HUMAN_REVIEW = "human_review"
 
 
 class ResourceType(StrEnum):
@@ -89,7 +88,6 @@ class TaskDecision(StrEnum):
     COMPLETED = "completed"
     NO_CHANGE = "no_change"
     REVISION_REQUIRED = "revision_required"
-    MANUAL_REVIEW_REQUIRED = "manual_review_required"
     FAILED = "failed"
     REJECTED = "rejected"
 
@@ -97,14 +95,13 @@ class TaskDecision(StrEnum):
 class ReviewDecision(StrEnum):
     PASSED = "passed"
     REVISION_REQUIRED = "revision_required"
-    MANUAL_REVIEW_REQUIRED = "manual_review_required"
     REJECTED = "rejected"
 
 
-class HumanDecision(StrEnum):
-    APPROVE = "approve"
-    REQUEST_REVISION = "request_revision"
-    REJECT = "reject"
+class EvidenceVerdict(StrEnum):
+    SUPPORTED = "supported"
+    CONTRADICTED = "contradicted"
+    UNABLE_TO_DETERMINE = "unable_to_determine"
 
 
 class MessageType(StrEnum):
@@ -123,7 +120,6 @@ class EvidenceType(StrEnum):
     SCORED_QUIZ = "scored_quiz"
     DIAGNOSTIC_RESULT = "diagnostic_result"
     VALIDATED_BEHAVIOR = "validated_behavior"
-    MANUAL_REVIEW = "manual_review"
 
 
 class MasteryType(StrEnum):
@@ -164,6 +160,9 @@ class QuestionType(StrEnum):
 
 class ReviewIssueCode(StrEnum):
     UNSUPPORTED_CLAIM = "unsupported_claim"
+    EVIDENCE_INSUFFICIENT = "evidence_insufficient"
+    CONTRADICTED_CLAIM = "contradicted_claim"
+    CLAIM_SET_MISMATCH = "claim_set_mismatch"
     MISSING_SOURCE = "missing_source"
     DIFFICULTY_MISMATCH = "difficulty_mismatch"
     MISSING_KNOWLEDGE = "missing_knowledge"
@@ -185,7 +184,7 @@ class MessagePayload(ContractModel):
 
 
 class AgentMessage(ContractModel):
-    contract_version: Literal["agent-contract-v2"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v5"] = CONTRACT_VERSION
     message_id: str = Field(default_factory=lambda: str(uuid4()))
     sender: AgentName
     receiver: AgentName
@@ -258,6 +257,22 @@ class ProfileSnapshot(ContractModel):
     blind_spot_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
+class LearningPathNodeSnapshot(ContractModel):
+    path_node_id: str = Field(min_length=1, max_length=64)
+    knowledge_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=255)
+    path_order: int = Field(ge=1)
+    target_difficulty: int = Field(ge=1, le=5)
+    learning_objective: str = Field(min_length=1, max_length=500)
+    prerequisite_knowledge_ids: list[str] = Field(default_factory=list, max_length=20)
+
+
+class LearningPathSnapshot(ContractModel):
+    path_id: str = Field(min_length=1, max_length=64)
+    nodes: list[LearningPathNodeSnapshot] = Field(default_factory=list, max_length=50)
+    current_node_id: str | None = Field(default=None, max_length=64)
+
+
 class AffectedScope(ContractModel):
     knowledge_ids: list[str] = Field(default_factory=list, max_length=50)
     path_node_ids: list[str] = Field(default_factory=list, max_length=50)
@@ -290,7 +305,7 @@ class TaskRequest(ContractModel):
 
 
 class TaskContext(TaskRequest):
-    contract_version: Literal["agent-contract-v2"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v5"] = CONTRACT_VERSION
 
 
 class ContextNodeContract(NodeContract):
@@ -345,6 +360,10 @@ class RevisionPlan(ContractModel):
     issue_codes: list[ReviewIssueCode] = Field(default_factory=list, max_length=20)
     query_terms: list[str] = Field(default_factory=list, max_length=30)
     required_changes: list[str] = Field(default_factory=list, max_length=30)
+    missing_knowledge_ids_by_resource: dict[ResourceType, list[str]] = Field(default_factory=dict)
+    preserve_knowledge_ids_by_resource: dict[ResourceType, list[str]] = Field(default_factory=dict)
+    claim_ids_by_resource: dict[ResourceType, list[str]] = Field(default_factory=dict)
+    field_paths_by_resource: dict[ResourceType, list[str]] = Field(default_factory=dict)
 
 
 class PrepareTaskInput(NodeContract):
@@ -358,7 +377,7 @@ class PrepareTaskInput(NodeContract):
 
 
 class PrepareTaskOutput(ContextNodeContract):
-    next_node: Literal["analyze_profile", "interpret_feedback", "human_review"]
+    next_node: Literal["analyze_profile", "interpret_feedback"]
 
     @model_validator(mode="after")
     def validate_route(self) -> "PrepareTaskOutput":
@@ -367,7 +386,7 @@ class PrepareTaskOutput(ContextNodeContract):
             if self.context.trigger_type == TriggerType.RESOURCE_FEEDBACK
             else "analyze_profile"
         )
-        if self.next_node != "human_review" and self.next_node != expected:
+        if self.next_node != expected:
             raise ValueError("next_node must match the task trigger_type")
         return self
 
@@ -430,6 +449,8 @@ class InterpretFeedbackOutput(NodeContract):
 
 class AnalyzeProfileInput(ContextNodeContract):
     current_profile: ProfileSnapshot
+    learning_path: LearningPathSnapshot | None = None
+    current_path_node: LearningPathNodeSnapshot | None = None
     diagnostic_summary: DiagnosticSummary | None = None
     feedback_evidence: list[EvidenceRef] = Field(default_factory=list, max_length=100)
     recommended_action: RecommendedAction | None = None
@@ -467,6 +488,8 @@ class AnalyzeProfileOutput(NodeContract):
     affected_scope: AffectedScope
     retrieval_plan: RetrievalPlan
     needs_generation: bool
+    current_path_node: LearningPathNodeSnapshot | None = None
+    resource_knowledge_targets: dict[ResourceType, list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_profile_change(self) -> "AnalyzeProfileOutput":
@@ -489,6 +512,19 @@ class RetrievedChunk(ContractModel):
     matched_by: RetrievalMatchType
     used_for: RetrievalPurpose
     source: SourceRef
+    content_checksum: str | None = Field(default=None, min_length=8, max_length=64)
+    source_locator: str | None = Field(default=None, max_length=512)
+
+
+class RetrievedQuestion(ContractModel):
+    question_id: str = Field(min_length=1, max_length=64)
+    knowledge_id: str = Field(min_length=1, max_length=64)
+    question_type: QuestionType
+    stem: str = Field(min_length=1, max_length=3000)
+    options: list[str] = Field(default_factory=list, max_length=10)
+    answer_key: dict = Field(default_factory=dict)
+    explanation: str | None = Field(default=None, max_length=3000)
+    difficulty: int = Field(ge=1, le=5)
 
 
 class RetrieveKnowledgeInput(ContextNodeContract):
@@ -504,6 +540,7 @@ class RetrieveKnowledgeOutput(NodeContract):
     covered_knowledge_ids: list[str] = Field(default_factory=list, max_length=50)
     missing_knowledge_ids: list[str] = Field(default_factory=list, max_length=50)
     warnings: list[str] = Field(default_factory=list, max_length=20)
+    reference_questions: list[RetrievedQuestion] = Field(default_factory=list, max_length=30)
 
     @model_validator(mode="after")
     def validate_coverage_sets(self) -> "RetrieveKnowledgeOutput":
@@ -518,9 +555,31 @@ class GenerationRequirements(ContractModel):
     target_difficulty: int = Field(ge=1, le=5)
     strategy: GenerationStrategy
     required_knowledge_ids: list[str] = Field(min_length=1, max_length=30)
+    resource_knowledge_targets: dict[ResourceType, list[str]] = Field(default_factory=dict)
+    package_coverage_threshold: float = Field(default=90, ge=0, le=100)
+    resource_coverage_threshold: float = Field(default=90, ge=0, le=100)
     source_whitelist: list[str] = Field(min_length=1, max_length=30)
     adaptation_notes: list[str] = Field(default_factory=list, max_length=20)
     revision_plan: RevisionPlan | None = None
+
+    @model_validator(mode="after")
+    def validate_resource_targets(self) -> "GenerationRequirements":
+        if not self.resource_knowledge_targets:
+            self.resource_knowledge_targets = {
+                resource_type: list(self.required_knowledge_ids)
+                for resource_type in self.resource_types
+            }
+        if set(self.resource_knowledge_targets) != set(self.resource_types):
+            raise ValueError("resource knowledge targets must match requested resource types")
+        required = set(self.required_knowledge_ids)
+        allocated: set[str] = set()
+        for values in self.resource_knowledge_targets.values():
+            if not values or not set(values).issubset(required):
+                raise ValueError("resource knowledge targets must be non-empty task target subsets")
+            allocated.update(values)
+        if allocated != required:
+            raise ValueError("resource knowledge target union must equal task targets")
+        return self
 
 
 class ConceptBlock(ContractModel):
@@ -578,6 +637,7 @@ class QuizQuestion(ContractModel):
     knowledge_id: str = Field(min_length=1, max_length=64)
     difficulty: int = Field(ge=1, le=5)
     source_ref_ids: list[str] = Field(min_length=1, max_length=10)
+    reference_question_ids: list[str] = Field(default_factory=list, max_length=10)
 
     @model_validator(mode="after")
     def validate_options(self) -> "QuizQuestion":
@@ -636,6 +696,7 @@ class GeneratedResourceArtifact(ContractModel):
     content_md: str = Field(min_length=1)
     difficulty: int = Field(ge=1, le=5)
     source_refs: list[SourceRef] = Field(min_length=1, max_length=30)
+    knowledge_coverage: dict[str, list[str]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_resource_type(self) -> "GeneratedResourceArtifact":
@@ -653,6 +714,8 @@ class GeneratedResourceArtifact(ContractModel):
 class GenerateResourceInput(ContextNodeContract):
     profile: ProfileSnapshot
     retrieved_chunks: list[RetrievedChunk] = Field(min_length=1, max_length=12)
+    reference_questions: list[RetrievedQuestion] = Field(default_factory=list, max_length=30)
+    current_path_node: LearningPathNodeSnapshot | None = None
     requirements: GenerationRequirements
 
     @model_validator(mode="after")
@@ -684,7 +747,10 @@ class ReviewCriterionScores(ContractModel):
 
 
 class FactCheck(ContractModel):
+    claim_id: str | None = Field(default=None, min_length=8, max_length=64)
+    field_path: str | None = Field(default=None, max_length=512)
     claim: str = Field(min_length=1, max_length=2000)
+    verdict: EvidenceVerdict | None = None
     supported: bool | None = None
     source_ref_ids: list[str] = Field(default_factory=list, max_length=20)
     reason: str = Field(min_length=1, max_length=1000)
@@ -692,8 +758,19 @@ class FactCheck(ContractModel):
 
     @model_validator(mode="after")
     def validate_support_state(self) -> "FactCheck":
-        if self.determinable == (self.supported is None):
-            raise ValueError("supported must be boolean exactly when the claim is determinable")
+        if self.verdict is None:
+            if not self.determinable or self.supported is None:
+                self.verdict = EvidenceVerdict.UNABLE_TO_DETERMINE
+            elif self.supported:
+                self.verdict = EvidenceVerdict.SUPPORTED
+            else:
+                self.verdict = EvidenceVerdict.CONTRADICTED
+        if self.verdict is EvidenceVerdict.UNABLE_TO_DETERMINE:
+            self.determinable = False
+            self.supported = None
+        else:
+            self.determinable = True
+            self.supported = self.verdict is EvidenceVerdict.SUPPORTED
         return self
 
 
@@ -714,12 +791,17 @@ class ModelReview(ContractModel):
     issues: list[ReviewIssue] = Field(default_factory=list, max_length=50)
     unable_to_determine: list[str] = Field(default_factory=list, max_length=50)
 
+    # Claim-set completeness and uniqueness are validated against the canonical
+    # ordered set by the review boundary. Keeping parsing permissive here allows
+    # one targeted correction call for missing, extra, or duplicate claim IDs.
+
 
 class ArbitrationResult(ContractModel):
     required: bool
     retrieval_performed: bool
     query_terms: list[str] = Field(default_factory=list, max_length=30)
     additional_source_ref_ids: list[str] = Field(default_factory=list, max_length=30)
+    disputed_claim_ids: list[str] = Field(default_factory=list, max_length=100)
     primary_recheck: ModelReview | None = None
     secondary_recheck: ModelReview | None = None
     disagreement_remains: bool
@@ -737,12 +819,69 @@ class ArbitrationResult(ContractModel):
                 self.disagreement_remains,
                 bool(self.query_terms),
                 bool(self.additional_source_ref_ids),
+                bool(self.disputed_claim_ids),
                 self.primary_recheck is not None,
                 self.secondary_recheck is not None,
             )
         ):
             raise ValueError("non-required arbitration cannot contain arbitration activity")
         return self
+
+
+class ResourceQualityMetrics(ContractModel):
+    verifiable_claim_count: int = Field(ge=0)
+    hallucinated_claim_count: int = Field(ge=0)
+    hallucination_rate: float = Field(ge=0, le=100)
+    difficulty_match_score: float = Field(ge=0, le=100)
+    covered_core_knowledge_count: int = Field(ge=0)
+    target_core_knowledge_count: int = Field(ge=0)
+    core_knowledge_coverage: float = Field(ge=0, le=100)
+    passed: bool
+    revision_count: int = Field(default=0, ge=0, le=2)
+
+    @model_validator(mode="after")
+    def validate_deterministic_metrics(self) -> "ResourceQualityMetrics":
+        if self.hallucinated_claim_count > self.verifiable_claim_count:
+            raise ValueError("hallucinated claims cannot exceed verifiable claims")
+        if self.covered_core_knowledge_count > self.target_core_knowledge_count:
+            raise ValueError("covered knowledge cannot exceed target knowledge")
+        expected_hallucination = (
+            0.0
+            if self.verifiable_claim_count == 0
+            else 100.0 * self.hallucinated_claim_count / self.verifiable_claim_count
+        )
+        expected_coverage = (
+            0.0
+            if self.target_core_knowledge_count == 0
+            else 100.0
+            * self.covered_core_knowledge_count
+            / self.target_core_knowledge_count
+        )
+        if abs(self.hallucination_rate - expected_hallucination) > 0.011:
+            raise ValueError("hallucination_rate must be derived from claim counts")
+        if abs(self.core_knowledge_coverage - expected_coverage) > 0.011:
+            raise ValueError("core_knowledge_coverage must be derived from knowledge counts")
+        expected_passed = (
+            self.verifiable_claim_count > 0
+            and self.hallucination_rate < 5
+            and self.difficulty_match_score >= 85
+            and self.core_knowledge_coverage >= 90
+        )
+        if self.passed != expected_passed:
+            raise ValueError("passed must match the three competition thresholds")
+        return self
+
+
+class GenerationPackageQuality(ContractModel):
+    verifiable_claim_count: int = Field(ge=0)
+    hallucinated_claim_count: int = Field(ge=0)
+    hallucination_rate: float = Field(ge=0, le=100)
+    difficulty_match_score: float = Field(ge=0, le=100)
+    covered_core_knowledge_count: int = Field(ge=0)
+    target_core_knowledge_count: int = Field(ge=0)
+    core_knowledge_coverage: float = Field(ge=0, le=100)
+    passed: bool
+    revision_count: int = Field(default=0, ge=0, le=2)
 
 
 class ReviewReport(ContractModel):
@@ -755,7 +894,15 @@ class ReviewReport(ContractModel):
     evidence_ref_ids: list[str] = Field(default_factory=list, max_length=50)
     decision: ReviewDecision
     passed: bool
-    manual_review_required: bool
+    quality_metrics: ResourceQualityMetrics
+    target_knowledge_ids: list[str] = Field(default_factory=list, max_length=30)
+    covered_knowledge_ids: list[str] = Field(default_factory=list, max_length=30)
+    missing_knowledge_ids: list[str] = Field(default_factory=list, max_length=30)
+    claim_set_hash: str | None = Field(default=None, min_length=8, max_length=64)
+    supported_claim_ids: list[str] = Field(default_factory=list, max_length=100)
+    contradicted_claim_ids: list[str] = Field(default_factory=list, max_length=100)
+    undetermined_claim_ids: list[str] = Field(default_factory=list, max_length=100)
+    unresolved_claim_ids: list[str] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")
     def validate_decision_flags(self) -> "ReviewReport":
@@ -765,11 +912,8 @@ class ReviewReport(ContractModel):
             raise ValueError("secondary_review must use the secondary model role")
         if self.passed != (self.decision == ReviewDecision.PASSED):
             raise ValueError("passed must match the review decision")
-        expected_manual = self.decision == ReviewDecision.MANUAL_REVIEW_REQUIRED
-        if self.manual_review_required != expected_manual:
-            raise ValueError("manual_review_required must match the review decision")
-        if self.arbitration.disagreement_remains and not self.manual_review_required:
-            raise ValueError("unresolved disagreement requires manual review")
+        if self.passed != self.quality_metrics.passed:
+            raise ValueError("review decision and quality metrics must agree")
         return self
 
 
@@ -796,6 +940,12 @@ class ReviewResourceInput(ContextNodeContract):
 
 class ReviewResourceOutput(NodeContract):
     reports: list[ReviewReport] = Field(min_length=1, max_length=3)
+    package_required_knowledge_ids: list[str] = Field(default_factory=list, max_length=30)
+    package_covered_knowledge_ids: list[str] = Field(default_factory=list, max_length=30)
+    package_missing_knowledge_ids: list[str] = Field(default_factory=list, max_length=30)
+    package_coverage_score: float = Field(default=0, ge=0, le=100)
+    package_passed: bool = True
+    package_quality: GenerationPackageQuality
 
     @model_validator(mode="after")
     def validate_unique_resource_types(self) -> "ReviewResourceOutput":
@@ -810,7 +960,9 @@ class FinalizeTaskInput(ContextNodeContract):
     review_reports: list[ReviewReport] = Field(default_factory=list, max_length=3)
     revision_count: int = Field(ge=0, le=2)
     tutoring_result: InterpretFeedbackOutput | None = None
-    human_decision: HumanDecision | None = None
+    package_coverage_score: float = Field(default=0, ge=0, le=100)
+    package_passed: bool = True
+    package_quality: GenerationPackageQuality | None = None
 
     @model_validator(mode="after")
     def validate_resource_reports(self) -> "FinalizeTaskInput":
@@ -826,14 +978,10 @@ class FinalizeTaskOutput(NodeContract):
     revision_count: int = Field(ge=0, le=2)
     revision_plan: RevisionPlan | None = None
     passed_resource_types: list[ResourceType] = Field(default_factory=list, max_length=3)
-    manual_review_required: bool
     decision_reason: str = Field(min_length=1, max_length=1000)
 
     @model_validator(mode="after")
     def validate_decision(self) -> "FinalizeTaskOutput":
-        expected_manual = self.decision == TaskDecision.MANUAL_REVIEW_REQUIRED
-        if self.manual_review_required != expected_manual:
-            raise ValueError("manual_review_required must match the task decision")
         if self.decision == TaskDecision.REVISION_REQUIRED:
             if self.revision_plan is None or self.revision_count == 0:
                 raise ValueError("revision_required needs a non-empty revision plan and count")
@@ -841,36 +989,6 @@ class FinalizeTaskOutput(NodeContract):
             raise ValueError("only revision_required may include a revision plan")
         if self.decision == TaskDecision.COMPLETED and not self.passed_resource_types:
             raise ValueError("completed generation tasks require passed resources")
-        return self
-
-
-class HumanReviewInput(ContextNodeContract):
-    review_reports: list[ReviewReport] = Field(min_length=1, max_length=3)
-    allowed_decisions: list[HumanDecision] = Field(min_length=1, max_length=3)
-
-    @model_validator(mode="after")
-    def validate_unique_decisions(self) -> "HumanReviewInput":
-        if len(self.allowed_decisions) != len(set(self.allowed_decisions)):
-            raise ValueError("allowed_decisions must be unique")
-        return self
-
-
-class HumanReviewOutput(NodeContract):
-    decision: HumanDecision
-    review_comment: str = Field(min_length=1, max_length=2000)
-    operator_id: str = Field(min_length=1, max_length=64)
-    reviewed_at: datetime
-    task_decision: TaskDecision
-
-    @model_validator(mode="after")
-    def validate_task_decision(self) -> "HumanReviewOutput":
-        expected = {
-            HumanDecision.APPROVE: TaskDecision.COMPLETED,
-            HumanDecision.REQUEST_REVISION: TaskDecision.REVISION_REQUIRED,
-            HumanDecision.REJECT: TaskDecision.REJECTED,
-        }[self.decision]
-        if self.task_decision != expected:
-            raise ValueError("task_decision must match the human decision")
         return self
 
 
@@ -890,5 +1008,3 @@ class AgentContractSchema(ContractModel):
     review_resource_output: ReviewResourceOutput
     finalize_task_input: FinalizeTaskInput
     finalize_task_output: FinalizeTaskOutput
-    human_review_input: HumanReviewInput
-    human_review_output: HumanReviewOutput

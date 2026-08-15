@@ -10,7 +10,7 @@ class CandidateIndexUnavailable(RuntimeError):
 
 
 class CandidateIndexAccess:
-    """Read-only access to the manifest-selected V2 candidate collection."""
+    """Read-only access to the manifest-selected V3 candidate collection."""
 
     def __init__(self, chroma_client: Any, manifest_store: CandidateManifestStore | None = None) -> None:
         self.client = chroma_client

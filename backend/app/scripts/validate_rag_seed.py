@@ -38,7 +38,6 @@ INTERNAL_SOURCE_MARKERS = (
 INTERNAL_CONTENT_MARKERS = (
     "agent_runs",
     "generation_tasks",
-    "manual_review_required",
     "primary_review_model",
     "secondary_review_model",
     "test_script",

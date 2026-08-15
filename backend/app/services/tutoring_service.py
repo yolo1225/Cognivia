@@ -15,8 +15,8 @@ from app.agents.contracts import (
     ResourceSummary,
     TaskContext,
 )
-from app.agents.v2_observability import collect_model_calls
-from app.agents.v2_tutoring_agent import V2TutoringAgent
+from app.agents.observability import collect_model_calls
+from app.agents.tutoring_agent import TutoringAgent
 from app.models import (
     AgentMessageRecord,
     AgentRun,
@@ -30,8 +30,11 @@ from app.models import (
 )
 from app.services.feedback_service import create_feedback_task
 from app.services.profile_service import public_id
-from app.services.v2_contract_mapping import profile_snapshot
-from app.services.resource_tutoring_service import answer_resource_question, build_resource_tutoring_context
+from app.services.contract_mapping import profile_snapshot
+from app.services.resource_tutoring_service import (
+    answer_resource_question,
+    build_resource_tutoring_context,
+)
 
 
 TUTORING_AGENT_NAME = "tutoring_agent"
@@ -67,12 +70,12 @@ def _supporting_evidence(values: list[dict]) -> list[EvidenceRef]:
             continue
         evidence.append(
             EvidenceRef(
-                evidence_id=str(item.get("evidence_id") or f"support_{index}_{public_id('ev')}")[:64],
+                evidence_id=str(item.get("evidence_id") or f"support_{index}_{public_id('ev')}")[
+                    :64
+                ],
                 evidence_type=evidence_type,
                 summary=str(item.get("summary") or "导学会话提供的结构化证据")[:500],
-                knowledge_id=str(item["knowledge_id"])[:64]
-                if item.get("knowledge_id")
-                else None,
+                knowledge_id=str(item["knowledge_id"])[:64] if item.get("knowledge_id") else None,
                 source_ref_id=str(item["source_ref_id"])[:128]
                 if item.get("source_ref_id")
                 else None,
@@ -118,12 +121,20 @@ def create_streaming_messages(
     if resource is None:
         raise ValueError("tutoring session resource not found")
     learner_message = TutoringMessage(
-        public_id=public_id("msg"), session_id=session.id, sender="learner",
-        message_type="question", content=content, metadata_json={"stream_status": "completed"},
+        public_id=public_id("msg"),
+        session_id=session.id,
+        sender="learner",
+        message_type="question",
+        content=content,
+        metadata_json={"stream_status": "completed"},
     )
     reply = TutoringMessage(
-        public_id=public_id("msg"), session_id=session.id, sender="tutoring_agent",
-        message_type="explanation", content="", metadata_json={"stream_status": "streaming"},
+        public_id=public_id("msg"),
+        session_id=session.id,
+        sender="tutoring_agent",
+        message_type="explanation",
+        content="",
+        metadata_json={"stream_status": "streaming"},
     )
     db.add_all([learner_message, reply])
     session.turn_count += 1
@@ -138,17 +149,29 @@ def stream_context_for_message(
 
 
 def update_streaming_reply(
-    db: Session, *, reply: TutoringMessage, content: str | None = None, status: str | None = None,
-    sources: list[dict[str, str]] | None = None, scope_status: str | None = None, assessment: dict | None = None,
+    db: Session,
+    *,
+    reply: TutoringMessage,
+    content: str | None = None,
+    status: str | None = None,
+    sources: list[dict[str, str]] | None = None,
+    scope_status: str | None = None,
+    assessment: dict | None = None,
     error_code: str | None = None,
 ) -> None:
     metadata = dict(reply.metadata_json or {})
-    if status: metadata["stream_status"] = status
-    if sources is not None: metadata["sources"] = sources
-    if scope_status is not None: metadata["scope_status"] = scope_status
-    if assessment is not None: metadata["assessment"] = assessment
-    if error_code: metadata["error_code"] = error_code
-    if content is not None: reply.content = content
+    if status:
+        metadata["stream_status"] = status
+    if sources is not None:
+        metadata["sources"] = sources
+    if scope_status is not None:
+        metadata["scope_status"] = scope_status
+    if assessment is not None:
+        metadata["assessment"] = assessment
+    if error_code:
+        metadata["error_code"] = error_code
+    if content is not None:
+        reply.content = content
     reply.metadata_json = metadata
     db.add(reply)
     db.commit()
@@ -181,16 +204,6 @@ def add_learner_message(
     db.add(learner_message)
     db.flush()
     session.turn_count += 1
-    previous_feedback = db.scalar(
-        select(Feedback)
-        .where(Feedback.tutoring_session_id == session.id)
-        .order_by(Feedback.id.desc())
-    )
-    source_ids = [
-        str(item.get("knowledge_id"))
-        for item in (resource.sources_json or [])
-        if isinstance(item, dict) and item.get("knowledge_id")
-    ]
     feedback = Feedback(
         resource_id=resource.id,
         learner_id=learner.id,
@@ -206,7 +219,7 @@ def add_learner_message(
         profile_update_required=False,
         profile_change_evidence_json=[],
         decision_confidence=0,
-        decision_reason="pending_v2_tutoring",
+        decision_reason="pending_v3_tutoring",
     )
     db.add(feedback)
     db.flush()
@@ -282,7 +295,7 @@ def add_learner_message(
             "evidence_count": len(safe_evidence),
         },
         output_summary_json={},
-        prompt_version="v2",
+        prompt_version="v3",
     )
     db.add(run)
     _agent_message(
@@ -294,7 +307,7 @@ def add_learner_message(
         payload={"node_name": "interpret_feedback", "turn_count": session.turn_count},
     )
     with collect_model_calls() as collector:
-        output_model = V2TutoringAgent().execute(request)
+        output_model = TutoringAgent().execute(request)
     model_calls = collector.snapshot()
     output = output_model.model_dump(mode="json")
     action = output_model.recommended_action.value
@@ -340,7 +353,7 @@ def add_learner_message(
     contextual_answer = answer_resource_question(
         db, session=session, resource=resource, question=content
     )
-    # Resource-scoped prose is deliberately separate from the V2 contract agent.
+    # Resource-scoped prose is deliberately separate from the V3 contract agent.
     # The contract agent still owns the classification and downstream decision.
     output["reply"] = contextual_answer.answer
     output["sources"] = contextual_answer.sources
@@ -369,12 +382,19 @@ def add_learner_message(
         and item.confidence >= 0.7
         for item in safe_evidence
     )
-    if has_confirmed_assessment and output_model.needs_generation and action in {
-        "review",
-        "challenge",
-        "explain",
-        "regenerate",
-    }:
+    # Generation is user-confirmed; this step only records the recommendation.
+    if (
+        False
+        and has_confirmed_assessment
+        and output_model.needs_generation
+        and action
+        in {
+            "review",
+            "challenge",
+            "explain",
+            "regenerate",
+        }
+    ):
         task = create_feedback_task(
             db,
             learner=learner,

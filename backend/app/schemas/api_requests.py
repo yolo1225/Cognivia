@@ -72,12 +72,6 @@ class TutoringMessageRequest(StrictRequest):
     evidence: list[dict] = Field(default_factory=list, max_length=50)
 
 
-class ManualReviewDecisionRequest(StrictRequest):
-    decision: Literal["approve", "request_revision", "reject"]
-    comment: str = Field(default="", max_length=2000)
-    reviewed_by: str = Field(default="demo_admin", min_length=1, max_length=64)
-
-
 class KnowledgeItemCreateRequest(StrictRequest):
     domain_code: str = Field(default="ai_app_dev", min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)

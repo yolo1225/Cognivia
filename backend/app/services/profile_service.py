@@ -400,6 +400,9 @@ def generate_profile_from_diagnostic(
 
 
 def profile_source(profile: LearnerProfile) -> str:
+    explicit = getattr(profile, "profile_source", None)
+    if explicit:
+        return explicit
     if profile.trigger_feedback_id:
         return "validated_feedback"
     if profile.decision_reason == "diagnostic_result":
@@ -560,6 +563,8 @@ def default_profile_for_learner(db: Session, learner: Learner) -> LearnerProfile
             profile_type="beginner",
         ),
         weak_knowledge_json=[],
+        profile_source="default_seed",
+        diagnosis_completed=False,
     )
     db.add(profile)
     db.flush()

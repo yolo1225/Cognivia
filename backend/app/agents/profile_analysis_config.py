@@ -1,6 +1,6 @@
-"""Versioned, deterministic configuration for the V2 profile-analysis algorithm.
+"""Versioned, deterministic configuration for the V3 profile-analysis algorithm.
 
-This module intentionally contains configuration only.  The V2 Profile Analysis
+This module intentionally contains configuration only.  The V3 Profile Analysis
 Agent will consume it in a later phase; no V1 runtime path imports this module.
 """
 
@@ -46,6 +46,7 @@ class ProfileAnalysisConfig:
             raise ValueError("difficulty must be between 1 and 5")
         return 1 + 0.15 * (difficulty - 3)
 
+
 @dataclass(frozen=True)
 class KnowledgeProfileMetadata:
     name: str
@@ -53,7 +54,9 @@ class KnowledgeProfileMetadata:
     prerequisite_ids: tuple[str, ...]
 
 
-def _weights(theory: float, practice: float, problem_solving: float, breadth: float) -> dict[str, float]:
+def _weights(
+    theory: float, practice: float, problem_solving: float, breadth: float
+) -> dict[str, float]:
     return {
         "theory": theory,
         "practice": practice,
@@ -120,7 +123,9 @@ AI_APP_DEV_ABILITY_WEIGHTS: dict[str, dict[str, float]] = {
 }
 
 
-AI_APP_DEV_PROFILE_V1_SEED_SHA256 = "4db42bddd7e45679e858e362f896f7243c0e0615659a09b1a085699c94406778"
+AI_APP_DEV_PROFILE_V1_SEED_SHA256 = (
+    "d761650e26845c9d0a7acf93ee05d2e0804df3ae9ae2679f3d23ae1fde757da7"
+)
 MASTERY_BASELINES = {
     "known": 0.90,
     "partial_mastery": 0.70,
@@ -173,7 +178,9 @@ def validate_ai_app_dev_profile_config(
     for knowledge_id, metadata in config.knowledge_catalog.items():
         if not metadata.name or not metadata.category:
             raise ValueError(f"{knowledge_id} has incomplete catalog metadata")
-        if any(prerequisite_id not in knowledge_ids for prerequisite_id in metadata.prerequisite_ids):
+        if any(
+            prerequisite_id not in knowledge_ids for prerequisite_id in metadata.prerequisite_ids
+        ):
             raise ValueError(f"{knowledge_id} has an unknown prerequisite")
     for knowledge_id, weights in config.ability_weights.items():
         if set(weights) != set(ABILITY_DIMENSIONS):
@@ -183,7 +190,11 @@ def validate_ai_app_dev_profile_config(
         if not isclose(sum(weights.values()), 1.0, abs_tol=1e-9):
             raise ValueError(f"{knowledge_id} ability weights must sum to 1")
     if set(config.mastery_baselines) != {
-        "known", "partial_mastery", "confused", "unmastered", "unassessed"
+        "known",
+        "partial_mastery",
+        "confused",
+        "unmastered",
+        "unassessed",
     }:
         raise ValueError("mastery baselines must cover every mastery type")
 

@@ -7,7 +7,7 @@ from app.models.feedback import Feedback
 from app.models.knowledge import KnowledgeDocument, KnowledgeItem, KnowledgeRelation
 from app.models.learner import Learner, LearnerProfile, LearningPath
 from app.models.resource import GenerationTask, LearningResource, ReviewReport
-from app.models.tutoring import ManualReviewTask, TutoringMessage, TutoringSession
+from app.models.tutoring import TutoringMessage, TutoringSession
 from app.models.user import DemoUser, User
 
 __all__ = [
@@ -31,7 +31,6 @@ __all__ = [
     "LearningPath",
     "LearningResource",
     "ReviewReport",
-    "ManualReviewTask",
     "TutoringMessage",
     "TutoringSession",
 ]

@@ -38,11 +38,11 @@ class DomainApiService:
         }
         issues = []
         if candidate_issue:
-            issues.append({"level": "warning", "message": "Candidate V2 索引不可用", "actual": candidate_issue, "target": "ready"})
+            issues.append({"level": "warning", "message": "Candidate V3 索引不可用", "actual": candidate_issue, "target": "ready"})
         for key, message, actual, target in (
             ("knowledge_items", "知识点数量未达到 M1 目标", knowledge_count, targets["knowledge_items"]),
             ("diagnostic_questions", "诊断题数量未达到 M1 目标", question_count, targets["diagnostic_questions"]),
-            ("vector_chunks", "Candidate V2 向量数量少于知识点数量", vector_count, targets["vector_chunks"]),
+            ("vector_chunks", "Candidate V3 向量数量少于知识点数量", vector_count, targets["vector_chunks"]),
         ):
             if actual < target:
                 issues.append({"level": "warning", "message": message, "actual": actual, "target": target})

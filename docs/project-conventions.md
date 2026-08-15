@@ -139,9 +139,6 @@ analyze_profile -> retrieve_knowledge when generation, review or regeneration is
 retrieve_knowledge -> generate_resource -> review_resource -> finalize_task
 finalize_task -> END                  when completed, no_change, failed or rejected
 finalize_task -> retrieve_knowledge   when revision_required and revision_count < 2
-finalize_task -> human_review         when manual_review_required or assisted approval is pending
-human_review -> retrieve_knowledge    when request_revision
-human_review -> finalize_task         when approve or reject
 ```
 
 约束：
@@ -154,14 +151,14 @@ human_review -> finalize_task         when approve or reject
 
 ### 5.1 Agent 契约修改规范
 
-`docs/agent-contract-v2.md`、`backend/app/agents/contracts.py`、`backend/app/agents/state.py` 和对应 Schema 是已冻结契约。契约由一名指定负责人统一维护，其他成员及开发代理在实现具体 Agent 时必须将以下文件视为只读：
+`docs/agent-contract-v5.md`、`backend/app/agents/contracts.py`、`backend/app/agents/state.py` 和对应 Schema 是当前契约。契约由一名指定负责人统一维护，其他成员及开发代理在实现具体 Agent 时必须将以下文件视为只读：
 
 - `backend/app/agents/contracts.py`
 - `backend/app/agents/state.py`
 - `backend/app/agents/contract_adapters.py`
 - `backend/tests/contracts/`
-- `docs/agent-contract-v2.md`
-- `docs/contracts/v2/`
+- `docs/agent-contract-v5.md`
+- `docs/contracts/v5/`
 
 具体 Agent 实现者不得为了让代码、Prompt 或测试通过，擅自修改字段名、类型、枚举、必填性、默认值、State 字段所有权、Schema 或顶层图。实现与契约不一致时，先在 Agent 内按已有契约适配；确实无法表达时，停止修改共享文件并提交契约变更申请。
 
@@ -183,9 +180,9 @@ Review and Validation Agent 是评分关键组件。
 双模型审核规则：
 
 - `primary_review_model` 和 `secondary_review_model` 都要检查事实和来源。
-- 分差超过 10 分，或一方通过一方失败，必须触发仲裁。
-- 仲裁流程：重新检索来源 -> 重新审核 -> 仍不一致则 `manual_review_required`。
-- 未通过或人工复核资源不得默认展示给学习者。
+- 事实判定冲突必须触发重新检索和再次审核。
+- 仲裁后仍不一致的声明计入幻觉事实，并进入自动局部修订。
+- 自动修订最多 2 轮；最终未通过资源不得展示给学习者。
 
 ## 7. 评测规范
 

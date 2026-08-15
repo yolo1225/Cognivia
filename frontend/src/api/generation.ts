@@ -1,4 +1,5 @@
 import { getData, postData } from './client'
+import type { ResourceQualityMetrics } from './resources'
 
 export interface GenerationTaskResult {
   task_id: string
@@ -26,6 +27,7 @@ export interface GenerationTaskResult {
     difficulty: number
     review_status: string
     sources: string[]
+    knowledge_coverage?: Record<string, string[]>
   }>
 }
 
@@ -43,35 +45,76 @@ export interface GenerationTaskDetail {
   execution_mode?: string
   revision_count: number
   decision: string
+  package_quality?: ResourceQualityMetrics | null
+  failure_reason?: string | null
+  package_coverage?: {
+    required_knowledge_ids?: string[]
+    covered_knowledge_ids?: string[]
+    missing_knowledge_ids?: string[]
+    coverage_score?: number
+    passed?: boolean
+  }
+  created_at?: string | null
+  updated_at?: string | null
   resources: GenerationTaskResult['resources']
+}
+
+export interface GenerationTaskFilters {
+  learnerId?: string
+  domainCode?: string
+  status?: string
+  limit?: number
+}
+
+export interface AgentRun {
+  run_id: number
+  task_id: string
+  agent_name: string
+  status: string
+  input_summary: Record<string, unknown>
+  output_summary: Record<string, unknown>
+  error?: string | null
 }
 
 export function createGenerationTask(
   profileId?: string,
-  learnerId = 'learner_001',
+  learnerId?: string,
   learningGoal = '个性化学习资源生成',
 ) {
-  return postData<GenerationTaskResult>('/generation-tasks', {
-    learner_id: learnerId,
+  const body: Record<string, unknown> = {
     profile_id: profileId,
     domain_code: 'ai_app_dev',
     trigger_type: 'initial_generation',
     execution_mode: 'auto',
     learning_goal: learningGoal,
     resource_types: ['lecture', 'practice_guide', 'graded_quiz'],
-  })
+  }
+  if (learnerId) body.learner_id = learnerId
+  return postData<GenerationTaskResult>('/generation-tasks', body)
 }
 
 export function getAgentRuns(taskId: string) {
-  return getData<Array<Record<string, unknown>>>(`/generation-tasks/${taskId}/agent-runs`)
+  return getData<AgentRun[]>(`/generation-tasks/${taskId}/agent-runs`)
 }
 
 export function getGenerationTask(taskId: string) {
   return getData<GenerationTaskDetail>(`/generation-tasks/${taskId}`)
 }
 
-export function getActiveGenerationTask(learnerId = 'learner_001') {
-  return getData<GenerationTaskDetail | null>(
-    `/generation-tasks/active?learner_id=${encodeURIComponent(learnerId)}`,
-  )
+export function retryGenerationTask(taskId: string) {
+  return postData<GenerationTaskDetail>(`/generation-tasks/${taskId}/retry`, {})
+}
+
+export function getActiveGenerationTask(learnerId?: string) {
+  const query = learnerId ? `?learner_id=${encodeURIComponent(learnerId)}` : ''
+  return getData<GenerationTaskDetail | null>(`/generation-tasks/active${query}`)
+}
+
+export function listGenerationTasks(filters: GenerationTaskFilters = {}) {
+  const params = new URLSearchParams()
+  if (filters.learnerId) params.set('learner_id', filters.learnerId)
+  if (filters.domainCode) params.set('domain_code', filters.domainCode)
+  if (filters.status) params.set('status', filters.status)
+  params.set('limit', String(filters.limit || 50))
+  return getData<GenerationTaskDetail[]>(`/generation-tasks?${params.toString()}`)
 }

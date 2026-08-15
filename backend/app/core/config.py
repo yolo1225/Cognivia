@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,8 +41,25 @@ class Settings(BaseSettings):
     primary_llm_model: str | None = None
     primary_review_model: str | None = None
     secondary_review_model: str | None = None
+    primary_review_fallback_model: str | None = None
+    secondary_review_fallback_model: str | None = None
     embedding_model: str | None = None
     llm_timeout_seconds: int = 30
+    # OpenAI-compatible providers consistently support json_object. A true
+    # json_schema request also requires a provider-specific schema payload and
+    # must not be enabled by changing only the response type string.
+    llm_json_schema_mode: Literal["json_object"] = "json_object"
+    generation_max_output_tokens: int = 4000
+    graded_quiz_max_output_tokens: int = 6000
+    review_max_output_tokens: int = 3000
+    review_timeout_seconds: int = 45
+    review_task_timeout_seconds: int = 150
+    review_batch_target_input_tokens: int = 4200
+    review_batch_hard_input_tokens: int = 5000
+    review_batch_output_tokens: int = 1400
+    review_batch_max_claims: int = 12
+    generation_model_concurrency: int = 3
+    review_model_concurrency: int = 4
     allow_fixture_llm: bool = False
     enable_evaluation_overrides: bool = False
     review_rule_version: str = "review-v1"

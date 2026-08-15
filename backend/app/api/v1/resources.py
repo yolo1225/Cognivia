@@ -7,12 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import Principal, get_current_user, principal_learner, require_resource
-from app.models import GenerationTask, Learner, LearningResource
+from app.models import GenerationTask, Learner, LearningResource, ReviewReport
 from app.schemas.common import ApiResponse, ok
 from app.services.demo_flow_service import serialize_resource
 from app.services.feedback_service import record_quick_feedback, serialize_feedback_decision
 from app.services.learner_service import get_or_create_demo_learner
 from app.services.profile_service import default_profile_for_learner
+from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.services.resource_export_service import export_resource, resolve_export_path
 from app.workers.generation_worker import run_generation_task
 
@@ -52,7 +53,42 @@ def list_resources(
     if domain_code:
         statement = statement.where(GenerationTask.domain_code == domain_code)
     rows = list(db.execute(statement))
-    return ok([serialize_resource(resource, task) for resource, task in rows])
+    resource_ids = [resource.id for resource, _ in rows]
+    reports = list(
+        db.scalars(
+            select(ReviewReport)
+            .where(ReviewReport.resource_id.in_(resource_ids))
+            .order_by(ReviewReport.id.desc())
+        )
+    ) if resource_ids else []
+    report_by_resource = {}
+    for report in reports:
+        report_by_resource.setdefault(report.resource_id, report)
+    data = []
+    for resource, task in rows:
+        item = serialize_resource(resource, task)
+        item["quality_metrics"] = _quality_metrics(report_by_resource.get(resource.id))
+        item["package_quality"] = task.package_quality_json or None
+        item["package_status"] = task.status
+        item["failure_reason"] = task.failure_reason or None
+        data.append(item)
+    return ok(data)
+
+
+def _quality_metrics(report: ReviewReport | None) -> dict[str, Any] | None:
+    if report is None:
+        return None
+    return {
+        "verifiable_claim_count": report.verifiable_claim_count,
+        "hallucinated_claim_count": report.hallucinated_claim_count,
+        "hallucination_rate": report.hallucination_rate,
+        "difficulty_match_score": report.difficulty_match_score,
+        "covered_core_knowledge_count": report.covered_core_knowledge_count,
+        "target_core_knowledge_count": report.target_core_knowledge_count,
+        "core_knowledge_coverage": report.core_knowledge_coverage,
+        "passed": report.quality_passed,
+        "revision_count": report.revision_count,
+    }
 
 
 @router.post("/{resource_id}/feedback", response_model=ApiResponse)
@@ -81,6 +117,12 @@ def submit_resource_feedback(
         )
     if resource is None:
         raise HTTPException(status_code=404, detail=f"Resource not found: {resource_id}")
+    if feedback_type in {"incorrect", "has_error"}:
+        source_task = db.get(GenerationTask, resource.generation_task_id)
+        try:
+            require_candidate_rag(source_task.domain_code if source_task else "ai_app_dev")
+        except CandidateRagNotReady as exc:
+            raise HTTPException(status_code=503, detail=f"{RAG_NOT_READY_CODE}:{exc}") from exc
     profile = default_profile_for_learner(db, learner)
     feedback, task = record_quick_feedback(
         db,
