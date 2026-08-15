@@ -31,9 +31,21 @@ function Wait-Backend {
                 return
             }
         } catch {
-            Start-Sleep -Seconds 2
+            # The service-state check below distinguishes startup delay from a crashed process.
         }
+
+        $exitedServices = @(& docker compose ps --all --status exited --services backend 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $exitedServices -contains "backend") {
+            Write-Host "Backend container exited before becoming healthy. Recent logs:"
+            & docker compose logs --tail 100 backend
+            throw "Backend container exited before becoming healthy."
+        }
+
+        Start-Sleep -Seconds 2
     }
+
+    Write-Host "Backend health check timed out. Recent logs:"
+    & docker compose logs --tail 100 backend
     throw "Backend did not become healthy within 120 seconds."
 }
 
@@ -130,10 +142,7 @@ function Sync-FrontendDependencies {
 function Test-DemoEnvironment {
     Wait-Backend
     $dependencies = Invoke-RestMethod -Uri "http://localhost:8000/api/v1/health/dependencies" -TimeoutSec 10
-    $knowledge = Invoke-RestMethod -Uri "http://localhost:8000/api/v1/knowledge/items?domain_code=ai_app_dev&limit=60" -TimeoutSec 10
-    if ($knowledge.data.total -lt 50) {
-        throw "Knowledge seed validation failed: expected at least 50 items."
-    }
+    Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.validate_rag_seed")
     $questionFile = Get-Content "data/seed/diagnostic_questions.json" -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($questionFile.Length -lt 60) {
         throw "Diagnostic seed validation failed: expected at least 60 questions."
@@ -144,7 +153,7 @@ function Test-DemoEnvironment {
         chroma = $dependencies.data.chroma.status
         live_models_ready = $dependencies.data.ready_for_live_demo
         fixture_enabled = $dependencies.data.fixture_enabled
-        knowledge_items = $knowledge.data.total
+        knowledge_items = "validated"
         diagnostic_questions = $questionFile.Length
     } | Format-List
     if (-not $dependencies.data.ready_for_live_demo) {
@@ -225,6 +234,7 @@ switch ($Action) {
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "backend")
         Wait-Backend
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "alembic", "upgrade", "head")
+        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.init_admin")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.seed_data", "--json")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_index", "--reset", "--json")
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "frontend")
@@ -246,6 +256,7 @@ switch ($Action) {
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "backend")
         Wait-Backend
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "alembic", "upgrade", "head")
+        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.init_admin")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.seed_data", "--json")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_index", "--reset", "--json")
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "frontend")

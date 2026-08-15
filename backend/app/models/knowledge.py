@@ -1,4 +1,6 @@
-from sqlalchemy import JSON, ForeignKey, String, Text
+from datetime import datetime
+
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -19,6 +21,33 @@ class KnowledgeItem(TimestampMixin, Base):
     source_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     license_note: Mapped[str] = mapped_column(String(255), default="")
     needs_reembedding: Mapped[bool] = mapped_column(default=True)
+    source_document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("knowledge_documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+
+class KnowledgeDocument(TimestampMixin, Base):
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    public_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    domain_code: Mapped[str] = mapped_column(String(64), index=True)
+    original_name: Mapped[str] = mapped_column(String(255))
+    stored_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    file_type: Mapped[str] = mapped_column(String(32))
+    mime_type: Mapped[str] = mapped_column(String(128), default="application/octet-stream")
+    size_bytes: Mapped[int] = mapped_column(default=0)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    knowledge_item_count: Mapped[int] = mapped_column(default=0)
+    chunk_count: Mapped[int] = mapped_column(default=0)
+    embedding_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_title: Mapped[str] = mapped_column(String(255), default="")
+    license_note: Mapped[str] = mapped_column(String(255), default="")
+    uploaded_by: Mapped[str] = mapped_column(String(64), default="demo_admin")
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class KnowledgeRelation(TimestampMixin, Base):

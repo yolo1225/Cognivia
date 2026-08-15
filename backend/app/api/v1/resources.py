@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.models import GenerationTask, LearningResource
+from app.core.security import Principal, get_current_user, principal_learner, require_resource
+from app.models import GenerationTask, Learner, LearningResource
 from app.schemas.common import ApiResponse, ok
 from app.services.demo_flow_service import serialize_resource
 from app.services.feedback_service import record_quick_feedback, serialize_feedback_decision
@@ -21,8 +22,16 @@ router = APIRouter()
 @router.get("", response_model=ApiResponse)
 def list_resources(
     include_unpublished: bool = Query(False, description="Administrator view"),
+    task_id: str | None = Query(None),
+    learner_id: str | None = Query(None),
+    domain_code: str | None = Query(None),
     db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
+    if include_unpublished and principal.role != "admin":
+        raise HTTPException(403, "需要管理员权限")
+    if principal.role != "admin":
+        learner_id = principal.learner_id
     statement = (
         select(LearningResource, GenerationTask)
         .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
@@ -34,6 +43,14 @@ def list_resources(
             LearningResource.is_current.is_(True),
             LearningResource.review_status == "passed",
         )
+    if task_id:
+        statement = statement.where(GenerationTask.public_id == task_id)
+    if learner_id:
+        statement = statement.join(Learner, Learner.id == GenerationTask.learner_id).where(
+            Learner.public_id == learner_id
+        )
+    if domain_code:
+        statement = statement.where(GenerationTask.domain_code == domain_code)
     rows = list(db.execute(statement))
     return ok([serialize_resource(resource, task) for resource, task in rows])
 
@@ -44,6 +61,7 @@ def submit_resource_feedback(
     background_tasks: BackgroundTasks,
     payload: dict[str, Any] | None = None,
     db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
     payload = payload or {}
     allowed_types = {
@@ -52,10 +70,15 @@ def submit_resource_feedback(
     feedback_type = str(payload.get("feedback_type", "confusing"))
     if feedback_type not in allowed_types:
         raise HTTPException(status_code=422, detail="unsupported quick feedback type")
-    learner = get_or_create_demo_learner(db, payload.get("learner_id", "learner_001"))
-    resource = db.scalar(
-        select(LearningResource).where(LearningResource.public_id == resource_id)
-    )
+    resource = require_resource(db, principal, resource_id)
+    requested_learner = payload.get("learner_id")
+    if principal.role == "admin" and not requested_learner:
+        task_owner = db.get(GenerationTask, resource.generation_task_id)
+        learner = db.get(Learner, task_owner.learner_id)
+    else:
+        learner = get_or_create_demo_learner(
+            db, principal_learner(principal, requested_learner)
+        )
     if resource is None:
         raise HTTPException(status_code=404, detail=f"Resource not found: {resource_id}")
     profile = default_profile_for_learner(db, learner)
@@ -77,10 +100,8 @@ def submit_resource_feedback(
 
 
 @router.get("/{resource_id}/versions", response_model=ApiResponse)
-def list_resource_versions(resource_id: str, db: Session = Depends(get_db)) -> ApiResponse:
-    resource = db.scalar(
-        select(LearningResource).where(LearningResource.public_id == resource_id)
-    )
+def list_resource_versions(resource_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+    resource = require_resource(db, principal, resource_id)
     if resource is None:
         raise HTTPException(status_code=404, detail=f"Resource not found: {resource_id}")
     series_id = resource.series_id or resource.public_id
@@ -112,10 +133,9 @@ def create_resource_export(
     resource_id: str,
     payload: dict[str, Any] | None = None,
     db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
-    resource = db.scalar(
-        select(LearningResource).where(LearningResource.public_id == resource_id)
-    )
+    resource = require_resource(db, principal, resource_id)
     if resource is None:
         raise HTTPException(status_code=404, detail=f"Resource not found: {resource_id}")
     if resource.review_status != "passed":

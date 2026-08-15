@@ -86,12 +86,24 @@ export interface KnowledgeIndexResult {
   embedding_model: string
 }
 
+export interface KnowledgeRelation {
+  source_id: string
+  source_name: string
+  target_id: string
+  target_name: string
+  relation_type: string
+}
+
 export function listKnowledgeItems(domainCode = 'ai_app_dev', limit = 100) {
   const params = new URLSearchParams({
     domain_code: domainCode,
     limit: String(limit),
   })
   return getData<KnowledgeItemsResponse>(`/knowledge/items?${params.toString()}`)
+}
+
+export function listKnowledgeRelations(domainCode = 'ai_app_dev') {
+  return getData<KnowledgeRelation[]>(`/knowledge/relations?domain_code=${encodeURIComponent(domainCode)}`)
 }
 
 export function searchKnowledge(query: string, domainCode = 'ai_app_dev', nResults = 5) {
@@ -111,6 +123,6 @@ export function updateKnowledgeItem(knowledgeId: string, payload: KnowledgeItemU
   return patchData<KnowledgeItemCreateResponse>(`/knowledge/items/${knowledgeId}`, payload)
 }
 
-export function rebuildKnowledgeIndex() {
-  return postData<KnowledgeIndexResult>('/knowledge/rebuild-index?domain_code=ai_app_dev')
+export function rebuildKnowledgeIndex(domainCode = 'ai_app_dev') {
+  return postData<KnowledgeIndexResult>(`/knowledge/rebuild-index?domain_code=${encodeURIComponent(domainCode)}`)
 }

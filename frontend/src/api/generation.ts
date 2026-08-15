@@ -43,7 +43,16 @@ export interface GenerationTaskDetail {
   execution_mode?: string
   revision_count: number
   decision: string
+  created_at?: string | null
+  updated_at?: string | null
   resources: GenerationTaskResult['resources']
+}
+
+export interface GenerationTaskFilters {
+  learnerId?: string
+  domainCode?: string
+  status?: string
+  limit?: number
 }
 
 export function createGenerationTask(
@@ -74,4 +83,13 @@ export function getActiveGenerationTask(learnerId = 'learner_001') {
   return getData<GenerationTaskDetail | null>(
     `/generation-tasks/active?learner_id=${encodeURIComponent(learnerId)}`,
   )
+}
+
+export function listGenerationTasks(filters: GenerationTaskFilters = {}) {
+  const params = new URLSearchParams()
+  if (filters.learnerId) params.set('learner_id', filters.learnerId)
+  if (filters.domainCode) params.set('domain_code', filters.domainCode)
+  if (filters.status) params.set('status', filters.status)
+  params.set('limit', String(filters.limit || 50))
+  return getData<GenerationTaskDetail[]>(`/generation-tasks?${params.toString()}`)
 }

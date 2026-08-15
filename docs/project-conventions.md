@@ -71,7 +71,7 @@ API 规则：
 
 - 基础路径固定 `/api/v1`。
 - 所有响应必须使用统一结构：`schema_version`、`request_id`、`data` 或 `error`。
-- MVP 认证使用演示账号和角色，不阻塞核心闭环。
+- 当前认证使用 learner/admin 两角色、bcrypt 密码、JWT HttpOnly Cookie 和 Redis Refresh 会话；业务接口必须执行后端对象归属校验。
 - 新增接口必须优先服务演示路线。
 - 修改 API 字段时要同步更新 `frontend/src/api` 类型。
 

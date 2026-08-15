@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.models import KnowledgeItem
+from app.models import KnowledgeItem, KnowledgeRelation
 from app.rag.embeddings import embed_texts, embedding_model_name
 from app.rag.vector_store import VectorStore, get_vector_store
 from app.scripts.build_chroma_index import build_index
@@ -19,6 +19,41 @@ from app.services.knowledge_update_service import (
 )
 
 router = APIRouter()
+
+
+@router.get("/relations", response_model=ApiResponse)
+def list_knowledge_relations(
+    domain_code: str = Query("ai_app_dev"),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    items = list(
+        db.scalars(select(KnowledgeItem).where(KnowledgeItem.domain_code == domain_code))
+    )
+    item_by_id = {item.id: item for item in items}
+    if not item_by_id:
+        return ok([])
+    relations = list(
+        db.scalars(
+            select(KnowledgeRelation)
+            .where(KnowledgeRelation.source_item_id.in_(item_by_id))
+            .order_by(KnowledgeRelation.id)
+            .limit(limit)
+        )
+    )
+    return ok(
+        [
+            {
+                "source_id": item_by_id[relation.source_item_id].public_id,
+                "source_name": item_by_id[relation.source_item_id].name,
+                "target_id": item_by_id[relation.target_item_id].public_id,
+                "target_name": item_by_id[relation.target_item_id].name,
+                "relation_type": relation.relation_type,
+            }
+            for relation in relations
+            if relation.source_item_id in item_by_id and relation.target_item_id in item_by_id
+        ]
+    )
 
 
 class KnowledgeItemCreate(BaseModel):

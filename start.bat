@@ -32,16 +32,21 @@ if not exist ".env" (
         goto :fail
     )
     echo [INFO] Created .env from .env.example.
+    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$p='.env'; $c=Get-Content $p -Raw; $b=New-Object byte[] 48; [Security.Cryptography.RandomNumberGenerator]::Fill($b); $s=[Convert]::ToBase64String($b); $c=$c.Replace('JWT_SECRET_KEY=replace-with-a-long-random-secret','JWT_SECRET_KEY='+$s).Replace('INITIAL_ADMIN_PASSWORD=change-me-before-first-run','INITIAL_ADMIN_PASSWORD=12345678'); Set-Content -LiteralPath $p -Value $c -Encoding utf8"
+    if errorlevel 1 (
+        echo [ERROR] Failed to initialize authentication settings in .env.
+        goto :fail
+    )
+    echo [INFO] Generated a private JWT key and configured the initial local administrator.
+    echo [WARN] Initial local login: admin / 12345678. Change it after first login.
     echo [INFO] Configure the OpenAI-compatible API values in .env for live model calls.
 )
 
 if not exist "storage" mkdir "storage"
 set "START_LOG=%~dp0storage\start.log"
 
-echo [WARN] Clean rebuild will delete this project's MySQL, ChromaDB, and frontend dependency volumes.
-echo [WARN] Manually added knowledge, learner activity, generated resources, and other runtime data will be removed.
-echo [INFO] Rebuilding DomainMind from the current source and seed baseline...
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& { Start-Transcript -Path '%START_LOG%' -Force; try { & '%~dp0scripts\demo.ps1' reset -ConfirmReset } finally { Stop-Transcript } }"
+echo [INFO] Starting DomainMind without deleting existing runtime data...
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& { Start-Transcript -Path '%START_LOG%' -Force; try { & '%~dp0scripts\demo.ps1' start } finally { Stop-Transcript } }"
 if errorlevel 1 (
     echo [ERROR] DomainMind failed to start. Review the output above.
     echo [INFO] Full log: %START_LOG%
@@ -49,10 +54,11 @@ if errorlevel 1 (
 )
 
 echo.
-echo [OK] DomainMind is ready with a clean, current data baseline.
+echo [OK] DomainMind is ready.
 echo Frontend:    http://localhost:5173/
 echo Backend API: http://localhost:8000/docs
 echo Health:      http://localhost:8000/api/v1/health
+echo Initial login on a fresh deployment: admin / 12345678
 echo.
 echo Press any key to close this window. Services will continue running in Docker.
 pause >nul

@@ -120,7 +120,7 @@ AI_APP_DEV_ABILITY_WEIGHTS: dict[str, dict[str, float]] = {
 }
 
 
-AI_APP_DEV_PROFILE_V1_SEED_SHA256 = "38ec13b4bd3dae1c6877a0c65c63b1e7bc42db7cb1bd6ec4cc05da2ef88878ec"
+AI_APP_DEV_PROFILE_V1_SEED_SHA256 = "4db42bddd7e45679e858e362f896f7243c0e0615659a09b1a085699c94406778"
 MASTERY_BASELINES = {
     "known": 0.90,
     "partial_mastery": 0.70,
@@ -136,13 +136,19 @@ def _seed_path() -> Path:
 
 def _load_knowledge_catalog() -> tuple[dict[str, KnowledgeProfileMetadata], str]:
     seed_bytes = _seed_path().read_bytes()
-    seed_sha256 = hashlib.sha256(seed_bytes).hexdigest()
+    payload = json.loads(seed_bytes.decode("utf-8"))
+    canonical_seed = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    seed_sha256 = hashlib.sha256(canonical_seed).hexdigest()
     if seed_sha256 != AI_APP_DEV_PROFILE_V1_SEED_SHA256:
         raise ValueError(
             "ai_app_dev profile configuration fingerprint mismatch; "
             "create a new configuration version and re-review fixtures"
         )
-    payload = json.loads(seed_bytes.decode("utf-8"))
     catalog = {
         item["knowledge_id"]: KnowledgeProfileMetadata(
             name=item["name"],

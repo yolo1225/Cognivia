@@ -2,7 +2,7 @@
   "baseline_version": "ai_app_dev_profile_v1_acceptance_2",
   "fixture_version": "ai_app_dev_profile_v1",
   "config_version": "ai_app_dev_profile_v1",
-  "seed_sha256": "983bb0404433259345eafe17b0f24a8ea743379b4010174e46bcf3fd649ab7ab",
+  "seed_sha256": "4db42bddd7e45679e858e362f896f7243c0e0615659a09b1a085699c94406778",
   "reviewed_on": "2026-07-26",
   "review_method": "rule-reviewed formula + seed relations",
   "case_sha256": {

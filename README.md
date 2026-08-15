@@ -19,54 +19,95 @@ test_script/  baseline/live 评测与七分支验收入口
 storage/      导出文件和运行期本地存储
 ```
 
-## 快速启动
+## 部署与启动
 
-1. 复制环境变量并填写真实模型配置：
+部署前需要安装并启动 Docker Desktop（或安装了 Docker Compose v2 的 Docker Engine）。项目提供两种部署方式。
+
+### 方式一：Windows 使用 start.bat 一键部署
+
+双击根目录的 `start.bat`，或在 PowerShell 中运行：
+
+```powershell
+.\start.bat
+```
+
+首次运行会自动：
+
+- 从 `.env.example` 创建不会提交到 Git 的 `.env`
+- 为当前部署生成独立的随机 `JWT_SECRET_KEY`
+- 设置初始管理员 `admin / 12345678`
+- 构建并启动 MySQL、Redis、ChromaDB、后端和前端
+- 执行 Alembic 迁移、管理员初始化、种子导入和 ChromaDB 索引重建
+
+`start.bat` 可以重复运行，不会删除已有数据库，也不会覆盖已经存在的管理员密码。首次登录后应在“用户管理”中立即修改初始密码。模型配置仍需按需填写到 `.env`；真实模型验收必须配置模型名称和 API Key，并保持 `ALLOW_FIXTURE_LLM=false`。
+
+需要主动清空 MySQL、ChromaDB 和相关 Docker 卷时，使用显式重置命令：
+
+```powershell
+.\scripts\demo.ps1 reset
+```
+
+### 方式二：手动使用 Docker Compose 部署
+
+适用于 Linux、macOS、Windows，或需要自行控制每个部署步骤的场景。
+
+1. 创建本地环境变量文件：
 
 ```bash
 cp .env.example .env
 ```
 
-正式验收必须设置三个模型名，并使用 `ALLOW_FIXTURE_LLM=false`。密钥只保存在未提交的 `.env`。
-
-Windows 可以一键完成构建、迁移、种子初始化和索引重建：
+Windows PowerShell 使用：
 
 ```powershell
-./scripts/demo.ps1 start
+Copy-Item .env.example .env
 ```
 
-对已有 Docker 演示数据进行真实验收前，先执行非破坏性备份：
+2. 编辑 `.env`，至少替换以下占位值：
 
-```powershell
-./scripts/demo.ps1 backup
+```env
+JWT_SECRET_KEY=请填写至少32字节的随机密钥
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=请填写至少8位的初始密码
+COOKIE_SECURE=false
 ```
 
-它会将 MySQL、Chroma、Compose 状态和 V2 candidate manifest 保存到 `reports/preflight/<timestamp>/`，不会执行 reset。
+`.env` 不应提交到 Git。HTTPS 正式部署需要设置 `COOKIE_SECURE=true`。如需真实模型调用，还要填写 `OPENAI_API_BASE`、`OPENAI_API_KEY`、三个模型名称和 Embedding 模型。
 
-2. 使用 Docker Compose 构建并启动：
+3. 构建并启动基础服务和后端：
 
 ```bash
-docker compose up -d --build
+docker compose up -d --build mysql redis chromadb backend
 ```
 
-3. 初始化数据库表、种子数据和 ChromaDB 索引：
+4. 依次执行数据库迁移、管理员初始化、种子导入和索引重建：
 
 ```bash
 docker compose exec backend alembic upgrade head
+docker compose exec backend python -m app.scripts.init_admin
 docker compose exec backend python -m app.scripts.seed_data --json
 docker compose exec backend python -m app.scripts.build_chroma_index --reset --json
 ```
 
-4. 验证：
+`init_admin` 是幂等命令：管理员已存在时不会重新创建，也不会使用 `.env` 中的新密码覆盖数据库中的旧密码。
+
+5. 启动前端：
 
 ```bash
-curl "http://localhost:8000/api/v1/health"
-curl "http://localhost:8000/api/v1/health/dependencies"
-curl "http://localhost:8000/api/v1/knowledge/items?domain_code=ai_app_dev&limit=60"
-curl "http://localhost:8000/api/v1/knowledge/search?query=RAG文档切片&n_results=3"
+docker compose up -d frontend
 ```
 
-5. 访问：
+6. 检查服务状态：
+
+```bash
+docker compose ps
+curl "http://localhost:8000/api/v1/health"
+curl "http://localhost:8000/api/v1/health/dependencies"
+```
+
+知识库等管理接口需要先登录管理员账号，不能再通过匿名 `curl` 直接访问。
+
+### 访问地址
 
 - Frontend: http://localhost:5173
 - Backend: http://localhost:8000/docs
@@ -78,6 +119,14 @@ curl "http://localhost:8000/api/v1/knowledge/search?query=RAG文档切片&n_resu
 ```bash
 docker compose up -d
 ```
+
+对已有 Docker 演示数据进行真实验收前，可先执行非破坏性备份：
+
+```powershell
+.\scripts\demo.ps1 backup
+```
+
+备份会保存到 `reports/preflight/<timestamp>/`，不会执行 reset。
 
 ## V2 Candidate 索引真实验收
 

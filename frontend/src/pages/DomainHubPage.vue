@@ -1,118 +1,61 @@
 <template>
   <section class="page">
-    <div class="head"><div><h1>领域管理</h1></div></div>
+    <div class="head"><div><h1>领域管理</h1><p class="sub">每个领域拥有独立的文件知识库、向量集合和生成规则。</p></div><div class="actions"><select v-model="selectedCode" class="field" @change="switchDomain"><option v-for="domain in domains" :key="domain.domain_code" :value="domain.domain_code">{{ domain.name }}</option></select><button class="btn" :disabled="loading" @click="loadDomain">刷新数据</button></div></div>
+    <div v-if="errorMessage" class="error-state"><strong>领域数据加载失败</strong><p>{{ errorMessage }}</p><button class="btn" @click="loadAll">重新加载</button></div>
+    <template v-else>
+      <div class="hub-context"><div class="hub-current"><div class="hub-mark">域</div><div><strong>{{ selectedDomain?.name || '-' }}</strong><small>{{ selectedCode }} · 独立知识库</small></div></div><span class="tag">Schema {{ selectedDomain?.domain_schema_version || '1.0' }}</span></div>
+      <div class="panel" style="padding:0 18px 18px">
+        <div class="hub-tabs"><button v-for="pane in panes" :key="pane.id" class="hub-tab" :class="{active:activePane===pane.id}" @click="selectPane(pane.id)">{{ pane.label }}</button></div>
 
-    <div class="hub-context">
-      <div class="hub-current">
-        <div class="hub-mark">AI</div>
-        <div><strong>{{ selectedDomain?.name || '选择领域' }}</strong><small><span class="domain-code">{{ selectedDomain?.domain_code }}</span> · {{ selectedDomain?.status }}</small></div>
-      </div>
-      <div class="actions">
-        <select class="field" v-model="selectedCode" @change="switchDomain">
-          <option v-for="d in domains" :key="d.domain_code" :value="d.domain_code">{{ d.name }}</option>
-        </select>
-        <button class="btn" @click="validate" :disabled="validating">校验当前领域</button>
-      </div>
-    </div>
+        <div v-if="activePane==='overview'" class="hub-pane active pane-body">
+          <div class="metrics"><div class="metric"><div><span>知识库文件</span></div><strong>{{ documentSummary.total }}</strong><small>{{ documentSummary.ready }} 个已完成索引</small></div><div class="metric"><div><span>向量切片</span></div><strong>{{ documentSummary.chunks }}</strong><small>当前领域独立集合</small></div><div class="metric"><div><span>处理中</span></div><strong>{{ documentSummary.processing }}</strong><small>解析或建立索引</small></div><div class="metric"><div><span>处理失败</span></div><strong>{{ documentSummary.failed }}</strong><small>可在知识库中重试</small></div></div>
+          <div class="cols" style="margin-top:16px"><div class="panel"><h2>知识库隔离</h2><div class="insight" style="margin-top:12px">文件保存在 <strong>{{ selectedCode }}</strong> 的独立目录，向量写入 <strong>knowledge_{{ selectedCode }}</strong> 集合。切换领域不会混用文件或召回结果。</div></div><div class="panel"><h2>领域就绪状态</h2><div class="readiness"><div class="ready-row"><span>知识库文件</span><strong>{{ documentSummary.total }} 个</strong></div><div class="ready-row"><span>索引就绪</span><strong>{{ documentSummary.ready }} 个</strong></div><div class="ready-row"><span>诊断题库</span><strong>{{ stats?.diagnostic_questions || 0 }} 题</strong></div></div></div></div>
+        </div>
 
-    <div class="panel" style="padding:0 18px 18px">
-      <div class="hub-tabs">
-        <button v-for="t in panes" :key="t.id" class="hub-tab" :class="{ active: activePane === t.id }" @click="activePane = t.id">{{ t.label }}</button>
-      </div>
-
-      <div class="hub-pane" :class="{ active: activePane === 'overview' }" style="padding-top:18px">
-        <div class="hub-overview">
-          <div>
-            <div class="metrics">
-              <div class="metric"><div><span>知识点</span></div><strong>{{ knowledgeTotal }}</strong><small>来源完整率 100%</small></div>
-              <div class="metric"><div><span>诊断题</span></div><strong>72</strong><small>覆盖五维能力</small></div>
-              <div class="metric"><div><span>知识关系</span></div><strong>94</strong><small>前置、后继、相关</small></div>
-              <div class="metric"><div><span>待向量化</span></div><strong>{{ pendingCount }}</strong><small>最近更新条目</small></div>
-            </div>
+        <div v-else-if="activePane==='knowledge'" class="hub-pane active pane-body">
+          <div class="panel-head"><div><h2>知识库管理</h2><p class="sub">上传的文件只进入当前领域知识库，系统会自动解析、切片并生成向量。</p></div><span class="tag">{{ documentSummary.total }} 个文件</span></div>
+          <div class="upload-zone knowledge-upload" :class="{dragging}" @dragover.prevent="dragging=true" @dragleave.prevent="dragging=false" @drop.prevent="handleDrop">
+            <div class="upload-icon">⇧</div><strong>拖拽文件到此处，或选择文件</strong><p>支持 PDF、Markdown、TXT，单个文件不超过 20MB；扫描版 PDF 暂不支持 OCR。</p><button class="btn primary" :disabled="uploading" @click="fileInput?.click()">{{ uploading?'正在上传...':'选择文件' }}</button><input ref="fileInput" class="hidden" type="file" multiple accept=".pdf,.md,.markdown,.txt" @change="handleFileInput">
           </div>
-          <aside class="panel">
-            <div class="panel-head"><h2>领域就绪状态</h2></div>
-            <div class="readiness">
-              <div class="ready-row"><span>基本信息</span><strong style="color:var(--green)">完整 ✓</strong></div>
-              <div class="ready-row"><span>知识数据</span><strong style="color:var(--green)">{{ knowledgeTotal }} / 50 ✓</strong></div>
-              <div class="ready-row"><span>向量索引</span><strong :style="{ color: pendingCount > 0 ? 'var(--amber)' : 'var(--green)' }">{{ pendingCount }} 项待处理</strong></div>
-            </div>
-            <button class="btn primary" style="width:100%;margin-top:14px" @click="rebuild" :disabled="rebuilding">{{ rebuilding ? '重建中...' : '重建向量索引' }}</button>
-            <div v-if="validationResult" class="insight" style="margin-top:14px"><strong>校验结果</strong><br>{{ validationResult.passed ? '全部通过 ✓' : '存在问题：' + validationResult.issues.map((i: any) => i.message).join('；') }}</div>
-          </aside>
+          <div class="form-grid upload-meta"><label>来源名称<input v-model="sourceTitle" class="field" placeholder="默认使用文件名"></label><label>来源与授权说明<input v-model="licenseNote" class="field" placeholder="例如：内部资料，经授权使用"></label></div>
+          <div v-if="uploadResults.length" class="upload-results"><div v-for="item in uploadResults" :key="item.name" :class="item.ok?'upload-ok':'upload-fail'"><strong>{{ item.name }}</strong><span>{{ item.message }}</span></div></div>
+          <div class="table-wrap" style="margin-top:16px"><table><thead><tr><th>文件</th><th>类型</th><th>大小</th><th>向量切片</th><th>状态</th><th>上传时间</th><th>操作</th></tr></thead><tbody><tr v-if="!documents.length"><td colspan="7" class="empty-cell">当前领域尚无知识库文件，请上传 PDF、Markdown 或 TXT。</td></tr><tr v-for="document in documents" :key="document.document_id"><td><strong>{{ document.original_name }}</strong><br><small>{{ document.source_title }}</small></td><td>{{ fileTypeLabel(document.file_type) }}</td><td>{{ formatBytes(document.size_bytes) }}</td><td>{{ document.chunk_count || '-' }}</td><td><span class="status" :class="statusClass(document.status)">{{ statusLabel(document.status) }}</span><small v-if="document.error_summary" class="document-error">{{ document.error_summary }}</small></td><td>{{ formatDate(document.created_at) }}</td><td><div class="actions"><span v-if="document.is_system" class="tag">系统内置</span><button v-else-if="document.status==='failed'" class="btn small" @click="retry(document)">重新处理</button><button v-if="!document.is_system" class="btn text danger" :disabled="isProcessing(document.status)" @click="remove(document)">删除</button></div></td></tr></tbody></table></div>
         </div>
-      </div>
 
-      <div v-for="t in panes.slice(1)" :key="t.id" class="hub-pane" :class="{ active: activePane === t.id }" style="padding-top:18px">
-        <div class="panel-head"><h2>{{ t.label }}</h2></div>
-        <div v-if="t.id === 'knowledge'" class="upload-zone" style="min-height:138px;margin-bottom:14px">
-          <div style="display:flex;align-items:center;gap:16px;text-align:left;max-width:720px">
-            <div class="upload-icon">⇧</div>
-            <div style="flex:1"><h3>导入领域文件</h3><p>知识资料支持 PDF、Markdown、TXT；诊断题库支持 Excel、JSON。</p><button class="btn primary" style="margin-top:10px" @click="showToast('请选择文件')">选择文件并导入</button></div>
-          </div>
-        </div>
-        <div v-if="t.id === 'graph'" class="graph-wrap">
-          <div class="graph-canvas"><svg viewBox="0 0 760 420"><g stroke="#9fb0c7" stroke-width="2" fill="none"><path d="M120 210 L260 120"/><path d="M120 210 L270 280"/><path d="M260 120 L410 205"/><path d="M270 280 L410 205"/><path d="M410 205 L565 115"/><path d="M410 205 L575 285"/></g><g font-family="system-ui" font-size="11" text-anchor="middle"><g><circle cx="120" cy="210" r="38" fill="#315fce"/><text x="120" y="207" fill="white">Python API</text></g><g><circle cx="260" cy="120" r="42" fill="#138560"/><text x="260" y="117" fill="white">Embedding</text></g><g><circle cx="410" cy="205" r="47" fill="#315fce"/><text x="410" y="202" fill="white">RAG 检索</text></g><g><circle cx="565" cy="115" r="41" fill="#315fce"/><text x="565" y="112" fill="white">召回评测</text></g></g></svg></div>
-        </div>
+        <div v-else-if="activePane==='relations'" class="hub-pane active pane-body"><div class="panel-head"><h2>知识关系</h2><span class="tag">{{ relations.length }} 条</span></div><div v-if="relations.length" class="relation-list"><div v-for="(relation,index) in relations" :key="index" class="relation"><strong>{{ relation.source_name }}</strong><i>{{ relationLabel(relation.relation_type) }} →</i><strong>{{ relation.target_name }}</strong></div></div><div v-else class="empty-hint">当前领域尚无知识关系。</div></div>
+
+        <div v-else-if="activePane==='config'" class="hub-pane active pane-body"><div class="panel-head"><h2>领域规则</h2><span class="tag">只读配置</span></div><div class="config-list"><div class="config-row"><div><h3>能力模型</h3><p>用于诊断画像和报告展示</p></div><strong>理论基础、实操能力、问题解决、知识广度、学习速度</strong></div><div class="config-row"><div><h3>难度标准</h3><p>知识、题目和资源共用</p></div><strong>1 至 5 级</strong></div><div class="config-row"><div><h3>审核规则</h3><p>资源发布前必须满足</p></div><strong>事实、来源、难度、核心覆盖</strong></div><div class="config-row"><div><h3>资源类型</h3><p>当前 MVP 输出</p></div><strong>讲义、实操指南、分阶测试</strong></div></div></div>
+
+        <div v-else class="hub-pane active pane-body"><div class="panel-head"><h2>索引与校验</h2><span class="status" :class="documentSummary.failed||documentSummary.processing?'wait':'ok'">{{ documentSummary.failed||documentSummary.processing?'存在待处理项':'已同步' }}</span></div><p class="sub">上传文件会自动建立索引。以下按钮仅用于处理历史知识条目的待向量化状态。</p><div class="actions" style="margin-top:14px"><button class="btn" :disabled="rebuilding||!stats?.pending_embeddings" @click="rebuild">{{ rebuilding?'重建中...':'重建历史待处理索引' }}</button><button class="btn" :disabled="validating" @click="validate">校验领域</button></div><div v-if="validationResult" class="insight" style="margin-top:14px"><strong>{{ validationResult.passed?'校验通过':'存在待处理项' }}</strong><br>{{ validationResult.issues.length?validationResult.issues.map(i=>i.message).join('；'):'知识库、诊断题和向量索引均满足要求。' }}</div></div>
       </div>
-    </div>
+    </template>
   </section>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useToast } from '@/composables/useToast'
-import { listDomains, validateDomain, type DomainSummary } from '@/api/domains'
-import { listKnowledgeItems, rebuildKnowledgeIndex } from '@/api/knowledge'
-
-const { showToast } = useToast()
-const domains = ref<DomainSummary[]>([])
-const selectedCode = ref('ai_app_dev')
-const selectedDomain = ref<DomainSummary | null>(null)
-const activePane = ref('overview')
-const knowledgeTotal = ref(0)
-const pendingCount = ref(0)
-const rebuilding = ref(false)
-const validating = ref(false)
-const validationResult = ref<any>(null)
-
-const panes = [
-  { id: 'overview', label: '领域概览' },
-  { id: 'knowledge', label: '知识库管理' },
-  { id: 'graph', label: '知识图谱' },
-  { id: 'rule', label: '差异规则' },
-  { id: 'index', label: '索引与校验' },
-]
-
-async function switchDomain() {
-  selectedDomain.value = domains.value.find(d => d.domain_code === selectedCode.value) || null
-  if (selectedDomain.value) {
-    try {
-      const resp = await listKnowledgeItems(selectedCode.value, 100)
-      knowledgeTotal.value = resp.total
-      pendingCount.value = resp.items.filter(i => i.needs_reembedding).length
-    } catch { knowledgeTotal.value = 0; pendingCount.value = 0 }
-  }
-}
-
-async function validate() {
-  validating.value = true
-  try { validationResult.value = await validateDomain(selectedCode.value); showToast(validationResult.value.passed ? '校验通过' : '存在待处理项') }
-  catch { showToast('校验失败') }
-  finally { validating.value = false }
-}
-
-async function rebuild() {
-  rebuilding.value = true
-  try { await rebuildKnowledgeIndex(); pendingCount.value = 0; showToast('索引重建完成') }
-  catch { showToast('索引重建失败') }
-  finally { rebuilding.value = false }
-}
-
-onMounted(async () => {
-  try {
-    domains.value = await listDomains()
-    if (domains.value.length > 0) { selectedDomain.value = domains.value[0]; await switchDomain() }
-  } catch { domains.value = [{ domain_code: 'ai_app_dev', name: '人工智能应用开发实训', status: 'enabled' }] }
-})
+import { computed,onBeforeUnmount,onMounted,ref } from 'vue'; import { useRoute,useRouter } from 'vue-router'
+import { getDomainStats,listDomains,validateDomain,type DomainStats,type DomainSummary } from '@/api/domains'
+import { listKnowledgeRelations,rebuildKnowledgeIndex,type KnowledgeRelation } from '@/api/knowledge'
+import { deleteKnowledgeDocument,listKnowledgeDocuments,retryKnowledgeDocument,uploadKnowledgeDocument,type KnowledgeDocumentItem,type KnowledgeDocumentStatus } from '@/api/knowledgeDocuments'
+import { useDomainStore } from '@/stores/domainStore'; import { useToast } from '@/composables/useToast'
+import { formatBeijingDateTime } from '@/utils/dateTime'
+const route=useRoute();const router=useRouter();const domainStore=useDomainStore();const{showToast}=useToast()
+const panes=[{id:'overview',label:'领域概览'},{id:'knowledge',label:'知识库管理'},{id:'relations',label:'知识关系'},{id:'config',label:'领域规则'},{id:'index',label:'索引校验'}]
+const domains=ref<DomainSummary[]>([]);const selectedCode=ref(domainStore.currentDomainCode);const activePane=ref(String(route.query.tab||'overview'));const stats=ref<DomainStats|null>(null);const documents=ref<KnowledgeDocumentItem[]>([]);const relations=ref<KnowledgeRelation[]>([]);const documentSummary=ref({total:0,ready:0,processing:0,failed:0,chunks:0});const loading=ref(false);const errorMessage=ref('');const validating=ref(false);const rebuilding=ref(false);const uploading=ref(false);const dragging=ref(false);const fileInput=ref<HTMLInputElement|null>(null);const sourceTitle=ref('');const licenseNote=ref('');const uploadResults=ref<Array<{name:string;ok:boolean;message:string}>>([]);const validationResult=ref<{passed:boolean;issues:Array<{message:string}>}|null>(null);let pollTimer:number|undefined;let loadVersion=0
+const selectedDomain=computed(()=>domains.value.find(d=>d.domain_code===selectedCode.value)||null)
+function selectPane(id:string){activePane.value=id;router.replace({query:{tab:id}})}
+function stopPolling(){if(pollTimer!==undefined){window.clearTimeout(pollTimer);pollTimer=undefined}}
+function schedulePolling(){stopPolling();if(documents.value.some(item=>isProcessing(item.status)))pollTimer=window.setTimeout(()=>loadDocuments(true),2000)}
+async function loadAll(){loading.value=true;errorMessage.value='';try{domains.value=await listDomains();if(!domains.value.some(d=>d.domain_code===selectedCode.value)&&domains.value.length)selectedCode.value=domains.value[0].domain_code;await loadDomain()}catch{errorMessage.value='无法读取领域知识库，请确认数据库和后端服务可用。'}finally{loading.value=false}}
+async function switchDomain(){stopPolling();documents.value=[];relations.value=[];documentSummary.value={total:0,ready:0,processing:0,failed:0,chunks:0};await loadDomain()}
+async function loadDomain(){const version=++loadVersion;const domain=selectedDomain.value;domainStore.currentDomainCode=selectedCode.value;if(domain)domainStore.currentDomainName=domain.name;try{const[s,d,r]=await Promise.all([getDomainStats(selectedCode.value),listKnowledgeDocuments(selectedCode.value),listKnowledgeRelations(selectedCode.value)]);if(version!==loadVersion)return;stats.value=s;documents.value=d.documents;documentSummary.value=d.summary;relations.value=r;errorMessage.value='';schedulePolling()}catch{if(version===loadVersion)errorMessage.value='当前领域知识库加载失败。'}}
+async function loadDocuments(silent=false){const domain=selectedCode.value;try{const data=await listKnowledgeDocuments(domain);if(domain!==selectedCode.value)return;documents.value=data.documents;documentSummary.value=data.summary;schedulePolling()}catch{if(!silent)showToast('知识库文件加载失败')}}
+async function uploadFiles(files:File[]){if(!files.length)return;uploading.value=true;uploadResults.value=[];for(const file of files){try{await uploadKnowledgeDocument(file,selectedCode.value,sourceTitle.value,licenseNote.value);uploadResults.value.push({name:file.name,ok:true,message:'已上传，正在自动解析和索引'})}catch(error:any){uploadResults.value.push({name:file.name,ok:false,message:error?.response?.data?.detail||'上传失败'})}}uploading.value=false;if(fileInput.value)fileInput.value.value='';await loadDocuments()}
+function handleFileInput(event:Event){uploadFiles(Array.from((event.target as HTMLInputElement).files||[]))}function handleDrop(event:DragEvent){dragging.value=false;uploadFiles(Array.from(event.dataTransfer?.files||[]))}
+async function retry(document:KnowledgeDocumentItem){try{await retryKnowledgeDocument(document.document_id);showToast('已重新提交处理');await loadDocuments()}catch{showToast('重新处理失败')}}
+async function remove(document:KnowledgeDocumentItem){if(!window.confirm(`确认删除“${document.original_name}”？相关向量和内部知识将同步删除。`))return;try{await deleteKnowledgeDocument(document.document_id);showToast('知识库文件已删除');await loadDomain()}catch(error:any){showToast(error?.response?.data?.detail||'删除失败')}}
+async function rebuild(){rebuilding.value=true;try{await rebuildKnowledgeIndex(selectedCode.value);showToast('历史索引重建完成');await loadDomain()}catch{showToast('索引重建失败')}finally{rebuilding.value=false}}
+async function validate(){validating.value=true;try{validationResult.value=await validateDomain(selectedCode.value)}catch{showToast('领域校验失败')}finally{validating.value=false}}
+function isProcessing(status:KnowledgeDocumentStatus){return['queued','parsing','indexing'].includes(status)}function statusLabel(status:KnowledgeDocumentStatus){return({queued:'等待处理',parsing:'正在解析',indexing:'正在索引',ready:'已就绪',failed:'处理失败'} as Record<string,string>)[status]}function statusClass(status:KnowledgeDocumentStatus){return status==='ready'?'ok':'wait'}function fileTypeLabel(type:string){return({pdf:'PDF',markdown:'Markdown',text:'TXT',seed_package:'知识包'} as Record<string,string>)[type]||type}function relationLabel(value:string){return({prerequisite:'前置',dependent:'后继',related:'相关'} as Record<string,string>)[value]||value}function formatBytes(value:number){if(!value)return'-';if(value<1024)return`${value} B`;if(value<1024*1024)return`${(value/1024).toFixed(1)} KB`;return`${(value/1024/1024).toFixed(1)} MB`}const formatDate=formatBeijingDateTime
+onMounted(loadAll);onBeforeUnmount(stopPolling)
 </script>

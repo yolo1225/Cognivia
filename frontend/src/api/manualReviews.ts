@@ -11,9 +11,26 @@ export interface ManualReviewItem {
   created_at: string | null
 }
 
+export interface ManualReviewDetail extends ManualReviewItem {
+  resource: { resource_id: string; title: string; resource_type: string; review_status: string } | null
+  review: {
+    primary: Record<string, unknown>
+    secondary: Record<string, unknown>
+    arbitration: Record<string, unknown>
+    scores: Record<string, number>
+    evidence_refs: unknown[]
+    disagreement: Record<string, unknown>
+    issues: unknown[]
+  } | null
+}
+
 export function listManualReviews(status?: string) {
   const query = status ? `?status=${encodeURIComponent(status)}` : ''
   return getData<ManualReviewItem[]>(`/manual-reviews${query}`)
+}
+
+export function getManualReview(reviewId: string) {
+  return getData<ManualReviewDetail>(`/manual-reviews/${reviewId}`)
 }
 
 export function decideManualReview(

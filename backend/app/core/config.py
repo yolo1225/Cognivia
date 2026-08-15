@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     schema_version: str = "1.0"
     api_v1_prefix: str = "/api/v1"
     frontend_origin: str = "http://localhost:5173"
+    jwt_secret_key: str = "local-development-secret-change-me"
+    access_token_minutes: int = 15
+    refresh_token_days: int = 7
+    cookie_secure: bool = False
+    redis_url: str = "redis://localhost:6379/0"
+    initial_admin_username: str = "admin"
+    initial_admin_password: str | None = None
+    initial_admin_display_name: str = "系统管理员"
 
     database_url: str = Field(
         default="mysql+pymysql://yunchuan:yunchuan_dev@localhost:3306/yunchuan_zhihui"
@@ -40,6 +48,13 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
     enable_full_debug_payloads: bool = False
+
+    def validate_auth_config(self) -> None:
+        if self.app_env not in {"local", "test"} and (
+            self.jwt_secret_key == "local-development-secret-change-me"
+            or len(self.jwt_secret_key.encode("utf-8")) < 32
+        ):
+            raise RuntimeError("JWT_SECRET_KEY must be a non-default secret of at least 32 bytes")
 
 @lru_cache
 def get_settings() -> Settings:

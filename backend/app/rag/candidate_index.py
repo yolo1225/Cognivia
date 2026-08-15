@@ -143,6 +143,7 @@ class CandidateIndexBuilder:
         return {
             "domain_code": item.domain_code,
             "knowledge_id": item.public_id,
+            "document_id": str(item.source_document_id or ""),
             "name": item.name,
             "category": item.category,
             "difficulty": item.difficulty,
