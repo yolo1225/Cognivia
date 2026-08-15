@@ -1029,42 +1029,6 @@ textarea {
 /* Utilities */
 .hidden { display: none !important; }
 
-.table-wrap { width: 100%; overflow-x: auto; }
-.empty-cell { padding: 28px 12px; text-align: center; color: var(--muted); }
-.error-state {
-  border: 1px solid #edc9c9;
-  border-radius: 10px;
-  background: #fffafa;
-  padding: 18px;
-  color: var(--red);
-}
-.error-state p { margin: 7px 0 12px; color: #7a4545; font-size: 13px; }
-.resource-content {
-  margin-top: 16px;
-  color: #3e4e63;
-  font-size: 13px;
-  line-height: 1.8;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.feedback-panel { margin-top: 18px; background: var(--soft); }
-.danger-action { border-color: #e2a9a9; color: var(--red); }
-.config-preview { max-height: 240px; overflow: auto; white-space: pre-wrap; color: #405067; font-size: 12px; }
-.pane-body { padding-top: 18px; }
-.knowledge-upload { gap: 10px; transition: border-color .18s ease, background .18s ease; }
-.knowledge-upload.dragging { border-color: var(--blue); background: var(--blue2); }
-.upload-meta { margin-top: 14px; }
-.upload-results { display: grid; gap: 7px; margin-top: 12px; }
-.upload-results > div { display: flex; justify-content: space-between; gap: 12px; border-radius: 8px; padding: 9px 11px; font-size: 12px; }
-.upload-ok { background: var(--green2); color: var(--green); }
-.upload-fail { background: #fff0f0; color: var(--red); }
-.document-error { display: block; max-width: 320px; margin-top: 5px; color: var(--red); line-height: 1.5; }
-button:disabled { cursor: not-allowed; opacity: .55; }
-button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 3px rgba(49,95,206,.18);
-}
-
 /* Responsive */
 @media (max-width: 1100px) {
   .metrics { grid-template-columns: 1fr 1fr; }
@@ -1100,10 +1064,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .step { min-width: 90px; }
   .enrollment { grid-template-columns: 36px 1fr; }
   .enrollment-actions { grid-column: 1/-1; justify-content: flex-start; }
-}
-@media (max-width: 480px) {
-  .metrics, .eval, .mastery, .form-grid, .task-detail-grid { grid-template-columns: 1fr; }
-  .btn { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
