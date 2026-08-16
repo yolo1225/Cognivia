@@ -42,7 +42,6 @@ async function logout(){ menuOpen.value = false; await authStore.logout(); await
 
 const labels: Record<string, string> = {
   '/dashboard': '首页',
-  '/diagnostic': '诊断训练',
   '/resources': '学习资源',
   '/report': '学习报告',
   '/metrics': '任务记录',

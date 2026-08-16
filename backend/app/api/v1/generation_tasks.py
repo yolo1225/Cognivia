@@ -23,7 +23,7 @@ from app.models import (
 )
 from app.schemas.common import ApiResponse, ok
 from app.services.feedback_service import create_feedback_task
-from app.services.profile_service import latest_profile_for_learner, profile_source, public_id
+from app.services.profile_service import is_initial_profile_ready, latest_profile_for_learner, profile_source, public_id
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.workers.generation_worker import run_generation_task
 
@@ -149,8 +149,8 @@ def create_generation_task(
         learner = db.get(Learner, profile.learner_id) or learner
     else:
         profile = latest_profile_for_learner(db, learner)
-    if profile is None or not profile.diagnosis_completed:
-        raise HTTPException(status_code=409, detail="DIAGNOSIS_REQUIRED")
+    if not is_initial_profile_ready(profile):
+        raise HTTPException(status_code=409, detail="PROFILE_NOT_READY")
     task = GenerationTask(
         public_id=public_id("task"),
         learner_id=learner.id,
@@ -204,8 +204,8 @@ def confirm_feedback_generation(
         return ok(_task_detail_summary(db, existing))
     profile = latest_profile_for_learner(db, learner)
     resource = db.get(LearningResource, feedback.resource_id)
-    if profile is None or not profile.diagnosis_completed:
-        raise HTTPException(status_code=409, detail="DIAGNOSIS_REQUIRED")
+    if not is_initial_profile_ready(profile):
+        raise HTTPException(status_code=409, detail="PROFILE_NOT_READY")
     if resource is None or feedback.recommended_action not in {"review", "challenge", "explain", "regenerate"}:
         raise HTTPException(status_code=409, detail="GENERATION_NOT_RECOMMENDED")
     source_task = db.get(GenerationTask, resource.generation_task_id)

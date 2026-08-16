@@ -33,13 +33,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
+import { useLearnerStore } from '@/stores/learnerStore'
+import { useProfileGateStore } from '@/stores/profileGateStore'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const learnerStore = useLearnerStore()
+const profileGate = useProfileGateStore()
 
 interface NavItem {
   page: string
@@ -58,7 +62,6 @@ const allNavGroups: NavGroup[] = [
     label: '学习体验',
     items: [
       { page: 'dashboard', label: '首页', icon: '⌂', route: '/dashboard' },
-      { page: 'diagnostic', label: '诊断训练', icon: '◎', route: '/diagnostic' },
       { page: 'resources', label: '学习资源', icon: '▤', route: '/resources' },
       { page: 'report', label: '学习报告', icon: '⌁', route: '/report' },
       { page: 'metrics', label: '任务记录', icon: '▥', route: '/metrics' },
@@ -78,8 +81,19 @@ const visibleNavGroups = computed(() => {
   return allNavGroups
     .map((group) => ({
       ...group,
-      items: group.label === '管理与质量' && role !== 'admin' ? [] : group.items,
+      items: group.label === '管理与质量' && role !== 'admin'
+        ? []
+        : group.label === '学习体验' && role === 'learner' && !profileGate.ready
+          ? group.items.filter((item) => item.page === 'dashboard')
+          : group.items,
     }))
     .filter((group) => group.items.length > 0)
 })
+
+function refreshProfileGate() {
+  if (authStore.role === 'learner') void profileGate.refresh(learnerStore.selectedLearnerId || '')
+}
+
+onMounted(refreshProfileGate)
+watch(() => learnerStore.selectedLearnerId, refreshProfileGate)
 </script>

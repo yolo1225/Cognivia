@@ -5,7 +5,7 @@
       <div class="actions">
         <button class="btn" @click="loadResources" :disabled="loading">刷新资源</button>
         <button class="btn" :disabled="!canTutor" @click="openTutor">AI 导学</button>
-        <button class="btn primary" @click="router.push('/diagnostic')">去诊断训练</button>
+        <button class="btn primary" @click="openReport">查看学习画像</button>
       </div>
     </div>
 
@@ -30,9 +30,9 @@
       <div style="font-size:36px;margin-bottom:12px">📚</div>
       <strong style="display:block;color:var(--ink);font-size:17px">暂无学习资源</strong>
       <p class="sub" style="margin-top:8px">
-        请先完成<span style="color:var(--blue)">诊断训练</span>，系统将根据你的答题情况分析知识薄弱点，<br>然后<span style="color:var(--blue)">生成个性化学习资源</span>（讲义、实操指南、分阶测试）。
+        请先在<span style="color:var(--blue)">学习报告</span>确认初始画像与学习路线，<br>再创建个性化学习包（讲义、实操指南、分阶测试）。
       </p>
-      <button class="btn primary" style="margin-top:18px" @click="router.push('/diagnostic')">开始诊断训练</button>
+      <button class="btn primary" style="margin-top:18px" @click="openReport">查看学习画像</button>
     </div>
 
     <template v-else-if="taskDetail?.status !== 'failed'">
@@ -127,11 +127,11 @@ import AppDialog from '@/components/Shared/AppDialog.vue'
 import AppDrawer from '@/components/Shared/AppDrawer.vue'
 import { createTutoringSession, getTutoringSession, pauseTutoringMessage, streamTutoringMessage, type TutoringSession } from '@/api/tutoring'
 import ResourceMarkdownViewer from '@/components/ResourceViewer/ResourceMarkdownViewer.vue'
-import { useLearnerStore } from '@/stores/learnerStore'
+import { useAuthStore } from '@/stores/authStore'
 
 const router = useRouter()
 const route = useRoute()
-const learnerStore = useLearnerStore()
+const authStore = useAuthStore()
 const { showToast } = useToast()
 const loading = ref(false)
 const resources = ref<ResourceSummary[]>([])
@@ -160,8 +160,11 @@ const formats = [
 const selected = computed(() => resources.value[selectedIdx.value] || null)
 const canTutor = computed(() => Boolean(selected.value && selected.value.review_status === 'passed' && selected.value.is_current !== false))
 const tutorMessages = computed(() => tutorSession.value?.messages || [])
-const currentLearnerId = computed(() => String(route.query.learner_id || learnerStore.selectedLearnerId || '').trim())
 const taskId = computed(() => String(route.query.task_id || '').trim())
+const currentLearnerId = computed(() => {
+  if (taskId.value) return String(taskDetail.value?.learner_id || route.query.learner_id || '').trim()
+  return String(authStore.user?.learner_id || '').trim()
+})
 const isTaskTerminal = computed(() => ['completed', 'failed'].includes(taskDetail.value?.status || ''))
 const packageQuality = computed(() => taskDetail.value?.package_quality || resources.value[0]?.package_quality || null)
 let taskTimer: number | null = null
@@ -261,6 +264,16 @@ async function loadTask() {
     if (taskDetail.value.status === 'completed') await loadResources()
     if (!isTaskTerminal.value) taskTimer = window.setTimeout(loadTask, 1500)
   } catch { errorMessage.value = '无法读取生成任务状态。' }
+}
+
+function openReport() {
+  router.push({
+    path: '/report',
+    query: {
+      ...(currentLearnerId.value ? { learner_id: currentLearnerId.value } : {}),
+      ...(taskId.value ? { task_id: taskId.value } : {}),
+    },
+  })
 }
 
 async function retryTask() {

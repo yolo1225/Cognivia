@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.security import Principal, get_current_user, principal_learner, require_resource
+from app.core.security import Principal, get_current_user, principal_learner, require_resource, require_task
 from app.models import GenerationTask, Learner, LearningResource, ReviewReport
 from app.schemas.common import ApiResponse, ok
 from app.services.demo_flow_service import serialize_resource
@@ -31,7 +31,15 @@ def list_resources(
 ) -> ApiResponse:
     if include_unpublished and principal.role != "admin":
         raise HTTPException(403, "需要管理员权限")
-    if principal.role != "admin":
+    if task_id:
+        task = require_task(db, principal, task_id)
+        task_learner = db.get(Learner, task.learner_id)
+        if task_learner is None:
+            raise HTTPException(404, "Task learner not found")
+        # A task is always owned by one learner. Ignore stale client selection
+        # so task-detail navigation cannot combine different owners and hide data.
+        learner_id = task_learner.public_id
+    elif principal.role != "admin":
         learner_id = principal.learner_id
     statement = (
         select(LearningResource, GenerationTask)

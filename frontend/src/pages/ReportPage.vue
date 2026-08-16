@@ -12,10 +12,8 @@
     <div v-else-if="!report" class="panel" style="text-align:center;padding:60px;color:var(--muted)">
       <div style="font-size:36px;margin-bottom:12px">📋</div>
       <strong style="display:block;color:var(--ink);font-size:17px">尚未生成学习报告</strong>
-      <p class="sub" style="margin-top:8px">
-        请先完成<span style="color:var(--blue)">诊断训练</span>，系统将根据答题结果分析能力画像，<br>生成个性化学习路径和报告。
-      </p>
-      <button class="btn primary" style="margin-top:18px" @click="router.push('/diagnostic')">去诊断训练</button>
+      <p class="sub" style="margin-top:8px">请先在学习中心完成学习背景建档和首次能力诊断，系统将据此生成能力画像与学习路线。</p>
+      <button class="btn primary" style="margin-top:18px" @click="router.push('/dashboard')">返回学习中心</button>
     </div>
 
     <template v-else>
@@ -40,6 +38,11 @@
           <div><span>诊断正确率</span><strong>{{ (report.diagnostic_summary.accuracy || 0).toFixed(0) }}%</strong></div>
           <div><span>当前学习资源</span><strong>{{ report.resource_summary?.total || 0 }}</strong></div>
         </div>
+      </div>
+
+      <div class="panel evidence-panel">
+        <div class="panel-head"><div><h2>画像依据</h2><p class="section-note">先验背景用于学习目标和案例适配，能力结论以诊断测评为准。</p></div></div>
+        <div class="evidence-grid"><div><span>学习背景</span><strong>{{ contextSnapshot.education_level || '-' }} · {{ contextSnapshot.major || '-' }}</strong></div><div><span>相关经验</span><strong>{{ contextSnapshot.experience_years ?? '-' }} 年</strong></div><div><span>学习方向</span><strong>{{ directionLabels }}</strong></div><div><span>诊断依据</span><strong>{{ report.diagnostic_summary?.answer_count || 0 }} 道已评分题目</strong></div></div>
       </div>
 
       <div class="panel weakness-panel">
@@ -85,7 +88,7 @@
       <div v-if="report.next_actions?.length" class="panel">
         <div class="panel-head"><h2>建议下一步</h2></div>
         <div class="actions">
-          <button v-for="a in report.next_actions" :key="a.type" class="btn" :class="{ primary: a.type === 'generate' }" @click="router.push(a.route)">{{ a.label }}</button>
+          <button v-for="a in report.next_actions" :key="a.type" class="btn" :class="{ primary: a.type === 'generation' }" :disabled="creatingGeneration && a.type === 'generation'" @click="handleNextAction(a)">{{ creatingGeneration && a.type === 'generation' ? '正在创建学习包...' : a.label }}</button>
         </div>
       </div>
     </template>
@@ -96,25 +99,34 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getLearningReport, type LearningReport } from '@/api/reports'
+import { createGenerationTask } from '@/api/generation'
 import RadarChart from '@/components/Charts/RadarChart.vue'
-import { useLearnerStore } from '@/stores/learnerStore'
+import { useAuthStore } from '@/stores/authStore'
 
 const router = useRouter()
 const route = useRoute()
-const learnerStore = useLearnerStore()
+const authStore = useAuthStore()
+const taskId = computed(() => String(route.query.task_id || '').trim())
+const isAdminTaskContext = computed(() => authStore.role === 'admin' && Boolean(taskId.value))
 const learnerId = computed(() => {
-  const normalized = String(route.query.learner_id || learnerStore.selectedLearnerId || '').trim()
+  const source = isAdminTaskContext.value
+    ? route.query.learner_id
+    : authStore.user?.learner_id
+  const normalized = String(source || '').trim()
   return ['null', 'undefined'].includes(normalized.toLowerCase()) ? '' : normalized
 })
 const report = ref<LearningReport | null>(null)
 const loading = ref(false)
 const errorMessage = ref('')
+const creatingGeneration = ref(false)
 const radarLabels = ['理论基础', '实操能力', '问题解决', '知识广度', '学习速度']
 const abilityRows = computed(() => radarLabels.map((label, index) => ({
   label,
   value: Math.max(0, Math.min(100, Number(report.value?.radar?.[index] || 0))),
 })))
 const sortedWeakKnowledge = computed(() => [...(report.value?.weak_knowledge || [])].sort((a, b) => b.weakness_level - a.weakness_level))
+const contextSnapshot = computed<Record<string, unknown>>(() => report.value?.context_snapshot || {})
+const directionLabels = computed(() => (Array.isArray(contextSnapshot.value.direction_tags) ? contextSnapshot.value.direction_tags : report.value?.direction_tags || []).map((value) => ({ llm_application: '大模型应用开发', prompt_engineering: 'Prompt 工程', rag_knowledge_base: 'RAG 知识库构建', agent_orchestration: 'Agent 编排' } as Record<string, string>)[String(value)] || String(value)).join('、') || '-')
 
 function profileTypeLabel(type?: string) {
   return ({ beginner: '基础起步型', intermediate: '进阶提升型', advanced: '综合应用型', practice_oriented: '实操导向型' } as Record<string, string>)[type || ''] || type || '画像待确认'
@@ -135,19 +147,27 @@ async function loadReport() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const data = await getLearningReport(learnerId.value)
-    // Only show report if a real diagnostic session was completed
-    report.value = data.diagnosis_completed ? data : null
+    const data = await getLearningReport(learnerId.value, taskId.value || undefined)
+    report.value = data.profile_ready ? data : null
   } catch { report.value = null; errorMessage.value = '无法读取学习报告，请确认后端服务可用。' }
   finally { loading.value = false }
 }
-watch(() => route.query.learner_id, (value) => {
-  const nextLearnerId = String(value || '').trim()
-  if (nextLearnerId) learnerStore.setSelectedLearner(nextLearnerId)
+
+async function handleNextAction(action: LearningReport['next_actions'][number]) {
+  if (action.type !== 'generation') { router.push(action.route); return }
+  if (!report.value?.profile_id || !learnerId.value) return
+  creatingGeneration.value = true
+  try {
+    const task = await createGenerationTask(report.value.profile_id, learnerId.value)
+    router.push({ path: '/resources', query: { learner_id: learnerId.value, task_id: task.task_id } })
+  } catch {
+    errorMessage.value = '创建学习包失败，请确认画像状态和生成环境后重试。'
+  } finally { creatingGeneration.value = false }
+}
+watch(() => [route.query.learner_id, route.query.task_id], () => {
   loadReport()
 })
 onMounted(() => {
-  if (learnerId.value) learnerStore.setSelectedLearner(learnerId.value)
   loadReport()
   window.addEventListener('focus', loadReport)
 })
@@ -198,12 +218,14 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
 .weak-empty { display: flex; align-items: center; gap: 12px; border-radius: 10px; background: var(--green2); padding: 16px; color: var(--green); }
 .weak-empty > span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: #fff; font-weight: 800; }
 .weak-empty p { margin-top: 4px; color: #3f735f; font-size: 11px; }
+.evidence-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; border-radius: 8px; background: var(--line); }.evidence-grid div { min-width: 0; background: var(--soft); padding: 13px 15px; }.evidence-grid span { display: block; color: var(--muted); font-size: 11px; }.evidence-grid strong { display: block; margin-top: 5px; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; }
 @media (max-width: 900px) { .profile-layout { grid-template-columns: 1fr; gap: 4px; } }
 @media (max-width: 600px) {
   .diagnostic-strip { grid-template-columns: 1fr; }
   .diagnostic-strip div, .diagnostic-strip div:first-child { padding: 10px 0; border-right: 0; border-bottom: 1px solid var(--line); }
   .diagnostic-strip div:last-child { border-bottom: 0; }
   .weak-row { grid-template-columns: 28px minmax(0, 1fr); }
+  .evidence-grid { grid-template-columns: 1fr; }
   .severity-copy { grid-column: 2; display: flex; gap: 6px; align-items: baseline; text-align: left; }
 }
 </style>

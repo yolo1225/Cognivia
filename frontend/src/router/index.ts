@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
+import { getLearnerProfile } from '@/api/learners'
 
 const admin = { requiresAuth:true, roles:['admin'] }
 const auth = { requiresAuth:true }
@@ -8,7 +9,7 @@ const routes = [
   { path:'/register', component:()=>import('@/pages/LoginPage.vue'), meta:{ guest:true } },
   { path:'/', redirect:'/dashboard' },
   { path:'/dashboard', component:()=>import('@/pages/DashboardPage.vue'), meta:auth },
-  { path:'/diagnostic', component:()=>import('@/pages/DiagnosticPage.vue'), meta:auth },
+  { path:'/diagnostic', redirect:'/dashboard', meta:auth },
   { path:'/resources', component:()=>import('@/pages/ResourcePage.vue'), meta:auth },
   { path:'/report', component:()=>import('@/pages/ReportPage.vue'), meta:auth },
   { path:'/metrics', component:()=>import('@/pages/MetricsPage.vue'), meta:auth },
@@ -22,4 +23,12 @@ router.beforeEach(async to=>{
   if(to.meta.requiresAuth && !store.isAuthenticated) return {path:'/login',query:{redirect:to.fullPath}}
   if(to.meta.guest && store.isAuthenticated) return '/dashboard'
   if(Array.isArray(to.meta.roles) && !to.meta.roles.includes(store.role)) return '/dashboard'
+  if (store.role === 'learner' && ['/resources', '/report', '/metrics'].includes(to.path) && store.user?.learner_id) {
+    try {
+      const profile = await getLearnerProfile(store.user.learner_id)
+      if (profile.profile_status !== 'ready') return '/dashboard'
+    } catch {
+      // Preserve the destination when profile status cannot be read; the page renders its normal error state.
+    }
+  }
 })

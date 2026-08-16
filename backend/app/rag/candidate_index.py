@@ -435,7 +435,10 @@ class CandidateIndexBuilder:
         )
         snapshot = database_source_snapshot(self.db, items)
         source_version = source_data_version(snapshot)
-        manifest = self._load_manifest(domain_code)
+        # A reset must be able to recover when its manifest outlives the
+        # Chroma collection it points to. Do not validate stale state before
+        # creating the replacement collection.
+        manifest = None if reset else self._load_manifest(domain_code)
 
         old_records: list[dict[str, Any]] = []
         changed_ids = {item.public_id for item in items}

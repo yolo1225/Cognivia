@@ -1,4 +1,4 @@
-import { getData, postData } from './client'
+import { getData, postData, putData } from './client'
 
 export interface LearnerSummary {
   learner_id: string
@@ -37,6 +37,9 @@ export interface LearnerProfileDetail {
   learner_id: string
   domain_code: string
   background: string
+  education_level: string
+  major: string
+  direction_tags: string[]
   learning_style: string
   experience_years: number
   profile_status: 'ready' | 'not_started'
@@ -58,6 +61,22 @@ export interface LearnerProfileDetail {
     accuracy: number
     latest_session_id?: string | null
   }
+  context_snapshot?: Record<string, unknown>
+}
+
+export interface InitialContextPayload {
+  education_level: string
+  major: string
+  experience_years: number
+  learning_style: 'theory' | 'practice' | 'mixed'
+  direction_tags: string[]
+}
+
+export interface InitialContextResult extends InitialContextPayload {
+  learner_id: string
+  background: string
+  target_domain: string
+  context_complete: boolean
 }
 
 export interface LearnerCreatePayload {
@@ -78,4 +97,8 @@ export function createLearner(payload: LearnerCreatePayload) {
 
 export function getLearnerProfile(learnerId: string) {
   return getData<LearnerProfileDetail>(`/learners/${learnerId}/profile`)
+}
+
+export function updateInitialContext(learnerId: string, payload: InitialContextPayload) {
+  return putData<InitialContextResult>(`/learners/${learnerId}/initial-context`, payload)
 }

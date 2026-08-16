@@ -24,7 +24,7 @@ import ToastOverlay from '@/components/Shared/ToastOverlay.vue'
 
 const router = useRouter()
 const transitionName = ref<'page-forward' | 'page-back'>('page-forward')
-const routeOrder = ['/dashboard', '/diagnostic', '/resources', '/report', '/metrics', '/learners', '/domain-hub']
+const routeOrder = ['/dashboard', '/resources', '/report', '/metrics', '/learners', '/domain-hub']
 
 const removeAfterEach = router.afterEach((to, from) => {
   const toIndex = routeOrder.indexOf(to.path)

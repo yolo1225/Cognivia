@@ -41,6 +41,11 @@ export async function patchData<T>(url: string, body: unknown): Promise<T> {
   return response.data.data
 }
 
+export async function putData<T>(url: string, body: unknown): Promise<T> {
+  const response = await apiClient.put<ApiResponse<T>>(url, body)
+  return response.data.data
+}
+
 export function subscribeTaskEvents(
   taskId: string,
   onEvent: (event: AgentStatusEvent) => void,

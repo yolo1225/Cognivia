@@ -11,6 +11,7 @@ from app.agents.contracts import (
     RecommendedAction,
 )
 from app.core.db import get_db
+from app.core.security import Principal, get_current_user
 from app.main import app
 from app.models import (
     Base,
@@ -158,6 +159,125 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
         assert feedback["task_id"] is None
     finally:
         app.dependency_overrides.clear()
+
+
+def test_task_resource_query_uses_task_owner_when_client_learner_is_stale() -> None:
+    testing_session = build_test_session()
+    with testing_session() as db:
+        seed_resource(db)
+        task_learner = Learner(
+            public_id="learner_task_owner",
+            background="test",
+            target_domain="ai_app_dev",
+            learning_style="mixed",
+        )
+        db.add(task_learner)
+        db.flush()
+        profile = LearnerProfile(
+            public_id="profile_task_owner",
+            learner_id=task_learner.id,
+            ability_profile_json={"profile_type": "beginner"},
+            weak_knowledge_json=[],
+        )
+        db.add(profile)
+        db.flush()
+        task = GenerationTask(
+            public_id="task_other_learner",
+            learner_id=task_learner.id,
+            profile_id=profile.id,
+            status="completed",
+            decision="completed",
+            resource_types_json=["lecture"],
+        )
+        db.add(task)
+        db.flush()
+        db.add(
+            LearningResource(
+                public_id="resource_task_owner",
+                generation_task_id=task.id,
+                resource_type="lecture",
+                title="任务所属学习者的资源",
+                content_md="正文",
+                difficulty=2,
+                sources_json=[{"knowledge_id": "AIAPP-K030"}],
+                review_status="passed",
+                series_id="resource_task_owner",
+                is_current=True,
+            )
+        )
+        db.commit()
+
+    app.dependency_overrides[get_db] = override(testing_session)
+    try:
+        response = TestClient(app).get(
+            "/api/v1/resources",
+            params={
+                "task_id": "task_other_learner",
+                "learner_id": "learner_001",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert [item["resource_id"] for item in response.json()["data"]] == [
+        "resource_task_owner"
+    ]
+
+
+def test_admin_report_requires_own_learner_unless_viewing_task() -> None:
+    testing_session = build_test_session()
+    with testing_session() as db:
+        seed_resource(db)
+        task_learner = Learner(
+            public_id="learner_report_task_owner",
+            background="test",
+            target_domain="ai_app_dev",
+            learning_style="mixed",
+        )
+        db.add(task_learner)
+        db.flush()
+        task_profile = LearnerProfile(
+            public_id="profile_report_task_owner",
+            learner_id=task_learner.id,
+            ability_profile_json={"profile_type": "beginner"},
+            weak_knowledge_json=[],
+        )
+        db.add(task_profile)
+        db.flush()
+        db.add(
+            GenerationTask(
+                public_id="task_report_owner",
+                learner_id=task_learner.id,
+                profile_id=task_profile.id,
+                status="completed",
+                decision="completed",
+                resource_types_json=["lecture"],
+            )
+        )
+        db.commit()
+
+    app.dependency_overrides[get_db] = override(testing_session)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        user_id="admin",
+        role="admin",
+        learner_id="learner_001",
+    )
+    try:
+        client = TestClient(app)
+        direct_response = client.get(
+            "/api/v1/reports/learners/learner_report_task_owner"
+        )
+        task_response = client.get(
+            "/api/v1/reports/learners/learner_report_task_owner",
+            params={"task_id": "task_report_owner"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert direct_response.status_code == 403
+    assert task_response.status_code == 200
+    assert task_response.json()["data"]["learner_id"] == "learner_report_task_owner"
 
 
 def test_failed_generation_task_can_schedule_checkpoint_retry(monkeypatch) -> None:

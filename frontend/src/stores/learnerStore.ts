@@ -8,12 +8,10 @@ function validLearnerId(value: unknown): string | null {
 export const useLearnerStore = defineStore('learner', {
   state: () => ({ selectedLearnerId: null as string | null }),
   actions: {
-    bindIdentity(role: string, learnerId: string | null) {
+    bindIdentity(_role: string, learnerId: string | null) {
       const ownLearner = validLearnerId(learnerId)
-      if (role === 'learner') { this.selectedLearnerId = ownLearner; localStorage.removeItem(STORAGE_KEY); return }
-      const stored = validLearnerId(localStorage.getItem(STORAGE_KEY))
-      this.selectedLearnerId = stored || ownLearner
-      if (!stored) localStorage.removeItem(STORAGE_KEY)
+      this.selectedLearnerId = ownLearner
+      localStorage.removeItem(STORAGE_KEY)
     },
     setSelectedLearner(learnerId: string) {
       this.selectedLearnerId = validLearnerId(learnerId)

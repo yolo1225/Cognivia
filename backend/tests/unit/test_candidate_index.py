@@ -137,6 +137,26 @@ def test_database_snapshot_reproduces_frozen_seed_version() -> None:
         assert source_data_version(database_source_snapshot(db, items)) == EXPECTED_SOURCE_VERSION
 
 
+def test_reseeding_unchanged_items_does_not_require_reembedding() -> None:
+    sessions = _session_factory()
+    with sessions() as db:
+        seeded = seed_knowledge_items(db)
+        db.commit()
+        for item in seeded.values():
+            item.needs_reembedding = False
+        db.commit()
+
+        seed_knowledge_items(db)
+        db.commit()
+
+        pending = list(
+            db.scalars(
+                select(KnowledgeItem).where(KnowledgeItem.needs_reembedding.is_(True))
+            )
+        )
+        assert pending == []
+
+
 def test_full_then_incremental_build_reuses_vectors_and_removes_orphans(
     tmp_path: Path,
 ) -> None:
@@ -236,6 +256,37 @@ def test_unchanged_incremental_build_does_not_call_provider(tmp_path: Path) -> N
 
         assert result["status"] == "unchanged"
         assert second_provider.calls == []
+
+
+def test_reset_rebuilds_when_manifest_points_to_missing_collection(tmp_path: Path) -> None:
+    sessions = _session_factory()
+    client = FakeChromaClient()
+    store = CandidateManifestStore(root=tmp_path)
+    with sessions() as db:
+        db.add(_item("item-a", "恢复索引的知识内容。" * 30))
+        db.commit()
+        first = CandidateIndexBuilder(
+            db=db,
+            chroma_client=client,
+            embedding_provider=FakeProvider(),
+            manifest_store=store,
+        ).build(reset=True)
+        client.delete_collection(name=first["active_collection"])
+
+        result = CandidateIndexBuilder(
+            db=db,
+            chroma_client=client,
+            embedding_provider=FakeProvider(),
+            manifest_store=store,
+        ).build(reset=True)
+
+        manifest = store.load(
+            "ai_app_dev", collection_exists=lambda name: name in client.collections
+        )
+        assert result["status"] == "built"
+        assert manifest is not None
+        assert manifest.active_collection == result["active_collection"]
+        assert manifest.previous_collection is None
 
 
 def test_index_integrity_rejects_duplicate_content_blocks(tmp_path: Path) -> None:

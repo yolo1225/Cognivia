@@ -45,7 +45,7 @@ if not exist ".env" (
 if not exist "storage" mkdir "storage"
 set "START_LOG=%~dp0storage\start.log"
 
-echo [INFO] Starting DomainMind without deleting existing runtime data...
+echo [INFO] Recreating containers and starting DomainMind without deleting existing runtime data...
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "& { Start-Transcript -Path '%START_LOG%' -Force; try { & '%~dp0scripts\demo.ps1' start } finally { Stop-Transcript } }"
 if errorlevel 1 (
     echo [ERROR] DomainMind failed to start. Review the output above.

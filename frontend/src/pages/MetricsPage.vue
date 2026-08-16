@@ -56,7 +56,7 @@
         <div><span>学习者</span><strong>{{ selected.learner_id || '-' }}</strong></div><div><span>最终决策</span><strong>{{ decisionLabel(selected.decision) }}</strong></div><div><span>画像版本</span><strong>v{{ selected.profile_version || '-' }}</strong></div><div><span>修订次数</span><strong>{{ selected.revision_count }}</strong></div>
       </div>
       <h3 style="margin:18px 0 10px">任务产物</h3>
-      <div v-if="selected.resources.length" class="task-artifacts"><div v-for="resource in selected.resources" :key="resource.resource_id" class="artifact"><div><strong>{{ resource.title }}</strong><span>{{ resourceTypeLabel(resource.resource_type) }} · 难度 {{ resource.difficulty }}</span></div><button class="btn text" @click="router.push({ path: '/resources', query: { task_id: selected!.task_id } })">查看资源</button></div></div>
+      <div v-if="selected.resources.length" class="task-artifacts"><div v-for="resource in selected.resources" :key="resource.resource_id" class="artifact"><div><strong>{{ resource.title }}</strong><span>{{ resourceTypeLabel(resource.resource_type) }} · 难度 {{ resource.difficulty }}</span></div><button class="btn text" @click="router.push({ path: '/resources', query: { task_id: selected!.task_id, ...(selected!.learner_id ? { learner_id: selected!.learner_id } : {}) } })">查看资源</button></div></div>
       <div v-else class="empty-hint">任务尚未产生可查看资源。</div>
     </div>
   </section>

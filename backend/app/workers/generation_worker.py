@@ -434,6 +434,7 @@ def _persist_profile_update(
         changed_dimensions_json=analysis.changed_dimensions,
         evidence_refs_json=[item.model_dump(mode="json") for item in analysis.evidence_refs],
         confidence=analysis.confidence,
+        context_snapshot_json=original.context_snapshot_json or {},
         trigger_feedback_id=task.source_feedback_id,
         decision_reason=analysis.decision_reason,
         profile_changed_at=datetime.now(UTC),

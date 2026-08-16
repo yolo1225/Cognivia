@@ -110,6 +110,16 @@ def principal_learner(principal: Principal, requested: str | None = None) -> str
     return principal.learner_id
 
 
+def self_service_learner(principal: Principal, requested: str | None = None) -> str:
+    """Resolve the learning record a signed-in user may manage for themselves."""
+
+    if not principal.learner_id:
+        raise HTTPException(403, "当前账号未关联学习者")
+    if requested and requested != principal.learner_id:
+        raise HTTPException(403, "无权操作其他学习者")
+    return principal.learner_id
+
+
 def require_task(db: Session, principal: Principal, task_id: str) -> GenerationTask:
     task = db.scalar(select(GenerationTask).where(GenerationTask.public_id == task_id))
     if not task or (

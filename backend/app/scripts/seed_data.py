@@ -109,26 +109,29 @@ def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
     items: dict[str, KnowledgeItem] = {}
     for payload in payloads:
         public_id = payload["knowledge_id"]
-        item = upsert_by_field(
-            db,
-            KnowledgeItem,
-            "public_id",
-            public_id,
-            {
-                "public_id": public_id,
-                "domain_code": payload.get("domain_code", "ai_app_dev"),
-                "name": payload["name"],
-                "category": payload["category"],
-                "difficulty": payload.get("difficulty", 1),
-                "tags_json": payload.get("tags", []),
-                "content_md": payload["content"],
-                "source_title": payload.get("source_title", "自建 AI 应用开发实训知识库"),
-                "source_url": payload.get("source_url"),
-                "license_note": payload.get("license_note", "team-authored"),
-                "needs_reembedding": True,
-                "source_document_id": seed_document.id,
-            },
-        )
+        values = {
+            "public_id": public_id,
+            "domain_code": payload.get("domain_code", "ai_app_dev"),
+            "name": payload["name"],
+            "category": payload["category"],
+            "difficulty": payload.get("difficulty", 1),
+            "tags_json": payload.get("tags", []),
+            "content_md": payload["content"],
+            "source_title": payload.get("source_title", "自建 AI 应用开发实训知识库"),
+            "source_url": payload.get("source_url"),
+            "license_note": payload.get("license_note", "team-authored"),
+            "source_document_id": seed_document.id,
+        }
+        item = db.scalar(select(KnowledgeItem).where(KnowledgeItem.public_id == public_id))
+        if item is None:
+            item = KnowledgeItem(**values, needs_reembedding=True)
+            db.add(item)
+        else:
+            changed = any(getattr(item, key) != value for key, value in values.items())
+            if changed:
+                for key, value in values.items():
+                    setattr(item, key, value)
+                item.needs_reembedding = True
         items[public_id] = item
 
     db.flush()
