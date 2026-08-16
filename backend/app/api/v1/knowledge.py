@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -10,6 +10,7 @@ from app.core.db import get_db
 from app.models import KnowledgeItem, KnowledgeRelation
 from app.rag.readiness import candidate_rag_status
 from app.schemas.common import ApiResponse, ok
+from app.services import candidate_index_job
 from app.services.knowledge_update_service import (
     mark_affected_content,
     related_knowledge_ids,
@@ -305,11 +306,18 @@ def search_knowledge(
 
 
 @router.post("/rebuild-index", response_model=ApiResponse)
-def rebuild_vector_index(domain_code: str = Query(default="ai_app_dev")) -> ApiResponse:
-    raise HTTPException(
-        status_code=409,
-        detail=(
-            "CANDIDATE_INDEX_REBUILD_REQUIRES_LIVE_COMMAND: "
-            f"run python -m app.scripts.build_chroma_candidate_index --domain-code {domain_code} --live"
-        ),
-    )
+def rebuild_vector_index(
+    background_tasks: BackgroundTasks,
+    domain_code: str = Query(default="ai_app_dev"),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    job = candidate_index_job.try_start(db, domain_code)
+    if job is None:
+        raise HTTPException(status_code=409, detail="候选索引正在重建中，请稍后再试")
+    background_tasks.add_task(candidate_index_job.run_rebuild, job.id, domain_code)
+    return ok({"job_id": job.id, "status": "running", "domain_code": domain_code})
+
+
+@router.get("/rebuild-index/status", response_model=ApiResponse)
+def rebuild_index_status(db: Session = Depends(get_db)) -> ApiResponse:
+    return ok(candidate_index_job.status(db))

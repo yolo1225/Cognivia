@@ -15,6 +15,7 @@ const routes = [
   { path:'/metrics', component:()=>import('@/pages/MetricsPage.vue'), meta:auth },
   { path:'/learners', component:()=>import('@/pages/LearnersPage.vue'), meta:admin },
   { path:'/domain-hub', component:()=>import('@/pages/DomainHubPage.vue'), meta:admin },
+  { path:'/model-settings', component:()=>import('@/pages/ModelSettingsPage.vue'), meta:admin },
   { path:'/:pathMatch(.*)*', redirect:'/dashboard' },
 ]
 export const router=createRouter({history:createWebHistory(),routes})

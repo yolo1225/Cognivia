@@ -76,14 +76,30 @@ export interface KnowledgeItemUpdateRequest {
   related?: string[]
 }
 
-export interface KnowledgeIndexResult {
-  status: 'completed'
-  affected_domain: string
-  indexed_items: number
-  indexed_chunks: number
-  deleted_chunks: number
-  collection_count: number
-  embedding_model: string
+export interface RebuildIndexStartResult {
+  job_id: number
+  status: 'running'
+  domain_code: string
+}
+
+export interface RebuildIndexStatus {
+  job_id: number | null
+  status: 'idle' | 'running' | 'success' | 'failed' | 'interrupted'
+  running: boolean
+  domain_code: string
+  started_at: string | null
+  finished_at: string | null
+  message: string
+  result: {
+    status?: string
+    mode?: string
+    indexed_items?: number
+    indexed_chunks?: number
+    reused_chunks?: number
+    reembedded_items?: number
+    embedding_model?: string
+    duration_ms?: number
+  } | null
 }
 
 export interface KnowledgeRelation {
@@ -124,5 +140,9 @@ export function updateKnowledgeItem(knowledgeId: string, payload: KnowledgeItemU
 }
 
 export function rebuildKnowledgeIndex(domainCode = 'ai_app_dev') {
-  return postData<KnowledgeIndexResult>(`/knowledge/rebuild-index?domain_code=${encodeURIComponent(domainCode)}`)
+  return postData<RebuildIndexStartResult>(`/knowledge/rebuild-index?domain_code=${encodeURIComponent(domainCode)}`)
+}
+
+export function getRebuildIndexStatus() {
+  return getData<RebuildIndexStatus>('/knowledge/rebuild-index/status')
 }

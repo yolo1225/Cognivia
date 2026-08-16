@@ -1008,20 +1008,21 @@ textarea {
 /* Toast */
 .toast {
   position: fixed;
-  right: 22px;
-  bottom: 22px;
+  top: 88px;
+  left: 50%;
   z-index: 30;
-  max-width: 360px;
+  max-width: 420px;
+  width: max-content;
   border-radius: 9px;
   background: #172231;
   color: #fff;
   padding: 12px 15px;
   font-size: 12px;
-  transform: translateY(90px);
+  transform: translate(-50%, -16px);
   opacity: 0;
   transition: .2s;
 }
-.toast.show { transform: translateY(0); opacity: 1; }
+.toast.show { transform: translate(-50%, 0); opacity: 1; }
 
 /* Utilities */
 .hidden { display: none !important; }

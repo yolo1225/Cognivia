@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,12 +14,39 @@ from app.core.errors import http_exception_handler
 from app.core.errors import validation_exception_handler
 
 
+def _load_model_config_overrides() -> None:
+    """Apply DB-backed model overrides on top of ``.env``/process env values."""
+    try:
+        from app.services.model_config_service import reload_from_db
+
+        reload_from_db()
+    except Exception:
+        # The table may not exist yet on a fresh volume (migrations run after
+        # first boot); env remains the effective source until then.
+        pass
+
+
 def create_app() -> FastAPI:
     settings.validate_auth_config()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        _load_model_config_overrides()
+        try:
+            from app.services.candidate_index_job import mark_interrupted_on_startup
+
+            mark_interrupted_on_startup()
+        except Exception:
+            # The job table may not exist yet on a fresh volume (migrations run
+            # after first boot); stale-running cleanup is best effort.
+            pass
+        yield
+
     app = FastAPI(
         title=settings.app_name,
         version=settings.schema_version,
         openapi_url=f"{settings.api_v1_prefix}/openapi.json",
+        lifespan=lifespan,
     )
 
     app.add_middleware(

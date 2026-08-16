@@ -1,6 +1,6 @@
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet("backup", "start", "reset", "verify", "stop")]
+    [ValidateSet("backup", "rebuild-index", "start", "reset", "verify", "stop")]
     [string]$Action,
     [switch]$ConfirmReset
 )
@@ -147,8 +147,7 @@ function Sync-CandidateIndex {
         "app.scripts.build_chroma_candidate_index", "--live", "--json"
     )
     if ($Reset) {
-        Invoke-Compose -Arguments ($indexArguments + "--reset")
-        return
+        $indexArguments += "--reset"
     }
 
     # The normal path does not request embeddings when the manifest and source
@@ -160,13 +159,21 @@ function Sync-CandidateIndex {
     if ($exitCode -eq 0) {
         return
     }
+
     $failureDetail = ($output -join "`n").Trim()
+    if ($failureDetail -match "EmbeddingConfigurationError|embedding provider configuration is missing") {
+        Write-Warning "Model configuration is incomplete; skipped candidate index vectorization. Configure models on the Model Settings page, then run ./scripts/demo.ps1 rebuild-index."
+        return
+    }
+    if ($Reset) {
+        throw "Candidate index rebuild failed: $failureDetail"
+    }
     if ($failureDetail -notmatch "candidate manifest is missing|manifest active_collection does not exist") {
         throw "Candidate index sync failed: $failureDetail"
     }
 
     Write-Host "Candidate index is unavailable; rebuilding the live index..."
-    Invoke-Compose -Arguments ($indexArguments + "--reset")
+    Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_candidate_index", "--live", "--json", "--reset")
 }
 
 function Test-DemoEnvironment {
@@ -267,6 +274,10 @@ function Backup-DemoEnvironment {
 switch ($Action) {
     "backup" {
         Backup-DemoEnvironment
+    }
+    "rebuild-index" {
+        Sync-CandidateIndex -Reset
+        Write-Host "Candidate index rebuilt. Run ./scripts/demo.ps1 verify to check RAG readiness."
     }
     "start" {
         # Source is bind-mounted for development, so recreating containers

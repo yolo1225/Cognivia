@@ -7,11 +7,16 @@ from app.core.db import SessionLocal
 from app.rag.candidate_index import CandidateIndexBuilder
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.rag.vector_store import VectorStore
+from app.services.model_config_service import reload_from_db
 
 
 def build_candidate_index(*, domain_code: str, reset: bool, live: bool) -> dict:
     if not live:
         raise RuntimeError("--live is required; candidate indexing never falls back to mock vectors")
+    # This CLI runs in its own process, so it must load DB-persisted model
+    # overrides before constructing the embedding provider. This lets an admin
+    # configure models through the web UI and then rebuild the index here.
+    reload_from_db()
     provider = OpenAICompatibleEmbeddingProvider()
     with SessionLocal() as db:
         return CandidateIndexBuilder(

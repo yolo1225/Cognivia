@@ -72,6 +72,7 @@ const allNavGroups: NavGroup[] = [
     items: [
       { page: 'learners', label: '用户管理', icon: '♙', route: '/learners' },
       { page: 'domainHub', label: '领域管理', icon: '▦', route: '/domain-hub' },
+      { page: 'modelSettings', label: '模型配置', icon: '⚙', route: '/model-settings' },
     ],
   },
 ]
