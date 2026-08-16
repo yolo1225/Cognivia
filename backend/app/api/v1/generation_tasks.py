@@ -5,23 +5,34 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal, get_db
-from app.models import AgentRun, GenerationTask, Learner, LearnerProfile, LearningResource
+from app.core.security import Principal, get_current_user, principal_learner, require_task
+from app.models import (
+    AgentRun,
+    Feedback,
+    GenerationTask,
+    GraphCheckpoint,
+    Learner,
+    LearnerProfile,
+    LearningResource,
+)
 from app.schemas.common import ApiResponse, ok
-from app.services.profile_service import default_profile_for_learner, profile_source, public_id
+from app.services.feedback_service import create_feedback_task
+from app.services.profile_service import is_initial_profile_ready, latest_profile_for_learner, profile_source, public_id
+from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.workers.generation_worker import run_generation_task
 
 router = APIRouter()
 RESOURCE_TYPES = {"lecture", "practice_guide", "graded_quiz"}
 TRIGGER_TYPES = {"initial_generation", "resource_feedback"}
 EXECUTION_MODES = {"auto", "assisted"}
-TERMINAL_TASK_STATUSES = {"completed", "failed", "revision_required", "waiting_human"}
-ACTIVE_TASK_STATUSES = {"pending", "running", "waiting_human"}
+TERMINAL_TASK_STATUSES = {"completed", "failed", "revision_required", "no_change", "rejected"}
+ACTIVE_TASK_STATUSES = {"pending", "retry_pending", "running"}
 SENSITIVE_KEYS = {"content", "content_md", "draft_resources", "profile", "answers"}
 
 STEP_LABELS = {
@@ -31,7 +42,6 @@ STEP_LABELS = {
     "retrieve_knowledge": "知识检索",
     "generate_resource": "资源生成",
     "review_resource": "双模型审核",
-    "human_review": "人工复核",
     "finalize_task": "确定性收尾",
 }
 
@@ -40,16 +50,7 @@ def _get_or_create_learner(db: Session, learner_public_id: str) -> Learner:
     learner = db.scalar(select(Learner).where(Learner.public_id == learner_public_id))
     if learner:
         return learner
-    learner = Learner(
-        public_id=learner_public_id,
-        background="MVP 演示学习者",
-        target_domain="ai_app_dev",
-        experience_years=0,
-        learning_style="mixed",
-    )
-    db.add(learner)
-    db.flush()
-    return learner
+    raise HTTPException(status_code=404, detail="LEARNER_NOT_FOUND")
 
 
 def _resource_summary(resource: LearningResource) -> dict[str, Any]:
@@ -62,6 +63,7 @@ def _resource_summary(resource: LearningResource) -> dict[str, Any]:
         "version": resource.version,
         "is_current": resource.is_current,
         "sources": [item.get("knowledge_id") for item in (resource.sources_json or [])],
+        "knowledge_coverage": resource.knowledge_coverage_json or {},
     }
 
 
@@ -102,6 +104,9 @@ def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
         **_profile_summary(db, task),
         "revision_count": task.revision_count,
         "decision": task.decision,
+        "package_coverage": task.package_coverage_json or {},
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+        "updated_at": task.updated_at.isoformat() if task.updated_at else None,
         "resources": [_resource_summary(item) for item in resources],
     }
 
@@ -111,6 +116,7 @@ def create_generation_task(
     background_tasks: BackgroundTasks,
     payload: dict[str, Any] | None = None,
     db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
     payload = payload or {}
     trigger_type = str(payload.get("trigger_type", "initial_generation"))
@@ -122,8 +128,15 @@ def create_generation_task(
     requested_types = list(payload.get("resource_types") or RESOURCE_TYPES)
     if not requested_types or any(item not in RESOURCE_TYPES for item in requested_types):
         raise HTTPException(status_code=422, detail="unsupported resource type")
+    domain_code = str(payload.get("domain_code", "ai_app_dev"))
+    try:
+        require_candidate_rag(domain_code)
+    except CandidateRagNotReady as exc:
+        raise HTTPException(status_code=503, detail=f"{RAG_NOT_READY_CODE}:{exc}") from exc
 
-    learner = _get_or_create_learner(db, payload.get("learner_id", "learner_001"))
+    learner = _get_or_create_learner(
+        db, principal_learner(principal, payload.get("learner_id"))
+    )
     profile_id = payload.get("profile_id")
     if profile_id:
         profile = db.scalar(
@@ -131,14 +144,18 @@ def create_generation_task(
         )
         if profile is None:
             raise HTTPException(status_code=404, detail="Learner profile not found")
+        if profile.learner_id != learner.id:
+            raise HTTPException(status_code=404, detail="Learner profile not found")
         learner = db.get(Learner, profile.learner_id) or learner
     else:
-        profile = default_profile_for_learner(db, learner)
+        profile = latest_profile_for_learner(db, learner)
+    if not is_initial_profile_ready(profile):
+        raise HTTPException(status_code=409, detail="PROFILE_NOT_READY")
     task = GenerationTask(
         public_id=public_id("task"),
         learner_id=learner.id,
         profile_id=profile.id,
-        domain_code=str(payload.get("domain_code", "ai_app_dev")),
+        domain_code=domain_code,
         status="pending",
         resource_types_json=requested_types,
         revision_count=0,
@@ -159,7 +176,7 @@ def create_generation_task(
             "trigger_type": task.trigger_type,
             "execution_mode": task.execution_mode,
             "resource_types": requested_types,
-            "agent_graph": "unified_learning_graph_v2",
+            "agent_graph": "unified_learning_graph_v3",
             **_profile_summary(db, task),
             "decision": task.decision,
             "agent_trace": [],
@@ -168,11 +185,47 @@ def create_generation_task(
     )
 
 
+@router.post("/feedback/{feedback_id}/confirm", response_model=ApiResponse)
+def confirm_feedback_generation(
+    feedback_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    feedback = db.get(Feedback, feedback_id)
+    if feedback is None:
+        raise HTTPException(status_code=404, detail="FEEDBACK_NOT_FOUND")
+    learner = db.get(Learner, feedback.learner_id)
+    if learner is None:
+        raise HTTPException(status_code=404, detail="LEARNER_NOT_FOUND")
+    principal_learner(principal, learner.public_id)
+    existing = db.scalar(select(GenerationTask).where(GenerationTask.source_feedback_id == feedback.id).order_by(GenerationTask.id.desc()))
+    if existing is not None:
+        return ok(_task_detail_summary(db, existing))
+    profile = latest_profile_for_learner(db, learner)
+    resource = db.get(LearningResource, feedback.resource_id)
+    if not is_initial_profile_ready(profile):
+        raise HTTPException(status_code=409, detail="PROFILE_NOT_READY")
+    if resource is None or feedback.recommended_action not in {"review", "challenge", "explain", "regenerate"}:
+        raise HTTPException(status_code=409, detail="GENERATION_NOT_RECOMMENDED")
+    source_task = db.get(GenerationTask, resource.generation_task_id)
+    try:
+        require_candidate_rag(source_task.domain_code if source_task else "ai_app_dev")
+    except CandidateRagNotReady as exc:
+        raise HTTPException(status_code=503, detail=f"{RAG_NOT_READY_CODE}:{exc}") from exc
+    task = create_feedback_task(db, learner=learner, profile=profile, resource=resource, feedback=feedback, resource_types=[resource.resource_type])
+    db.commit()
+    background_tasks.add_task(run_generation_task, task.public_id)
+    return ok(_task_detail_summary(db, task))
+
+
 @router.get("/active", response_model=ApiResponse)
 def get_active_generation_task(
-    learner_id: str = "learner_001",
+    learner_id: str | None = None,
     db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
+    learner_id = principal_learner(principal, learner_id)
     task = db.scalar(
         select(GenerationTask)
         .join(Learner, Learner.id == GenerationTask.learner_id)
@@ -183,11 +236,83 @@ def get_active_generation_task(
     return ok(_task_detail_summary(db, task) if task is not None else None)
 
 
+@router.get("", response_model=ApiResponse)
+def list_generation_tasks(
+    learner_id: str | None = Query(None),
+    domain_code: str | None = Query(None),
+    status: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    if principal.role != "admin":
+        learner_id = principal.learner_id
+    statement = select(GenerationTask).order_by(
+        GenerationTask.created_at.desc(), GenerationTask.id.desc()
+    )
+    if learner_id:
+        statement = statement.join(Learner, Learner.id == GenerationTask.learner_id).where(
+            Learner.public_id == learner_id
+        )
+    if domain_code:
+        statement = statement.where(GenerationTask.domain_code == domain_code)
+    if status:
+        statement = statement.where(GenerationTask.status == status)
+    tasks = list(db.scalars(statement.limit(limit)))
+    return ok([_task_detail_summary(db, task) for task in tasks])
+
+
 @router.get("/{task_id}", response_model=ApiResponse)
-def get_generation_task(task_id: str, db: Session = Depends(get_db)) -> ApiResponse:
-    task = db.scalar(select(GenerationTask).where(GenerationTask.public_id == task_id))
+def get_generation_task(task_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+    task = require_task(db, principal, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Generation task not found")
+    return ok(_task_detail_summary(db, task))
+
+
+@router.post("/{task_id}/retry", response_model=ApiResponse)
+def retry_generation_task(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    """Resume a recoverable failed node from its existing LangGraph checkpoint."""
+
+    task = require_task(db, principal, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Generation task not found")
+    if task.status in {"retry_pending", "running"}:
+        return ok(_task_detail_summary(db, task))
+    if task.status != "failed":
+        raise HTTPException(status_code=409, detail="TASK_NOT_RETRYABLE")
+    try:
+        require_candidate_rag(task.domain_code)
+    except CandidateRagNotReady as exc:
+        raise HTTPException(status_code=503, detail=f"{RAG_NOT_READY_CODE}:{exc}") from exc
+    checkpoint = db.scalar(
+        select(GraphCheckpoint).where(GraphCheckpoint.task_id == task.public_id)
+    )
+    latest_failure = db.scalar(
+        select(AgentRun)
+        .where(AgentRun.generation_task_id == task.id)
+        .where(AgentRun.status == "failed")
+        .order_by(AgentRun.id.desc())
+    )
+    recoverable = bool(
+        latest_failure
+        and (latest_failure.output_summary_json or {}).get("recoverable")
+    )
+    if (
+        checkpoint is None
+        or not (checkpoint.state_json or {}).get("native_checkpoint")
+        or not recoverable
+    ):
+        raise HTTPException(status_code=409, detail="TASK_CHECKPOINT_NOT_RECOVERABLE")
+    task.status = "retry_pending"
+    task.decision = "pending"
+    db.commit()
+    background_tasks.add_task(run_generation_task, task.public_id)
     return ok(_task_detail_summary(db, task))
 
 
@@ -200,8 +325,8 @@ def _safe(value: Any) -> Any:
 
 
 @router.get("/{task_id}/agent-runs", response_model=ApiResponse)
-def get_agent_runs(task_id: str, db: Session = Depends(get_db)) -> ApiResponse:
-    task = db.scalar(select(GenerationTask).where(GenerationTask.public_id == task_id))
+def get_agent_runs(task_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+    task = require_task(db, principal, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Generation task not found")
     runs = list(
@@ -291,11 +416,8 @@ def _semantic_events(task: GenerationTask, payload: dict[str, Any]) -> list[tupl
             events.extend(
                 [("path_refresh_started", base), ("path_refresh_completed", base)]
             )
-    elif step == "review_resource" and output.get("manual_review_required"):
+    elif step == "review_resource" and output.get("arbitration_required"):
         events.extend([("review_disagreement", base), ("review_retrieval_started", base)])
-    elif step == "human_review":
-        name = "manual_review_required" if output.get("decision") == "manual_review_required" else "manual_review_resolved"
-        events.append((name, base))
     return events
 
 
@@ -339,8 +461,6 @@ async def _task_events(task_id: str) -> AsyncIterator[str]:
                             {"task_id": task.public_id, **_resource_summary(resource)},
                         )
                     name = "task_completed"
-                elif task.status == "waiting_human":
-                    name = "manual_review_required"
                 else:
                     name = "task_failed"
                 yield _json_event(
@@ -358,7 +478,8 @@ async def _task_events(task_id: str) -> AsyncIterator[str]:
 
 
 @router.get("/{task_id}/events")
-async def stream_generation_events(task_id: str) -> StreamingResponse:
+async def stream_generation_events(task_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> StreamingResponse:
+    require_task(db, principal, task_id)
     return StreamingResponse(
         _task_events(task_id),
         media_type="text/event-stream",

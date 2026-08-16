@@ -135,6 +135,29 @@ def test_report_summarizes_resources_reviews_feedback_and_path_refresh() -> None
                 sources_json=[{"knowledge_id": "ki_2"}],
                 review_status="passed",
             ),
+            LearningResource(
+                public_id="res_report_rejected",
+                generation_task_id=task.id,
+                resource_type="graded_quiz",
+                title="Rejected quiz",
+                content_md="content",
+                difficulty=3,
+                learner_profile_type="intermediate",
+                sources_json=[{"knowledge_id": "ki_3"}],
+                review_status="failed",
+            ),
+            LearningResource(
+                public_id="res_report_old_lecture",
+                generation_task_id=task.id,
+                resource_type="lecture",
+                title="Old lecture",
+                content_md="content",
+                difficulty=2,
+                learner_profile_type="intermediate",
+                sources_json=[{"knowledge_id": "ki_4"}],
+                review_status="passed",
+                is_current=False,
+            ),
         ]
         db.add_all(resources)
         db.flush()

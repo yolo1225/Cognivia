@@ -10,15 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
 from app.models import (
-    DemoUser,
     DiagnosticQuestion,
     Domain,
     KnowledgeItem,
+    KnowledgeDocument,
     KnowledgeRelation,
-    Learner,
-    LearnerProfile,
-    LearningPath,
 )
+from app.rag.candidate_chunker import chunk_knowledge_item
 
 
 SEED_DIR = Path("/app/data/seed")
@@ -30,6 +28,19 @@ def load_json(filename: str) -> Any:
         fallback = Path(__file__).resolve().parents[3] / "data" / "seed" / filename
         path = fallback if fallback.exists() else path
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _candidate_chunk_count(payload: dict[str, Any]) -> int:
+    return len(
+        chunk_knowledge_item(
+            knowledge_id=str(payload["knowledge_id"]),
+            name=str(payload["name"]),
+            category=str(payload["category"]),
+            difficulty=int(payload.get("difficulty", 1)),
+            tags=list(payload.get("tags", [])),
+            content_md=str(payload["content"]),
+        )
+    )
 
 
 def upsert_by_field(
@@ -72,28 +83,55 @@ def seed_domain(db: Session) -> Domain:
 
 def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
     payloads = load_json("knowledge_items.json")
+    seed_document = upsert_by_field(
+        db,
+        KnowledgeDocument,
+        "public_id",
+        "kdoc_ai_app_dev_seed",
+        {
+            "public_id": "kdoc_ai_app_dev_seed",
+            "domain_code": "ai_app_dev",
+            "original_name": "AI应用开发核心知识包.json",
+            "stored_path": None,
+            "file_type": "seed_package",
+            "mime_type": "application/json",
+            "size_bytes": 0,
+            "sha256": "seed-ai-app-dev-core-v1",
+            "status": "ready",
+            "knowledge_item_count": len(payloads),
+            "chunk_count": sum(_candidate_chunk_count(item) for item in payloads),
+            "source_title": "AI 应用开发核心知识包",
+            "license_note": "项目内置种子知识",
+            "uploaded_by": "system",
+        },
+    )
+    db.flush()
     items: dict[str, KnowledgeItem] = {}
     for payload in payloads:
         public_id = payload["knowledge_id"]
-        item = upsert_by_field(
-            db,
-            KnowledgeItem,
-            "public_id",
-            public_id,
-            {
-                "public_id": public_id,
-                "domain_code": payload.get("domain_code", "ai_app_dev"),
-                "name": payload["name"],
-                "category": payload["category"],
-                "difficulty": payload.get("difficulty", 1),
-                "tags_json": payload.get("tags", []),
-                "content_md": payload["content"],
-                "source_title": payload.get("source_title", "自建 AI 应用开发实训知识库"),
-                "source_url": payload.get("source_url"),
-                "license_note": payload.get("license_note", "team-authored"),
-                "needs_reembedding": True,
-            },
-        )
+        values = {
+            "public_id": public_id,
+            "domain_code": payload.get("domain_code", "ai_app_dev"),
+            "name": payload["name"],
+            "category": payload["category"],
+            "difficulty": payload.get("difficulty", 1),
+            "tags_json": payload.get("tags", []),
+            "content_md": payload["content"],
+            "source_title": payload.get("source_title", "自建 AI 应用开发实训知识库"),
+            "source_url": payload.get("source_url"),
+            "license_note": payload.get("license_note", "team-authored"),
+            "source_document_id": seed_document.id,
+        }
+        item = db.scalar(select(KnowledgeItem).where(KnowledgeItem.public_id == public_id))
+        if item is None:
+            item = KnowledgeItem(**values, needs_reembedding=True)
+            db.add(item)
+        else:
+            changed = any(getattr(item, key) != value for key, value in values.items())
+            if changed:
+                for key, value in values.items():
+                    setattr(item, key, value)
+                item.needs_reembedding = True
         items[public_id] = item
 
     db.flush()
@@ -132,6 +170,21 @@ def seed_diagnostic_questions(
     questions: list[DiagnosticQuestion] = []
     for payload in payloads:
         item = knowledge_items[payload["knowledge_id"]]
+        options = payload.get("options", [])
+        answer_key = dict(payload.get("answer_key", {}))
+        correct_option = answer_key.get("correct_option")
+        correct_text = (
+            options[correct_option]
+            if isinstance(correct_option, int) and 0 <= correct_option < len(options)
+            else "参考答案中的关键要点"
+        )
+        answer_key.setdefault(
+            "explanation",
+            f"正确答案为“{correct_text}”，对应知识点“{item.name}”的核心要求。",
+        )
+        answer_key.setdefault(
+            "source_locator", f"knowledge:{item.public_id}#chunk=0"
+        )
         question = upsert_by_field(
             db,
             DiagnosticQuestion,
@@ -143,8 +196,8 @@ def seed_diagnostic_questions(
                 "knowledge_item_id": item.id,
                 "question_type": payload["question_type"],
                 "stem": payload["stem"],
-                "options_json": payload.get("options", []),
-                "answer_key_json": payload.get("answer_key", {}),
+                "options_json": options,
+                "answer_key_json": answer_key,
                 "difficulty": payload.get("difficulty", item.difficulty),
             },
         )
@@ -152,111 +205,10 @@ def seed_diagnostic_questions(
     return questions
 
 
-PROFILE_PRESETS = {
-    "beginner": {
-        "ability_profile_json": {
-            "theory": 35,
-            "practice": 25,
-            "problem_solving": 30,
-            "breadth": 25,
-            "learning_speed": 45,
-        },
-        "weak_knowledge_json": ["http_rest_basics", "prompt_output_format", "rag_pipeline_overview"],
-    },
-    "advanced": {
-        "ability_profile_json": {
-            "theory": 65,
-            "practice": 75,
-            "problem_solving": 70,
-            "breadth": 60,
-            "learning_speed": 70,
-        },
-        "weak_knowledge_json": [
-            "llm_judge_reliability",
-            "evaluation_metrics",
-            "observability_tracing",
-        ],
-    },
-    "practice_oriented": {
-        "ability_profile_json": {
-            "theory": 45,
-            "practice": 70,
-            "problem_solving": 60,
-            "breadth": 40,
-            "learning_speed": 60,
-        },
-        "weak_knowledge_json": ["prompt_evaluation", "citation_traceability", "privacy_log_policy"],
-    },
-}
-
-
-def seed_learners(db: Session) -> None:
-    payloads = load_json("sample_learners.json")
-    for payload in payloads:
-        learner = upsert_by_field(
-            db,
-            Learner,
-            "public_id",
-            payload["learner_id"],
-            {
-                "public_id": payload["learner_id"],
-                "background": payload.get("background", ""),
-                "target_domain": payload.get("target_domain", "ai_app_dev"),
-                "experience_years": payload.get("experience_years", 0),
-                "learning_style": payload.get("learning_style", "mixed"),
-            },
-        )
-        db.flush()
-        profile_type = payload.get("profile_type", "beginner")
-        preset = PROFILE_PRESETS.get(profile_type, PROFILE_PRESETS["beginner"])
-        profile_public_id = f"profile_{payload['learner_id']}"
-        profile = upsert_by_field(
-            db,
-            LearnerProfile,
-            "public_id",
-            profile_public_id,
-            {
-                "public_id": profile_public_id,
-                "learner_id": learner.id,
-                "domain_code": payload.get("target_domain", "ai_app_dev"),
-                "ability_profile_json": {
-                    **preset["ability_profile_json"],
-                    "profile_type": profile_type,
-                },
-                "weak_knowledge_json": preset["weak_knowledge_json"],
-            },
-        )
-        db.flush()
-        upsert_by_field(
-            db,
-            LearningPath,
-            "public_id",
-            f"path_{payload['learner_id']}",
-            {
-                "public_id": f"path_{payload['learner_id']}",
-                "learner_id": learner.id,
-                "profile_id": profile.id,
-                "domain_code": payload.get("target_domain", "ai_app_dev"),
-                "status": "active",
-                "path_json": {
-                    "profile_type": profile_type,
-                    "stages": [
-                        {"name": "基础补齐", "knowledge_ids": preset["weak_knowledge_json"][:2]},
-                        {"name": "任务实作", "resource_types": ["practice_guide", "graded_quiz"]},
-                    ],
-                },
-                "needs_refresh": False,
-            },
-        )
-
-
 def seed_demo_users(db: Session) -> None:
-    users = [
-        {"public_id": "demo_instructor", "role": "instructor", "display_name": "演示教师"},
-        {"public_id": "demo_learner", "role": "learner", "display_name": "演示学员"},
-    ]
-    for user in users:
-        upsert_by_field(db, DemoUser, "public_id", user["public_id"], user)
+    # Authentication users are created by registration or init_admin.py.
+    # Legacy demo learner records remain seeded separately as business fixtures.
+    return None
 
 
 def run_seed() -> dict[str, int]:
@@ -264,7 +216,6 @@ def run_seed() -> dict[str, int]:
         seed_domain(db)
         knowledge_items = seed_knowledge_items(db)
         questions = seed_diagnostic_questions(db, knowledge_items)
-        seed_learners(db)
         seed_demo_users(db)
         db.commit()
 
@@ -272,7 +223,7 @@ def run_seed() -> dict[str, int]:
             "domains": db.scalar(select(Domain).where(Domain.domain_code == "ai_app_dev")) is not None,
             "knowledge_items": len(knowledge_items),
             "diagnostic_questions": len(questions),
-            "learners": len(load_json("sample_learners.json")),
+            "learners": 0,
         }
 
 

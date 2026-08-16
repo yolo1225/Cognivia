@@ -400,6 +400,9 @@ def generate_profile_from_diagnostic(
 
 
 def profile_source(profile: LearnerProfile) -> str:
+    explicit = getattr(profile, "profile_source", None)
+    if explicit:
+        return explicit
     if profile.trigger_feedback_id:
         return "validated_feedback"
     if profile.decision_reason == "diagnostic_result":
@@ -537,6 +540,18 @@ def latest_profile_for_learner(db: Session, learner: Learner) -> LearnerProfile 
     )
 
 
+def is_initial_profile_ready(profile: LearnerProfile | None) -> bool:
+    context = profile.context_snapshot_json if profile else {}
+    return bool(
+        profile
+        and profile.diagnosis_completed
+        and context.get("education_level")
+        and context.get("major")
+        and context.get("direction_tags")
+        and context.get("confirmed_at")
+    )
+
+
 def latest_path_for_profile(db: Session, profile: LearnerProfile) -> LearningPath | None:
     return db.scalar(
         select(LearningPath)
@@ -560,6 +575,8 @@ def default_profile_for_learner(db: Session, learner: Learner) -> LearnerProfile
             profile_type="beginner",
         ),
         weak_knowledge_json=[],
+        profile_source="default_seed",
+        diagnosis_completed=False,
     )
     db.add(profile)
     db.flush()
@@ -612,6 +629,9 @@ def serialize_profile_detail(
             "learner_id": learner.public_id,
             "domain_code": learner.target_domain,
             "background": clean_display_text(learner.background),
+            "education_level": learner.education_level,
+            "major": learner.major,
+            "direction_tags": learner.direction_tags_json or [],
             "learning_style": learner.learning_style,
             "experience_years": learner.experience_years,
             "profile_status": "not_started",
@@ -621,6 +641,7 @@ def serialize_profile_detail(
             "radar": [0, 0, 0, 0, 0],
             "category_mastery": {},
             "weak_knowledge": [],
+            "context_snapshot": {},
             "learning_path": None,
             "diagnostic_summary": diagnostic_summary_for_learner(db, learner),
         }
@@ -631,15 +652,19 @@ def serialize_profile_detail(
         "learner_id": learner.public_id,
         "domain_code": profile.domain_code,
         "background": clean_display_text(learner.background),
+        "education_level": learner.education_level,
+        "major": learner.major,
+        "direction_tags": learner.direction_tags_json or [],
         "learning_style": learner.learning_style,
         "experience_years": learner.experience_years,
-        "profile_status": "ready",
+        "profile_status": "ready" if is_initial_profile_ready(profile) else "not_started",
         "profile_id": profile.public_id,
         "profile_type": ability_profile.get("profile_type", "beginner"),
         "ability_profile": clean_display_payload(ability_profile),
         "radar": radar_values(ability_profile),
         "category_mastery": clean_display_payload(ability_profile.get("category_mastery", {})),
         "weak_knowledge": clean_display_payload(profile.weak_knowledge_json or []),
+        "context_snapshot": clean_display_payload(profile.context_snapshot_json or {}),
         "learning_path": clean_display_payload(path.path_json) if path else None,
         "diagnostic_summary": diagnostic_summary_for_learner(db, learner),
     }

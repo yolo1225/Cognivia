@@ -1,9 +1,16 @@
 import { getData } from './client'
 
 export interface LearningReport {
+  diagnosis_completed?: boolean
+  profile_ready?: boolean
+  profile_source?: string | null
   learner_id: string
   profile_id?: string | null
   profile_type?: string
+  education_level?: string
+  major?: string
+  direction_tags?: string[]
+  context_snapshot?: Record<string, unknown>
   radar: number[]
   path: string[]
   diagnostic_summary?: {
@@ -56,7 +63,6 @@ export interface LearningReport {
   review_summary: {
     total_reports: number
     passed: number
-    manual_review_required: number
     review_status_counts: Record<string, number>
     source_coverage: number
   }
@@ -82,6 +88,7 @@ export interface LearningReport {
   }>
 }
 
-export function getLearningReport(learnerId: string) {
-  return getData<LearningReport>(`/reports/learners/${learnerId}`)
+export function getLearningReport(learnerId: string, taskId?: string) {
+  const params = taskId ? `?task_id=${encodeURIComponent(taskId)}` : ''
+  return getData<LearningReport>(`/reports/learners/${learnerId}${params}`)
 }

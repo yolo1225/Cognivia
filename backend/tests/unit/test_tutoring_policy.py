@@ -16,7 +16,7 @@ from app.services.tutoring_policy import (
 FIXTURE_PATH = (
     Path(__file__).resolve().parents[1]
     / "fixtures"
-    / "v2_tutoring"
+    / "v3_tutoring"
     / "minimal_feedback_input.json"
 )
 

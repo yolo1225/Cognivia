@@ -16,6 +16,13 @@ export interface DiagnosticSession {
   question_count: number
   status: string
   questions: DiagnosticQuestion[]
+  selection_summary: {
+    direction_tags: string[]
+    single_choice_count: number
+    short_answer_count: number
+    theory_count: number
+    practice_count: number
+  }
 }
 
 export interface DiagnosticResult {
@@ -35,6 +42,12 @@ export interface DiagnosticResult {
     weakness_level: number
   }>
   learning_path_id: string
+  learning_path?: {
+    stages?: Array<{
+      name: string
+      description?: string
+    }>
+  }
   next_action: string
 }
 

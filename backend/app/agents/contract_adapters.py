@@ -14,9 +14,6 @@ from app.agents.contracts import (
     GenerationRequirements,
     GenerationStrategy,
     GradedQuizContent,
-    HumanDecision,
-    HumanReviewInput,
-    HumanReviewOutput,
     InterpretFeedbackInput,
     InterpretFeedbackOutput,
     KnowledgeAssessment,
@@ -34,6 +31,7 @@ from app.agents.contracts import (
     TaskContext,
 )
 from app.agents.state import AgentGraphState
+from app.agents.knowledge_coverage_policy import allocate_resource_knowledge_targets
 
 
 STATE_FIELD_OWNERS: dict[str, str] = {
@@ -44,13 +42,12 @@ STATE_FIELD_OWNERS: dict[str, str] = {
     "generate_resource": "generate_resource",
     "review_resource": "review_resource",
     "finalize_task": "finalize_task",
-    "human_review": "human_review",
 }
 
 def _required(state: AgentGraphState, key: str):
     value = state.get(key)  # type: ignore[literal-required]
     if value is None:
-        raise ValueError(f"V2 state requires '{key}' before this node")
+        raise ValueError(f"V4 state requires '{key}' before this node")
     return value
 
 
@@ -93,6 +90,8 @@ def build_analyze_profile_input(
         task_id=context.task_id,
         context=context,
         current_profile=_required(state, "current_profile"),
+        learning_path=state.get("learning_path"),
+        current_path_node=state.get("current_path_node"),
         diagnostic_summary=state.get("diagnostic_summary"),
         feedback_evidence=tutoring.evidence if tutoring else [],
         recommended_action=tutoring.recommended_action if tutoring else None,
@@ -119,19 +118,32 @@ def _generation_requirements(state: AgentGraphState) -> GenerationRequirements:
     plan = analysis.retrieval_plan
     required_ids = list(
         dict.fromkeys([*plan.priority_knowledge_ids, *plan.prerequisite_knowledge_ids])
-    )
+    )[:10]
     if not required_ids:
-        required_ids = list(retrieval.covered_knowledge_ids)
+        required_ids = list(retrieval.covered_knowledge_ids)[:10]
     source_ids = list(dict.fromkeys(chunk.source.source_ref_id for chunk in retrieval.chunks))
     if not required_ids:
         raise ValueError("generation requires at least one target knowledge id")
     if not source_ids:
         raise ValueError("generation requires at least one retrieved source")
+    covered_ids = set(retrieval.covered_knowledge_ids)
+    missing_evidence = [item for item in required_ids if item not in covered_ids]
+    if missing_evidence:
+        raise ValueError(
+            "generation required knowledge ids must all have retrieved evidence: "
+            + ",".join(missing_evidence)
+        )
+    sourced_ids = {chunk.knowledge_id for chunk in retrieval.chunks}
+    if not set(required_ids).issubset(sourced_ids):
+        raise ValueError("generation requires at least one retrieved source per target")
     return GenerationRequirements(
         resource_types=plan.resource_types,
         target_difficulty=plan.target_difficulty,
         strategy=plan.strategy,
         required_knowledge_ids=required_ids,
+        resource_knowledge_targets=allocate_resource_knowledge_targets(
+            required_ids, retrieval.chunks, plan.resource_types
+        ),
         source_whitelist=source_ids,
         adaptation_notes=[analysis.decision_reason],
         revision_plan=state.get("revision_plan"),
@@ -147,6 +159,8 @@ def build_generate_resource_input(state: AgentGraphState) -> GenerateResourceInp
         context=context,
         profile=analysis.profile,
         retrieved_chunks=retrieval.chunks,
+        reference_questions=retrieval.reference_questions,
+        current_path_node=analysis.current_path_node,
         requirements=_generation_requirements(state),
     )
 
@@ -168,7 +182,6 @@ def build_finalize_task_input(state: AgentGraphState) -> FinalizeTaskInput:
     context = _context(state)
     generation = state.get("generate_resource")
     review = state.get("review_resource")
-    human_review = state.get("human_review")
     revision_plan = state.get("revision_plan")
     return FinalizeTaskInput(
         task_id=context.task_id,
@@ -177,18 +190,9 @@ def build_finalize_task_input(state: AgentGraphState) -> FinalizeTaskInput:
         review_reports=review.reports if review else [],
         revision_count=revision_plan.revision_count if revision_plan else 0,
         tutoring_result=state.get("interpret_feedback"),
-        human_decision=human_review.decision if human_review else None,
-    )
-
-
-def build_human_review_input(state: AgentGraphState) -> HumanReviewInput:
-    context = _context(state)
-    review = _required(state, "review_resource")
-    return HumanReviewInput(
-        task_id=context.task_id,
-        context=context,
-        review_reports=review.reports,
-        allowed_decisions=list(HumanDecision),
+        package_coverage_score=review.package_coverage_score if review else 0,
+        package_passed=review.package_passed if review else False,
+        package_quality=review.package_quality if review else None,
     )
 
 
@@ -201,16 +205,15 @@ OutputT = TypeVar(
     GenerateResourceOutput,
     ReviewResourceOutput,
     FinalizeTaskOutput,
-    HumanReviewOutput,
 )
 
 
 def _output_patch(node_name: str, output: OutputT) -> AgentGraphState:
     expected_field = STATE_FIELD_OWNERS.get(node_name)
     if expected_field is None:
-        raise ValueError(f"unknown V2 node '{node_name}'")
+        raise ValueError(f"unknown V3 node '{node_name}'")
     if output.contract_version != CONTRACT_VERSION:
-        raise ValueError("output contract version does not match frozen V2")
+        raise ValueError("output contract version does not match frozen V5")
     return cast(AgentGraphState, {expected_field: output})
 
 
@@ -247,6 +250,9 @@ def generate_resource_output_to_patch(
         actual_sources = {source.source_ref_id for source in artifact.source_refs}
         if not actual_sources.issubset(source_whitelist):
             raise ValueError("generated resources may only cite whitelisted sources")
+        targets = set(node_input.requirements.resource_knowledge_targets[artifact.resource_type])
+        if not set(artifact.knowledge_coverage).issubset(targets):
+            raise ValueError("knowledge coverage may only claim assigned targets")
         expected_markdown = render_resource_markdown(
             artifact.structured_content, artifact.source_refs
         )
@@ -272,14 +278,12 @@ def finalize_task_output_to_patch(output: FinalizeTaskOutput) -> AgentGraphState
     return _output_patch("finalize_task", output)
 
 
-def human_review_output_to_patch(output: HumanReviewOutput) -> AgentGraphState:
-    return _output_patch("human_review", output)
 
 
 def validate_state_patch(node_name: str, patch: Mapping[str, object]) -> None:
     expected = STATE_FIELD_OWNERS.get(node_name)
     if expected is None:
-        raise ValueError(f"unknown V2 node '{node_name}'")
+        raise ValueError(f"unknown V3 node '{node_name}'")
     unexpected = set(patch) - {expected}
     if unexpected:
         raise ValueError(f"node '{node_name}' cannot write state fields: {sorted(unexpected)}")

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import UTC, datetime
 from hashlib import sha256
+import random
 import time
 from typing import Any
 
@@ -16,7 +18,7 @@ from app.agents.contracts import (
     KnowledgeAssessment,
     TaskContext,
 )
-from app.agents.v2_profile_analysis_agent import V2ProfileAnalysisAgent
+from app.agents.profile_analysis_agent import ProfileAnalysisAgent
 from app.models import (
     AgentMessageRecord,
     AgentRun,
@@ -30,11 +32,12 @@ from app.services.learner_service import get_or_create_demo_learner
 from app.services.profile_service import (
     build_learning_path_from_snapshot,
     default_profile_for_learner,
+    is_initial_profile_ready,
     latest_path_for_profile,
     public_id,
     score_answer,
 )
-from app.services.v2_contract_mapping import ability_profile_payload, profile_snapshot
+from app.services.contract_mapping import ability_profile_payload, profile_snapshot
 
 PROFILE_AGENT_NAME = "profile_analysis_agent"
 
@@ -48,6 +51,44 @@ def _question_payload(question: DiagnosticQuestion) -> dict[str, Any]:
         "options": question.options_json or [],
         "difficulty": question.difficulty,
     }
+
+
+_DIRECTION_KEYWORDS = {
+    "llm_application": {"llm", "model", "api", "workflow", "overview"},
+    "prompt_engineering": {"prompt", "context", "structured", "json"},
+    "rag_knowledge_base": {"rag", "retrieval", "embedding", "vector", "knowledge"},
+    "agent_orchestration": {"agent", "tool", "orchestration", "workflow", "planning"},
+}
+_PRACTICE_KEYWORDS = {"rag", "agent", "工程", "后端", "前端", "系统", "向量", "模型调用", "实操", "应用"}
+
+
+def _is_practice_question(question: DiagnosticQuestion, knowledge: KnowledgeItem) -> bool:
+    text = " ".join(
+        [knowledge.category, knowledge.name, question.stem, *[str(tag) for tag in (knowledge.tags_json or [])]]
+    ).lower()
+    return any(keyword.lower() in text for keyword in _PRACTICE_KEYWORDS)
+
+
+def _direction_score(knowledge: KnowledgeItem, direction_tags: list[str]) -> int:
+    text = " ".join([knowledge.category, knowledge.name, *[str(tag) for tag in (knowledge.tags_json or [])]]).lower()
+    return sum(
+        1
+        for direction in direction_tags
+        for keyword in _DIRECTION_KEYWORDS.get(direction, set())
+        if keyword in text
+    )
+
+
+def _take_questions(
+    candidates: list[tuple[DiagnosticQuestion, KnowledgeItem, int]],
+    count: int,
+) -> list[tuple[DiagnosticQuestion, KnowledgeItem, int]]:
+    if len(candidates) < count:
+        raise ValueError("diagnostic_question_distribution_unavailable")
+    ranked = sorted(candidates, key=lambda item: item[2], reverse=True)
+    cutoff = ranked[count - 1][2]
+    preferred = [item for item in ranked if item[2] >= cutoff]
+    return random.sample(preferred, k=count)
 
 
 def _message(
@@ -69,6 +110,86 @@ def _message(
     )
 
 
+def _sample_diagnostic_questions(
+    available_questions: list[DiagnosticQuestion],
+    knowledge_rows: dict[int, KnowledgeItem],
+    direction_tags: list[str],
+    question_count: int,
+) -> list[DiagnosticQuestion]:
+    if int(question_count) != 10:
+        raise ValueError("initial_diagnostic_requires_ten_questions")
+
+    buckets: dict[tuple[str, bool], list[tuple[DiagnosticQuestion, KnowledgeItem, int]]] = {
+        ("single_choice", False): [],
+        ("single_choice", True): [],
+        ("short_answer", False): [],
+        ("short_answer", True): [],
+    }
+    for question in available_questions:
+        knowledge = knowledge_rows.get(question.knowledge_item_id)
+        if knowledge is None or question.question_type not in {"single_choice", "short_answer"}:
+            continue
+        buckets[(question.question_type, _is_practice_question(question, knowledge))].append(
+            (question, knowledge, _direction_score(knowledge, direction_tags))
+        )
+
+    targets = {
+        ("single_choice", False): 3,
+        ("single_choice", True): 3,
+        ("short_answer", False): 2,
+        ("short_answer", True): 2,
+    }
+    selected: list[DiagnosticQuestion] = []
+    for bucket, target in targets.items():
+        selected.extend(question for question, _, _ in _take_questions(buckets[bucket], target))
+    random.shuffle(selected)
+    return selected
+
+
+def _initial_context_snapshot(learner, *, confirmed_at: str | None = None) -> dict[str, Any]:
+    direction_tags = list(learner.direction_tags_json or [])
+    if not learner.education_level or not learner.major or not direction_tags:
+        raise ValueError("initial_context_required")
+    if learner.target_domain != "ai_app_dev":
+        raise ValueError("initial_context_domain_unsupported")
+    return {
+        "education_level": learner.education_level,
+        "major": learner.major,
+        "background": learner.background,
+        "experience_years": learner.experience_years,
+        "learning_style": learner.learning_style,
+        "target_domain": learner.target_domain,
+        "direction_tags": direction_tags,
+        "confirmed_at": confirmed_at or datetime.now(UTC).isoformat(),
+    }
+
+
+def _diagnostic_session_message(db: Session, session_id: str) -> AgentMessageRecord | None:
+    rows = db.scalars(
+        select(AgentMessageRecord)
+        .where(AgentMessageRecord.session_id == session_id)
+        .order_by(AgentMessageRecord.id)
+    )
+    return next(
+        (
+            row
+            for row in rows
+            if (row.payload_summary_json or {}).get("event") == "diagnostic_session_created"
+        ),
+        None,
+    )
+
+
+def _assert_unsubmitted_session(db: Session, session_id: str) -> None:
+    submitted = any(
+        (row.payload_summary_json or {}).get("event") == "diagnostic_session_submitted"
+        for row in db.scalars(
+            select(AgentMessageRecord).where(AgentMessageRecord.session_id == session_id)
+        )
+    )
+    if submitted:
+        raise ValueError("diagnostic_session_already_submitted")
+
 def create_diagnostic_session(
     db: Session,
     *,
@@ -77,21 +198,67 @@ def create_diagnostic_session(
     question_count: int = 10,
 ) -> dict[str, Any]:
     learner = get_or_create_demo_learner(db, learner_id)
-    questions = list(
+    if domain_code != "ai_app_dev":
+        raise ValueError("initial_context_domain_unsupported")
+    context_snapshot = _initial_context_snapshot(learner)
+    profile = default_profile_for_learner(db, learner)
+    if is_initial_profile_ready(profile):
+        raise ValueError("initial_profile_already_ready")
+    available_questions = list(
         db.scalars(
             select(DiagnosticQuestion)
             .where(DiagnosticQuestion.domain_code == domain_code)
             .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.public_id)
-            .limit(question_count)
         )
     )
+    knowledge_rows = {
+        item.id: item
+        for item in db.scalars(
+            select(KnowledgeItem).where(
+                KnowledgeItem.id.in_({question.knowledge_item_id for question in available_questions})
+            )
+        )
+    }
+    questions = _sample_diagnostic_questions(
+        available_questions, knowledge_rows, context_snapshot["direction_tags"], question_count
+    )
+    practice_count = sum(
+        1 for question in questions if _is_practice_question(question, knowledge_rows[question.knowledge_item_id])
+    )
+    session_id = public_id("diag")
+    selection_summary = {
+        "direction_tags": context_snapshot["direction_tags"],
+        "single_choice_count": 6,
+        "short_answer_count": 4,
+        "theory_count": len(questions) - practice_count,
+        "practice_count": practice_count,
+    }
+    db.add(
+        AgentMessageRecord(
+            session_id=session_id,
+            task_id=session_id,
+            sender="orchestrator_agent",
+            receiver=PROFILE_AGENT_NAME,
+            message_type="command",
+            payload_summary_json={
+                "event": "diagnostic_session_created",
+                "learner_id": learner.public_id,
+                "domain_code": domain_code,
+                "question_ids": [question.public_id for question in questions],
+                "selection_summary": selection_summary,
+                "context_snapshot": context_snapshot,
+            },
+        )
+    )
+    db.commit()
     return {
-        "session_id": public_id("diag"),
+        "session_id": session_id,
         "learner_id": learner.public_id,
         "domain_code": domain_code,
         "question_count": len(questions),
         "status": "created",
         "questions": [_question_payload(question) for question in questions],
+        "selection_summary": selection_summary,
     }
 
 
@@ -104,8 +271,27 @@ def submit_diagnostic_session(
     answers: list[dict[str, Any]],
 ) -> dict[str, Any]:
     learner = get_or_create_demo_learner(db, learner_id)
-    answer_by_question_id = {item["question_id"]: item.get("answer") for item in answers}
-    question_ids = list(answer_by_question_id.keys())
+    session_message = _diagnostic_session_message(db, session_id)
+    if session_message is None:
+        raise ValueError("diagnostic_session_not_found")
+    _assert_unsubmitted_session(db, session_id)
+    session_payload = session_message.payload_summary_json or {}
+    if session_payload.get("learner_id") != learner.public_id or session_payload.get("domain_code") != domain_code:
+        raise ValueError("diagnostic_session_access_denied")
+    context_snapshot = session_payload.get("context_snapshot")
+    selected_question_ids = session_payload.get("question_ids")
+    if not isinstance(context_snapshot, dict) or not isinstance(selected_question_ids, list):
+        raise ValueError("diagnostic_session_invalid")
+
+    answer_by_question_id: dict[str, Any] = {}
+    for item in answers:
+        question_id = str(item.get("question_id") or "")
+        if not question_id or question_id in answer_by_question_id:
+            raise ValueError("diagnostic_answers_invalid")
+        answer_by_question_id[question_id] = item.get("answer")
+    if set(answer_by_question_id) != set(selected_question_ids) or len(answer_by_question_id) != 10:
+        raise ValueError("diagnostic_answers_do_not_match_session")
+    question_ids = list(selected_question_ids)
     questions = list(
         db.scalars(
             select(DiagnosticQuestion)
@@ -113,7 +299,7 @@ def submit_diagnostic_session(
             .where(DiagnosticQuestion.domain_code == domain_code)
         )
     )
-    if not questions:
+    if len(questions) != 10:
         raise ValueError("diagnostic_session_has_no_valid_questions")
 
     started_at = time.perf_counter()
@@ -133,7 +319,7 @@ def submit_diagnostic_session(
         llm_calls=0,
         tokens_used=0,
         duration_ms=0,
-        prompt_version="v2",
+        prompt_version="v3",
     )
     db.add(run)
     _message(
@@ -231,7 +417,7 @@ def submit_diagnostic_session(
             resource_types=["lecture", "practice_guide", "graded_quiz"],
             learning_goal="根据诊断结果形成学习画像和个性化学习路径",
         )
-        analysis = V2ProfileAnalysisAgent().execute(
+        analysis = ProfileAnalysisAgent().execute(
             AnalyzeProfileInput(
                 task_id=session_id,
                 context=context,
@@ -267,6 +453,9 @@ def submit_diagnostic_session(
                 ],
                 profile_version=analysis.profile.profile_version,
                 previous_profile_id=current_profile.id,
+                profile_source="diagnostic",
+                diagnosis_completed=True,
+                context_snapshot_json=context_snapshot,
                 changed_dimensions_json=analysis.changed_dimensions,
                 evidence_refs_json=[
                     item.model_dump(mode="json") for item in analysis.evidence_refs
@@ -337,6 +526,20 @@ def submit_diagnostic_session(
             session_id=session_id,
             message_type="result",
             payload={**output_summary, "status": "completed"},
+        )
+        db.add(
+            AgentMessageRecord(
+                session_id=session_id,
+                task_id=session_id,
+                sender="orchestrator_agent",
+                receiver=PROFILE_AGENT_NAME,
+                message_type="result",
+                payload_summary_json={
+                    "event": "diagnostic_session_submitted",
+                    "learner_id": learner.public_id,
+                    "profile_id": result["profile_id"],
+                },
+            )
         )
         db.commit()
         return {

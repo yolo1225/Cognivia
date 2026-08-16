@@ -1,435 +1,178 @@
 <template>
-  <section class="page diagnostic-page">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">诊断测评</h1>
-        <p class="page-subtitle">
-          从真实题库抽取题目，形成学习画像、薄弱知识点和学习路径，再把画像传给多智能体生成流程。
-        </p>
-      </div>
-      <div class="toolbar">
-        <el-select
-          v-model="selectedLearnerId"
-          class="learner-select"
-          @change="changeLearner"
-        >
-          <el-option
-            v-for="learner in learnerOptions"
-            :key="learner.learner_id"
-            :label="learner.learner_id"
-            :value="learner.learner_id"
-          />
-        </el-select>
-        <el-button :loading="loadingSession" @click="createSession">创建 10 题测评</el-button>
-        <el-button v-if="session" @click="fillDemoAnswers">填入演示答案</el-button>
+  <section class="page">
+    <div class="head">
+      <div><h1>诊断训练</h1><p class="sub">完成 10 道领域题目，帮助系统识别当前能力基础与需要优先巩固的知识。</p></div>
+      <div class="actions">
+        <button class="btn primary" @click="startSession" :disabled="creatingSession || submitting">{{ creatingSession ? '创建中...' : session || result ? '重新开始训练' : '创建 10 题训练' }}</button>
       </div>
     </div>
 
-    <div class="panel">
-      <el-steps :active="currentStep" finish-status="success" simple>
-        <el-step title="创建测评" />
-        <el-step title="提交答案" />
-        <el-step title="生成画像" />
-        <el-step title="生成资源" />
-      </el-steps>
+    <!-- No Session -->
+    <div v-if="!session && !result" class="panel" style="text-align:center;padding:60px">
+      <div class="upload-icon" style="margin:auto">◎</div>
+      <strong style="display:block;margin-top:14px">尚未开始诊断训练</strong>
+      <p class="sub">系统将从 {{ domainCode }} 领域题库中抽取 10 道题，覆盖理论理解与实操场景。</p>
+      <button class="btn primary" style="margin-top:16px" @click="startSession" :disabled="creatingSession">{{ creatingSession ? '创建中...' : '开始诊断训练' }}</button>
     </div>
 
-    <div v-if="session" class="panel session-panel">
-      <el-descriptions :column="3" border>
-        <el-descriptions-item label="测评会话">{{ session.session_id }}</el-descriptions-item>
-        <el-descriptions-item label="学习者">{{ session.learner_id }}</el-descriptions-item>
-        <el-descriptions-item label="题目数量">{{ session.question_count }}</el-descriptions-item>
-      </el-descriptions>
-    </div>
-
-    <div v-if="session" class="panel question-panel">
-      <article v-for="(question, index) in session.questions" :key="question.question_id" class="question-item">
-        <div class="question-title">
-          <strong>{{ index + 1 }}. {{ question.stem }}</strong>
-          <el-tag size="small" effect="plain">难度 {{ question.difficulty }}</el-tag>
+    <!-- Test View -->
+    <div v-if="session && !result" class="diag">
+      <aside class="panel">
+        <h2>{{ session.domain_code }} 诊断</h2>
+        <p class="sub">{{ session.question_count }} 题 · 会话 {{ session.session_id?.slice(0,8) }}</p>
+        <div class="qnav">
+          <button v-for="(q,i) in session.questions" :key="q.question_id" class="q"
+            :class="{ done: answers[i] !== undefined && answers[i] !== '', current: i === currentIdx }" :aria-current="i===currentIdx?'step':undefined" @click="currentIdx=i">{{ i+1 }}</button>
         </div>
-        <el-radio-group
-          v-if="question.question_type === 'single_choice'"
-          v-model="answers[question.question_id]"
-        >
-          <el-radio
-            v-for="(option, optionIndex) in question.options"
-            :key="`${question.question_id}-${optionIndex}`"
-            :label="optionIndex"
-          >
-            {{ option }}
-          </el-radio>
-        </el-radio-group>
-        <el-input
-          v-else
-          v-model="answers[question.question_id]"
-          type="textarea"
-          :rows="3"
-          placeholder="输入简答题答案"
-        />
+        <p class="sub" style="margin-top:18px">已完成 {{ answeredCount }}/{{ session.question_count }} 题</p>
+      </aside>
+      <article v-if="currentQuestion" class="panel">
+        <div class="meta">
+          <span class="tag">{{ currentQuestion.question_type === 'single_choice' ? '单选题' : '简答题' }}</span>
+          <span class="tag">难度 {{ currentQuestion.difficulty }}/5</span>
+        </div>
+        <h2 class="question">{{ currentQuestion.stem }}</h2>
+        <div v-if="currentQuestion.question_type === 'single_choice'" class="options">
+          <label v-for="(opt, i) in currentQuestion.options" :key="i" class="option">
+            <input type="radio" :name="'q'+currentIdx" :value="i" v-model="answers[currentIdx]" />{{ String.fromCharCode(65+i) }}. {{ opt }}
+          </label>
+        </div>
+        <textarea v-else v-model="answers[currentIdx]" aria-label="简答题答案" placeholder="请输入答案..." style="margin-top:14px;min-height:100px"></textarea>
+        <div class="actions" style="margin-top:22px;justify-content:flex-end">
+          <button class="btn" @click="currentIdx = Math.max(0, currentIdx-1)" :disabled="currentIdx===0">上一题</button>
+          <button v-if="!isLastQuestion" class="btn primary" @click="currentIdx++">下一题</button>
+          <button v-else class="btn primary" @click="submitAll" :disabled="submitting || !allAnswered">{{ submitting ? '提交中...' : allAnswered ? '提交诊断' : `还有 ${unansweredCount} 题未完成` }}</button>
+        </div>
       </article>
-      <div class="submit-row">
-        <el-button type="primary" :loading="loadingSubmit" @click="submitSession">
-          提交诊断并生成画像
-        </el-button>
-      </div>
     </div>
 
-    <div v-else class="empty-hint">
-      <strong>先创建一组诊断题</strong>
-      <p>系统会从 ai_app_dev 领域题库读取题目，用答题结果生成差异化学习画像。</p>
-    </div>
-
-    <div v-if="result" class="panel result-panel">
-      <div class="result-header">
-        <div>
-          <h2 class="panel-title">诊断结果</h2>
-          <p class="page-subtitle">
-            画像类型为 {{ profileLabel(result.profile_type) }}，得分 {{ result.score }}，下一步可以启动资源生成。
-          </p>
-        </div>
-        <el-button type="primary" :loading="loadingGeneration" @click="generateResources">
-          启动资源生成
-        </el-button>
+    <!-- Completion summary: profile details live in the learning report. -->
+    <div v-if="result" class="panel completion-panel">
+      <div class="completion-mark" aria-hidden="true">✓</div>
+      <div>
+        <h2>诊断训练已完成</h2>
+        <p class="sub">答题结果已保存，能力画像与薄弱知识分析请前往学习报告查看。</p>
       </div>
-
-      <div class="result-grid">
-        <div class="metric-card">
-          <span class="metric-label">正确题数</span>
-          <div class="metric-value">{{ result.correct_count }}/{{ result.question_count }}</div>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">画像 ID</span>
-          <strong>{{ result.profile_id }}</strong>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">学习路径 ID</span>
-          <strong>{{ result.learning_path_id }}</strong>
-        </div>
+      <div class="completion-stats" aria-label="诊断训练结果">
+        <div><span>答对题数</span><strong>{{ result.correct_count }}/{{ result.question_count }}</strong></div>
+        <div><span>正确题数</span><strong>{{ result.correct_count }}</strong></div>
+        <div><span>正确率</span><strong>{{ accuracyPercent }}%</strong></div>
       </div>
-
-      <div class="weak-block">
-        <h3>薄弱知识点</h3>
-        <div class="tag-list">
-          <el-tag
-            v-for="item in result.weak_knowledge"
-            :key="item.knowledge_id"
-            type="warning"
-            effect="plain"
-          >
-            {{ item.name }}
-          </el-tag>
-        </div>
-      </div>
-    </div>
-
-    <div v-if="generation" class="panel">
-      <h2 class="panel-title">生成结果</h2>
-      <el-steps :active="(generation.agent_trace ?? []).length" finish-status="success" simple>
-        <el-step v-for="trace in generation.agent_trace ?? []" :key="trace.agent_name" :title="agentLabel(trace.agent_name)" />
-      </el-steps>
-      <el-alert
-        class="resource-alert"
-        :type="generation.status === 'completed' ? 'success' : generation.status === 'failed' ? 'error' : 'info'"
-        show-icon
-      >
-        <template #title>
-          任务状态：{{ generation.status }}；当前已生成 {{ generation.resources.length }} 类学习资源，协同决策为 {{ generation.decision }}。
-        </template>
-      </el-alert>
-      <div class="generation-actions">
-        <el-button @click="router.push({ path: '/agents', query: { task_id: generation.task_id } })">
-          查看协同进度
-        </el-button>
-        <el-button
-          v-if="generation.status === 'completed'"
-          type="primary"
-          @click="router.push({ path: '/resources', query: { task_id: generation.task_id } })"
-        >
-          查看本次资源
-        </el-button>
+      <div class="actions completion-actions">
+        <button class="btn" @click="router.push('/report')">查看学习报告</button>
+        <button class="btn primary" :disabled="generating" @click="generateResources">{{ generating ? '正在创建...' : '生成学习资源' }}</button>
       </div>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-
-import {
-  createDiagnosticSession,
-  submitDiagnosticSession,
-  type DiagnosticResult,
-  type DiagnosticSession,
-} from '@/api/diagnostics'
-import { createGenerationTask, getGenerationTask, type GenerationTaskResult } from '@/api/generation'
-import { listLearners, type LearnerSummary } from '@/api/learners'
+import { useToast } from '@/composables/useToast'
+import { createDiagnosticSession, submitDiagnosticSession, type DiagnosticSession, type DiagnosticResult } from '@/api/diagnostics'
+import { createGenerationTask } from '@/api/generation'
 import { useLearnerStore } from '@/stores/learnerStore'
 
-const route = useRoute()
 const router = useRouter()
+const route = useRoute()
 const learnerStore = useLearnerStore()
-const selectedLearnerId = ref(learnerStore.selectedLearnerId)
-const learnerOptions = ref<LearnerSummary[]>([])
+const { showToast } = useToast()
+const domainCode = 'ai_app_dev'
+
+const creatingSession = ref(false)
+const submitting = ref(false)
+const generating = ref(false)
+const currentIdx = ref(0)
 const session = ref<DiagnosticSession | null>(null)
 const result = ref<DiagnosticResult | null>(null)
-const generation = ref<GenerationTaskResult | null>(null)
-const answers = ref<Record<string, string | number>>({})
-const loadingSession = ref(false)
-const loadingSubmit = ref(false)
-const loadingGeneration = ref(false)
-let generationPollTimer: number | null = null
+const answers = ref<Record<number, string>>({})
 
-const currentStep = computed(() => {
-  if (generation.value) return 4
-  if (result.value) return 3
-  if (session.value) return 1
-  return 0
-})
+const currentQuestion = computed(() => session.value?.questions[currentIdx.value] || null)
+const isLastQuestion = computed(() => Boolean(session.value) && currentIdx.value === session.value!.questions.length - 1)
+const answeredCount = computed(() => session.value?.questions.filter((_, index) => String(answers.value[index] ?? '').trim() !== '').length || 0)
+const unansweredCount = computed(() => Math.max(0, (session.value?.question_count || 0) - answeredCount.value))
+const allAnswered = computed(() => Boolean(session.value) && unansweredCount.value === 0)
+const routeLearnerId = String(route.query.learner_id || '').trim()
+if (routeLearnerId) learnerStore.setSelectedLearner(routeLearnerId)
+const learnerId = computed(() => routeLearnerId || learnerStore.selectedLearnerId)
+const accuracyPercent = computed(() => result.value ? Math.round((result.value.correct_count / Math.max(1, result.value.question_count)) * 100) : 0)
 
-const learnerId = computed(() => {
-  return selectedLearnerId.value || learnerStore.selectedLearnerId
-})
-
-watch(
-  () => route.query.learner_id,
-  (raw) => {
-    if (typeof raw === 'string' && raw.trim()) {
-      selectedLearnerId.value = raw
-      learnerStore.setSelectedLearner(raw)
-    }
-  },
-  { immediate: true },
-)
-
-async function loadLearnerOptions() {
+async function startSession() {
+  if (!learnerId.value) { showToast('当前账号未关联学习者'); return }
+  creatingSession.value = true
   try {
-    learnerOptions.value = await listLearners()
-    if (!learnerOptions.value.some((learner) => learner.learner_id === selectedLearnerId.value)) {
-      selectedLearnerId.value = learnerOptions.value[0]?.learner_id ?? learnerStore.selectedLearnerId
-      learnerStore.setSelectedLearner(selectedLearnerId.value)
-    }
-  } catch (error) {
-    learnerOptions.value = [{ learner_id: selectedLearnerId.value, profile_type: '', target_domain: 'ai_app_dev', ability_level: 0, profile_status: 'not_started' }]
-  }
-}
-
-function changeLearner(learnerId: string) {
-  selectedLearnerId.value = learnerId
-  learnerStore.setSelectedLearner(learnerId)
-  session.value = null
-  result.value = null
-  generation.value = null
-  answers.value = {}
-  stopGenerationPolling()
-}
-
-function profileLabel(profileType: string) {
-  return (
-    {
-      beginner: '基础补齐型',
-      intermediate: '能力提升型',
-      advanced: '挑战拓展型',
-    }[profileType] ?? profileType
-  )
-}
-
-function agentLabel(agentName: string) {
-  return (
-    {
-      profile_analysis_agent: '画像分析',
-      knowledge_retrieval_agent: '知识检索',
-      content_generation_agent: '内容生成',
-      review_validation_agent: '审核校验',
-      orchestrator_agent: '协同决策',
-    }[agentName] ?? agentName
-  )
-}
-
-async function createSession() {
-  loadingSession.value = true
-  try {
-    learnerStore.setSelectedLearner(learnerId.value)
     session.value = await createDiagnosticSession(learnerId.value)
     result.value = null
-    generation.value = null
     answers.value = {}
-  } catch (error) {
-    ElMessage.error('创建诊断测评失败，请确认后端服务已启动。')
-  } finally {
-    loadingSession.value = false
-  }
+    showToast('已创建 10 题诊断测评')
+  } catch { showToast('创建测评失败') }
+  finally { creatingSession.value = false }
 }
 
-function fillDemoAnswers() {
-  if (!session.value) return
-  const nextAnswers: Record<string, string | number> = {}
-  session.value.questions.forEach((question, index) => {
-    nextAnswers[question.question_id] =
-      question.question_type === 'single_choice'
-        ? index % 4 === 0
-          ? 1
-          : 0
-        : '语义完整性、召回精度、上下文占用、可追溯来源'
-  })
-  answers.value = nextAnswers
-}
-
-async function submitSession() {
-  if (!session.value) return
-  const payload = session.value.questions.map((question) => ({
-    question_id: question.question_id,
-    answer: answers.value[question.question_id] ?? '',
-  }))
-  loadingSubmit.value = true
+async function submitAll() {
+  if (!session.value || !learnerId.value) return
+  submitting.value = true
   try {
-    result.value = await submitDiagnosticSession(session.value.session_id, payload, session.value.learner_id)
-    learnerStore.setSelectedLearner(result.value.learner_id)
-    ElMessage.success('诊断完成，学习画像已生成。')
-  } catch (error) {
-    ElMessage.error('提交诊断失败，请检查答案或后端服务。')
-  } finally {
-    loadingSubmit.value = false
-  }
+    const list = Object.entries(answers.value).map(([idx, answer]) => ({
+      question_id: session.value!.questions[Number(idx)].question_id,
+      answer,
+    }))
+    result.value = await submitDiagnosticSession(session.value.session_id, list, learnerId.value)
+    showToast(`诊断完成，答对 ${result.value.correct_count}/${result.value.question_count} 题`)
+  } catch { showToast('提交失败') }
+  finally { submitting.value = false }
 }
 
 async function generateResources() {
-  if (!result.value) return
-  loadingGeneration.value = true
+  if (!result.value || !learnerId.value) return
+  generating.value = true
   try {
-    generation.value = await createGenerationTask(result.value.profile_id, result.value.learner_id)
-    startGenerationPolling(generation.value.task_id)
-    ElMessage.success('资源生成任务已启动，当前页面将保留任务状态。')
-  } catch (error) {
-    ElMessage.error('生成资源失败，请确认生成接口可用。')
-  } finally {
-    loadingGeneration.value = false
-  }
+    const task = await createGenerationTask(result.value.profile_id, learnerId.value)
+    router.push({ path: '/resources', query: { task_id: task.task_id, learner_id: learnerId.value } })
+  } catch { showToast('创建生成任务失败') }
+  finally { generating.value = false }
 }
-
-function stopGenerationPolling() {
-  if (generationPollTimer !== null) {
-    window.clearInterval(generationPollTimer)
-    generationPollTimer = null
-  }
-}
-
-function startGenerationPolling(taskId: string) {
-  stopGenerationPolling()
-  generationPollTimer = window.setInterval(async () => {
-    try {
-      const detail = await getGenerationTask(taskId)
-      if (generation.value?.task_id !== taskId) return
-      generation.value = { ...generation.value, ...detail }
-      if (['completed', 'failed', 'waiting_human'].includes(detail.status)) {
-        stopGenerationPolling()
-      }
-    } catch {
-      // Keep the task summary visible; the user can open the Agent page to retry.
-    }
-  }, 2000)
-}
-
-onMounted(loadLearnerOptions)
-onBeforeUnmount(stopGenerationPolling)
 </script>
 
 <style scoped>
-.diagnostic-page {
+.completion-panel {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 18px;
+  align-items: center;
+  padding: 26px;
 }
-
-.session-panel {
-  background: #fbfdff;
-}
-
-.learner-select {
-  width: 160px;
-}
-
-.question-panel {
+.completion-mark {
+  width: 46px;
+  height: 46px;
   display: grid;
-  gap: 14px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--green2);
+  color: var(--green);
+  font-size: 22px;
+  font-weight: 800;
 }
-
-.question-item {
+.completion-panel h2 { margin: 0; font-size: 19px; }
+.completion-stats {
   display: grid;
-  gap: 10px;
-  border-bottom: 1px solid var(--app-border);
-  padding-bottom: 14px;
+  grid-template-columns: repeat(3, minmax(88px, 1fr));
+  gap: 1px;
+  border-radius: 10px;
+  background: var(--line);
+  overflow: hidden;
 }
-
-.question-item:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
+.completion-stats div { min-width: 96px; background: var(--soft); padding: 13px 16px; }
+.completion-stats span { display: block; color: var(--muted); font-size: 11px; }
+.completion-stats strong { display: block; margin-top: 5px; font-size: 18px; }
+.completion-actions { grid-column: 2 / -1; justify-content: flex-end; }
+@media (max-width: 900px) {
+  .completion-panel { grid-template-columns: auto 1fr; }
+  .completion-stats, .completion-actions { grid-column: 1 / -1; }
 }
-
-.question-title,
-.submit-row,
-.result-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.question-title strong {
-  line-height: 1.65;
-}
-
-.submit-row {
-  justify-content: flex-end;
-}
-
-.result-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
-}
-
-.metric-card strong {
-  display: block;
-  margin-top: 10px;
-  overflow-wrap: anywhere;
-}
-
-.weak-block {
-  margin-top: 18px;
-}
-
-.weak-block h3 {
-  margin: 0 0 10px;
-  font-size: 15px;
-}
-
-.tag-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.resource-alert {
-  margin-top: 14px;
-}
-
-.generation-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-@media (max-width: 760px) {
-  .question-title,
-  .result-header {
-    display: grid;
-  }
-
-  .result-grid {
-    grid-template-columns: 1fr;
-  }
+@media (max-width: 480px) {
+  .completion-stats { grid-template-columns: 1fr; }
+  .completion-actions { display: grid; }
 }
 </style>

@@ -1,302 +1,88 @@
 <template>
-  <section class="page dashboard-page">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">演示工作台</h1>
-        <p class="page-subtitle">
-          按照比赛 MVP 闭环组织演示：学习者画像、诊断、知识检索、资源生成、双路审核、协同决策、反馈更新。
-        </p>
-      </div>
-      <div class="toolbar">
-        <el-button :icon="VideoPlay" @click="router.push('/diagnostics')">开始诊断</el-button>
-        <el-button type="primary" :icon="MagicStick" :loading="creating" @click="handleCreateTask">
-          直接生成资源
-        </el-button>
-      </div>
-    </div>
+  <section class="dashboard">
+    <header class="dashboard-head">
+      <div><h1>{{ profileReady ? '学习中心' : '开始建立学习画像' }}</h1><p>{{ profileReady ? '查看当前学习状态，继续完成下一步学习任务。' : '填写学习背景并完成首次能力诊断后，系统才能生成个性化学习内容。' }}</p></div>
+    </header>
 
-    <div class="metric-grid">
-      <div v-for="metric in metrics" :key="metric.label" class="metric-card">
-        <div class="metric-head"><span class="metric-label">{{ metric.label }}</span><span class="metric-state">{{ metric.state }}</span></div>
-        <div class="metric-value">{{ metric.value }}</div>
-        <p>{{ metric.note }}</p>
-      </div>
-    </div>
+    <section v-if="loading" class="learning-stage loading-stage" aria-busy="true"><div class="loading-line wide"></div><div class="loading-line"></div><div class="loading-line short"></div></section>
+    <section v-else-if="loadError" class="learning-stage stage-error" role="alert"><div class="stage-copy"><span class="stage-label">加载失败</span><h2>暂时无法读取学习状态</h2><p>{{ loadError }}</p><button class="btn primary" type="button" @click="loadDashboard">重新加载</button></div></section>
+    <InitialProfileWizard v-else-if="!profileReady && currentLearnerId" :learner-id="currentLearnerId" @complete="completeOnboarding" />
+    <section v-else-if="!currentLearnerId" class="learning-stage stage-error"><div class="stage-copy"><span class="stage-label">学习者未关联</span><h2>当前账号未关联学习者档案</h2><p>请重新登录或联系管理员完成账号配置。</p></div></section>
 
-    <div class="panel demo-strip">
-      <div class="demo-heading">
-        <div>
-          <div class="section-kicker"><span class="status-dot is-active" /> 当前演示路径</div>
-          <h2 class="panel-title">一条可点击的完整演示线</h2>
-          <p class="page-subtitle">
-            先跑诊断，再看 Agent 协作流，最后进入资源反馈和学习报告。每一步都保留可追踪的状态和结果。
-          </p>
-        </div>
-        <div class="demo-status"><span class="status-dot is-done" /> 环境就绪 <strong>5 个环节</strong></div>
+    <section v-else class="learning-stage" :class="`state-${dashboardState.kind}`">
+      <div class="stage-copy">
+        <template v-if="dashboardState.kind === 'assessment'">
+          <span class="stage-label">画像与路线已就绪</span><h2>{{ profile?.profile_type ? profileTypeLabel(profile.profile_type) : '你的初始学习画像已生成' }}</h2><p>请先查看能力画像和学习路线，确认后再创建包含讲义、实操指南和分阶测试的学习包。</p>
+          <div class="assessment-facts"><span>诊断已完成</span><span>{{ profile?.weak_knowledge.length || 0 }} 项待巩固</span><span>{{ profile?.direction_tags.map(directionLabel).join('、') || '学习方向已确认' }}</span></div>
+          <div class="stage-actions"><button class="btn primary stage-primary" type="button" @click="openReport">查看画像与学习路线</button></div>
+        </template>
+        <template v-else-if="dashboardState.kind === 'preparing'">
+          <span class="stage-label">{{ dashboardState.feedbackTriggered ? '正在根据反馈调整学习内容' : '正在生成学习包' }}</span><h2>{{ dashboardState.task.decision === 'revision_required' ? '资源正在自动修订' : '正在准备个性化学习资源' }}</h2><p>检索、生成和审核会依次完成；仅通过质量门槛的资源会发布到学习资源页。</p><div class="task-progress"><span><i :style="{ width: `${progressValue}%` }"></i></span><strong>{{ progressValue }}%</strong></div><div class="stage-actions"><button class="btn" type="button" @click="openResources(dashboardState.task.task_id)">查看生成进度</button></div>
+        </template>
+        <template v-else-if="dashboardState.kind === 'resource'">
+          <span class="stage-label">学习包已准备好</span><h2>{{ dashboardState.resource.title }}</h2><p>学习过程中可通过分阶测试、反馈和导学对话提供新的证据，系统会据此决定是否更新画像。</p><div class="resource-meta"><span>{{ resourceTypeLabel(dashboardState.resource.resource_type) }}</span><span>难度 {{ dashboardState.resource.difficulty }}/5</span><span>已通过审核</span></div><div class="stage-actions"><button class="btn primary" type="button" @click="openResources()">开始学习</button><button class="btn" type="button" @click="openReport">查看学习报告</button></div>
+        </template>
+        <template v-else>
+          <span class="stage-label">需要重新处理</span><h2>学习包尚未达到发布标准</h2><p>{{ dashboardState.task.failure_reason || '本次生成未通过质量门槛，未向学习者发布。' }}</p><div class="stage-actions"><button class="btn primary" type="button" :disabled="retrying" @click="retryTask(dashboardState.task.task_id)">{{ retrying ? '正在重新生成...' : '重新生成' }}</button></div>
+        </template>
       </div>
-      <div class="flow-grid">
-        <button
-          v-for="(step, index) in demoSteps"
-          :key="step.path"
-          class="step-card"
-          type="button"
-          @click="router.push(step.path)"
-        >
-          <span class="step-index">{{ index + 1 }}</span>
-          <strong>{{ step.title }}</strong>
-          <small>{{ step.description }}</small>
-          <el-icon class="step-arrow"><ArrowRight /></el-icon>
-        </button>
-      </div>
-    </div>
-
-    <div class="dashboard-grid">
-      <div class="panel">
-        <div class="section-head">
-          <h2 class="panel-title">最近生成任务</h2>
-          <el-button text :icon="ArrowRight" @click="router.push('/agents')">查看协作过程</el-button>
-        </div>
-        <el-table v-if="tasks.length" :data="tasks" size="large">
-          <el-table-column prop="task_id" label="任务 ID" min-width="180" />
-          <el-table-column prop="status" label="状态" width="120" />
-          <el-table-column prop="decision" label="决策" width="120" />
-        </el-table>
-        <div v-else class="empty-hint">
-          <strong>还没有生成任务</strong>
-          <p>点击“开始诊断”完成测评，或直接生成一组演示资源。</p>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h2 class="panel-title">演示验收重点</h2>
-        <ul class="proof-list">
-          <li v-for="item in proofPoints" :key="item"><CircleCheckFilled />{{ item }}</li>
-        </ul>
-      </div>
-    </div>
+      <div class="stage-visual" aria-hidden="true"><div class="visual-mark"></div><span>{{ visualLabel }}</span></div>
+    </section>
   </section>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { ArrowRight, CircleCheckFilled, MagicStick, VideoPlay } from '@element-plus/icons-vue'
-
-import { createGenerationTask, getGenerationTask } from '@/api/generation'
+import InitialProfileWizard from '@/components/Onboarding/InitialProfileWizard.vue'
+import { getActiveGenerationTask, listGenerationTasks, retryGenerationTask, type GenerationTaskDetail } from '@/api/generation'
+import { getLearnerProfile, type LearnerProfileDetail } from '@/api/learners'
+import { listResources, type ResourceSummary } from '@/api/resources'
+import { useAuthStore } from '@/stores/authStore'
+import { useProfileGateStore } from '@/stores/profileGateStore'
+import { getDashboardState } from './dashboardState'
 
 const router = useRouter()
-const creating = ref(false)
-const tasks = ref<Array<{ task_id: string; status: string; decision?: string }>>([])
+const authStore = useAuthStore()
+const profileGate = useProfileGateStore()
+const loading = ref(true)
+const retrying = ref(false)
+const loadError = ref('')
+const profile = ref<LearnerProfileDetail | null>(null)
+const activeTask = ref<GenerationTaskDetail | null>(null)
+const recentTasks = ref<GenerationTaskDetail[]>([])
+const resources = ref<ResourceSummary[]>([])
+const currentLearnerId = computed(() => authStore.user?.learner_id || '')
+const profileReady = computed(() => profile.value?.profile_status === 'ready')
+const dashboardState = computed(() => getDashboardState(activeTask.value, resources.value, recentTasks.value))
+const progressValue = computed(() => Math.min(100, Math.max(0, dashboardState.value.kind === 'preparing' ? dashboardState.value.task.progress ?? 0 : 0)))
+const visualLabel = computed(() => ({ assessment: '路线已就绪', preparing: '正在处理', resource: '可以开始', failed: '需要重试' })[dashboardState.value.kind])
 
-const metrics = [
-  { label: '领域包', value: '1', note: 'ai_app_dev 主验证领域', state: '已配置' },
-  { label: '知识点目标', value: '50+', note: '支撑检索和溯源', state: '覆盖中' },
-  { label: '诊断题目标', value: '60+', note: '覆盖画像分层', state: '覆盖中' },
-  { label: '评测样例', value: '50', note: '离线脚本可复现', state: '可复现' },
-]
-
-const proofPoints = [
-  '每个 Agent 都有职责、状态和运行记录。',
-  '每份资源都展示知识来源和审核状态。',
-  '反馈会触发辅导动作，并标记学习路径刷新。',
-  '指标页对应离线 test_script 的验收目标。',
-]
-
-const demoSteps = [
-  { title: '诊断测评', description: '答题后生成画像和薄弱知识点', path: '/diagnostics' },
-  { title: 'Agent 协作', description: '观察检索、生成、审核、决策流转', path: '/agents' },
-  { title: '学习资源', description: '查看讲义、实训指导和测验', path: '/resources' },
-  { title: '学习报告', description: '看雷达图、路径和反馈刷新状态', path: '/reports' },
-  { title: '评测指标', description: '对齐幻觉率、难度匹配和覆盖率', path: '/metrics' },
-]
-
-async function handleCreateTask() {
-  creating.value = true
+async function loadDashboard() {
+  const learnerId = currentLearnerId.value
+  loading.value = true
+  loadError.value = ''
   try {
-    const created = await createGenerationTask()
-    const task = await getGenerationTask(created.task_id)
-    tasks.value.unshift(task)
-    ElMessage.success('资源生成任务已完成，可以进入学习资源页查看。')
-  } catch (error) {
-    ElMessage.error('生成任务创建失败，请确认后端服务已启动。')
-  } finally {
-    creating.value = false
-  }
+    profile.value = learnerId ? await getLearnerProfile(learnerId) : null
+    await profileGate.refresh(learnerId)
+    if (!profileReady.value || !learnerId) { activeTask.value = null; recentTasks.value = []; resources.value = []; return }
+    const [active, publishedResources, tasks] = await Promise.all([getActiveGenerationTask(learnerId), listResources({ learnerId, domainCode: 'ai_app_dev' }), listGenerationTasks({ learnerId, limit: 10 })])
+    activeTask.value = active
+    resources.value = publishedResources
+    recentTasks.value = tasks
+  } catch { loadError.value = '请检查网络连接后重试。' } finally { loading.value = false }
 }
+
+async function completeOnboarding() { await loadDashboard() }
+function openReport() { router.push({ path: '/report', query: { learner_id: currentLearnerId.value } }) }
+function openResources(taskId?: string | null) { router.push({ path: '/resources', query: { learner_id: currentLearnerId.value, ...(taskId ? { task_id: taskId } : {}) } }) }
+async function retryTask(taskId: string) { retrying.value = true; try { const task = await retryGenerationTask(taskId); activeTask.value = task; openResources(task.task_id) } catch { loadError.value = '重新生成失败，请稍后再试。' } finally { retrying.value = false } }
+function resourceTypeLabel(type: string) { return ({ lecture: '讲义', practice_guide: '实操指南', graded_quiz: '测试题' } as Record<string, string>)[type] || type }
+function profileTypeLabel(type: string) { return ({ beginner: '基础起步型学习者', intermediate: '进阶提升型学习者', advanced: '综合应用型学习者', practice_oriented: '实操导向型学习者' } as Record<string, string>)[type] || '个性化学习画像' }
+function directionLabel(value: string) { return ({ llm_application: '大模型应用', prompt_engineering: 'Prompt 工程', rag_knowledge_base: 'RAG 知识库', agent_orchestration: 'Agent 编排' } as Record<string, string>)[value] || value }
+onMounted(loadDashboard)
 </script>
 
 <style scoped>
-.dashboard-page {
-  gap: 20px;
-}
-
-.metric-card p {
-  margin: 8px 0 0;
-  color: var(--app-muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.metric-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.metric-state {
-  color: var(--app-success);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.demo-strip {
-  display: grid;
-  gap: 16px;
-}
-
-.demo-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.section-kicker {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 8px;
-  color: var(--app-accent);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.demo-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 10px;
-  border: 1px solid #d6e8e1;
-  border-radius: 8px;
-  background: #f4fbf8;
-  color: var(--app-success);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.demo-status strong {
-  color: var(--app-text);
-}
-
-.step-card {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 10px;
-  min-height: 108px;
-  border: 1px solid var(--app-border);
-  border-radius: 10px;
-  background: var(--app-panel-soft);
-  padding: 14px;
-  color: var(--app-text);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 180ms ease,
-    background 180ms ease,
-    transform 180ms ease;
-}
-
-.step-card:hover {
-  border-color: #9bb8f5;
-  background: #fff;
-  transform: translateY(-1px);
-}
-
-.step-index {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  background: var(--app-accent-soft);
-  color: var(--app-accent);
-  font-weight: 750;
-}
-
-.step-card strong {
-  align-self: center;
-}
-
-.step-card small {
-  grid-column: 2;
-  color: var(--app-muted);
-  line-height: 1.5;
-}
-
-.step-arrow {
-  grid-column: 2;
-  justify-self: end;
-  color: #91a0b6;
-  font-size: 15px;
-}
-
-.dashboard-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
-  gap: 16px;
-}
-
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.empty-hint p,
-.proof-list {
-  margin: 8px 0 0;
-  color: var(--app-muted);
-  line-height: 1.7;
-}
-
-.proof-list {
-  list-style: none;
-  padding-left: 0;
-}
-
-.proof-list li {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.proof-list li:last-child {
-  margin-bottom: 0;
-}
-
-.proof-list .el-icon {
-  flex: 0 0 auto;
-  margin-top: 3px;
-  color: var(--app-success);
-}
-
-@media (max-width: 980px) {
-  .dashboard-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 640px) {
-  .demo-heading {
-    display: grid;
-  }
-
-  .demo-status {
-    justify-self: start;
-  }
-}
+.dashboard { display: grid; gap: 20px; max-width: 1080px; }.dashboard-head { padding: 10px 2px 2px; }.dashboard-head h1 { margin: 0; color: var(--ink); font-size: 28px; line-height: 1.25; }.dashboard-head p { margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.7; }.learning-stage { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 230px; min-height: 360px; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #fff; }.stage-copy { display: grid; align-content: center; justify-items: start; gap: 14px; padding: 48px 54px; }.stage-label { color: var(--blue); font-size: 12px; font-weight: 750; }.stage-copy h2 { max-width: 620px; margin: 0; color: var(--ink); font-size: 30px; line-height: 1.3; text-wrap: balance; }.stage-copy > p { max-width: 560px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.75; text-wrap: pretty; }.stage-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 8px; }.stage-actions .btn { min-width: 112px; }.stage-primary { min-height: 42px; padding-inline: 18px; }.assessment-facts,.resource-meta { display: flex; flex-wrap: wrap; gap: 8px; }.assessment-facts span,.resource-meta span { border: 1px solid var(--line); border-radius: 6px; background: var(--soft); padding: 5px 8px; color: #405067; font-size: 12px; }.stage-visual { display: grid; place-content: center; gap: 12px; border-left: 1px solid var(--line); background: #f4f7fb; color: #405067; font-size: 12px; font-weight: 700; text-align: center; }.visual-mark { width: 48px; height: 48px; margin: auto; border: 10px solid #dce7ff; border-top-color: var(--blue); border-radius: 50%; }.state-assessment .stage-visual { background: #eef3ff; color: #27457f; }.state-resource .stage-visual { background: #eef8f3; color: #176346; }.state-failed .stage-visual { background: #fff7ed; color: #8b4c0b; }.task-progress { display: grid; grid-template-columns: minmax(180px, 340px) auto; align-items: center; gap: 10px; width: 100%; margin-top: 2px; }.task-progress > span { display: block; height: 7px; overflow: hidden; border-radius: 5px; background: #dce4ee; }.task-progress i { display: block; height: 100%; border-radius: inherit; background: var(--blue); }.task-progress strong { color: #405067; font-size: 12px; }.stage-error { display: block; min-height: 280px; border-color: #edc9c9; background: #fffafa; }.stage-error .stage-label { color: var(--red); }.loading-stage { display: grid; align-content: center; gap: 14px; padding: 48px 54px; }.loading-line { width: min(420px, 76%); height: 14px; border-radius: 5px; background: #e9eef5; }.loading-line.wide { width: min(520px, 92%); height: 32px; }.loading-line.short { width: 132px; height: 40px; margin-top: 10px; background: #dce7ff; }@media (max-width: 760px) { .learning-stage { grid-template-columns: 1fr; min-height: 0; }.stage-copy { padding: 34px 26px; }.stage-copy h2 { font-size: 25px; }.stage-visual { min-height: 96px; border-top: 1px solid var(--line); border-left: 0; }.visual-mark { width: 32px; height: 32px; border-width: 7px; }.task-progress { grid-template-columns: minmax(0, 1fr) auto; } }@media (max-width: 480px) { .dashboard { gap: 16px; }.dashboard-head h1 { font-size: 25px; }.stage-copy { padding: 28px 20px; }.stage-actions { display: grid; width: 100%; }.stage-actions .btn { width: 100%; min-height: 44px; } }
 </style>

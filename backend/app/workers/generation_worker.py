@@ -1,4 +1,4 @@
-"""V2 generation worker and observability bridge."""
+"""V3 generation worker and observability bridge."""
 
 from __future__ import annotations
 
@@ -7,8 +7,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from langgraph.errors import GraphInterrupt
-from langgraph.types import Command
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,13 +15,16 @@ from app.agents.contracts import (
     ConversationSummary,
     FeedbackContext,
     FeedbackIntent,
+    LearningPathNodeSnapshot,
+    LearningPathSnapshot,
     ResourceSummary,
     TaskRequest,
 )
 from app.services.evaluation_case_service import evaluation_profile_override
 from app.agents.graphs import build_learning_graph
-from app.agents.v2_observability import collect_model_calls
-from app.agents.v2_nodes import V2_GRAPH_STATE, V2Runtime, build_nodes
+from app.agents.observability import collect_model_calls
+from app.agents.nodes import GRAPH_STATE, AgentRuntime, build_nodes
+from app.agents.review_agent import ReviewBatchCache
 from app.core.compatibility import AGENT_CONTRACT_VERSION
 from app.core.db import SessionLocal
 from app.models import (
@@ -35,16 +36,15 @@ from app.models import (
     LearnerProfile,
     LearningPath,
     LearningResource,
-    ManualReviewTask,
     TutoringMessage,
     TutoringSession,
 )
 from app.services.generation_service import persist_generated_resources
 from app.services.profile_service import build_learning_path_from_snapshot, public_id
-from app.services.v2_contract_mapping import ability_profile_payload, profile_snapshot
+from app.services.contract_mapping import ability_profile_payload, profile_snapshot
 
 
-NodeFunc = Callable[[V2_GRAPH_STATE], V2_GRAPH_STATE]
+NodeFunc = Callable[[GRAPH_STATE], GRAPH_STATE]
 NODE_AGENT_NAMES = {
     "prepare_task": "orchestrator_agent",
     "interpret_feedback": "tutoring_agent",
@@ -52,7 +52,6 @@ NODE_AGENT_NAMES = {
     "retrieve_knowledge": "knowledge_retrieval_agent",
     "generate_resource": "content_generation_agent",
     "review_resource": "review_validation_agent",
-    "human_review": "orchestrator_agent",
     "finalize_task": "orchestrator_agent",
 }
 NODE_PROGRESS = {
@@ -62,7 +61,6 @@ NODE_PROGRESS = {
     "retrieve_knowledge": 40,
     "generate_resource": 60,
     "review_resource": 78,
-    "human_review": 82,
     "finalize_task": 95,
 }
 
@@ -104,8 +102,10 @@ def _initial_state(
     learner: Learner,
     profile: LearnerProfile,
     feedback: Feedback | None,
-) -> V2_GRAPH_STATE:
-    resource = db.get(LearningResource, task.source_resource_id) if task.source_resource_id else None
+) -> GRAPH_STATE:
+    resource = (
+        db.get(LearningResource, task.source_resource_id) if task.source_resource_id else None
+    )
     session = (
         db.get(TutoringSession, feedback.tutoring_session_id)
         if feedback is not None and feedback.tutoring_session_id
@@ -134,40 +134,85 @@ def _initial_state(
         tutoring_message_id=message.public_id if message else None,
     )
     active_profile = evaluation_profile_override(request.learning_goal) or profile_snapshot(profile)
-    state: V2_GRAPH_STATE = {
+    learning_path = db.scalar(
+        select(LearningPath)
+        .where(
+            LearningPath.learner_id == learner.id,
+            LearningPath.domain_code == task.domain_code,
+            LearningPath.status == "active",
+        )
+        .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
+    )
+    path_snapshot, current_path_node = _learning_path_snapshot(learning_path, active_profile)
+    state: GRAPH_STATE = {
         "contract_version": AGENT_CONTRACT_VERSION,
         "task_request": request,
         "current_profile": active_profile,
         "revision_plan": None,
     }
+    if path_snapshot is not None:
+        state["learning_path"] = path_snapshot
+    if current_path_node is not None:
+        state["current_path_node"] = current_path_node
     if feedback is not None and resource is not None:
-            quick_tag = feedback.feedback_intent or feedback.feedback_type
-            state["feedback_context"] = FeedbackContext(
-                resource=ResourceSummary(
-                    resource_id=resource.public_id,
-                    resource_type=resource.resource_type,
-                    title=resource.title,
-                    difficulty=resource.difficulty,
-                    source_ref_ids=[
-                        item.get("source_ref_id")
-                        for item in (resource.sources_json or [])
-                        if item.get("source_ref_id")
-                    ],
-                ),
-                conversation=ConversationSummary(
-                    tutoring_session_id=session.public_id if session else task.public_id,
-                    turn_count=max(1, session.turn_count if session else 1),
-                    latest_message_summary=(
-                        message.content if message else feedback.comment or "学习者提交资源反馈"
-                    )[:500],
-                ),
-                feedback_summary=(feedback.comment or feedback.feedback_type or "学习者反馈")[:500],
-                quick_tag=quick_tag
-                if quick_tag in {item.value for item in FeedbackIntent}
-                else FeedbackIntent.OTHER,
-                rating=feedback.rating,
-            )
+        quick_tag = feedback.feedback_intent or feedback.feedback_type
+        state["feedback_context"] = FeedbackContext(
+            resource=ResourceSummary(
+                resource_id=resource.public_id,
+                resource_type=resource.resource_type,
+                title=resource.title,
+                difficulty=resource.difficulty,
+                source_ref_ids=[
+                    item.get("source_ref_id")
+                    for item in (resource.sources_json or [])
+                    if item.get("source_ref_id")
+                ],
+            ),
+            conversation=ConversationSummary(
+                tutoring_session_id=session.public_id if session else task.public_id,
+                turn_count=max(1, session.turn_count if session else 1),
+                latest_message_summary=(
+                    message.content if message else feedback.comment or "学习者提交资源反馈"
+                )[:500],
+            ),
+            feedback_summary=(feedback.comment or feedback.feedback_type or "学习者反馈")[:500],
+            quick_tag=quick_tag
+            if quick_tag in {item.value for item in FeedbackIntent}
+            else FeedbackIntent.OTHER,
+            rating=feedback.rating,
+        )
     return state
+
+
+def _learning_path_snapshot(
+    path: LearningPath | None, profile,
+) -> tuple[LearningPathSnapshot | None, LearningPathNodeSnapshot | None]:
+    if path is None:
+        return None, None
+    payload = path.path_json or {}
+    difficulty = max(1, min(5, round(sum(profile.ability_scores.model_dump().values()) / 60)))
+    nodes: list[LearningPathNodeSnapshot] = []
+    for stage_index, stage in enumerate(payload.get("stages") or [], start=1):
+        for knowledge_index, knowledge_id in enumerate(stage.get("knowledge_ids") or [], start=1):
+            nodes.append(
+                LearningPathNodeSnapshot(
+                    path_node_id=f"{path.public_id}:{stage_index}:{knowledge_index}",
+                    knowledge_id=str(knowledge_id),
+                    title=str(stage.get("name") or knowledge_id),
+                    path_order=len(nodes) + 1,
+                    target_difficulty=difficulty,
+                    learning_objective=str(stage.get("description") or f"掌握 {knowledge_id}"),
+                )
+            )
+    current = nodes[0] if nodes else None
+    return (
+        LearningPathSnapshot(
+            path_id=path.public_id,
+            nodes=nodes,
+            current_node_id=current.path_node_id if current else None,
+        ),
+        current,
+    )
 
 
 def _compact_review_channel(channel: dict[str, Any]) -> dict[str, Any]:
@@ -178,6 +223,9 @@ def _compact_review_channel(channel: dict[str, Any]) -> dict[str, Any]:
         "passed": channel["passed"],
         "fact_checks": [
             {
+                "claim_id": item.get("claim_id"),
+                "field_path": item.get("field_path"),
+                "verdict": item.get("verdict"),
                 "supported": item["supported"],
                 "source_ref_ids": item["source_ref_ids"],
                 "determinable": item["determinable"],
@@ -188,15 +236,88 @@ def _compact_review_channel(channel: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _verdict_by_claim(channel: dict[str, Any] | None) -> dict[str, str | None]:
+    if not channel:
+        return {}
+    return {
+        str(item.get("claim_id")): item.get("verdict")
+        for item in channel.get("fact_checks", [])
+        if item.get("claim_id")
+    }
+
+
+def _disputed_claim_ids(
+    primary: dict[str, Any] | None, secondary: dict[str, Any] | None
+) -> set[str]:
+    primary_verdicts = _verdict_by_claim(primary)
+    secondary_verdicts = _verdict_by_claim(secondary)
+    return {
+        claim_id
+        for claim_id in primary_verdicts.keys() & secondary_verdicts.keys()
+        if primary_verdicts[claim_id] != secondary_verdicts[claim_id]
+    }
+
+
+def _field_type(field_path: str | None) -> str:
+    root = (field_path or "unknown").split("[", 1)[0].split(".", 1)[0]
+    return root or "unknown"
+
+
+def _review_observability(report: dict[str, Any]) -> dict[str, Any]:
+    primary = report["primary_review"]
+    secondary = report["secondary_review"]
+    arbitration = report["arbitration"]
+    initial_disputed = _disputed_claim_ids(primary, secondary)
+    remaining_disputed = _disputed_claim_ids(
+        arbitration.get("primary_recheck"), arbitration.get("secondary_recheck")
+    )
+    field_by_claim = {
+        str(item.get("claim_id")): _field_type(item.get("field_path"))
+        for item in primary.get("fact_checks", [])
+        if item.get("claim_id")
+    }
+    disputed_field_types: dict[str, int] = {}
+    for claim_id in remaining_disputed or initial_disputed:
+        field_type = field_by_claim.get(claim_id, "unknown")
+        disputed_field_types[field_type] = disputed_field_types.get(field_type, 0) + 1
+
+    tendencies: dict[str, dict[str, int | float]] = {}
+    for channel in (primary, secondary):
+        checks = channel.get("fact_checks", [])
+        supported = sum(item.get("verdict") == "supported" for item in checks)
+        tendencies[channel["model_role"]] = {
+            "supported": supported,
+            "total": len(checks),
+            "supported_rate": round(supported / len(checks), 4) if checks else 0.0,
+        }
+    return {
+        "initial_disputed_count": len(initial_disputed),
+        "remaining_disputed_count": len(remaining_disputed),
+        "disputed_field_types": disputed_field_types,
+        "evidence_capability_insufficient_count": sum(
+            not item.get("source_ref_ids") for item in primary.get("fact_checks", [])
+        ),
+        "model_supported_tendency": tendencies,
+    }
+
+
 def _compact_review_report(report: dict[str, Any]) -> dict[str, Any]:
     arbitration = report["arbitration"]
     return {
         "resource_type": report["resource_type"],
         "decision": report["decision"],
         "passed": report["passed"],
-        "manual_review_required": report["manual_review_required"],
+        "quality_metrics": report["quality_metrics"],
         "final_scores": report["final_scores"],
         "evidence_ref_ids": report["evidence_ref_ids"],
+        "claim_set_hash": report.get("claim_set_hash"),
+        "claim_counts": {
+            "supported": len(report.get("supported_claim_ids", [])),
+            "contradicted": len(report.get("contradicted_claim_ids", [])),
+            "unable_to_determine": len(report.get("undetermined_claim_ids", [])),
+            "unresolved": len(report.get("unresolved_claim_ids", [])),
+        },
+        "observability": _review_observability(report),
         "primary_review": _compact_review_channel(report["primary_review"]),
         "secondary_review": _compact_review_channel(report["secondary_review"]),
         "arbitration": {
@@ -204,6 +325,7 @@ def _compact_review_report(report: dict[str, Any]) -> dict[str, Any]:
             "retrieval_performed": arbitration["retrieval_performed"],
             "query_terms": arbitration["query_terms"],
             "additional_source_ref_ids": arbitration["additional_source_ref_ids"],
+            "disputed_claim_ids": arbitration.get("disputed_claim_ids", []),
             "disagreement_remains": arbitration["disagreement_remains"],
             "primary_recheck": (
                 _compact_review_channel(arbitration["primary_recheck"])
@@ -219,7 +341,7 @@ def _compact_review_report(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _summary(step: str, patch: V2_GRAPH_STATE) -> dict[str, Any]:
+def _summary(step: str, patch: GRAPH_STATE) -> dict[str, Any]:
     output = patch.get(step)
     if output is None:
         return {"step": step}
@@ -234,18 +356,14 @@ def _summary(step: str, patch: V2_GRAPH_STATE) -> dict[str, Any]:
         return {
             "step": step,
             "decisions": [item["decision"] for item in reports],
-            "manual_review_required": any(
-                item["manual_review_required"] for item in reports
-            ),
+            "package_quality": payload["package_quality"],
             "arbitration": [
                 {
                     "required": item["arbitration"]["required"],
                     "retrieval_performed": item["arbitration"]["retrieval_performed"],
                     "disagreement_remains": item["arbitration"]["disagreement_remains"],
                     "query_terms": item["arbitration"]["query_terms"],
-                    "additional_source_ref_ids": item["arbitration"][
-                        "additional_source_ref_ids"
-                    ],
+                    "additional_source_ref_ids": item["arbitration"]["additional_source_ref_ids"],
                 }
                 for item in reports
             ],
@@ -283,8 +401,16 @@ def _apply_model_call_metrics(
     output["provider_mode"] = modes.pop() if len(modes) == 1 else "mixed"
 
 
+def _failure_code(exc: Exception) -> str:
+    """Persist controlled error codes without copying arbitrary provider payloads."""
+    value = str(exc).strip()
+    if value and len(value) <= 128 and value.replace("_", "").isalnum():
+        return value
+    return type(exc).__name__
+
+
 def _persist_profile_update(
-    db: Session, task: GenerationTask, original: LearnerProfile, state: V2_GRAPH_STATE
+    db: Session, task: GenerationTask, original: LearnerProfile, state: GRAPH_STATE
 ) -> LearnerProfile:
     analysis = state.get("analyze_profile")
     if analysis is None or not analysis.profile_update_required:
@@ -303,9 +429,12 @@ def _persist_profile_update(
         weak_knowledge_json=[item.model_dump(mode="json") for item in snapshot.weak_knowledge],
         profile_version=snapshot.profile_version,
         previous_profile_id=original.id,
+        profile_source="feedback_revision",
+        diagnosis_completed=True,
         changed_dimensions_json=analysis.changed_dimensions,
         evidence_refs_json=[item.model_dump(mode="json") for item in analysis.evidence_refs],
         confidence=analysis.confidence,
+        context_snapshot_json=original.context_snapshot_json or {},
         trigger_feedback_id=task.source_feedback_id,
         decision_reason=analysis.decision_reason,
         profile_changed_at=datetime.now(UTC),
@@ -332,28 +461,46 @@ def _persist_profile_update(
 
 
 def _observable_node(
-    db: Session, task: GenerationTask, profile: LearnerProfile, step: str, node: NodeFunc
+    db: Session,
+    task: GenerationTask,
+    profile: LearnerProfile,
+    step: str,
+    node: NodeFunc,
+    runtime: AgentRuntime,
 ) -> NodeFunc:
     agent_name = NODE_AGENT_NAMES[step]
 
-    def wrapped(state: V2_GRAPH_STATE) -> V2_GRAPH_STATE:
+    def wrapped(state: GRAPH_STATE) -> GRAPH_STATE:
         started = time.perf_counter()
+        initial_output: dict[str, Any] = {"step": step}
+        if step == "review_resource":
+            initial_output["review_batch_cache"] = runtime.review_batch_cache.snapshot()
         run = AgentRun(
             generation_task_id=task.id,
             agent_name=agent_name,
             status="running",
             input_summary_json={"task_id": task.public_id, "step": step},
-            output_summary_json={"step": step},
-            prompt_version="v2",
+            output_summary_json=initial_output,
+            prompt_version="v3",
         )
         db.add(run)
         _message(
             db,
             task,
             agent_name,
-            {"step": step, "status": "running", "contract_version": "agent-contract-v2"},
+            {"step": step, "status": "running", "contract_version": "agent-contract-v5"},
         )
         db.commit()
+        if step == "review_resource":
+
+            def persist_review_cache(snapshot: dict[str, Any]) -> None:
+                current = dict(run.output_summary_json or {})
+                current["review_batch_cache"] = snapshot
+                run.output_summary_json = current
+                db.add(run)
+                db.commit()
+
+            runtime.review_batch_cache.set_persist_callback(persist_review_cache)
         model_calls: list[dict[str, Any]] = []
         try:
             with collect_model_calls() as collector:
@@ -362,14 +509,13 @@ def _observable_node(
             next_state = {**state, **patch}
             if step == "analyze_profile":
                 _persist_profile_update(db, task, profile, next_state)
-            if (
-                step == "finalize_task"
-                and next_state["finalize_task"].decision.value == "completed"
-            ):
+            if step == "finalize_task":
                 persist_generated_resources(
                     db, task, db.get(LearnerProfile, task.profile_id) or profile, next_state
                 )
             output = _summary(step, patch)
+            if step == "review_resource":
+                output["review_batch_cache"] = runtime.review_batch_cache.snapshot()
             _apply_model_call_metrics(run, output, model_calls)
             run.status = "completed"
             run.output_summary_json = output
@@ -383,34 +529,41 @@ def _observable_node(
                     "step": step,
                     "status": "completed",
                     "output": output,
-                    "contract_version": "agent-contract-v2",
+                    "contract_version": "agent-contract-v5",
                 },
                 message_type="result",
             )
             db.commit()
             return patch
-        except GraphInterrupt:
-            if "collector" in locals():
-                model_calls = collector.snapshot()
-            run.status = "completed"
-            run.output_summary_json = {"step": step, "decision": "manual_review_required"}
-            _apply_model_call_metrics(run, run.output_summary_json, model_calls)
-            run.duration_ms = round((time.perf_counter() - started) * 1000)
-            _message(
-                db,
-                task,
-                agent_name,
-                {"step": step, "status": "waiting_human"},
-                message_type="decision",
-            )
-            db.commit()
-            raise
         except Exception as exc:
             if "collector" in locals():
                 model_calls = collector.snapshot()
             run.status = "failed"
             run.error_message = str(exc)
-            output = {"step": step, "error": type(exc).__name__}
+            output = {
+                "step": step,
+                "error": type(exc).__name__,
+                "failure_code": _failure_code(exc),
+                "failed_step": step,
+                "recoverable": step
+                in {
+                    "retrieve_knowledge",
+                    "generate_resource",
+                    "review_resource",
+                },
+                "resource_types": list(
+                    dict.fromkeys(
+                        str(item.get("resource_type"))
+                        for item in model_calls
+                        if item.get("resource_type")
+                    )
+                ),
+                "model_roles": list(
+                    dict.fromkeys(str(item.get("role")) for item in model_calls if item.get("role"))
+                ),
+            }
+            if step == "review_resource":
+                output["review_batch_cache"] = runtime.review_batch_cache.snapshot()
             _apply_model_call_metrics(run, output, model_calls)
             run.output_summary_json = output
             run.duration_ms = round((time.perf_counter() - started) * 1000)
@@ -418,11 +571,19 @@ def _observable_node(
                 db,
                 task,
                 agent_name,
-                {"step": step, "status": "failed", "error": type(exc).__name__},
+                {
+                    "step": step,
+                    "status": "failed",
+                    "error": type(exc).__name__,
+                    "failure_code": _failure_code(exc),
+                },
                 message_type="error",
             )
             db.commit()
             raise
+        finally:
+            if step == "review_resource":
+                runtime.review_batch_cache.set_persist_callback(None)
 
     return wrapped
 
@@ -432,11 +593,11 @@ def _build_graph(
     task: GenerationTask,
     profile: LearnerProfile,
     checkpointer: MySQLLangGraphCheckpointer,
-    runtime: V2Runtime,
+    runtime: AgentRuntime,
 ):
     return build_learning_graph(
         {
-            step: _observable_node(db, task, profile, step, node)
+            step: _observable_node(db, task, profile, step, node, runtime)
             for step, node in build_nodes(runtime).items()
         },
         checkpointer=checkpointer,
@@ -444,51 +605,65 @@ def _build_graph(
     )
 
 
+def _load_review_batch_cache(db: Session, task: GenerationTask) -> ReviewBatchCache:
+    runs = db.scalars(
+        select(AgentRun)
+        .where(AgentRun.generation_task_id == task.id)
+        .where(AgentRun.agent_name == "review_validation_agent")
+        .order_by(AgentRun.id.desc())
+    )
+    for run in runs:
+        output = run.output_summary_json or {}
+        snapshot = output.get("review_batch_cache")
+        if isinstance(snapshot, dict) and snapshot.get("entries"):
+            return ReviewBatchCache(snapshot)
+    return ReviewBatchCache()
+
+
 def run_generation_task(task_id: str) -> dict[str, Any]:
     with SessionLocal() as db:
         task = db.scalar(select(GenerationTask).where(GenerationTask.public_id == task_id))
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
+        if task.status == "completed" and task.decision in {"completed", "no_change"}:
+            resources = list(
+                db.scalars(
+                    select(LearningResource)
+                    .where(LearningResource.generation_task_id == task.id)
+                    .order_by(LearningResource.id)
+                )
+            )
+            return {
+                "task_id": task.public_id,
+                "status": task.status,
+                "decision": task.decision,
+                "resources": [_resource_summary(item) for item in resources],
+            }
         learner, profile = db.get(Learner, task.learner_id), db.get(LearnerProfile, task.profile_id)
         if learner is None or profile is None:
             task.status = task.decision = "failed"
             db.commit()
             return {"task_id": task_id, "status": "failed"}
         feedback = db.get(Feedback, task.source_feedback_id) if task.source_feedback_id else None
-        resume = task.status == "waiting_human"
+        resume_failed = task.status in {"failed", "retry_pending"}
         task.status = "running"
         task.decision = "pending"
         db.commit()
-        runtime = V2Runtime.production()
+        review_batch_cache = _load_review_batch_cache(db, task)
+        runtime = AgentRuntime.production(review_batch_cache=review_batch_cache)
         checkpointer = MySQLLangGraphCheckpointer(SessionLocal)
         try:
             graph = _build_graph(db, task, profile, checkpointer, runtime)
-            graph_input: V2_GRAPH_STATE | Command = _initial_state(
+            graph_config = {"configurable": {"thread_id": task.public_id}}
+            graph_input: GRAPH_STATE | None = _initial_state(
                 db, task, learner, profile, feedback
             )
-            if resume:
-                manual = db.scalar(
-                    select(ManualReviewTask)
-                    .where(ManualReviewTask.task_id == task.id)
-                    .where(ManualReviewTask.status == "resolved")
-                    .order_by(ManualReviewTask.id.desc())
-                )
-                if manual is None or not manual.decision:
-                    task.status = "waiting_human"
-                    task.decision = "manual_review_required"
-                    db.commit()
-                    return {"task_id": task.public_id, "status": task.status}
-                graph_input = Command(
-                    resume={
-                        "decision": manual.decision,
-                        "review_comment": manual.review_comment or "管理员已处理。",
-                        "operator_id": manual.reviewed_by or "admin",
-                        "reviewed_at": datetime.now(UTC).isoformat(),
-                    }
-                )
-            final = graph.invoke(
-                graph_input, config={"configurable": {"thread_id": task.public_id}}
-            )
+            if resume_failed and checkpointer.get_tuple(graph_config) is not None:
+                # A failed LangGraph node leaves the last successful checkpoint
+                # intact. Invoking with None resumes that node and preserves the
+                # generated resources already present in state.
+                graph_input = None
+            final = graph.invoke(graph_input, config=graph_config)
             result = final.get("finalize_task")
             task.revision_count = result.revision_count if result else 0
             task.decision = result.decision.value if result else "failed"
@@ -496,23 +671,9 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
                 task.status = "completed"
                 task.progress = 100
                 checkpointer.mark_status(task.public_id, "resolved")
-            elif task.decision == "manual_review_required":
-                task.status = "waiting_human"
-                checkpointer.mark_status(task.public_id, "waiting_human")
-                if (
-                    db.scalar(select(ManualReviewTask).where(ManualReviewTask.task_id == task.id))
-                    is None
-                ):
-                    db.add(
-                        ManualReviewTask(
-                            public_id=f"mr_{task.public_id}",
-                            task_id=task.id,
-                            trigger_reason="model_disagreement",
-                            status="pending",
-                        )
-                    )
             else:
-                task.status = "failed" if task.decision == "rejected" else task.decision
+                task.status = "failed"
+                task.failure_reason = result.decision_reason if result else "generation_failed"
             db.commit()
             resources = list(
                 db.scalars(
@@ -527,31 +688,20 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
                 "decision": task.decision,
                 "resources": [_resource_summary(item) for item in resources],
             }
-        except GraphInterrupt:
-            task.status = "waiting_human"
-            task.decision = "manual_review_required"
-            checkpointer.mark_status(task.public_id, "waiting_human")
-            if (
-                db.scalar(select(ManualReviewTask).where(ManualReviewTask.task_id == task.id))
-                is None
-            ):
-                db.add(
-                    ManualReviewTask(
-                        public_id=f"mr_{task.public_id}",
-                        task_id=task.id,
-                        trigger_reason="model_disagreement",
-                        status="pending",
-                    )
-                )
-            db.commit()
-            return {"task_id": task.public_id, "status": task.status, "decision": task.decision}
         except Exception as exc:
             task.status = task.decision = "failed"
+            task.failure_reason = _failure_code(exc)
             _message(
                 db,
                 task,
                 "generation_worker",
-                {"task_id": task.public_id, "status": "failed", "error": type(exc).__name__},
+                {
+                    "task_id": task.public_id,
+                    "status": "failed",
+                    "error": type(exc).__name__,
+                    "failure_code": _failure_code(exc),
+                    "failed_step": "generation_worker",
+                },
                 message_type="error",
             )
             db.commit()

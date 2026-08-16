@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, TypeVar
 
 from openai import OpenAI
@@ -26,11 +26,23 @@ class ModelConfigurationError(ModelGatewayError):
 
 
 class ModelResponseError(ModelGatewayError):
-    pass
+    """Safe structured-output failure; metadata intentionally excludes model content."""
+
+    def __init__(self, message: str, *, metadata: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.metadata = metadata or {}
+
+
+class ModelOutputTruncatedError(ModelResponseError):
+    """The provider stopped because the configured output limit was reached."""
 
 
 class ModelCallError(ModelGatewayError):
-    pass
+    """Transport/provider failure with payload-safe call metadata."""
+
+    def __init__(self, message: str, *, metadata: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.metadata = metadata or {}
 
 
 class OpenAICompatibleGateway:
@@ -38,13 +50,13 @@ class OpenAICompatibleGateway:
 
     RETRY_DELAYS = (1, 3, 5)
 
-    def _client(self) -> OpenAI:
+    def _client(self, *, timeout_seconds: float | None = None) -> OpenAI:
         if not settings.openai_api_key:
             raise ModelConfigurationError("OPENAI_API_KEY is not configured")
         return OpenAI(
             api_key=settings.openai_api_key,
             base_url=settings.openai_api_base,
-            timeout=settings.llm_timeout_seconds,
+            timeout=timeout_seconds or settings.llm_timeout_seconds,
             # The gateway implements the only permitted retry policy below:
             # initial request plus the three documented backoff retries.
             # Disable the SDK's implicit retries to avoid multiplicative waits.
@@ -60,6 +72,10 @@ class OpenAICompatibleGateway:
         fixture_factory: Callable[[], dict[str, Any]] | None = None,
         response_model: type[ResponseModel] | None = None,
         response_adapter: ResponseAdapter | None = None,
+        max_output_tokens: int | None = None,
+        timeout_seconds: float | None = None,
+        transport_retry_delays: Sequence[float] | None = None,
+        repair_truncated_output: bool = True,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         started_at = time.perf_counter()
         if not model or not settings.openai_api_key:
@@ -81,26 +97,77 @@ class OpenAICompatibleGateway:
             raise ModelConfigurationError("model channel is not configured")
 
         last_error: Exception | None = None
-        client = self._client()
-        for attempt in range(1, len(self.RETRY_DELAYS) + 2):
+        client = (
+            self._client(timeout_seconds=timeout_seconds)
+            if timeout_seconds is not None
+            else self._client()
+        )
+        invalid_content: str | None = None
+        invalid_fields: list[str] = []
+        validation_failures = 0
+        tokens_input = 0
+        tokens_output = 0
+        attempt = 0
+        transport_retries = 0
+        provider_retries = 0
+        timeout_delays = tuple(
+            self.RETRY_DELAYS
+            if transport_retry_delays is None
+            else transport_retry_delays
+        )
+        while True:
+            attempt += 1
+            content = "{}"
             try:
-                response = client.chat.completions.create(
-                    model=model,
-                    response_format={"type": "json_object"},
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": f"Return a valid JSON object.\n\n{system_prompt}",
-                        },
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-                    ],
-                )
-                content = response.choices[0].message.content or "{}"
+                messages: list[dict[str, str]] = [
+                    {
+                        "role": "system",
+                        "content": f"Return a valid JSON object.\n\n{system_prompt}",
+                    },
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ]
+                if invalid_content is not None:
+                    correction = (
+                        "Correct only the listed invalid fields and return the complete JSON object. "
+                        "The previous response failed validation at: "
+                        + ", ".join(invalid_fields)
+                    )
+                    if any(field.endswith(".verdict") for field in invalid_fields):
+                        correction += (
+                            ". Every verdict must be exactly one of: supported, contradicted, "
+                            "unable_to_determine. Do not use unknown or unsupported."
+                        )
+                    messages.extend(
+                        [
+                            {"role": "assistant", "content": invalid_content},
+                            {
+                                "role": "user",
+                                "content": correction,
+                            },
+                        ]
+                    )
+                request_options: dict[str, Any] = {
+                    "model": model,
+                    "response_format": {"type": settings.llm_json_schema_mode},
+                    "messages": messages,
+                }
+                if max_output_tokens is not None:
+                    request_options["max_tokens"] = max_output_tokens
+                response = client.chat.completions.create(**request_options)
+                choice = response.choices[0]
+                content = choice.message.content or "{}"
+                usage = response.usage
+                tokens_input += int(getattr(usage, "prompt_tokens", 0) or 0)
+                tokens_output += int(getattr(usage, "completion_tokens", 0) or 0)
+                finish_reason = str(getattr(choice, "finish_reason", "") or "").lower()
+                if finish_reason in {"length", "max_tokens"}:
+                    raise ModelOutputTruncatedError(
+                        "model output reached the configured token limit"
+                    )
                 result = json.loads(content)
                 if response_adapter is not None:
                     result = response_adapter(result)
                 result = self._validate(result, response_model)
-                usage = response.usage
                 return result, {
                     "provider_mode": "live",
                     "model_name": model,
@@ -110,8 +177,32 @@ class OpenAICompatibleGateway:
                     "duration_ms": round((time.perf_counter() - started_at) * 1000),
                 }
             except (json.JSONDecodeError, ValidationError, ModelResponseError) as exc:
-                last_error = ModelResponseError(f"model returned invalid structured output: {exc}")
                 validation_fields = _validation_error_fields(exc)
+                validation_failures += 1
+                truncated = isinstance(exc, ModelOutputTruncatedError)
+                error_type = (
+                    ModelOutputTruncatedError if truncated else ModelResponseError
+                )
+                last_error = error_type(
+                    f"model returned invalid structured output: {exc}",
+                    metadata={
+                        "provider_mode": "live",
+                        "model_name": model,
+                        "tokens_input": tokens_input,
+                        "tokens_output": tokens_output,
+                        "attempt": attempt,
+                        "attempt_count": validation_failures,
+                        "status": "failed",
+                        "failure_code": (
+                            "model_output_truncated"
+                            if truncated
+                            else "model_structured_output_invalid"
+                        ),
+                        "finish_reason": "length" if truncated else None,
+                        "validation_fields": validation_fields,
+                        "duration_ms": round((time.perf_counter() - started_at) * 1000),
+                    },
+                )
                 logger.warning(
                     "Model structured output validation failed model=%s attempt=%s error_type=%s fields=%s",
                     model,
@@ -119,8 +210,21 @@ class OpenAICompatibleGateway:
                     type(exc).__name__,
                     validation_fields,
                 )
-                if attempt <= len(self.RETRY_DELAYS):
-                    time.sleep(self.RETRY_DELAYS[attempt - 1])
+                if truncated and not repair_truncated_output:
+                    break
+                if validation_failures >= 2:
+                    break
+                # Structured-output failures get one immediate, targeted repair
+                # instead of consuming all transport retries with the same prompt.
+                # Never echo a token-limit-sized partial response into the repair
+                # prompt; it makes the second request larger and more likely to
+                # time out.  The schema and correction instruction are sufficient.
+                invalid_content = "{}" if truncated else content
+                invalid_fields = (
+                    ["output_truncated_return_complete_concise_json"]
+                    if truncated
+                    else validation_fields or ["invalid_json"]
+                )
             except Exception as exc:  # provider exceptions vary across compatible APIs
                 last_error = exc
                 logger.warning(
@@ -131,11 +235,103 @@ class OpenAICompatibleGateway:
                     getattr(exc, "status_code", None),
                     getattr(exc, "code", None),
                 )
-                if attempt <= len(self.RETRY_DELAYS):
-                    time.sleep(self.RETRY_DELAYS[attempt - 1])
+                retry_kind = _provider_retry_kind(exc)
+                if retry_kind == "provider" and provider_retries < len(self.RETRY_DELAYS):
+                    delay = self.RETRY_DELAYS[provider_retries]
+                    provider_retries += 1
+                    time.sleep(delay)
+                    continue
+                if retry_kind == "transport" and transport_retries < len(timeout_delays):
+                    delay = timeout_delays[transport_retries]
+                    transport_retries += 1
+                    time.sleep(delay)
+                    continue
+                break
         if isinstance(last_error, ModelResponseError):
             raise last_error
-        raise ModelCallError(f"model call failed after 3 retries: {last_error}")
+        raise ModelCallError(
+            f"model call failed after bounded retries: {last_error}",
+            metadata={
+                "provider_mode": "live",
+                "model_name": model,
+                "tokens_input": tokens_input,
+                "tokens_output": tokens_output,
+                "attempt_count": attempt,
+                "status": "failed",
+                "failure_code": "model_call_failed",
+                "retryable": (
+                    _provider_retry_kind(last_error) is not None
+                    if last_error is not None
+                    else False
+                ),
+                "error_type": type(last_error).__name__ if last_error else "unknown",
+                "duration_ms": round((time.perf_counter() - started_at) * 1000),
+            },
+        )
+
+    def complete_text(
+        self,
+        *,
+        model: str | None,
+        system_prompt: str,
+        payload: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        """Call the configured compatible chat model for bounded tutoring prose."""
+        started_at = time.perf_counter()
+        if not model or not settings.openai_api_key:
+            raise ModelConfigurationError("model channel is not configured")
+        last_error: Exception | None = None
+        client = self._client()
+        for attempt in range(1, len(self.RETRY_DELAYS) + 2):
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                    ],
+                )
+                content = (response.choices[0].message.content or "").strip()
+                if not content:
+                    raise ModelResponseError("model returned empty text")
+                usage = response.usage
+                return content, {
+                    "provider_mode": "live", "model_name": model,
+                    "tokens_input": int(getattr(usage, "prompt_tokens", 0) or 0),
+                    "tokens_output": int(getattr(usage, "completion_tokens", 0) or 0),
+                    "attempt": attempt,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000),
+                }
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Model text call failed model=%s attempt=%s error_type=%s",
+                    model,
+                    attempt,
+                    type(exc).__name__,
+                )
+                if attempt <= len(self.RETRY_DELAYS):
+                    time.sleep(self.RETRY_DELAYS[attempt - 1])
+        raise ModelCallError(f"model text call failed after bounded retries: {last_error}")
+
+    def stream_text(
+        self, *, model: str | None, system_prompt: str, payload: dict[str, Any]
+    ) -> Iterator[str]:
+        """Yield OpenAI-compatible text chunks; callers persist partial output."""
+        if not model or not settings.openai_api_key:
+            raise ModelConfigurationError("model channel is not configured")
+        stream = self._client().chat.completions.create(
+            model=model,
+            stream=True,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+        )
+        for event in stream:
+            content = event.choices[0].delta.content if event.choices else None
+            if content:
+                yield content
 
     @staticmethod
     def _validate(
@@ -160,6 +356,10 @@ class OpenAICompatibleGateway:
             }
             if "source_ids" in normalized and isinstance(normalized["source_ids"], str):
                 normalized["source_ids"] = [normalized["source_ids"]]
+            if "source_ref_ids" in normalized and isinstance(normalized["source_ref_ids"], str):
+                normalized["source_ref_ids"] = [normalized["source_ref_ids"]]
+            if "options" in normalized and normalized["options"] is None:
+                normalized["options"] = []
             return normalized
         return value
 
@@ -213,6 +413,30 @@ def _validation_error_fields(exc: Exception) -> list[str]:
         ".".join(str(part) for part in issue.get("loc", ()))
         for issue in exc.errors(include_input=False)
     ][:20]
+
+
+def _provider_retry_kind(exc: Exception) -> str | None:
+    """Classify compatible-provider failures without exposing response bodies."""
+
+    status = getattr(exc, "status_code", None)
+    try:
+        status_code = int(status) if status is not None else None
+    except (TypeError, ValueError):
+        status_code = None
+    if status_code == 429 or (status_code is not None and status_code >= 500):
+        return "provider"
+    if status_code is not None and 400 <= status_code < 500:
+        return None
+    name = type(exc).__name__.lower()
+    code = str(getattr(exc, "code", "") or "").lower()
+    if any(
+        item in f"{name} {code}"
+        for item in ("timeout", "connection", "connect", "network")
+    ):
+        return "transport"
+    # Compatible providers use different transport exception classes. Unknown
+    # exceptions remain retryable only within the caller's bounded policy.
+    return "transport"
 
 
 gateway = OpenAICompatibleGateway()

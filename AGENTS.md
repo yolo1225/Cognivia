@@ -126,9 +126,6 @@ analyze_profile -> retrieve_knowledge when generation, review, or regeneration i
 retrieve_knowledge -> generate_resource -> review_resource -> finalize_task
 finalize_task -> END                  when decision in [completed, no_change, failed, rejected]
 finalize_task -> retrieve_knowledge   when decision = revision_required and revision_count < 2
-finalize_task -> human_review         when decision = manual_review_required or assisted approval is pending
-human_review -> retrieve_knowledge    when the administrator requests revision
-human_review -> finalize_task         when the administrator approves or rejects
 ```
 
 `build_learning_graph()` is the only top-level graph builder. Initial generation and
@@ -146,10 +143,10 @@ development agents implementing concrete Agents must treat these files as read-o
 - `backend/app/agents/state.py`
 - `backend/app/agents/contract_adapters.py`
 - `backend/tests/contracts/`
-- `docs/agent-contract-v2.md`
-- `docs/contracts/v2/`
+- `docs/agent-contract-v5.md`
+- `docs/contracts/v5/`
 
-The V2 source of truth is `docs/agent-contract-v2.md` together with the executable Pydantic
+The V5 source of truth is `docs/agent-contract-v5.md` together with the executable Pydantic
 models and generated JSON Schema. All Agent implementations import only from
 `app.agents.contracts` and `app.agents.state`. V1 contracts, State and Agent implementations
 have been retired and must not be reintroduced.
@@ -190,8 +187,8 @@ Facts and source traceability must be checked by both model channels. If scores 
 
 1. Retrieve sources again.
 2. Review again.
-3. If disagreement remains, mark `manual_review_required`.
-4. Do not show unresolved resources to learners.
+3. If disagreement remains, count the claim as unresolved and send only the affected resource to automatic local revision.
+4. Do not show unresolved resources to learners; fail the package after two revisions.
 
 Every generated resource must include knowledge sources.
 

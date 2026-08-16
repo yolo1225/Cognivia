@@ -26,6 +26,9 @@ class GenerationTask(TimestampMixin, Base):
         ForeignKey("resource_feedback.id", use_alter=True), nullable=True
     )
     progress: Mapped[int] = mapped_column(default=0)
+    package_coverage_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    package_quality_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    failure_reason: Mapped[str] = mapped_column(Text, default="")
 
 
 class LearningResource(TimestampMixin, Base):
@@ -48,6 +51,7 @@ class LearningResource(TimestampMixin, Base):
     )
     is_current: Mapped[bool] = mapped_column(default=True, index=True)
     adaptation_reason: Mapped[str] = mapped_column(Text, default="")
+    knowledge_coverage_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class ReviewReport(TimestampMixin, Base):
@@ -58,7 +62,6 @@ class ReviewReport(TimestampMixin, Base):
     primary_review_json: Mapped[dict] = mapped_column(JSON, default=dict)
     secondary_review_json: Mapped[dict] = mapped_column(JSON, default=dict)
     arbitration_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    manual_review_required: Mapped[bool] = mapped_column(default=False)
     passed: Mapped[bool] = mapped_column(default=False)
     task_id: Mapped[int | None] = mapped_column(ForeignKey("generation_tasks.id"), nullable=True)
     factual_score: Mapped[float] = mapped_column(default=0)
@@ -71,3 +74,15 @@ class ReviewReport(TimestampMixin, Base):
     review_rule_version: Mapped[str] = mapped_column(String(32), default="review-v1")
     issues_json: Mapped[list] = mapped_column(JSON, default=list)
     suggestions_json: Mapped[list] = mapped_column(JSON, default=list)
+    target_knowledge_ids_json: Mapped[list] = mapped_column(JSON, default=list)
+    covered_knowledge_ids_json: Mapped[list] = mapped_column(JSON, default=list)
+    missing_knowledge_ids_json: Mapped[list] = mapped_column(JSON, default=list)
+    verifiable_claim_count: Mapped[int] = mapped_column(default=0)
+    hallucinated_claim_count: Mapped[int] = mapped_column(default=0)
+    hallucination_rate: Mapped[float] = mapped_column(default=0)
+    covered_core_knowledge_count: Mapped[int] = mapped_column(default=0)
+    target_core_knowledge_count: Mapped[int] = mapped_column(default=0)
+    core_knowledge_coverage: Mapped[float] = mapped_column(default=0)
+    quality_passed: Mapped[bool] = mapped_column(default=False)
+    revision_count: Mapped[int] = mapped_column(default=0)
+    model_role_version: Mapped[str] = mapped_column(String(32), default="review-v4")

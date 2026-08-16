@@ -11,6 +11,7 @@ from app.agents.contracts import (
     RecommendedAction,
 )
 from app.core.db import get_db
+from app.core.security import Principal, get_current_user
 from app.main import app
 from app.models import (
     Base,
@@ -21,7 +22,6 @@ from app.models import (
     Learner,
     LearnerProfile,
     LearningResource,
-    ManualReviewTask,
 )
 
 
@@ -106,7 +106,7 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
     monkeypatch.setattr("app.api.v1.resources.run_generation_task", lambda task_id: None)
     monkeypatch.setattr("app.api.v1.tutoring.run_generation_task", lambda task_id: None)
     monkeypatch.setattr(
-        "app.services.tutoring_service.V2TutoringAgent.execute",
+        "app.services.tutoring_service.TutoringAgent.execute",
         lambda _self, request: InterpretFeedbackOutput(
             task_id=request.task_id,
             feedback_intent=FeedbackIntent.TOO_HARD,
@@ -134,6 +134,10 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
             "/api/v1/tutoring/sessions", json={"resource_id": "resource_visible"}
         )
         session_id = session_response.json()["data"]["session_id"]
+        reused_session = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_visible"}
+        ).json()["data"]
+        assert reused_session["session_id"] == session_id
         message = client.post(
             f"/api/v1/tutoring/sessions/{session_id}/messages",
             json={"content": "这部分太难，我看不懂"},
@@ -143,7 +147,7 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
         with testing_session() as db:
             run = db.query(AgentRun).filter_by(agent_name="tutoring_agent").one()
             messages = db.query(AgentMessageRecord).filter_by(session_id=session_id).all()
-            assert run.prompt_version == "v2"
+            assert run.prompt_version == "v3"
             assert run.status == "completed"
             assert {item.message_type for item in messages} >= {"command", "result"}
 
@@ -157,46 +161,187 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
         app.dependency_overrides.clear()
 
 
-def test_manual_review_resumes_same_thread(monkeypatch) -> None:
+def test_task_resource_query_uses_task_owner_when_client_learner_is_stale() -> None:
     testing_session = build_test_session()
     with testing_session() as db:
-        _, _, task, _ = seed_resource(db)
-        task.status = "waiting_human"
-        task.decision = "manual_review_required"
-        review = ManualReviewTask(
-            public_id="mr_task_visible",
-            task_id=task.id,
-            trigger_reason="model_disagreement",
-            status="pending",
+        seed_resource(db)
+        task_learner = Learner(
+            public_id="learner_task_owner",
+            background="test",
+            target_domain="ai_app_dev",
+            learning_style="mixed",
         )
-        checkpoint = GraphCheckpoint(
-            task_id=task.public_id,
-            checkpoint_id="cp_1",
-            state_json={"native_checkpoint": True},
-            next_node="human_review",
-            status="waiting_human",
+        db.add(task_learner)
+        db.flush()
+        profile = LearnerProfile(
+            public_id="profile_task_owner",
+            learner_id=task_learner.id,
+            ability_profile_json={"profile_type": "beginner"},
+            weak_knowledge_json=[],
         )
-        db.add_all([review, checkpoint])
+        db.add(profile)
+        db.flush()
+        task = GenerationTask(
+            public_id="task_other_learner",
+            learner_id=task_learner.id,
+            profile_id=profile.id,
+            status="completed",
+            decision="completed",
+            resource_types_json=["lecture"],
+        )
+        db.add(task)
+        db.flush()
+        db.add(
+            LearningResource(
+                public_id="resource_task_owner",
+                generation_task_id=task.id,
+                resource_type="lecture",
+                title="任务所属学习者的资源",
+                content_md="正文",
+                difficulty=2,
+                sources_json=[{"knowledge_id": "AIAPP-K030"}],
+                review_status="passed",
+                series_id="resource_task_owner",
+                is_current=True,
+            )
+        )
         db.commit()
-    monkeypatch.setattr("app.api.v1.manual_reviews.run_generation_task", lambda task_id: None)
+
+    app.dependency_overrides[get_db] = override(testing_session)
+    try:
+        response = TestClient(app).get(
+            "/api/v1/resources",
+            params={
+                "task_id": "task_other_learner",
+                "learner_id": "learner_001",
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert [item["resource_id"] for item in response.json()["data"]] == [
+        "resource_task_owner"
+    ]
+
+
+def test_admin_report_requires_own_learner_unless_viewing_task() -> None:
+    testing_session = build_test_session()
+    with testing_session() as db:
+        seed_resource(db)
+        task_learner = Learner(
+            public_id="learner_report_task_owner",
+            background="test",
+            target_domain="ai_app_dev",
+            learning_style="mixed",
+        )
+        db.add(task_learner)
+        db.flush()
+        task_profile = LearnerProfile(
+            public_id="profile_report_task_owner",
+            learner_id=task_learner.id,
+            ability_profile_json={"profile_type": "beginner"},
+            weak_knowledge_json=[],
+        )
+        db.add(task_profile)
+        db.flush()
+        db.add(
+            GenerationTask(
+                public_id="task_report_owner",
+                learner_id=task_learner.id,
+                profile_id=task_profile.id,
+                status="completed",
+                decision="completed",
+                resource_types_json=["lecture"],
+            )
+        )
+        db.commit()
+
+    app.dependency_overrides[get_db] = override(testing_session)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        user_id="admin",
+        role="admin",
+        learner_id="learner_001",
+    )
+    try:
+        client = TestClient(app)
+        direct_response = client.get(
+            "/api/v1/reports/learners/learner_report_task_owner"
+        )
+        task_response = client.get(
+            "/api/v1/reports/learners/learner_report_task_owner",
+            params={"task_id": "task_report_owner"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert direct_response.status_code == 403
+    assert task_response.status_code == 200
+    assert task_response.json()["data"]["learner_id"] == "learner_report_task_owner"
+
+
+def test_failed_generation_task_can_schedule_checkpoint_retry(monkeypatch) -> None:
+    testing_session = build_test_session()
+    with testing_session() as db:
+        learner, profile, _, _ = seed_resource(db)
+        task = GenerationTask(
+            public_id="task_retryable",
+            learner_id=learner.id,
+            profile_id=profile.id,
+            status="failed",
+            decision="failed",
+            progress=60,
+            resource_types_json=["lecture"],
+        )
+        db.add(task)
+        db.flush()
+        db.add(
+            GraphCheckpoint(
+                task_id=task.public_id,
+                checkpoint_id="cp_retryable",
+                state_json={"native_checkpoint": True},
+                status="saved",
+            )
+        )
+        db.add(
+            AgentRun(
+                generation_task_id=task.id,
+                agent_name="review_validation_agent",
+                status="failed",
+                input_summary_json={"step": "review_resource"},
+                output_summary_json={
+                    "step": "review_resource",
+                    "failure_code": "review_model_call_failed",
+                    "recoverable": True,
+                },
+                error_message="review_model_call_failed",
+            )
+        )
+        db.commit()
+
+    scheduled: list[str] = []
+    monkeypatch.setattr(
+        "app.api.v1.generation_tasks.run_generation_task", scheduled.append
+    )
+    monkeypatch.setattr(
+        "app.api.v1.generation_tasks.require_candidate_rag", lambda _domain: {}
+    )
     app.dependency_overrides[get_db] = override(testing_session)
     try:
         response = TestClient(app).post(
-            "/api/v1/manual-reviews/mr_task_visible/decision",
-            json={"decision": "approve", "comment": "证据已核验"},
+            "/api/v1/generation-tasks/task_retryable/retry"
         )
         assert response.status_code == 200
-        data = response.json()["data"]
-        assert data["task_id"] == "task_visible"
-        assert data["resume_thread_id"] == "task_visible"
+        assert response.json()["data"]["status"] == "retry_pending"
+        assert scheduled == ["task_retryable"]
         with testing_session() as db:
-            review = db.scalar(
-                select(ManualReviewTask).where(
-                    ManualReviewTask.public_id == "mr_task_visible"
+            task = db.scalar(
+                select(GenerationTask).where(
+                    GenerationTask.public_id == "task_retryable"
                 )
             )
-            assert review.decision == "approve"
-            assert review.status == "resolved"
+            assert task.status == "retry_pending"
+            assert task.decision == "pending"
     finally:
         app.dependency_overrides.clear()
 
@@ -251,14 +396,6 @@ def test_active_generation_task_returns_latest_non_terminal_task_for_learner() -
                     resource_types_json=["lecture"],
                 ),
                 GenerationTask(
-                    public_id="task_other_waiting",
-                    learner_id=other_learner.id,
-                    profile_id=other_profile.id,
-                    status="waiting_human",
-                    decision="manual_review_required",
-                    resource_types_json=["lecture"],
-                ),
-                GenerationTask(
                     public_id="task_active_completed",
                     learner_id=learner.id,
                     profile_id=profile.id,
@@ -283,12 +420,12 @@ def test_active_generation_task_returns_latest_non_terminal_task_for_learner() -
         assert client.get(
             "/api/v1/generation-tasks/active",
             params={"learner_id": "learner_other"},
-        ).json()["data"]["task_id"] == "task_other_waiting"
+        ).json()["data"] is None
 
         with testing_session() as db:
             db.query(GenerationTask).filter(
                 GenerationTask.learner_id == learner_db_id,
-                GenerationTask.status.in_({"pending", "running", "waiting_human"}),
+                GenerationTask.status.in_({"pending", "retry_pending", "running"}),
             ).update(
                 {"status": "completed", "decision": "completed"},
                 synchronize_session=False,

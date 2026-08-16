@@ -1,703 +1,231 @@
 <template>
-  <section class="page report-page">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">学习报告</h1>
-        <p class="page-subtitle">
-          汇总当前学习者从诊断画像、资源生成、审核校验到反馈更新的闭环结果。
-        </p>
-      </div>
-      <div class="toolbar">
-        <el-tag effect="plain">{{ learnerStore.selectedLearnerId }}</el-tag>
-        <el-button :loading="loading" @click="load">刷新报告</el-button>
-      </div>
+  <section class="page">
+    <div class="head">
+      <div><h1>学习报告</h1><p class="sub">集中查看能力画像、薄弱知识与当前推荐学习路径。</p></div>
+      <div class="actions"><span class="tag">当前学习者：{{ learnerId }}</span><button class="btn" :disabled="loading" @click="loadReport">{{ loading ? '刷新中...' : '刷新报告' }}</button></div>
     </div>
 
-    <div v-if="loading" class="panel">
-      <el-skeleton :rows="8" animated />
+    <div v-if="loading" class="panel" style="text-align:center;padding:40px;color:var(--muted)">加载报告中...</div>
+
+    <div v-else-if="errorMessage" class="error-state"><strong>报告加载失败</strong><p>{{ errorMessage }}</p><button class="btn" @click="loadReport">重新加载</button></div>
+
+    <div v-else-if="!report" class="panel" style="text-align:center;padding:60px;color:var(--muted)">
+      <div style="font-size:36px;margin-bottom:12px">📋</div>
+      <strong style="display:block;color:var(--ink);font-size:17px">尚未生成学习报告</strong>
+      <p class="sub" style="margin-top:8px">请先在学习中心完成学习背景建档和首次能力诊断，系统将据此生成能力画像与学习路线。</p>
+      <button class="btn primary" style="margin-top:18px" @click="router.push('/dashboard')">返回学习中心</button>
     </div>
 
-    <el-alert
-      v-else-if="errorMessage"
-      class="panel"
-      type="error"
-      show-icon
-      :title="errorMessage"
-    />
-
-    <template v-else-if="report">
-      <section class="panel loop-panel">
-        <div class="section-head">
-          <div>
-            <h2 class="panel-title">闭环状态</h2>
-            <p class="panel-caption">按比赛演示链路查看每个环节是否已经产生可展示结果。</p>
-          </div>
-          <el-tag :type="report.feedback_summary.learning_path_needs_refresh ? 'warning' : 'success'">
-            {{ report.feedback_summary.learning_path_needs_refresh ? '路径待刷新' : '路径当前有效' }}
-          </el-tag>
+    <template v-else>
+      <div class="panel profile-overview">
+        <div class="panel-head">
+          <div><h2>能力画像</h2><p class="section-note">基于最近一次诊断训练结果生成</p></div>
+          <span class="profile-badge">{{ profileTypeLabel(report.profile_type) }}</span>
         </div>
-        <div class="loop-steps">
-          <div
-            v-for="step in loopSteps"
-            :key="step.key"
-            class="loop-step"
-            :class="{ 'is-complete': step.complete, 'needs-refresh': step.needsRefresh }"
-          >
-            <span class="status-dot" :class="{ 'is-done': step.complete, 'is-active': step.needsRefresh }" />
-            <div>
-              <strong>{{ step.label }}</strong>
-              <small>{{ step.description }}</small>
+        <div class="profile-layout">
+          <div class="radar-wrap"><RadarChart :values="report.radar" /></div>
+          <div class="ability-list">
+            <div v-for="item in abilityRows" :key="item.label" class="ability-row">
+              <div><span>{{ item.label }}</span><strong>{{ item.value }}</strong></div>
+              <div class="ability-track" role="progressbar" :aria-label="item.label" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="item.value">
+                <i :style="{ width: `${item.value}%` }"></i>
+              </div>
             </div>
           </div>
         </div>
-      </section>
-
-      <section class="metric-grid">
-        <div class="metric-card">
-          <span class="metric-label">生成资源</span>
-          <strong class="metric-value">{{ report.resource_summary.total }}</strong>
+        <div v-if="report.diagnostic_summary?.answer_count" class="diagnostic-strip">
+          <div><span>已完成题目</span><strong>{{ report.diagnostic_summary.answer_count }}</strong></div>
+          <div><span>诊断正确率</span><strong>{{ (report.diagnostic_summary.accuracy || 0).toFixed(0) }}%</strong></div>
+          <div><span>当前学习资源</span><strong>{{ report.resource_summary?.total || 0 }}</strong></div>
         </div>
-        <div class="metric-card">
-          <span class="metric-label">审核通过</span>
-          <strong class="metric-value">
-            {{ report.review_summary.passed }}/{{ report.review_summary.total_reports }}
-          </strong>
+      </div>
+
+      <div class="panel evidence-panel">
+        <div class="panel-head"><div><h2>画像依据</h2><p class="section-note">先验背景用于学习目标和案例适配，能力结论以诊断测评为准。</p></div></div>
+        <div class="evidence-grid"><div><span>学习背景</span><strong>{{ contextSnapshot.education_level || '-' }} · {{ contextSnapshot.major || '-' }}</strong></div><div><span>相关经验</span><strong>{{ contextSnapshot.experience_years ?? '-' }} 年</strong></div><div><span>学习方向</span><strong>{{ directionLabels }}</strong></div><div><span>诊断依据</span><strong>{{ report.diagnostic_summary?.answer_count || 0 }} 道已评分题目</strong></div></div>
+      </div>
+
+      <div class="panel weakness-panel">
+        <div class="panel-head">
+          <div><h2>薄弱知识点</h2><p class="section-note">按薄弱程度排序，优先处理高等级项目</p></div>
+          <span v-if="sortedWeakKnowledge.length" class="weak-count">{{ sortedWeakKnowledge.length }} 项待巩固</span>
         </div>
-        <div class="metric-card">
-          <span class="metric-label">反馈触发</span>
-          <strong class="metric-value">{{ report.feedback_summary.total }}</strong>
+        <div v-if="sortedWeakKnowledge.length" class="weak-list">
+          <div v-for="(item, index) in sortedWeakKnowledge" :key="item.knowledge_id" class="weak-row">
+            <div class="weak-rank">{{ String(index + 1).padStart(2, '0') }}</div>
+            <div class="weak-main">
+              <div class="weak-title"><h3>{{ item.name }}</h3><span class="category-tag">{{ item.category }}</span></div>
+              <div class="severity-track" role="progressbar" :aria-label="`${item.name}薄弱程度`" aria-valuemin="1" aria-valuemax="5" :aria-valuenow="item.weakness_level">
+                <i v-for="level in 5" :key="level" :class="{ active: level <= item.weakness_level, high: item.weakness_level >= 4 }"></i>
+              </div>
+            </div>
+            <div class="severity-copy" :class="{ high: item.weakness_level >= 4 }">
+              <strong>{{ item.weakness_level }}/5</strong><span>{{ weaknessLabel(item.weakness_level) }}</span>
+            </div>
+          </div>
         </div>
-        <div class="metric-card">
-          <span class="metric-label">知识来源覆盖</span>
-          <strong class="metric-value">{{ report.review_summary.source_coverage }}</strong>
+        <div v-else class="weak-empty"><span aria-hidden="true">✓</span><div><strong>当前没有已确认的薄弱知识点</strong><p>继续完成训练与分阶测试，报告会根据有效证据更新。</p></div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>推荐学习路径</h2><span class="status" :class="report.feedback_summary?.learning_path_needs_refresh?'wait':'ok'">{{ report.feedback_summary?.learning_path_needs_refresh?'待刷新':'当前版本' }}</span></div>
+        <div v-if="report.path_detail?.length" class="path"><div v-for="(stage,index) in report.path_detail" :key="index" class="node"><div class="node-num">{{ index+1 }}</div><div><h3>{{ stage.name }}</h3><p>{{ stage.description || '根据当前画像推荐' }}</p></div></div></div><div v-else class="empty-hint">尚未形成可展示的学习路径。</div>
+      </div>
+
+      <div v-if="report.resource_summary?.recent?.length" class="panel">
+        <div class="panel-head"><h2>最近资源</h2></div>
+        <table><thead><tr><th>资源</th><th>类型</th><th>难度</th><th>审核状态</th><th>来源数</th></tr></thead>
+          <tbody>
+            <tr v-for="r in report.resource_summary.recent" :key="r.resource_id">
+              <td>{{ r.title }}</td><td><span class="tag">{{ r.resource_type_label || r.resource_type }}</span></td><td>{{ r.difficulty }}/5</td>
+              <td><span class="status" :class="r.review_status === 'passed' ? 'ok' : 'wait'">{{ r.review_status }}</span></td>
+              <td>{{ r.source_count }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-if="report.next_actions?.length" class="panel">
+        <div class="panel-head"><h2>建议下一步</h2></div>
+        <div class="actions">
+          <button v-for="a in report.next_actions" :key="a.type" class="btn" :class="{ primary: a.type === 'generation' }" :disabled="creatingGeneration && a.type === 'generation'" @click="handleNextAction(a)">{{ creatingGeneration && a.type === 'generation' ? '正在创建学习包...' : a.label }}</button>
         </div>
-      </section>
-
-      <div class="report-layout">
-        <main class="report-main">
-          <section class="panel">
-            <div class="section-head">
-              <div>
-                <h2 class="panel-title">生成资源清单</h2>
-                <p class="panel-caption">按最近生成结果展示资源类型、审核状态和来源数量。</p>
-              </div>
-              <div class="type-tags">
-                <el-tag effect="plain">讲义 {{ resourceCount('lecture') }}</el-tag>
-                <el-tag effect="plain">实训 {{ resourceCount('practice_guide') }}</el-tag>
-                <el-tag effect="plain">测验 {{ resourceCount('graded_quiz') }}</el-tag>
-              </div>
-            </div>
-            <el-table v-if="report.resource_summary.recent.length" :data="report.resource_summary.recent">
-              <el-table-column prop="title" label="资源" min-width="180" />
-              <el-table-column label="类型" width="110">
-                <template #default="{ row }">{{ row.resource_type_label }}</template>
-              </el-table-column>
-              <el-table-column label="难度" width="80">
-                <template #default="{ row }">{{ row.difficulty }}</template>
-              </el-table-column>
-              <el-table-column label="审核" width="120">
-                <template #default="{ row }">
-                  <el-tag :type="row.review_status === 'passed' ? 'success' : 'warning'" effect="plain">
-                    {{ reviewLabel(row.review_status) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="来源" width="90">
-                <template #default="{ row }">{{ row.source_count }}</template>
-              </el-table-column>
-            </el-table>
-            <div v-else class="empty-hint small">
-              <strong>还没有生成学习资源</strong>
-              <p>先在学情画像页生成个性化资源，报告页会自动汇总三类资源与审核结果。</p>
-              <el-button type="primary" @click="router.push('/learners')">去生成资源</el-button>
-            </div>
-          </section>
-
-          <section class="panel">
-            <div class="section-head">
-              <div>
-                <h2 class="panel-title">审核与溯源</h2>
-                <p class="panel-caption">展示资源审核分布，以及是否存在需要人工复核的内容。</p>
-              </div>
-              <el-tag
-                :type="report.review_summary.manual_review_required > 0 ? 'danger' : 'success'"
-                effect="plain"
-              >
-                人工复核 {{ report.review_summary.manual_review_required }}
-              </el-tag>
-            </div>
-            <div class="review-grid">
-              <div v-for="item in reviewRows" :key="item.status" class="review-item">
-                <span>{{ item.label }}</span>
-                <strong>{{ item.count }}</strong>
-              </div>
-            </div>
-            <div class="quality-list">
-              <div>
-                <span>幻觉率</span>
-                <strong>{{ percent(report.metrics.hallucination_rate) }}</strong>
-              </div>
-              <div>
-                <span>难度匹配</span>
-                <strong>{{ percent(report.metrics.difficulty_match_accuracy ?? report.metrics.difficulty_match) }}</strong>
-              </div>
-              <div>
-                <span>知识覆盖</span>
-                <strong>{{ percent(report.metrics.knowledge_coverage) }}</strong>
-              </div>
-            </div>
-          </section>
-
-          <section class="panel">
-            <div class="section-head">
-              <div>
-                <h2 class="panel-title">反馈触发与路径更新</h2>
-                <p class="panel-caption">学习者反馈会触发辅导动作，并标记学习路径是否需要刷新。</p>
-              </div>
-              <el-tag :type="report.feedback_summary.total ? 'success' : 'info'" effect="plain">
-                {{ report.feedback_summary.total }} 条反馈
-              </el-tag>
-            </div>
-            <div v-if="report.feedback_summary.recent.length" class="feedback-list">
-              <div v-for="item in report.feedback_summary.recent" :key="`${item.resource_id}-${item.created_at}`">
-                <div>
-                  <strong>{{ item.resource_title }}</strong>
-                  <small>{{ formatDateTime(item.created_at) }}</small>
-                </div>
-                <el-tag effect="plain">{{ feedbackLabel(item.feedback_type) }}</el-tag>
-                <el-tag type="warning" effect="plain">{{ actionLabel(item.triggered_action) }}</el-tag>
-              </div>
-            </div>
-            <div v-else class="empty-hint small">
-              <strong>还没有提交学习反馈</strong>
-              <p>到学习资源页对某个资源提交“太难、太简单、看不懂或有错误”，这里会显示触发结果。</p>
-              <el-button @click="router.push('/resources')">去提交反馈</el-button>
-            </div>
-          </section>
-        </main>
-
-        <aside class="report-side">
-          <section class="panel profile-brief">
-            <h2 class="panel-title">画像摘要</h2>
-            <div class="profile-row">
-              <span>画像</span>
-              <strong>{{ report.profile_id || '待生成' }}</strong>
-            </div>
-            <div class="profile-row">
-              <span>类型</span>
-              <strong>{{ profileLabel(report.profile_type || 'not_started') }}</strong>
-            </div>
-            <div class="profile-row">
-              <span>诊断正确率</span>
-              <strong>{{ report.diagnostic_summary?.accuracy ?? 0 }}%</strong>
-            </div>
-            <div class="radar-mini">
-              <span v-for="item in radarRows" :key="item.label">
-                <b>{{ item.label }}</b>
-                <i>{{ item.value }}</i>
-              </span>
-            </div>
-          </section>
-
-          <section class="panel">
-            <h2 class="panel-title">下一步建议</h2>
-            <div class="next-actions">
-              <button
-                v-for="action in report.next_actions"
-                :key="action.type"
-                class="next-action"
-                type="button"
-                @click="router.push(action.route)"
-              >
-                <strong>{{ action.label }}</strong>
-                <span>{{ action.description }}</span>
-              </button>
-            </div>
-          </section>
-        </aside>
       </div>
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { getLearningReport, type LearningReport } from '@/api/reports'
-import { useLearnerStore } from '@/stores/learnerStore'
+import { createGenerationTask } from '@/api/generation'
+import RadarChart from '@/components/Charts/RadarChart.vue'
+import { useAuthStore } from '@/stores/authStore'
 
 const router = useRouter()
-const learnerStore = useLearnerStore()
+const route = useRoute()
+const authStore = useAuthStore()
+const taskId = computed(() => String(route.query.task_id || '').trim())
+const isAdminTaskContext = computed(() => authStore.role === 'admin' && Boolean(taskId.value))
+const learnerId = computed(() => {
+  const source = isAdminTaskContext.value
+    ? route.query.learner_id
+    : authStore.user?.learner_id
+  const normalized = String(source || '').trim()
+  return ['null', 'undefined'].includes(normalized.toLowerCase()) ? '' : normalized
+})
 const report = ref<LearningReport | null>(null)
 const loading = ref(false)
 const errorMessage = ref('')
+const creatingGeneration = ref(false)
+const radarLabels = ['理论基础', '实操能力', '问题解决', '知识广度', '学习速度']
+const abilityRows = computed(() => radarLabels.map((label, index) => ({
+  label,
+  value: Math.max(0, Math.min(100, Number(report.value?.radar?.[index] || 0))),
+})))
+const sortedWeakKnowledge = computed(() => [...(report.value?.weak_knowledge || [])].sort((a, b) => b.weakness_level - a.weakness_level))
+const contextSnapshot = computed<Record<string, unknown>>(() => report.value?.context_snapshot || {})
+const directionLabels = computed(() => (Array.isArray(contextSnapshot.value.direction_tags) ? contextSnapshot.value.direction_tags : report.value?.direction_tags || []).map((value) => ({ llm_application: '大模型应用开发', prompt_engineering: 'Prompt 工程', rag_knowledge_base: 'RAG 知识库构建', agent_orchestration: 'Agent 编排' } as Record<string, string>)[String(value)] || String(value)).join('、') || '-')
 
-function normalizeReport(raw: LearningReport): LearningReport {
-  return {
-    ...raw,
-    diagnostic_summary: raw.diagnostic_summary ?? {
-      answer_count: 0,
-      correct_count: 0,
-      accuracy: 0,
-      latest_session_id: null,
-    },
-    loop_status: raw.loop_status ?? {
-      diagnosis: (raw.diagnostic_summary?.answer_count ?? 0) > 0 ? 'completed' : 'pending',
-      profile: raw.profile_id ? 'completed' : 'pending',
-      generation: 'pending',
-      review: 'pending',
-      feedback: 'pending',
-      path_update: 'current',
-    },
-    resource_summary: raw.resource_summary ?? {
-      total: 0,
-      by_type: { lecture: 0, practice_guide: 0, graded_quiz: 0 },
-      recent: [],
-    },
-    review_summary: raw.review_summary ?? {
-      total_reports: 0,
-      passed: 0,
-      manual_review_required: 0,
-      review_status_counts: {},
-      source_coverage: 0,
-    },
-    feedback_summary: raw.feedback_summary ?? {
-      total: 0,
-      latest_action: null,
-      learning_path_needs_refresh: false,
-      recent: [],
-    },
-    next_actions: raw.next_actions ?? [
-      {
-        type: 'generation',
-        label: '生成个性化资源',
-        description: '基于当前画像生成讲义、实训指导和分级测验。',
-        route: '/learners',
-      },
-    ],
+function profileTypeLabel(type?: string) {
+  return ({ beginner: '基础起步型', intermediate: '进阶提升型', advanced: '综合应用型', practice_oriented: '实操导向型' } as Record<string, string>)[type || ''] || type || '画像待确认'
+}
+
+function weaknessLabel(level: number) {
+  if (level >= 4) return '优先补强'
+  if (level === 3) return '重点巩固'
+  return '持续练习'
+}
+
+async function loadReport() {
+  if (!learnerId.value) {
+    report.value = null
+    errorMessage.value = '当前账号未关联有效学习者，请重新登录或联系管理员。'
+    return
   }
-}
-
-const loopSteps = computed(() => {
-  const status = report.value?.loop_status
-  return [
-    {
-      key: 'diagnosis',
-      label: '诊断',
-      description: status?.diagnosis === 'completed' ? '已有答题记录' : '等待测评',
-      complete: status?.diagnosis === 'completed',
-    },
-    {
-      key: 'profile',
-      label: '画像',
-      description: status?.profile === 'completed' ? '画像已生成' : '等待画像',
-      complete: status?.profile === 'completed',
-    },
-    {
-      key: 'generation',
-      label: '生成',
-      description: status?.generation === 'completed' ? '资源已入库' : '等待生成',
-      complete: status?.generation === 'completed',
-    },
-    {
-      key: 'review',
-      label: '审核',
-      description: status?.review === 'completed' ? '已有审核结果' : '等待审核',
-      complete: status?.review === 'completed',
-    },
-    {
-      key: 'feedback',
-      label: '反馈',
-      description: status?.feedback === 'completed' ? '已触发辅导动作' : '等待反馈',
-      complete: status?.feedback === 'completed',
-    },
-    {
-      key: 'path_update',
-      label: '更新',
-      description: status?.path_update === 'needs_refresh' ? '路径需要刷新' : '路径当前有效',
-      complete: status?.path_update === 'current',
-      needsRefresh: status?.path_update === 'needs_refresh',
-    },
-  ]
-})
-
-const reviewRows = computed(() => {
-  const counts = report.value?.review_summary.review_status_counts ?? {}
-  const statuses = Object.keys(counts)
-  const rows = statuses.length
-    ? statuses.map((status) => ({ status, label: reviewLabel(status), count: counts[status] }))
-    : [{ status: 'pending', label: '暂无审核', count: 0 }]
-  return rows
-})
-
-const radarRows = computed(() => {
-  const values = report.value?.radar ?? [0, 0, 0, 0, 0]
-  return [
-    { label: '理论', value: values[0] ?? 0 },
-    { label: '实操', value: values[1] ?? 0 },
-    { label: '问题解决', value: values[2] ?? 0 },
-    { label: '广度', value: values[3] ?? 0 },
-    { label: '速度', value: values[4] ?? 0 },
-  ]
-})
-
-function resourceCount(type: string) {
-  return report.value?.resource_summary.by_type[type] ?? 0
-}
-
-function percent(value: number) {
-  if (value <= 1) return `${Math.round(value * 100)}%`
-  return `${Math.round(value)}%`
-}
-
-function profileLabel(profileType: string) {
-  return (
-    {
-      beginner: '基础补齐型',
-      intermediate: '能力提升型',
-      advanced: '挑战拓展型',
-      practice_oriented: '实操优势型',
-      not_started: '待诊断',
-    }[profileType] ?? profileType
-  )
-}
-
-function reviewLabel(status: string) {
-  return (
-    {
-      passed: '审核通过',
-      failed: '审核未通过',
-      revision_required: '需要修订',
-      pending: '等待审核',
-    }[status] ?? status
-  )
-}
-
-function feedbackLabel(type: string) {
-  return (
-    {
-      too_easy: '太简单',
-      too_hard: '太难',
-      incorrect: '有错误',
-      confusing: '看不懂',
-    }[type] ?? type
-  )
-}
-
-function actionLabel(action: string) {
-  return (
-    {
-      challenge_task: '挑战任务',
-      remedial_explanation: '补救解释',
-      revision_required: '资源修订',
-      profile_update: '画像更新',
-    }[action] ?? action
-  )
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return '时间未记录'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    report.value = normalizeReport(await getLearningReport(learnerStore.selectedLearnerId))
-  } catch (error) {
-    report.value = null
-    errorMessage.value = '学习报告加载失败，请确认后端服务可用，或先创建对应学习者。'
-    ElMessage.error(errorMessage.value)
-  } finally {
-    loading.value = false
-  }
+    const data = await getLearningReport(learnerId.value, taskId.value || undefined)
+    report.value = data.profile_ready ? data : null
+  } catch { report.value = null; errorMessage.value = '无法读取学习报告，请确认后端服务可用。' }
+  finally { loading.value = false }
 }
 
-watch(
-  () => learnerStore.selectedLearnerId,
-  () => load(),
-)
-
-onMounted(load)
+async function handleNextAction(action: LearningReport['next_actions'][number]) {
+  if (action.type !== 'generation') { router.push(action.route); return }
+  if (!report.value?.profile_id || !learnerId.value) return
+  creatingGeneration.value = true
+  try {
+    const task = await createGenerationTask(report.value.profile_id, learnerId.value)
+    router.push({ path: '/resources', query: { learner_id: learnerId.value, task_id: task.task_id } })
+  } catch {
+    errorMessage.value = '创建学习包失败，请确认画像状态和生成环境后重试。'
+  } finally { creatingGeneration.value = false }
+}
+watch(() => [route.query.learner_id, route.query.task_id], () => {
+  loadReport()
+})
+onMounted(() => {
+  loadReport()
+  window.addEventListener('focus', loadReport)
+})
+onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
 </script>
 
 <style scoped>
-.report-page {
-  gap: 18px;
-}
-
-.section-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 14px;
-}
-
-.panel-caption {
-  margin: -6px 0 0;
-  color: var(--app-muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.loop-panel {
-  display: grid;
-  gap: 12px;
-}
-
-.loop-steps {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.loop-step {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  min-width: 0;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background: var(--app-panel-soft);
-  padding: 12px;
-}
-
-.loop-step.is-complete {
-  border-color: rgb(22 163 74 / 0.28);
-  background: rgb(22 163 74 / 0.07);
-}
-
-.loop-step.needs-refresh {
-  border-color: rgb(217 119 6 / 0.28);
-  background: rgb(217 119 6 / 0.08);
-}
-
-.loop-step strong,
-.loop-step small {
-  display: block;
-}
-
-.loop-step small {
-  margin-top: 4px;
-  color: var(--app-muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.report-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  gap: 16px;
-  align-items: start;
-}
-
-.report-main,
-.report-side {
-  display: grid;
-  gap: 16px;
-}
-
-.type-tags {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.empty-hint.small {
-  padding: 16px;
-}
-
-.empty-hint p {
-  margin: 8px 0 14px;
-  color: var(--app-muted);
-  line-height: 1.7;
-}
-
-.review-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.review-item,
-.profile-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background: var(--app-panel-soft);
-  padding: 12px;
-}
-
-.review-item span,
-.profile-row span {
-  color: var(--app-muted);
-}
-
-.quality-list {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.quality-list div {
-  display: grid;
-  gap: 7px;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  padding: 12px;
-}
-
-.quality-list span {
-  color: var(--app-muted);
-  font-size: 13px;
-}
-
-.quality-list strong {
-  font-size: 22px;
-}
-
-.feedback-list {
-  display: grid;
-  gap: 10px;
-}
-
-.feedback-list > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  padding: 12px;
-}
-
-.feedback-list strong,
-.feedback-list small {
-  display: block;
-}
-
-.feedback-list small {
-  margin-top: 4px;
-  color: var(--app-muted);
-}
-
-.profile-brief {
-  display: grid;
-  gap: 10px;
-}
-
-.profile-row strong {
-  min-width: 0;
-  overflow: hidden;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.radar-mini {
-  display: grid;
-  gap: 8px;
-  margin-top: 2px;
-}
-
-.radar-mini span {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 36px;
-  align-items: center;
-  gap: 8px;
-  color: var(--app-muted);
-  font-size: 13px;
-}
-
-.radar-mini span::before {
-  content: "";
-  order: 2;
-  height: 7px;
+.section-note { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.profile-badge, .weak-count {
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--app-accent), var(--app-info));
-  opacity: 0.72;
+  background: var(--blue2);
+  color: var(--blue);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 750;
 }
-
-.radar-mini b {
-  font-weight: 600;
-}
-
-.radar-mini i {
-  order: 3;
-  color: var(--app-text);
-  font-style: normal;
-  font-weight: 700;
-  text-align: right;
-}
-
-.next-actions {
-  display: grid;
-  gap: 10px;
-}
-
-.next-action {
-  display: grid;
-  gap: 5px;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background: var(--app-panel-soft);
-  padding: 12px;
-  color: var(--app-text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.next-action:hover {
-  border-color: #93b4ef;
-  background: var(--app-accent-soft);
-}
-
-.next-action span {
-  color: var(--app-muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-@media (max-width: 1180px) {
-  .loop-steps {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .report-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 760px) {
-  .section-head,
-  .feedback-list > div {
-    display: grid;
-  }
-
-  .loop-steps,
-  .quality-list {
-    grid-template-columns: 1fr;
-  }
-
-  .type-tags {
-    justify-content: flex-start;
-  }
+.profile-layout { display: grid; grid-template-columns: minmax(320px, .9fr) minmax(300px, 1.1fr); gap: 28px; align-items: center; }
+.radar-wrap { min-width: 0; }
+.ability-list { display: grid; gap: 17px; }
+.ability-row > div:first-child { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.ability-row span { color: var(--muted); }
+.ability-row strong { font-size: 14px; }
+.ability-track { height: 7px; margin-top: 7px; border-radius: 999px; background: #e8edf3; overflow: hidden; }
+.ability-track i { display: block; height: 100%; border-radius: inherit; background: var(--blue); }
+.diagnostic-strip { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 8px; border-top: 1px solid var(--line); padding-top: 18px; }
+.diagnostic-strip div { padding: 0 18px; border-right: 1px solid var(--line); }
+.diagnostic-strip div:first-child { padding-left: 0; }
+.diagnostic-strip div:last-child { border-right: 0; }
+.diagnostic-strip span { color: var(--muted); font-size: 11px; }
+.diagnostic-strip strong { display: block; margin-top: 5px; font-size: 20px; }
+.weak-count { background: var(--amber2); color: var(--amber); }
+.weak-list { border-top: 1px solid var(--line); }
+.weak-row { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 16px 2px; border-bottom: 1px solid #edf0f4; }
+.weak-row:last-child { border-bottom: 0; padding-bottom: 2px; }
+.weak-rank { color: #8a97a9; font: 700 12px Consolas, monospace; }
+.weak-title { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.weak-title h3 { min-width: 0; overflow-wrap: anywhere; }
+.category-tag { flex: 0 0 auto; border-radius: 6px; background: var(--soft); color: var(--muted); padding: 3px 7px; font-size: 10px; }
+.severity-track { display: grid; grid-template-columns: repeat(5, minmax(20px, 58px)); gap: 5px; margin-top: 9px; }
+.severity-track i { height: 5px; border-radius: 999px; background: #e5eaf0; }
+.severity-track i.active { background: var(--amber); }
+.severity-track i.active.high { background: var(--red); }
+.severity-copy { min-width: 72px; color: var(--amber); text-align: right; }
+.severity-copy.high { color: var(--red); }
+.severity-copy strong, .severity-copy span { display: block; }
+.severity-copy strong { font-size: 16px; }
+.severity-copy span { margin-top: 3px; font-size: 10px; }
+.weak-empty { display: flex; align-items: center; gap: 12px; border-radius: 10px; background: var(--green2); padding: 16px; color: var(--green); }
+.weak-empty > span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: #fff; font-weight: 800; }
+.weak-empty p { margin-top: 4px; color: #3f735f; font-size: 11px; }
+.evidence-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; border-radius: 8px; background: var(--line); }.evidence-grid div { min-width: 0; background: var(--soft); padding: 13px 15px; }.evidence-grid span { display: block; color: var(--muted); font-size: 11px; }.evidence-grid strong { display: block; margin-top: 5px; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; }
+@media (max-width: 900px) { .profile-layout { grid-template-columns: 1fr; gap: 4px; } }
+@media (max-width: 600px) {
+  .diagnostic-strip { grid-template-columns: 1fr; }
+  .diagnostic-strip div, .diagnostic-strip div:first-child { padding: 10px 0; border-right: 0; border-bottom: 1px solid var(--line); }
+  .diagnostic-strip div:last-child { border-bottom: 0; }
+  .weak-row { grid-template-columns: 28px minmax(0, 1fr); }
+  .evidence-grid { grid-template-columns: 1fr; }
+  .severity-copy { grid-column: 2; display: flex; gap: 6px; align-items: baseline; text-align: left; }
 }
 </style>

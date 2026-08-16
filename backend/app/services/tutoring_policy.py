@@ -1,4 +1,4 @@
-"""Deterministic teaching policy for the standalone V2 tutoring Agent.
+"""Deterministic teaching policy for the standalone V3 tutoring Agent.
 
 The policy deliberately owns business decisions.  A language model may describe a
 learner's feedback, but it may not decide whether a learner profile changes or
@@ -30,7 +30,7 @@ DIFFICULTY_INTENTS = {FeedbackIntent.TOO_HARD, FeedbackIntent.CONFUSING}
 
 
 class TutoringSemanticResult(BaseModel):
-    """Internal, model-produced description of feedback; it is not a V2 contract."""
+    """Internal, model-produced description of feedback; it is not a V3 contract."""
 
     intent: FeedbackIntent | None = None
     difficulty_focus: str | None = Field(default=None, max_length=300)

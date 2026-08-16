@@ -1,4 +1,4 @@
-"""Pure deterministic implementation for V2 profile-analysis decisions."""
+"""Pure deterministic implementation for V3 profile-analysis decisions."""
 
 from __future__ import annotations
 
@@ -68,6 +68,7 @@ def analyze_profile(
         confirmed_high_mastery=any(
             mastery >= config.mastery_thresholds[2] for mastery in masteries.values()
         ),
+        current_path_node=node_input.current_path_node,
     )
     affected_scope = _affected_scope(changed_knowledge_ids, catalog)
     reason = _decision_reason(action, profile_update_required, bool(assessments))
@@ -88,6 +89,14 @@ def analyze_profile(
         affected_scope=affected_scope,
         retrieval_plan=retrieval_plan,
         needs_generation=needs_generation,
+        current_path_node=node_input.current_path_node,
+        resource_knowledge_targets={
+            resource_type: list(dict.fromkeys([
+                *retrieval_plan.priority_knowledge_ids,
+                *retrieval_plan.prerequisite_knowledge_ids,
+            ]))[:10]
+            for resource_type in retrieval_plan.resource_types
+        },
     )
 
 
@@ -113,7 +122,6 @@ def _effective_assessments(
         EvidenceType.DIAGNOSTIC_RESULT,
         EvidenceType.SCORED_QUIZ,
         EvidenceType.VALIDATED_BEHAVIOR,
-        EvidenceType.MANUAL_REVIEW,
     }
     effective: list[KnowledgeAssessment] = []
     for assessment in node_input.knowledge_assessments:
@@ -342,6 +350,7 @@ def _build_retrieval_plan(
     config: ProfileAnalysisConfig,
     evidence_by_id: dict[str, EvidenceRef],
     confirmed_high_mastery: bool,
+    current_path_node=None,
 ) -> RetrievalPlan:
     weak = _prioritized_weak_knowledge(profile.weak_knowledge, context_goal, evidence_by_id)
     # An explicit, valid knowledge ID in a learner's goal is a scoped learning
@@ -363,8 +372,9 @@ def _build_retrieval_plan(
     else:
         strategy = GenerationStrategy.CONSOLIDATION
 
+    path_ids = [current_path_node.knowledge_id] if current_path_node is not None else []
     priority_ids = (
-        list(dict.fromkeys([*requested_ids, *(item.knowledge_id for item in weak)]))[:20]
+        list(dict.fromkeys([*path_ids, *requested_ids, *(item.knowledge_id for item in weak)]))[:20]
         if needs_generation
         else []
     )
@@ -389,7 +399,11 @@ def _build_retrieval_plan(
         GenerationStrategy.CONSOLIDATION: 0,
         GenerationStrategy.CHALLENGE: 1,
     }[strategy]
-    difficulty = max(1, min(5, base + adjustment))
+    difficulty = (
+        current_path_node.target_difficulty
+        if current_path_node is not None
+        else max(1, min(5, base + adjustment))
+    )
     terms = [context_goal]
     for knowledge_id in priority_ids:
         metadata = catalog[knowledge_id]
@@ -404,12 +418,16 @@ def _build_retrieval_plan(
     )
     query_terms = list(dict.fromkeys(term for term in terms if term))[:30] or ["ai_app_dev"]
     unique_resource_types = list(dict.fromkeys(resource_types))
+    planned_target_count = min(10, len([*priority_ids, *prerequisite_ids]))
     if action in {RecommendedAction.REVIEW, RecommendedAction.REGENERATE}:
         n_results = config.maximum_n_results
     elif strategy is GenerationStrategy.REMEDIAL and len(priority_ids) > 1:
         n_results = config.multi_priority_remedial_n_results
     else:
         n_results = config.default_n_results
+    # GenerationRequirements owns at most ten task targets. Retrieval must be
+    # able to return evidence for that complete set before generation starts.
+    n_results = min(config.maximum_n_results, max(n_results, planned_target_count))
     return RetrievalPlan(
         strategy=strategy,
         target_difficulty=difficulty,

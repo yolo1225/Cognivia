@@ -31,9 +31,21 @@ function Wait-Backend {
                 return
             }
         } catch {
-            Start-Sleep -Seconds 2
+            # The service-state check below distinguishes startup delay from a crashed process.
         }
+
+        $exitedServices = @(& docker compose ps --all --status exited --services backend 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $exitedServices -contains "backend") {
+            Write-Host "Backend container exited before becoming healthy. Recent logs:"
+            & docker compose logs --tail 100 backend
+            throw "Backend container exited before becoming healthy."
+        }
+
+        Start-Sleep -Seconds 2
     }
+
+    Write-Host "Backend health check timed out. Recent logs:"
+    & docker compose logs --tail 100 backend
     throw "Backend did not become healthy within 120 seconds."
 }
 
@@ -105,7 +117,7 @@ function Sync-FrontendDependencies {
 
     $expectedHash = (Get-FileHash $lockFile -Algorithm SHA256).Hash.ToLowerInvariant()
     $currentHashOutput = & docker compose run --rm --no-deps frontend `
-        sh -c 'cat node_modules/.domainmind-package-lock.sha256 2>/dev/null || true'
+        sh -c 'cat node_modules/.cognivia-package-lock.sha256 2>/dev/null || true'
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to inspect the frontend dependency volume."
     }
@@ -123,32 +135,70 @@ function Sync-FrontendDependencies {
 
     Write-Host "Synchronizing frontend dependencies..."
     Invoke-Compose -Arguments @("stop", "frontend")
-    $installCommand = "npm ci && printf '%s' '$expectedHash' > node_modules/.domainmind-package-lock.sha256"
+    $installCommand = "npm ci && printf '%s' '$expectedHash' > node_modules/.cognivia-package-lock.sha256"
     Invoke-Compose -Arguments @("run", "--rm", "--no-deps", "frontend", "sh", "-c", $installCommand)
+}
+
+function Sync-CandidateIndex {
+    param([switch]$Reset)
+
+    $indexArguments = @(
+        "exec", "--no-TTY", "backend", "python", "-m",
+        "app.scripts.build_chroma_candidate_index", "--live", "--json"
+    )
+    if ($Reset) {
+        Invoke-Compose -Arguments ($indexArguments + "--reset")
+        return
+    }
+
+    # The normal path does not request embeddings when the manifest and source
+    # snapshot are unchanged. A new volume, or a manifest whose Chroma collection
+    # was lost, needs one full build to restore the atomic manifest/collection pair.
+    $output = & docker compose @indexArguments 2>&1
+    $exitCode = $LASTEXITCODE
+    $output | Write-Output
+    if ($exitCode -eq 0) {
+        return
+    }
+    $failureDetail = ($output -join "`n").Trim()
+    if ($failureDetail -notmatch "candidate manifest is missing|manifest active_collection does not exist") {
+        throw "Candidate index sync failed: $failureDetail"
+    }
+
+    Write-Host "Candidate index is unavailable; rebuilding the live index..."
+    Invoke-Compose -Arguments ($indexArguments + "--reset")
 }
 
 function Test-DemoEnvironment {
     Wait-Backend
     $dependencies = Invoke-RestMethod -Uri "http://localhost:8000/api/v1/health/dependencies" -TimeoutSec 10
-    $knowledge = Invoke-RestMethod -Uri "http://localhost:8000/api/v1/knowledge/items?domain_code=ai_app_dev&limit=60" -TimeoutSec 10
-    if ($knowledge.data.total -lt 50) {
-        throw "Knowledge seed validation failed: expected at least 50 items."
-    }
+    Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.validate_rag_seed")
     $questionFile = Get-Content "data/seed/diagnostic_questions.json" -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($questionFile.Length -lt 60) {
         throw "Diagnostic seed validation failed: expected at least 60 questions."
     }
+    $rag = $dependencies.data.rag
+    $ragReasonProperty = $rag.PSObject.Properties["reason"]
+    $ragReason = if ($null -eq $ragReasonProperty) { $null } else { $ragReasonProperty.Value }
     [pscustomobject]@{
         backend = "ok"
         database = $dependencies.data.database.status
         chroma = $dependencies.data.chroma.status
         live_models_ready = $dependencies.data.ready_for_live_demo
         fixture_enabled = $dependencies.data.fixture_enabled
-        knowledge_items = $knowledge.data.total
+        rag_ready = $rag.ready
+        rag_reason = $ragReason
+        knowledge_items = "validated"
         diagnostic_questions = $questionFile.Length
     } | Format-List
     if (-not $dependencies.data.ready_for_live_demo) {
         Write-Warning "Infrastructure is ready, but real-model acceptance is blocked until .env is configured."
+    }
+    if (-not $rag.ready) {
+        if ([string]::IsNullOrWhiteSpace($ragReason)) {
+            $ragReason = "unknown readiness failure"
+        }
+        Write-Warning "Candidate RAG is not ready: $ragReason. Configure the embedding provider and rebuild the candidate index before generating resources."
     }
 }
 
@@ -219,14 +269,21 @@ switch ($Action) {
         Backup-DemoEnvironment
     }
     "start" {
+        # Source is bind-mounted for development, so recreating containers
+        # picks up code changes. Images rebuild only when dependencies change.
         Ensure-ServiceImage -Service "backend" -BuildInputs @("backend/Dockerfile", "backend/pyproject.toml")
         Ensure-ServiceImage -Service "frontend" -BuildInputs @("frontend/Dockerfile", "frontend/package.json", "frontend/package-lock.json")
         Sync-FrontendDependencies
+        # Runtime dependencies retain durable state. Compose still recreates a
+        # dependency when its service configuration changes, but an ordinary
+        # source refresh should not churn the database or Chroma containers.
+        Invoke-Compose -Arguments @("up", "--detach", "--no-build", "mysql", "chromadb", "redis")
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "backend")
         Wait-Backend
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "alembic", "upgrade", "head")
+        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.init_admin")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.seed_data", "--json")
-        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_index", "--reset", "--json")
+        Sync-CandidateIndex
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "frontend")
         Wait-Frontend
         Test-DemoEnvironment
@@ -246,8 +303,9 @@ switch ($Action) {
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "backend")
         Wait-Backend
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "alembic", "upgrade", "head")
+        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.init_admin")
         Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.seed_data", "--json")
-        Invoke-Compose -Arguments @("exec", "--no-TTY", "backend", "python", "-m", "app.scripts.build_chroma_index", "--reset", "--json")
+        Sync-CandidateIndex -Reset
         Invoke-Compose -Arguments @("up", "--detach", "--no-build", "--force-recreate", "frontend")
         Wait-Frontend
         Test-DemoEnvironment

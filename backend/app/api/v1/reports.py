@@ -1,13 +1,14 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.security import Principal, assert_learner_access, get_current_user, require_task
 from app.models import Feedback, GenerationTask, Learner, LearningPath, LearningResource, ReviewReport
 from app.schemas.common import ApiResponse, ok
-from app.services.profile_service import latest_profile_for_learner, serialize_profile_detail
+from app.services.profile_service import is_initial_profile_ready, latest_profile_for_learner, profile_source, serialize_profile_detail
 from app.services.report_service import build_metric_summary, refresh_learning_path
 
 router = APIRouter()
@@ -87,7 +88,7 @@ def _next_actions(
                 "type": "diagnosis",
                 "label": "完成诊断测评",
                 "description": "先生成学习者画像，再进入资源生成与反馈闭环。",
-                "route": "/diagnostics",
+                "route": "/diagnostic",
             }
         ]
     if not resources:
@@ -96,7 +97,7 @@ def _next_actions(
                 "type": "generation",
                 "label": "生成个性化资源",
                 "description": "基于当前画像生成讲义、实训指导和分级测验。",
-                "route": "/learners",
+                "route": "/dashboard?intent=generate",
             }
         ]
     if feedback_count == 0:
@@ -114,7 +115,7 @@ def _next_actions(
                 "type": "path_refresh",
                 "label": "刷新学习路径",
                 "description": "反馈已触发辅导动作，下一次打开画像或报告时应更新路径。",
-                "route": "/reports",
+                "route": "/report",
             }
         ]
     return [
@@ -128,8 +129,20 @@ def _next_actions(
 
 
 @router.get("/learners/{learner_id}", response_model=ApiResponse)
-def get_learning_report(learner_id: str, db: Session = Depends(get_db)) -> ApiResponse:
-    learner = db.scalar(select(Learner).where(Learner.public_id == learner_id))
+def get_learning_report(
+    learner_id: str,
+    task_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    if task_id:
+        task = require_task(db, principal, task_id)
+        learner = db.get(Learner, task.learner_id)
+    else:
+        if principal.role == "admin" and principal.learner_id != learner_id:
+            raise HTTPException(403, "管理员直访只能查看自己的学习报告")
+        assert_learner_access(principal, learner_id)
+        learner = db.scalar(select(Learner).where(Learner.public_id == learner_id))
     if learner is None:
         raise HTTPException(status_code=404, detail=f"Learner not found: {learner_id}")
 
@@ -153,7 +166,11 @@ def get_learning_report(learner_id: str, db: Session = Depends(get_db)) -> ApiRe
         db.execute(
             select(LearningResource, GenerationTask)
             .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
-            .where(GenerationTask.learner_id == learner.id)
+            .where(
+                GenerationTask.learner_id == learner.id,
+                LearningResource.is_current.is_(True),
+                LearningResource.review_status == "passed",
+            )
             .order_by(LearningResource.id.desc())
         )
     )
@@ -193,9 +210,8 @@ def get_learning_report(learner_id: str, db: Session = Depends(get_db)) -> ApiRe
     ]
     diagnostic_summary = detail.get("diagnostic_summary", {})
     has_diagnosis = int(diagnostic_summary.get("answer_count") or 0) > 0
-    has_profile = detail.get("profile_status") == "ready"
+    has_profile = is_initial_profile_ready(profile)
     passed_reviews = sum(1 for report in review_reports if report.passed)
-    manual_review_required = sum(1 for report in review_reports if report.manual_review_required)
     reviewed_resource_count = len(review_reports)
     feedback_count = len(feedback_rows)
 
@@ -204,6 +220,13 @@ def get_learning_report(learner_id: str, db: Session = Depends(get_db)) -> ApiRe
             "learner_id": learner.public_id,
             "profile_id": detail.get("profile_id"),
             "profile_type": detail.get("profile_type"),
+            "profile_source": profile_source(profile) if profile else None,
+            "profile_ready": has_profile,
+            "diagnosis_completed": is_initial_profile_ready(profile),
+            "education_level": detail.get("education_level", ""),
+            "major": detail.get("major", ""),
+            "direction_tags": detail.get("direction_tags", []),
+            "context_snapshot": detail.get("context_snapshot", {}),
             "radar": detail.get("radar", [0, 0, 0, 0, 0]),
             "path": [stage.get("name", "") for stage in stages],
             "path_detail": stages,
@@ -236,7 +259,6 @@ def get_learning_report(learner_id: str, db: Session = Depends(get_db)) -> ApiRe
             "review_summary": {
                 "total_reports": reviewed_resource_count,
                 "passed": passed_reviews,
-                "manual_review_required": manual_review_required,
                 "review_status_counts": _review_status_counts(resources),
                 "source_coverage": _source_coverage(resources),
             },

@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from app.models import Base, KnowledgeItem
+from app.models import Base, DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.rag.candidate_index import (
     CandidateIndexBuilder,
     CandidateIndexError,
@@ -20,7 +20,7 @@ from app.scripts.validate_rag_seed import source_data_version
 
 
 EXPECTED_SOURCE_VERSION = (
-    "sha256:837441b02400435bf83fc802d79b69a473b591fdd9062529e16154c22560c608"
+    "sha256:7d7449e87a00a5bc027718e10a1e3f8699f5efc3644184bf63355e1258ed886b"
 )
 
 
@@ -137,6 +137,26 @@ def test_database_snapshot_reproduces_frozen_seed_version() -> None:
         assert source_data_version(database_source_snapshot(db, items)) == EXPECTED_SOURCE_VERSION
 
 
+def test_reseeding_unchanged_items_does_not_require_reembedding() -> None:
+    sessions = _session_factory()
+    with sessions() as db:
+        seeded = seed_knowledge_items(db)
+        db.commit()
+        for item in seeded.values():
+            item.needs_reembedding = False
+        db.commit()
+
+        seed_knowledge_items(db)
+        db.commit()
+
+        pending = list(
+            db.scalars(
+                select(KnowledgeItem).where(KnowledgeItem.needs_reembedding.is_(True))
+            )
+        )
+        assert pending == []
+
+
 def test_full_then_incremental_build_reuses_vectors_and_removes_orphans(
     tmp_path: Path,
 ) -> None:
@@ -199,7 +219,7 @@ def test_full_then_incremental_build_reuses_vectors_and_removes_orphans(
             second_manifest.previous_collection,
             "knowledge_other_domain_candidate_legacy",
         }
-        assert item_a.needs_reembedding is True
+        assert item_a.needs_reembedding is False
         assert "knowledge_ai_app_dev" in client.collections
         assert "knowledge_other_domain_candidate_legacy" in client.collections
 
@@ -236,6 +256,110 @@ def test_unchanged_incremental_build_does_not_call_provider(tmp_path: Path) -> N
 
         assert result["status"] == "unchanged"
         assert second_provider.calls == []
+
+
+def test_reset_rebuilds_when_manifest_points_to_missing_collection(tmp_path: Path) -> None:
+    sessions = _session_factory()
+    client = FakeChromaClient()
+    store = CandidateManifestStore(root=tmp_path)
+    with sessions() as db:
+        db.add(_item("item-a", "恢复索引的知识内容。" * 30))
+        db.commit()
+        first = CandidateIndexBuilder(
+            db=db,
+            chroma_client=client,
+            embedding_provider=FakeProvider(),
+            manifest_store=store,
+        ).build(reset=True)
+        client.delete_collection(name=first["active_collection"])
+
+        result = CandidateIndexBuilder(
+            db=db,
+            chroma_client=client,
+            embedding_provider=FakeProvider(),
+            manifest_store=store,
+        ).build(reset=True)
+
+        manifest = store.load(
+            "ai_app_dev", collection_exists=lambda name: name in client.collections
+        )
+        assert result["status"] == "built"
+        assert manifest is not None
+        assert manifest.active_collection == result["active_collection"]
+        assert manifest.previous_collection is None
+
+
+def test_index_integrity_rejects_duplicate_content_blocks(tmp_path: Path) -> None:
+    sessions = _session_factory()
+    with sessions() as db:
+        db.add_all([
+            _item("item-a", "完全相同的知识内容块。"),
+            _item("item-b", "完全相同的知识内容块。"),
+        ])
+        db.commit()
+
+        with pytest.raises(CandidateIndexError, match="duplicate candidate chunk content"):
+            CandidateIndexBuilder(
+                db=db,
+                chroma_client=FakeChromaClient(),
+                embedding_provider=FakeProvider(),
+                manifest_store=CandidateManifestStore(root=tmp_path),
+            ).build(reset=True)
+
+
+def test_index_integrity_rejects_question_without_explanation(tmp_path: Path) -> None:
+    sessions = _session_factory()
+    with sessions() as db:
+        item = _item("item-a", "用于题目校验的知识内容。")
+        db.add(item)
+        db.flush()
+        db.add(
+            DiagnosticQuestion(
+                public_id="question-a",
+                domain_code="ai_app_dev",
+                knowledge_item_id=item.id,
+                question_type="single_choice",
+                stem="哪一项正确？",
+                options_json=["正确", "错误"],
+                answer_key_json={"correct_option": 0},
+                difficulty=1,
+            )
+        )
+        db.commit()
+
+        with pytest.raises(CandidateIndexError, match="has no explanation"):
+            CandidateIndexBuilder(
+                db=db,
+                chroma_client=FakeChromaClient(),
+                embedding_provider=FakeProvider(),
+                manifest_store=CandidateManifestStore(root=tmp_path),
+            ).build(reset=True)
+
+
+def test_index_integrity_rejects_cross_domain_relation(tmp_path: Path) -> None:
+    sessions = _session_factory()
+    with sessions() as db:
+        local = _item("item-a", "本领域知识内容。")
+        external = _item("item-b", "其他领域知识内容。")
+        external.domain_code = "other_domain"
+        db.add_all([local, external])
+        db.flush()
+        db.add(
+            KnowledgeRelation(
+                source_item_id=external.id,
+                target_item_id=local.id,
+                relation_type="prerequisite",
+            )
+        )
+        db.commit()
+
+        with pytest.raises(CandidateIndexError, match="orphan or cross-domain"):
+            CandidateIndexBuilder(
+                db=db,
+                chroma_client=FakeChromaClient(),
+                embedding_provider=FakeProvider(),
+                manifest_store=CandidateManifestStore(root=tmp_path),
+            ).build(reset=True)
 
 
 def test_incremental_build_rejects_model_change_without_touching_active(

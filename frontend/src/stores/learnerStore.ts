@@ -1,22 +1,23 @@
 import { defineStore } from 'pinia'
 
-const STORAGE_KEY = 'domainmind:selectedLearnerId'
-const DEFAULT_LEARNER_ID = 'learner_001'
-
-function readStoredLearnerId() {
-  if (typeof window === 'undefined') return DEFAULT_LEARNER_ID
-  return window.localStorage.getItem(STORAGE_KEY) || DEFAULT_LEARNER_ID
+const STORAGE_KEY = 'cognivia:selectedLearnerId'
+function validLearnerId(value: unknown): string | null {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  return normalized && !['null', 'undefined'].includes(normalized.toLowerCase()) ? normalized : null
 }
-
 export const useLearnerStore = defineStore('learner', {
-  state: () => ({
-    selectedLearnerId: readStoredLearnerId(),
-  }),
+  state: () => ({ selectedLearnerId: null as string | null }),
   actions: {
-    setSelectedLearner(learnerId: string) {
-      const nextLearnerId = learnerId.trim() || DEFAULT_LEARNER_ID
-      this.selectedLearnerId = nextLearnerId
-      window.localStorage.setItem(STORAGE_KEY, nextLearnerId)
+    bindIdentity(_role: string, learnerId: string | null) {
+      const ownLearner = validLearnerId(learnerId)
+      this.selectedLearnerId = ownLearner
+      localStorage.removeItem(STORAGE_KEY)
     },
+    setSelectedLearner(learnerId: string) {
+      this.selectedLearnerId = validLearnerId(learnerId)
+      if (this.selectedLearnerId) localStorage.setItem(STORAGE_KEY, this.selectedLearnerId)
+      else localStorage.removeItem(STORAGE_KEY)
+    },
+    clear(){ this.selectedLearnerId=null },
   },
 })

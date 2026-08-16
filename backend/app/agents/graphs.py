@@ -2,12 +2,11 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from app.agents.v2_nodes import (
-    V2_GRAPH_STATE,
-    V2Runtime,
+from app.agents.nodes import (
+    GRAPH_STATE,
+    AgentRuntime,
     build_nodes,
     route_after_finalize,
-    route_after_human_review,
     route_after_prepare,
     route_after_profile,
 )
@@ -16,19 +15,19 @@ from app.agents.v2_nodes import (
 def build_learning_graph(
     node_overrides: dict[str, Any] | None = None,
     checkpointer: Any | None = None,
-    runtime: V2Runtime | None = None,
+    runtime: AgentRuntime | None = None,
 ):
-    """Build the single V2 top-level graph for initial and feedback tasks."""
+    """Build the single V4 graph with automatic revision and atomic publication."""
 
     owned_runtime = runtime is None
-    active_runtime = runtime or V2Runtime.production()
+    active_runtime = runtime or AgentRuntime.production()
     node_map = build_nodes(active_runtime)
     node_map.update(node_overrides or {})
 
-    graph = StateGraph(V2_GRAPH_STATE)
+    graph = StateGraph(GRAPH_STATE)
     graph_node = {name: f"{name}_node" for name in node_map}
     for name, func in node_map.items():
-        # V2 State owns fields named prepare_task, analyze_profile, etc.;
+        # V3 State owns fields named prepare_task, analyze_profile, etc.;
         # LangGraph reserves those channel names, so internal node IDs differ.
         graph.add_node(graph_node[name], func)
 
@@ -39,7 +38,6 @@ def build_learning_graph(
         {
             "interpret_feedback": graph_node["interpret_feedback"],
             "analyze_profile": graph_node["analyze_profile"],
-            "human_review": graph_node["human_review"],
         },
     )
     graph.add_edge(graph_node["interpret_feedback"], graph_node["analyze_profile"])
@@ -59,16 +57,6 @@ def build_learning_graph(
         route_after_finalize,
         {
             "retrieve_knowledge": graph_node["retrieve_knowledge"],
-            "human_review": graph_node["human_review"],
-            "end": END,
-        },
-    )
-    graph.add_conditional_edges(
-        graph_node["human_review"],
-        route_after_human_review,
-        {
-            "retrieve_knowledge": graph_node["retrieve_knowledge"],
-            "finalize_task": graph_node["finalize_task"],
             "end": END,
         },
     )
@@ -76,5 +64,5 @@ def build_learning_graph(
     # A caller supplying a runtime owns its lifecycle. The default runtime is
     # retained by the compiled graph so the retrieval client stays alive.
     if owned_runtime:
-        setattr(compiled, "_v2_runtime", active_runtime)
+        setattr(compiled, "_agent_runtime", active_runtime)
     return compiled

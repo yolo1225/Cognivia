@@ -17,10 +17,31 @@ export interface ResourceSummary {
   generation_decision?: string | null
   generated_at?: string | null
   task_created_at?: string | null
+  quality_metrics?: ResourceQualityMetrics | null
+  package_quality?: ResourceQualityMetrics | null
+  package_status?: string
+  failure_reason?: string | null
 }
 
-export function listResources() {
-  return getData<ResourceSummary[]>('/resources')
+export interface ResourceQualityMetrics {
+  verifiable_claim_count: number
+  hallucinated_claim_count: number
+  hallucination_rate: number
+  difficulty_match_score: number
+  covered_core_knowledge_count: number
+  target_core_knowledge_count: number
+  core_knowledge_coverage: number
+  passed: boolean
+  revision_count: number
+}
+
+export function listResources(filters: { taskId?: string; learnerId?: string; domainCode?: string } = {}) {
+  const params = new URLSearchParams()
+  if (filters.taskId) params.set('task_id', filters.taskId)
+  if (filters.learnerId) params.set('learner_id', filters.learnerId)
+  if (filters.domainCode) params.set('domain_code', filters.domainCode)
+  const query = params.toString()
+  return getData<ResourceSummary[]>(`/resources${query ? `?${query}` : ''}`)
 }
 
 export function listResourceVersions(resourceId: string) {
@@ -54,11 +75,12 @@ export function submitFeedback(
   resourceId: string,
   feedbackType: string,
   rating = 3,
-  learnerId = 'learner_001',
+  learnerId?: string,
 ) {
-  return postData(`/resources/${resourceId}/feedback`, {
-    learner_id: learnerId,
+  const body: Record<string, unknown> = {
     feedback_type: feedbackType,
     rating,
-  })
+  }
+  if (learnerId) body.learner_id = learnerId
+  return postData(`/resources/${resourceId}/feedback`, body)
 }

@@ -6,8 +6,9 @@ from app.agents.contracts import (
     FeedbackContext,
     FinalizeTaskOutput,
     GenerateResourceOutput,
-    HumanReviewOutput,
     InterpretFeedbackOutput,
+    LearningPathNodeSnapshot,
+    LearningPathSnapshot,
     PrepareTaskOutput,
     ProfileSnapshot,
     RetrieveKnowledgeOutput,
@@ -18,11 +19,13 @@ from app.agents.contracts import (
 
 
 class AgentGraphState(TypedDict, total=False):
-    """Frozen V2 state shape for all new agent implementations."""
+    """Agent Contract V4 state shape for production workflows."""
 
-    contract_version: Literal["agent-contract-v2"]
+    contract_version: Literal["agent-contract-v5"]
     task_request: TaskRequest
     current_profile: ProfileSnapshot
+    learning_path: LearningPathSnapshot
+    current_path_node: LearningPathNodeSnapshot
     diagnostic_summary: DiagnosticSummary
     feedback_context: FeedbackContext
     revision_plan: RevisionPlan
@@ -33,6 +36,5 @@ class AgentGraphState(TypedDict, total=False):
     generate_resource: GenerateResourceOutput
     review_resource: ReviewResourceOutput
     finalize_task: FinalizeTaskOutput
-    human_review: HumanReviewOutput
     error_code: str
     error_summary: str

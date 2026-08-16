@@ -1,6 +1,6 @@
-"""Versioned, deterministic configuration for the V2 profile-analysis algorithm.
+"""Versioned, deterministic configuration for the V3 profile-analysis algorithm.
 
-This module intentionally contains configuration only.  The V2 Profile Analysis
+This module intentionally contains configuration only.  The V3 Profile Analysis
 Agent will consume it in a later phase; no V1 runtime path imports this module.
 """
 
@@ -46,6 +46,7 @@ class ProfileAnalysisConfig:
             raise ValueError("difficulty must be between 1 and 5")
         return 1 + 0.15 * (difficulty - 3)
 
+
 @dataclass(frozen=True)
 class KnowledgeProfileMetadata:
     name: str
@@ -53,7 +54,9 @@ class KnowledgeProfileMetadata:
     prerequisite_ids: tuple[str, ...]
 
 
-def _weights(theory: float, practice: float, problem_solving: float, breadth: float) -> dict[str, float]:
+def _weights(
+    theory: float, practice: float, problem_solving: float, breadth: float
+) -> dict[str, float]:
     return {
         "theory": theory,
         "practice": practice,
@@ -120,7 +123,9 @@ AI_APP_DEV_ABILITY_WEIGHTS: dict[str, dict[str, float]] = {
 }
 
 
-AI_APP_DEV_PROFILE_V1_SEED_SHA256 = "983bb0404433259345eafe17b0f24a8ea743379b4010174e46bcf3fd649ab7ab"
+AI_APP_DEV_PROFILE_V1_SEED_SHA256 = (
+    "d761650e26845c9d0a7acf93ee05d2e0804df3ae9ae2679f3d23ae1fde757da7"
+)
 MASTERY_BASELINES = {
     "known": 0.90,
     "partial_mastery": 0.70,
@@ -136,13 +141,19 @@ def _seed_path() -> Path:
 
 def _load_knowledge_catalog() -> tuple[dict[str, KnowledgeProfileMetadata], str]:
     seed_bytes = _seed_path().read_bytes()
-    seed_sha256 = hashlib.sha256(seed_bytes).hexdigest()
+    payload = json.loads(seed_bytes.decode("utf-8"))
+    canonical_seed = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    seed_sha256 = hashlib.sha256(canonical_seed).hexdigest()
     if seed_sha256 != AI_APP_DEV_PROFILE_V1_SEED_SHA256:
         raise ValueError(
             "ai_app_dev profile configuration fingerprint mismatch; "
             "create a new configuration version and re-review fixtures"
         )
-    payload = json.loads(seed_bytes.decode("utf-8"))
     catalog = {
         item["knowledge_id"]: KnowledgeProfileMetadata(
             name=item["name"],
@@ -167,7 +178,9 @@ def validate_ai_app_dev_profile_config(
     for knowledge_id, metadata in config.knowledge_catalog.items():
         if not metadata.name or not metadata.category:
             raise ValueError(f"{knowledge_id} has incomplete catalog metadata")
-        if any(prerequisite_id not in knowledge_ids for prerequisite_id in metadata.prerequisite_ids):
+        if any(
+            prerequisite_id not in knowledge_ids for prerequisite_id in metadata.prerequisite_ids
+        ):
             raise ValueError(f"{knowledge_id} has an unknown prerequisite")
     for knowledge_id, weights in config.ability_weights.items():
         if set(weights) != set(ABILITY_DIMENSIONS):
@@ -177,7 +190,11 @@ def validate_ai_app_dev_profile_config(
         if not isclose(sum(weights.values()), 1.0, abs_tol=1e-9):
             raise ValueError(f"{knowledge_id} ability weights must sum to 1")
     if set(config.mastery_baselines) != {
-        "known", "partial_mastery", "confused", "unmastered", "unassessed"
+        "known",
+        "partial_mastery",
+        "confused",
+        "unmastered",
+        "unassessed",
     }:
         raise ValueError("mastery baselines must cover every mastery type")
 

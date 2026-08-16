@@ -1,1125 +1,335 @@
 <template>
-  <section class="page resource-page">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">学习资源</h1>
-        <p class="page-subtitle">
-          按生成批次查看讲义、实训指导和分级测验。带有任务编号的入口会自动定位到本次生成结果。
-        </p>
-      </div>
-      <div class="toolbar">
-        <el-button :loading="loading" @click="load">刷新资源</el-button>
-        <el-button type="primary" @click="router.push('/diagnostics')">生成新资源</el-button>
+  <section class="page">
+    <div class="head">
+      <div><h1>个性化学习资源</h1><p class="sub">完成诊断测评后，系统将根据画像生成个性化学习资源。</p></div>
+      <div class="actions">
+        <button class="btn" @click="loadResources" :disabled="loading">刷新资源</button>
+        <button class="btn" :disabled="!canTutor" @click="openTutor">AI 导学</button>
+        <button class="btn primary" @click="openReport">查看学习画像</button>
       </div>
     </div>
 
-    <div v-if="loading" class="panel loading-panel">
-      <el-skeleton :rows="5" animated />
+    <div v-if="taskDetail && !isTaskTerminal" class="panel generation-state">
+      <strong>{{ taskDetail.decision === 'revision_required' ? '正在自动修订资源' : '正在生成个性化学习资源' }}</strong>
+      <p class="sub">三类资源将在全部达到质量门槛后统一发布。</p>
+      <div class="progress-track"><i :style="{ width: `${taskDetail.progress || 5}%` }"></i></div>
     </div>
 
-    <div v-else-if="requestedTaskId && pendingTask && !selectedBatch" class="panel generation-status-panel">
-      <div class="section-head">
-        <div>
-          <h2 class="panel-title">
-            {{ pendingTask.status === 'completed' ? '本次任务已完成' : '本次资源正在生成' }}
-          </h2>
-          <p class="page-subtitle">
-            诊断画像已传入生成任务，系统正在完成知识检索、内容生成和双模型审核。
-          </p>
-        </div>
-        <el-tag :type="pendingTask.status === 'waiting_human' ? 'warning' : 'primary'">
-          {{ generationStatusLabel(pendingTask.status) }}
-        </el-tag>
-      </div>
-      <el-progress
-        :percentage="Math.max(0, Math.min(100, pendingTask.progress ?? 0))"
-        :status="pendingTask.status === 'waiting_human' ? 'warning' : undefined"
-      />
-      <p class="muted generation-status-copy">
-        {{ generationStatusDetail(pendingTask.status) }}任务编号：{{ shortTaskId(requestedTaskId) }}
+    <div v-else-if="taskDetail?.status === 'failed'" class="error-state">
+      <strong>本次资源未达到发布标准</strong>
+      <p>{{ taskDetail.failure_reason || '自动修订达到上限，未达标资源不会向学习者发布。' }}</p>
+      <QualityMetrics v-if="taskDetail.package_quality" :metrics="taskDetail.package_quality" />
+      <button class="btn primary" :disabled="retrying" @click="retryTask">{{ retrying ? '重新生成中...' : '重新生成' }}</button>
+    </div>
+
+    <div v-if="loading" class="panel" style="text-align:center;padding:40px;color:var(--muted)">加载中...</div>
+
+    <div v-else-if="errorMessage" class="error-state"><strong>资源加载失败</strong><p>{{ errorMessage }}</p><button class="btn" @click="loadResources">重新加载</button></div>
+
+    <div v-else-if="taskDetail?.status !== 'failed' && resources.length === 0" class="panel" style="text-align:center;padding:60px;color:var(--muted)">
+      <div style="font-size:36px;margin-bottom:12px">📚</div>
+      <strong style="display:block;color:var(--ink);font-size:17px">暂无学习资源</strong>
+      <p class="sub" style="margin-top:8px">
+        请先在<span style="color:var(--blue)">学习报告</span>确认初始画像与学习路线，<br>再创建个性化学习包（讲义、实操指南、分阶测试）。
       </p>
-      <div class="empty-actions">
-        <el-button :loading="loading" @click="load">刷新状态</el-button>
-        <el-button @click="router.push({ path: '/agents', query: { task_id: requestedTaskId } })">
-          查看 Agent 进度
-        </el-button>
-      </div>
+      <button class="btn primary" style="margin-top:18px" @click="openReport">查看学习画像</button>
     </div>
 
-    <div v-else-if="requestedTaskId && !pendingTask && !selectedBatch" class="empty-hint">
-      <strong>没有找到这次生成的资源</strong>
-      <p>任务可能已失败或尚未返回状态，请刷新资源或前往 Agent 协同页查看进度。</p>
-      <div class="empty-actions">
-        <el-button :loading="loading" @click="load">刷新资源</el-button>
-        <el-button @click="router.push('/agents')">查看 Agent 进度</el-button>
+    <template v-else-if="taskDetail?.status !== 'failed'">
+      <div v-if="packageQuality" class="panel quality-overview">
+        <div class="panel-head"><div><h2>本次资源质量</h2><p class="sub">三类资源全部达标后统一发布</p></div><span class="status ok">已达标</span></div>
+        <QualityMetrics :metrics="packageQuality" />
       </div>
-    </div>
-
-    <div v-else-if="!resources.length" class="empty-hint">
-      <strong>还没有学习资源</strong>
-      <p>请先完成诊断测评，或在 Agent 协同页启动一次生成流程。</p>
-    </div>
-
-    <div v-else class="resource-workspace">
-      <div v-if="selectedBatch" class="current-batch-bar">
-        <div class="current-batch-copy">
-          <span class="batch-eyebrow">
-            {{ isRequestedBatch(selectedBatch.taskId) ? '本次生成' : '当前查看批次' }}
-          </span>
-          <h2>{{ selectedBatch.taskId }}</h2>
-          <p>
-            {{ formatDateTime(selectedBatch.taskCreatedAt) }} 创建，{{
-              selectedBatch.resources.length
-            }}/3 类资源已入库，决策 {{ decisionLabel(selectedBatch.decision) }}。
-          </p>
-        </div>
-        <div class="current-batch-metrics" aria-label="当前批次资源状态">
-          <div>
-            <span>任务状态</span>
-            <strong>{{ statusLabel(selectedBatch.status) }}</strong>
-          </div>
-          <div>
-            <span>审核通过</span>
-            <strong>{{ batchPassedCount(selectedBatch) }}/{{ selectedBatch.resources.length }}</strong>
-          </div>
-          <div>
-            <span>知识来源</span>
-            <strong>{{ batchSourceCount(selectedBatch) }}</strong>
-          </div>
-        </div>
-      </div>
-
-      <div class="resource-layout">
-        <aside class="panel batch-list">
-          <div class="section-head">
-            <div>
-              <h2 class="panel-title">生成批次</h2>
-              <p class="panel-caption">按任务查看每次生成的三类资源</p>
-            </div>
-            <el-tag effect="plain">{{ batches.length }} 批</el-tag>
-          </div>
-          <button
-            v-for="batch in batches"
-            :key="batch.taskId"
-            class="batch-tab"
-            :class="{ 'is-active': selectedBatch?.taskId === batch.taskId }"
-            type="button"
-            @click="selectBatch(batch.taskId)"
-          >
-            <span class="batch-marker" aria-hidden="true" />
-            <span class="batch-topline">
-              <el-tag
-                size="small"
-                :type="isRequestedBatch(batch.taskId) ? 'success' : 'info'"
-                effect="plain"
-              >
-                {{ isRequestedBatch(batch.taskId) ? '本次生成' : '历史生成' }}
-              </el-tag>
-              <small>{{ formatDateTime(batch.taskCreatedAt) }}</small>
-            </span>
-            <strong>{{ shortTaskId(batch.taskId) }}</strong>
-            <span class="batch-meta">
-              {{ batch.resources.length }} 类资源 · {{ decisionLabel(batch.decision) }}
-            </span>
-            <span class="batch-meta">
-              画像 {{ batch.profileType || '未标注' }} · 难度 {{ batch.targetDifficulty || '-' }}
-            </span>
-            <span class="batch-resource-dots" aria-label="资源类型">
-              <i
-                v-for="item in resourceTypeChecklist(batch)"
-                :key="item.type"
-                :class="{ 'is-ready': item.ready }"
-              >
-                {{ item.label }}
-              </i>
-            </span>
+      <div class="panel" style="margin-bottom:14px">
+        <div class="panel-head"><div><h2>学习资源列表</h2><p class="sub">针对诊断结果生成的个性化资源</p></div><span class="status ok">{{ resources.length }} 份</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button v-for="(r,i) in resources" :key="r.resource_id" class="resource-tab" :class="{ active: selectedIdx === i }" style="flex:1;min-width:180px" @click="selectedIdx = i">
+            <strong>{{ r.title }}</strong><small>{{ r.resource_type }} · 难度 {{ r.difficulty }}</small>
           </button>
-        </aside>
-
-        <main v-if="selectedBatch" class="resource-main">
-          <div class="resource-switcher">
-            <button
-              v-for="resource in orderedBatchResources"
-              :key="resource.resource_id"
-              class="resource-chip"
-              :class="{ 'is-active': selectedResourceId === resource.resource_id }"
-              type="button"
-              @click="selectedResourceId = resource.resource_id"
-            >
-              <span>{{ typeLabel(resource.resource_type) }}</span>
-              <strong>{{ resource.title }}</strong>
-              <small>难度 {{ resource.difficulty }} · {{ reviewLabel(resource.review_status) }}</small>
-            </button>
-          </div>
-
-          <div class="panel resource-detail">
-            <template v-if="selected">
-              <div class="resource-head">
-                <div>
-                  <h2>{{ selected.title }}</h2>
-                  <p class="muted">
-                    {{ typeLabel(selected.resource_type) }} · 难度 {{ selected.difficulty }} ·
-                    {{ formatDateTime(selected.generated_at) }}
-                  </p>
-                </div>
-                <div class="resource-actions">
-                  <el-tag :type="selected.review_status === 'passed' ? 'success' : 'warning'">
-                    {{ reviewLabel(selected.review_status) }}
-                  </el-tag>
-                  <el-button size="small" @click="showVersions">版本记录</el-button>
-                  <el-dropdown @command="downloadResource">
-                    <el-button size="small">导出</el-button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item command="markdown:learner">Markdown 学习者版</el-dropdown-item>
-                        <el-dropdown-item command="pdf:learner">PDF 学习者版</el-dropdown-item>
-                        <el-dropdown-item v-if="selected.resource_type === 'graded_quiz'" command="markdown:teacher">Markdown 教师版</el-dropdown-item>
-                        <el-dropdown-item v-if="selected.resource_type === 'graded_quiz'" command="pdf:teacher">PDF 教师版</el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
-                </div>
-              </div>
-
-              <div class="resource-facts">
-                <div>
-                  <span>资源类型</span>
-                  <strong>{{ typeLabel(selected.resource_type) }}</strong>
-                </div>
-                <div>
-                  <span>目标难度</span>
-                  <strong>{{ selected.difficulty }}</strong>
-                </div>
-                <div>
-                  <span>知识来源</span>
-                  <strong>{{ resourceSourceCount(selected) }}</strong>
-                </div>
-              </div>
-
-              <section class="source-section">
-                <div class="section-title-row">
-                  <h3>知识来源</h3>
-                  <span>{{ resourceSourceCount(selected) }} 条可追溯引用</span>
-                </div>
-                <div class="source-list">
-                  <el-tag
-                    v-for="source in selected.source_details?.length ? selected.source_details : selected.sources"
-                    :key="sourceKey(source)"
-                    effect="plain"
-                  >
-                    {{ sourceLabel(source) }}
-                  </el-tag>
-                </div>
-              </section>
-
-              <section class="content-section">
-                <h3>资源内容</h3>
-                <ResourceMarkdownViewer v-if="selected.content" :content="selected.content" />
-                <p v-else class="muted">当前资源只有摘要，完整内容将在生成任务完成后写入。</p>
-              </section>
-
-              <section class="feedback-panel">
-                <div>
-                  <h3>学习反馈</h3>
-                  <p class="muted">选择学习者最直接的感受，系统会触发对应辅导动作。</p>
-                </div>
-                <div class="feedback-row">
-                  <el-button @click="sendFeedback(selected.resource_id, 'too_easy')">
-                    太简单，给挑战任务
-                  </el-button>
-                  <el-button @click="sendFeedback(selected.resource_id, 'too_hard')">
-                    太难，补救解释
-                  </el-button>
-                  <el-button @click="sendFeedback(selected.resource_id, 'confusing')">
-                    看不懂，重新讲解
-                  </el-button>
-                  <el-button type="warning" @click="sendFeedback(selected.resource_id, 'incorrect')">
-                    有错误，触发修订
-                  </el-button>
-                </div>
-                <div class="tutoring-box">
-                  <div class="section-title-row">
-                    <h3>连续导学</h3>
-                    <el-tag v-if="tutoringSessionId" effect="plain">会话进行中</el-tag>
-                  </div>
-                  <div v-if="tutoringMessages.length" class="tutoring-messages">
-                    <p v-for="message in tutoringMessages" :key="message.id" :class="message.sender">
-                      <strong>{{ message.sender === 'learner' ? '我' : '导学 Agent' }}</strong>
-                      <span>{{ message.content }}</span>
-                    </p>
-                  </div>
-                  <el-button
-                    v-if="tutoringTaskId"
-                    type="primary"
-                    plain
-                    @click="router.push({ path: '/agents', query: { task_id: tutoringTaskId } })"
-                  >
-                    查看本次导学协同进度
-                  </el-button>
-                  <div class="tutoring-input">
-                    <el-input
-                      v-model="tutoringInput"
-                      placeholder="描述你具体不理解的地方"
-                      @keyup.enter="sendTutorMessage"
-                    />
-                    <el-button type="primary" :loading="tutoringSending" @click="sendTutorMessage">发送</el-button>
-                  </div>
-                </div>
-              </section>
-            </template>
-          </div>
-        </main>
+        </div>
       </div>
-    </div>
 
-    <div v-if="lastFeedback" class="panel feedback-result">
-      <div>
-        <h2 class="panel-title">反馈触发结果</h2>
-        <p class="page-subtitle">
-          {{ actionLabel(lastFeedback.recommended_action) }}。{{ lastFeedback.decision_reason }}
-        </p>
+      <article v-if="selected" class="panel">
+        <div class="trust">
+          <span class="status" :class="selected.review_status === 'passed' ? 'ok' : 'wait'">{{ selected.review_status === 'passed' ? '✓ 已通过审核' : '待审核' }}</span>
+          <span class="tag">难度 {{ selected.difficulty }}/5</span>
+          <span class="tag">引用 {{ selected.sources.length }} 条</span>
+          <span class="tag">资源 v{{ selected.version || 1 }}</span>
+          <button class="btn" :disabled="!canTutor" @click="openTutor">AI 导学</button>
+          <button class="btn" style="margin-left:auto" @click="exportDialog?.open()">导出资源</button>
+        </div>
+        <QualityMetrics v-if="selected.quality_metrics" :metrics="selected.quality_metrics" show-details />
+        <div class="article">
+          <h1 style="font-size:24px;margin-top:18px">{{ selected.title }}</h1>
+          <p class="sub">资源类型：{{ selected.resource_type }} · 审核状态：{{ selected.review_status }} · 生成任务：{{ selected.generation_task_id || '-' }}</p>
+          <h2>知识来源</h2>
+          <div v-for="s in selected.source_details || []" :key="s.knowledge_id" class="source">
+            <strong>{{ s.name }}</strong><span>{{ s.source_title }}</span>
+          </div>
+          <div v-if="selected.content" class="resource-content">{{ selected.content }}</div>
+        </div>
+        <div class="panel feedback-panel">
+          <h2>学习反馈</h2><p class="sub">反馈将触发补救解释、挑战任务或资源复核，不会直接覆盖学习画像。</p>
+          <div class="chips"><button v-for="item in feedbackOptions" :key="item.value" class="chip" :disabled="feedbackSubmitting" @click="sendFeedback(item.value)">{{ item.label }}</button></div>
+        </div>
+      </article>
+    </template>
+
+    <AppDialog ref="exportDialog" title="导出资源" :subtitle="selected?.title || ''">
+      <label v-for="f in formats" :key="f.value" class="export-row">
+        <input type="radio" name="fmt" :value="f.value" v-model="exportFormat" />
+        <span><strong>{{ f.label }}</strong><small>{{ f.desc }}</small></span><span class="tag">{{ f.tag }}</span>
+      </label>
+      <template #footer>
+        <button class="btn" @click="exportDialog?.close()">取消</button>
+        <button class="btn primary" @click="doExport">导出资源</button>
+      </template>
+    </AppDialog>
+
+    <AppDrawer v-model="tutorOpen" title="AI 导学" :subtitle="selected?.title || '请选择学习资源'">
+      <div class="tutor-context">围绕当前资源提问。导学记录会按资源分别保存。</div>
+      <div v-if="tutorLoading" class="tutor-state">正在加载导学记录...</div>
+      <div v-else-if="tutorError" class="tutor-state tutor-error"><p>{{ tutorError }}</p><button class="btn" @click="openTutor">重新加载</button></div>
+      <div v-else-if="tutorMessages.length === 0" class="tutor-state">你可以询问概念解释、步骤拆解或练习建议。</div>
+      <div v-else ref="messageList" class="tutor-messages" aria-live="polite">
+        <div v-for="message in tutorMessages" :key="message.message_id" class="tutor-message" :class="message.sender === 'learner' ? 'is-learner' : 'is-agent'">
+          <span>{{ message.sender === 'learner' ? '我' : 'AI 导学' }}</span>
+          <ResourceMarkdownViewer :content="message.content || (message.stream_status === 'streaming' ? '正在思考…' : '')" />
+          <i v-if="message.stream_status === 'streaming'" class="tutor-cursor" aria-label="正在输出" />
+          <small v-if="message.stream_status === 'paused'" class="tutor-stream-note">已暂停，保留以上内容。</small>
+          <small v-if="message.stream_status === 'interrupted' || message.stream_status === 'failed'" class="tutor-stream-note">回复中断，可继续提问。</small>
+          <small v-if="message.sources?.length" class="tutor-sources">依据：{{ message.sources.map(source => source.name).join('、') }}</small>
+          <div v-if="message.assessment?.status === 'pending'" class="tutor-assessment">
+            <strong>掌握情况验证</strong><p>{{ message.assessment.prompt }}</p>
+            <small>回答后，系统会结合可验证证据判断是否需要调整画像。</small>
+          </div>
+        </div>
       </div>
-      <el-descriptions :column="3" border>
-        <el-descriptions-item label="资源">{{ lastFeedback.resource_id }}</el-descriptions-item>
-        <el-descriptions-item label="反馈意图">{{ lastFeedback.feedback_intent || '未知状态' }}</el-descriptions-item>
-        <el-descriptions-item label="建议动作">{{ actionLabel(lastFeedback.recommended_action) }}</el-descriptions-item>
-        <el-descriptions-item label="画像更新">
-          {{ lastFeedback.profile_update_required ? '已更新' : '证据不足，不更新' }}
-        </el-descriptions-item>
-        <el-descriptions-item label="后续任务">
-          {{ lastFeedback.task_id || '无需创建任务' }}
-        </el-descriptions-item>
-      </el-descriptions>
-      <el-button
-        v-if="lastFeedback.task_id"
-        type="primary"
-        @click="router.push({ path: '/agents', query: { task_id: lastFeedback.task_id } })"
-      >
-        查看协同进度
-      </el-button>
-    </div>
-
-    <el-drawer v-model="versionsVisible" title="资源版本记录" size="420px">
-      <el-timeline v-if="versions.length">
-        <el-timeline-item v-for="item in versions" :key="item.resource_id" :timestamp="formatDateTime(item.created_at)">
-          <strong>版本 {{ item.version }}</strong>
-          <el-tag v-if="item.is_current" size="small" type="success">当前版本</el-tag>
-          <p>{{ reviewLabel(item.review_status) }} · {{ item.adaptation_reason || '首次生成' }}</p>
-        </el-timeline-item>
-      </el-timeline>
-      <el-empty v-else description="暂无版本记录" />
-    </el-drawer>
+      <template #footer>
+        <form class="tutor-form" @submit.prevent="sendTutorMessage">
+          <textarea v-model="tutorDraft" rows="3" maxlength="2000" placeholder="例如：请用一个例子解释这一部分" :disabled="tutorSending || tutorLoading" @keydown.enter.exact.prevent="sendTutorMessage" />
+          <button v-if="tutorSending" class="btn" type="button" @click="pauseTutorMessage">暂停输出</button>
+          <button v-else class="btn primary" type="submit" :disabled="!tutorDraft.trim() || tutorLoading">发送</button>
+        </form>
+      </template>
+    </AppDrawer>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-
-import {
-  exportResource,
-  listResources,
-  listResourceVersions,
-  submitFeedback,
-  type ResourceSummary,
-} from '@/api/resources'
-import { getGenerationTask } from '@/api/generation'
-import { createTutoringSession, sendTutoringMessage } from '@/api/tutoring'
+import { useToast } from '@/composables/useToast'
+import { listResources, exportResource, submitFeedback, type ResourceSummary } from '@/api/resources'
+import { getGenerationTask, retryGenerationTask, type GenerationTaskDetail } from '@/api/generation'
+import QualityMetrics from '@/components/ResourceViewer/QualityMetrics.vue'
+import AppDialog from '@/components/Shared/AppDialog.vue'
+import AppDrawer from '@/components/Shared/AppDrawer.vue'
+import { createTutoringSession, getTutoringSession, pauseTutoringMessage, streamTutoringMessage, type TutoringSession } from '@/api/tutoring'
 import ResourceMarkdownViewer from '@/components/ResourceViewer/ResourceMarkdownViewer.vue'
-import { useLearnerStore } from '@/stores/learnerStore'
+import { useAuthStore } from '@/stores/authStore'
 
-interface FeedbackResult {
-  resource_id: string
-  feedback_status: string
-  feedback_intent: string | null
-  recommended_action: string
-  profile_update_required: boolean
-  decision_reason: string
-  task_id: string | null
-}
-
-interface ResourceBatch {
-  taskId: string
-  status: string
-  decision: string
-  taskCreatedAt: string | null
-  resources: ResourceSummary[]
-  profileType: string
-  targetDifficulty: number | null
-}
-
-const route = useRoute()
 const router = useRouter()
-const learnerStore = useLearnerStore()
-const resources = ref<ResourceSummary[]>([])
-const selectedTaskId = ref('')
-const selectedResourceId = ref('')
+const route = useRoute()
+const authStore = useAuthStore()
+const { showToast } = useToast()
 const loading = ref(false)
-const lastFeedback = ref<FeedbackResult | null>(null)
-const versionsVisible = ref(false)
-const versions = ref<Awaited<ReturnType<typeof listResourceVersions>>>([])
-const tutoringSessionId = ref('')
-const tutoringInput = ref('')
-const tutoringSending = ref(false)
-const tutoringMessages = ref<Array<{ id: string; sender: 'learner' | 'agent'; content: string }>>([])
-const tutoringTaskId = ref<string | null>(null)
-const pendingTask = ref<Awaited<ReturnType<typeof getGenerationTask>> | null>(null)
-let generationPollTimer: number | null = null
+const resources = ref<ResourceSummary[]>([])
+const selectedIdx = ref(0)
+const exportFormat = ref('markdown')
+const exportDialog = ref<InstanceType<typeof AppDialog> | null>(null)
+const errorMessage = ref('')
+const feedbackSubmitting = ref(false)
+const retrying = ref(false)
+const taskDetail = ref<GenerationTaskDetail | null>(null)
+const tutorOpen = ref(false)
+const tutorLoading = ref(false)
+const tutorSending = ref(false)
+const tutorError = ref('')
+const tutorDraft = ref('')
+const tutorSession = ref<TutoringSession | null>(null)
+const messageList = ref<HTMLElement | null>(null)
+let streamController: AbortController | null = null
+let activeReplyId = ''
+const feedbackOptions = [{value:'too_hard',label:'内容太难'},{value:'too_easy',label:'内容太简单'},{value:'confusing',label:'解释不清楚'},{value:'incorrect',label:'内容可能有误'},{value:'helpful',label:'对我有帮助'}]
+const formats = [
+  { value: 'markdown', label: 'Markdown', desc: '保留标题、表格、代码块和知识来源结构。', tag: '源格式' },
+  { value: 'pdf', label: 'PDF', desc: '适合阅读、打印和提交。', tag: '推荐' },
+]
 
-const requestedTaskId = computed(() => {
-  const raw = route.query.task_id
-  return typeof raw === 'string' && raw.trim() ? raw.trim() : ''
+const selected = computed(() => resources.value[selectedIdx.value] || null)
+const canTutor = computed(() => Boolean(selected.value && selected.value.review_status === 'passed' && selected.value.is_current !== false))
+const tutorMessages = computed(() => tutorSession.value?.messages || [])
+const taskId = computed(() => String(route.query.task_id || '').trim())
+const currentLearnerId = computed(() => {
+  if (taskId.value) return String(taskDetail.value?.learner_id || route.query.learner_id || '').trim()
+  return String(authStore.user?.learner_id || '').trim()
 })
+const isTaskTerminal = computed(() => ['completed', 'failed'].includes(taskDetail.value?.status || ''))
+const packageQuality = computed(() => taskDetail.value?.package_quality || resources.value[0]?.package_quality || null)
+let taskTimer: number | null = null
 
-const batches = computed<ResourceBatch[]>(() => {
-  const grouped = new Map<string, ResourceSummary[]>()
-  for (const resource of resources.value) {
-    const taskId = resource.generation_task_id || 'unknown_task'
-    const current = grouped.get(taskId) ?? []
-    current.push(resource)
-    grouped.set(taskId, current)
-  }
-  return [...grouped.entries()].map(([taskId, batchResources]) => {
-    const first = batchResources[0]
-    return {
-      taskId,
-      status: first.generation_task_status || 'unknown',
-      decision: first.generation_decision || 'pending',
-      taskCreatedAt: first.task_created_at || first.generated_at || null,
-      resources: batchResources,
-      profileType: first.learner_profile_type || '',
-      targetDifficulty: batchResources[0]?.difficulty ?? null,
-    }
-  })
-})
-
-const selectedBatch = computed(() => {
-  return batches.value.find((batch) => batch.taskId === selectedTaskId.value) ?? null
-})
-
-const orderedBatchResources = computed(() => {
-  const order: Record<string, number> = {
-    lecture: 1,
-    practice_guide: 2,
-    graded_quiz: 3,
-  }
-  return [...(selectedBatch.value?.resources ?? [])].sort(
-    (left, right) => (order[left.resource_type] ?? 99) - (order[right.resource_type] ?? 99),
-  )
-})
-
-const selected = computed(() => {
-  return (
-    orderedBatchResources.value.find((resource) => resource.resource_id === selectedResourceId.value) ??
-    orderedBatchResources.value[0] ??
-    null
-  )
-})
-
-function typeLabel(type: string) {
-  return (
-    {
-      lecture: '讲义',
-      practice_guide: '实训指导',
-      graded_quiz: '分级测验',
-    }[type] ?? type
-  )
-}
-
-function reviewLabel(status: string) {
-  return (
-    {
-      passed: '审核通过',
-      failed: '审核未通过',
-      revision_required: '需要修订',
-      pending: '等待审核',
-    }[status] ?? '未知状态'
-  )
-}
-
-function statusLabel(status: string) {
-  return (
-    {
-      completed: '任务完成',
-      running: '生成中',
-      failed: '任务失败',
-      revision_required: '需要修订',
-      pending: '等待生成',
-    }[status] ?? '未知状态'
-  )
-}
-
-function decisionLabel(decision: string) {
-  return (
-    {
-      passed: '已通过',
-      failed: '未通过',
-      revision_required: '需要修订',
-      pending: '等待决策',
-    }[decision] ?? '未知状态'
-  )
-}
-
-function actionLabel(action: string) {
-  return (
-    {
-      challenge: '生成挑战任务',
-      explain: '给出补救解释',
-      review: '复核资源事实',
-      regenerate: '局部重新生成',
-      update_profile: '更新学习画像',
-      update_path: '刷新学习路径',
-      no_change: '记录反馈，不修改画像',
-    }[action] ?? action
-  )
-}
-
-function sourceKey(source: string | { knowledge_id: string }) {
-  return typeof source === 'string' ? source : source.knowledge_id
-}
-
-function sourceLabel(source: string | { knowledge_id: string; name?: string; source_title?: string }) {
-  if (typeof source === 'string') return source
-  return source.name ? `${source.name}（${source.knowledge_id}）` : source.knowledge_id
-}
-
-function shortTaskId(taskId: string) {
-  if (taskId.length <= 18) return taskId
-  return `${taskId.slice(0, 10)}...${taskId.slice(-6)}`
-}
-
-function resourceSourceCount(resource: ResourceSummary) {
-  return resource.source_details?.length || resource.sources?.length || 0
-}
-
-function batchSourceCount(batch: ResourceBatch) {
-  return new Set(
-    batch.resources.flatMap((resource) =>
-      resource.source_details?.length
-        ? resource.source_details.map((source) => source.knowledge_id)
-        : resource.sources,
-    ),
-  ).size
-}
-
-function batchPassedCount(batch: ResourceBatch) {
-  return batch.resources.filter((resource) => resource.review_status === 'passed').length
-}
-
-function resourceTypeChecklist(batch: ResourceBatch) {
-  const readyTypes = new Set(batch.resources.map((resource) => resource.resource_type))
-  return [
-    { type: 'lecture', label: '讲义', ready: readyTypes.has('lecture') },
-    { type: 'practice_guide', label: '实训', ready: readyTypes.has('practice_guide') },
-    { type: 'graded_quiz', label: '测验', ready: readyTypes.has('graded_quiz') },
-  ]
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return '时间未记录'
-  const normalizedValue = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)
-    ? `${value}Z`
-    : value
-  const date = new Date(normalizedValue)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
+function scrollTutorToLatest() {
+  nextTick(() => {
+    if (messageList.value) messageList.value.scrollTop = messageList.value.scrollHeight
   })
 }
 
-function isRequestedBatch(taskId: string) {
-  return requestedTaskId.value ? requestedTaskId.value === taskId : selectedTaskId.value === taskId
-}
-
-function syncSelectionFromRoute() {
-  if (!batches.value.length) {
-    selectedTaskId.value = ''
-    selectedResourceId.value = ''
-    return
-  }
-  if (requestedTaskId.value && !batches.value.some((batch) => batch.taskId === requestedTaskId.value)) {
-    selectedTaskId.value = requestedTaskId.value
-    selectedResourceId.value = ''
-    return
-  }
-  const nextTaskId =
-    (requestedTaskId.value &&
-      batches.value.find((batch) => batch.taskId === requestedTaskId.value)?.taskId) ||
-    selectedTaskId.value ||
-    batches.value[0].taskId
-  selectedTaskId.value = nextTaskId
-  const currentBatch = batches.value.find((batch) => batch.taskId === nextTaskId)
-  if (
-    currentBatch &&
-    !currentBatch.resources.some((resource) => resource.resource_id === selectedResourceId.value)
-  ) {
-    selectedResourceId.value = currentBatch.resources[0]?.resource_id ?? ''
-  }
-}
-
-function generationStatusLabel(status: string) {
-  return ({
-    pending: '排队中',
-    running: '生成中',
-    waiting_human: '等待人工审核',
-    completed: '已完成',
-    failed: '生成失败',
-  } as Record<string, string>)[status] || '处理中'
-}
-
-function generationStatusDetail(status: string) {
-  return ({
-    pending: '任务已创建，正在排队。',
-    running: '正在执行多智能体协同流程，请稍候。',
-    waiting_human: '双模型审核存在分歧，需要管理员确认后才会发布资源。',
-    completed: '任务已完成，但资源列表正在同步。',
-    failed: '任务执行失败，请查看 Agent 运行记录。',
-  } as Record<string, string>)[status] || '系统正在处理任务。'
-}
-
-function stopGenerationPolling() {
-  if (generationPollTimer !== null) {
-    window.clearInterval(generationPollTimer)
-    generationPollTimer = null
-  }
-}
-
-async function refreshGenerationStatus() {
-  if (!requestedTaskId.value) {
-    pendingTask.value = null
-    stopGenerationPolling()
-    return
-  }
+async function openTutor() {
+  if (!canTutor.value || !selected.value) return
+  tutorOpen.value = true
+  tutorLoading.value = true
+  tutorError.value = ''
+  tutorSession.value = null
   try {
-    const task = await getGenerationTask(requestedTaskId.value)
-    pendingTask.value = task
-    if (task.status === 'completed' || task.status === 'failed' || task.status === 'waiting_human') {
-      stopGenerationPolling()
-      await loadResources()
-    }
+    tutorSession.value = await createTutoringSession(selected.value.resource_id, currentLearnerId.value || undefined)
+    scrollTutorToLatest()
   } catch {
-    pendingTask.value = null
+    tutorError.value = '无法打开导学会话，请稍后重试。'
+  } finally {
+    tutorLoading.value = false
   }
 }
+
+async function sendTutorMessage() {
+  const content = tutorDraft.value.trim()
+  if (!content || !tutorSession.value || tutorSending.value) return
+  tutorSending.value = true
+  tutorError.value = ''
+  const pendingId = `pending_${Date.now()}`
+  tutorSession.value.messages.push({ message_id: pendingId, sender: 'learner', message_type: 'question', content, created_at: null, stream_status: 'completed' })
+  tutorDraft.value = ''
+  scrollTutorToLatest()
+  streamController = new AbortController()
+  try {
+    await streamTutoringMessage(tutorSession.value.session_id, content, event => {
+      if (!tutorSession.value) return
+      if (event.type === 'accepted') {
+        activeReplyId = event.reply_message_id
+        const learner = tutorSession.value.messages.find(item => item.message_id === pendingId)
+        if (learner) learner.message_id = event.learner_message_id
+        tutorSession.value.messages.push({ message_id: activeReplyId, sender: 'tutoring_agent', message_type: 'explanation', content: '', created_at: null, stream_status: 'streaming' })
+      } else {
+        const reply = tutorSession.value.messages.find(item => item.message_id === event.reply_message_id)
+        if (event.type === 'delta' && reply) reply.content += event.content
+        if (event.type === 'completed' && reply) { reply.content = event.content; reply.sources = event.sources; reply.scope_status = event.scope_status; reply.assessment = event.assessment; reply.stream_status = 'completed'; if (event.task_id) showToast('已触发后续学习调整，可前往任务记录查看进度。') }
+        if (event.type === 'paused' && reply) { reply.content = event.content; reply.stream_status = 'paused' }
+        if (event.type === 'error' && reply) reply.stream_status = event.recoverable ? 'interrupted' : 'failed'
+      }
+      scrollTutorToLatest()
+    }, streamController.signal)
+    tutorSession.value.turn_count += 1
+  } catch (error) {
+    if ((error as Error).name !== 'AbortError') await recoverTutorSession()
+  } finally {
+    tutorSending.value = false
+    streamController = null
+    activeReplyId = ''
+  }
+}
+
+async function pauseTutorMessage() {
+  if (!tutorSession.value || !activeReplyId) return
+  streamController?.abort()
+  try { await pauseTutoringMessage(tutorSession.value.session_id, activeReplyId); const reply = tutorSession.value.messages.find(item => item.message_id === activeReplyId); if (reply) reply.stream_status = 'paused' }
+  catch { await recoverTutorSession() }
+}
+
+async function recoverTutorSession() {
+  if (!tutorSession.value) return
+  try { tutorSession.value = await getTutoringSession(tutorSession.value.session_id); scrollTutorToLatest() }
+  catch { tutorError.value = '连接中断，无法恢复导学记录。' }
+}
+
+watch(selectedIdx, () => {
+  if (tutorOpen.value) openTutor()
+})
 
 async function loadResources() {
-  resources.value = await listResources()
-  syncSelectionFromRoute()
-}
-
-function startGenerationPolling() {
-  stopGenerationPolling()
-  if (!requestedTaskId.value) return
-  void refreshGenerationStatus()
-  generationPollTimer = window.setInterval(() => void refreshGenerationStatus(), 2000)
-}
-
-function selectBatch(taskId: string) {
-  selectedTaskId.value = taskId
-  const batch = batches.value.find((item) => item.taskId === taskId)
-  selectedResourceId.value = batch?.resources[0]?.resource_id ?? ''
-  router.replace({ path: '/resources', query: { task_id: taskId } })
-}
-
-async function load() {
   loading.value = true
+  errorMessage.value = ''
   try {
-    await loadResources()
-    await refreshGenerationStatus()
-  } catch (error) {
-    ElMessage.error('资源加载失败，请确认后端服务已启动。')
+    resources.value = await listResources({ taskId: String(route.query.task_id || '') || undefined, learnerId: currentLearnerId.value || undefined, domainCode: 'ai_app_dev' })
+  } catch {
+    errorMessage.value = '无法读取学习资源，请确认后端服务可用。'
   } finally {
     loading.value = false
   }
 }
 
-async function sendFeedback(resourceId: string, feedbackType: string) {
+async function loadTask() {
+  if (!taskId.value) return
   try {
-    lastFeedback.value = (await submitFeedback(
-      resourceId,
-      feedbackType,
-      3,
-      learnerStore.selectedLearnerId,
-    )) as FeedbackResult
-    ElMessage.success('反馈已触发辅导动作。')
-    await load()
-  } catch (error) {
-    ElMessage.error('反馈提交失败，请稍后重试。')
-  }
+    taskDetail.value = await getGenerationTask(taskId.value)
+    if (taskDetail.value.status === 'completed') await loadResources()
+    if (!isTaskTerminal.value) taskTimer = window.setTimeout(loadTask, 1500)
+  } catch { errorMessage.value = '无法读取生成任务状态。' }
 }
 
-async function showVersions() {
+function openReport() {
+  router.push({
+    path: '/report',
+    query: {
+      ...(currentLearnerId.value ? { learner_id: currentLearnerId.value } : {}),
+      ...(taskId.value ? { task_id: taskId.value } : {}),
+    },
+  })
+}
+
+async function retryTask() {
+  if (!taskId.value) return
+  retrying.value = true
+  try { taskDetail.value = await retryGenerationTask(taskId.value); await loadTask() }
+  catch { showToast('重新生成失败') }
+  finally { retrying.value = false }
+}
+
+async function sendFeedback(type: string) {
   if (!selected.value) return
-  versionsVisible.value = true
-  try { versions.value = await listResourceVersions(selected.value.resource_id) }
-  catch { ElMessage.error('版本记录加载失败') }
+  feedbackSubmitting.value = true
+  try { const result = await submitFeedback(selected.value.resource_id, type, 3, currentLearnerId.value || undefined); showToast(`反馈已记录：${String((result as any).decision_reason || (result as any).recommended_action || '系统将按证据处理')}`) }
+  catch { showToast('反馈提交失败') }
+  finally { feedbackSubmitting.value = false }
 }
 
-async function downloadResource(command: string) {
+async function doExport() {
   if (!selected.value) return
-  const [format, audience] = command.split(':') as ['markdown' | 'pdf', 'learner' | 'teacher']
   try {
-    const result = await exportResource(selected.value.resource_id, format, audience)
-    window.open(result.download_url, '_blank', 'noopener')
-    ElMessage.success(`已生成版本 ${result.resource_version} 的${audience === 'teacher' ? '教师版' : '学习者版'}${format === 'pdf' ? ' PDF' : ' Markdown'}文件`)
-  } catch { ElMessage.error('资源导出失败') }
+    const r = await exportResource(selected.value.resource_id, exportFormat.value as 'markdown' | 'pdf')
+    exportDialog.value?.close()
+    showToast(`已导出：${r.file_name}`)
+  } catch { showToast('导出失败') }
 }
 
-async function sendTutorMessage() {
-  if (!selected.value || !tutoringInput.value.trim()) return
-  const content = tutoringInput.value.trim()
-  tutoringSending.value = true
-  try {
-    if (!tutoringSessionId.value) {
-      const session = await createTutoringSession(selected.value.resource_id, learnerStore.selectedLearnerId)
-      tutoringSessionId.value = session.session_id
-    }
-    tutoringMessages.value.push({ id: `local-${Date.now()}`, sender: 'learner', content })
-    tutoringInput.value = ''
-    const result = await sendTutoringMessage(tutoringSessionId.value, content)
-    tutoringMessages.value.push({ id: result.reply.message_id, sender: 'agent', content: result.reply.content })
-    tutoringTaskId.value = result.task_id
-    ElMessage.info(result.profile_update_required ? '画像已基于证据创建新版本' : '当前证据不足，画像保持不变')
-  } catch { ElMessage.error('导学消息发送失败') }
-  finally { tutoringSending.value = false }
-}
-
-watch(
-  () => route.query.task_id,
-  () => {
-    syncSelectionFromRoute()
-    startGenerationPolling()
-  },
-)
-
-watch(batches, syncSelectionFromRoute)
-
-watch(selected, (next, previous) => {
-  if (next && selectedResourceId.value !== next.resource_id) {
-    selectedResourceId.value = next.resource_id
-  }
-  if (next?.resource_id !== previous?.resource_id) {
-    tutoringSessionId.value = ''
-    tutoringMessages.value = []
-  }
-})
-
-onMounted(load)
-onBeforeUnmount(stopGenerationPolling)
+onMounted(async () => { if (taskId.value) await loadTask(); else await loadResources() })
+onUnmounted(() => { if (taskTimer !== null) window.clearTimeout(taskTimer) })
 </script>
 
 <style scoped>
-.resource-page {
-  gap: 18px;
-}
-
-.resource-actions,
-.tutoring-input {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.tutoring-box {
-  display: grid;
-  gap: 12px;
-  margin-top: 16px;
-  border-top: 1px solid var(--app-border);
-  padding-top: 16px;
-}
-
-.tutoring-messages {
-  display: grid;
-  gap: 8px;
-  max-height: 260px;
-  overflow: auto;
-}
-
-.tutoring-messages p {
-  display: grid;
-  gap: 3px;
-  margin: 0;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background: var(--app-panel-soft);
-  padding: 7px 10px;
-  color: var(--app-muted);
-}
-
-.tutoring-messages p.agent {
-  border-color: #b9cdf8;
-  background: var(--app-accent-soft);
-}
-
-.loading-panel {
-  min-height: 220px;
-}
-
-.generation-status-panel {
-  display: grid;
-  gap: 14px;
-}
-
-.generation-status-copy {
-  margin: 0;
-  line-height: 1.7;
-}
-
-.empty-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.resource-workspace {
-  display: grid;
-  gap: 16px;
-}
-
-.current-batch-bar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.72fr);
-  gap: 16px;
-  border: 1px solid #b9cdf8;
-  border-radius: 10px;
-  background:
-    linear-gradient(90deg, rgb(37 99 235 / 0.11), rgb(8 145 178 / 0.08)),
-    var(--app-panel);
-  padding: 18px;
-}
-
-.current-batch-copy {
-  min-width: 0;
-}
-
-.batch-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid rgb(37 99 235 / 0.25);
-  border-radius: 999px;
-  background: #fff;
-  padding: 3px 10px;
-  color: var(--app-accent);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.5;
-}
-
-.current-batch-copy h2 {
-  margin: 10px 0 6px;
-  overflow-wrap: anywhere;
-  color: var(--app-text);
-  font-size: 20px;
-  line-height: 1.35;
-}
-
-.current-batch-copy p {
-  margin: 0;
-  color: #344054;
-  font-size: 14px;
-  line-height: 1.7;
-}
-
-.current-batch-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  align-self: stretch;
-}
-
-.current-batch-metrics div,
-.resource-facts div {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  border: 1px solid rgb(219 228 239 / 0.9);
-  border-radius: 8px;
-  background: rgb(255 255 255 / 0.82);
-  padding: 12px;
-}
-
-.current-batch-metrics span,
-.resource-facts span,
-.panel-caption {
-  color: var(--app-muted);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.current-batch-metrics strong,
-.resource-facts strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--app-text);
-  font-size: 16px;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.resource-layout {
-  display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
-  gap: 16px;
-}
-
-.batch-list,
-.resource-main,
-.resource-detail {
-  display: grid;
-  gap: 14px;
-  align-self: start;
-}
-
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.panel-caption {
-  margin: -6px 0 0;
-}
-
-.batch-tab {
-  position: relative;
-  display: grid;
-  gap: 7px;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background: #fff;
-  padding: 12px 12px 12px 18px;
-  color: var(--app-text);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease,
-    transform 160ms ease;
-}
-
-.batch-tab:hover,
-.batch-tab.is-active {
-  border-color: #9bb8f5;
-  background: var(--app-accent-soft);
-}
-
-.batch-tab:hover {
-  transform: translateY(-1px);
-}
-
-.batch-marker {
-  position: absolute;
-  top: 13px;
-  bottom: 13px;
-  left: 8px;
-  width: 3px;
-  border-radius: 999px;
-  background: #cbd5e1;
-}
-
-.batch-tab.is-active .batch-marker {
-  background: var(--app-accent);
-}
-
-.batch-topline {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.batch-topline small,
-.batch-meta {
-  color: var(--app-muted);
-  font-size: 12px;
-}
-
-.batch-tab strong {
-  overflow-wrap: anywhere;
-  font-size: 14px;
-  line-height: 1.4;
-}
-
-.batch-resource-dots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.batch-resource-dots i {
-  border: 1px solid var(--app-border);
-  border-radius: 999px;
-  background: var(--app-panel-soft);
-  padding: 2px 7px;
-  color: var(--app-muted);
-  font-size: 12px;
-  font-style: normal;
-  line-height: 1.5;
-}
-
-.batch-resource-dots i.is-ready {
-  border-color: rgb(22 163 74 / 0.28);
-  background: rgb(22 163 74 / 0.08);
-  color: #15803d;
-}
-
-.resource-switcher {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.resource-chip {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background: var(--app-panel);
-  padding: 13px;
-  color: var(--app-text);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color 160ms ease,
-    background 160ms ease;
-}
-
-.resource-chip:hover,
-.resource-chip.is-active {
-  border-color: #9bb8f5;
-  background: var(--app-accent-soft);
-}
-
-.resource-chip span {
-  color: var(--app-accent);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.resource-chip strong {
-  overflow: hidden;
-  font-size: 14px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.resource-chip small {
-  color: var(--app-muted);
-  font-size: 12px;
-}
-
-.resource-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.resource-head h2 {
-  margin: 0;
-  font-size: 20px;
-  line-height: 1.35;
-}
-
-.resource-facts {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.resource-detail h3 {
-  margin: 0 0 10px;
-  font-size: 15px;
-}
-
-.section-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.section-title-row span {
-  color: var(--app-muted);
-  font-size: 12px;
-}
-
-.source-list,
-.feedback-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.source-section,
-.content-section,
-.feedback-panel {
-  border-top: 1px solid var(--app-border);
-  padding-top: 16px;
-}
-
-.feedback-panel {
-  display: grid;
-  gap: 12px;
-  border-radius: 8px;
-  background: var(--app-panel-soft);
-  padding: 16px;
-}
-
-.feedback-panel h3,
-.feedback-panel p {
-  margin-left: 0;
-}
-
-.feedback-result {
-  display: grid;
-  gap: 14px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .batch-tab,
-  .resource-chip {
-    transition: none;
-  }
-
-  .batch-tab:hover {
-    transform: none;
-  }
-}
-
-@media (max-width: 1160px) {
-  .current-batch-bar {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 980px) {
-  .resource-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 760px) {
-  .current-batch-metrics,
-  .resource-switcher,
-  .resource-facts {
-    grid-template-columns: 1fr;
-  }
-
-  .resource-head,
-  .section-title-row {
-    display: grid;
-  }
-}
+.tutor-context { margin-bottom: 14px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.generation-state, .quality-overview { margin-bottom: 14px; }
+.progress-track { height: 8px; margin-top: 16px; overflow: hidden; border-radius: 4px; background: var(--soft); }
+.progress-track i { display: block; height: 100%; background: var(--blue); transition: width .25s ease; }
+.tutor-state { display: grid; gap: 10px; place-items: start; min-height: 140px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.tutor-error { color: var(--red); }
+.tutor-error p { margin: 0; }
+.tutor-messages { display: grid; gap: 12px; align-content: start; min-height: 220px; max-height: calc(100vh - 290px); overflow-y: auto; padding-right: 2px; }
+.tutor-message { max-width: 92%; }
+.tutor-message span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.tutor-message :deep(.markdown-body) { border-radius: 10px; background: var(--soft); padding: 10px 12px; color: var(--ink); font-size: 13px; overflow-wrap: anywhere; }
+.tutor-message :deep(.markdown-body > :first-child) { margin-top: 0; }
+.tutor-message :deep(.markdown-body > :last-child) { margin-bottom: 0; }
+.tutor-message.is-learner { justify-self: end; }
+.tutor-message.is-learner span { text-align: right; }
+.tutor-message.is-learner :deep(.markdown-body) { background: var(--blue2); color: #27457f; }
+.tutor-cursor { display: inline-block; width: 7px; height: 14px; margin: 6px 0 0 8px; background: var(--blue); animation: tutor-blink 1s steps(2, start) infinite; vertical-align: middle; }
+.tutor-stream-note { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
+.tutor-sources { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.tutor-assessment { margin-top: 9px; border: 1px solid #cbd9f4; border-radius: 8px; background: #f5f8ff; padding: 10px; color: #27457f; font-size: 12px; line-height: 1.6; }
+.tutor-assessment p { margin: 5px 0; background: transparent; padding: 0; color: inherit; }
+.tutor-assessment small { color: #516788; }
+.tutor-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.tutor-form textarea { width: 100%; min-height: 78px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; color: var(--ink); line-height: 1.5; }
+@media (max-width: 480px) { .tutor-form { grid-template-columns: 1fr; } .tutor-messages { max-height: calc(100vh - 340px); } }
+@keyframes tutor-blink { 50% { opacity: 0; } }
 </style>

@@ -2,7 +2,7 @@
   "schema_version": "rag-evaluation-1.0",
   "split": "development",
   "domain_code": "ai_app_dev",
-  "source_data_version": "sha256:837441b02400435bf83fc802d79b69a473b591fdd9062529e16154c22560c608",
+  "source_data_version": "sha256:7d7449e87a00a5bc027718e10a1e3f8699f5efc3644184bf63355e1258ed886b",
   "cases": [
     {
       "case_id": "RAG-DEV-001",

@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import JSON, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -24,21 +24,7 @@ class TutoringMessage(TimestampMixin, Base):
     sender: Mapped[str] = mapped_column(String(32))
     message_type: Mapped[str] = mapped_column(String(32))
     content: Mapped[str] = mapped_column(Text)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
     feedback_id: Mapped[int | None] = mapped_column(
         ForeignKey("resource_feedback.id", use_alter=True), nullable=True
     )
-
-
-class ManualReviewTask(TimestampMixin, Base):
-    __tablename__ = "manual_review_tasks"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    public_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    task_id: Mapped[int] = mapped_column(ForeignKey("generation_tasks.id"))
-    resource_id: Mapped[int | None] = mapped_column(ForeignKey("learning_resources.id"), nullable=True)
-    review_report_id: Mapped[int | None] = mapped_column(ForeignKey("review_reports.id"), nullable=True)
-    trigger_reason: Mapped[str] = mapped_column(String(32))
-    status: Mapped[str] = mapped_column(String(32), default="pending")
-    decision: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    review_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
-    reviewed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)

@@ -20,6 +20,10 @@ storage/candidate-index/
 
 # Rolling local evaluation output; frozen RAG/admission evidence remains tracked.
 reports/evaluation/latest*
+reports/evaluation/runs/
+
+# Local preflight bundles may contain database exports and service snapshots.
+reports/preflight/
 
 
 *.log

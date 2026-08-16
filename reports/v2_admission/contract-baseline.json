@@ -1,8 +1,0 @@
-{
-  "schema_version": "v2-contract-baseline-attestation-v1",
-  "status": "approved",
-  "approved_by": "repository-owner (contract maintainer)",
-  "baseline_ref": "git:HEAD=f04b7860c396c18efb44960d4a6b614e853c9a63; frozen-contract-diff-sha256:a074dbb67a2ff8ff2cb4546dcc1d0e20f1b20c51377186d4ca975d6ef9332179",
-  "approved_at": "2026-07-25T09:43:36.8248543Z",
-  "approved_scope": "KnowledgeAssessment and AnalyzeProfileInput.knowledge_assessments contract change"
-}

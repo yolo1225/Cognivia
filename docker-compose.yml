@@ -1,4 +1,16 @@
 services:
+  redis:
+    image: redis:7.4-alpine
+    container_name: yczh_redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   mysql:
     image: mysql:8.0.39
     container_name: yczh_mysql
@@ -39,6 +51,7 @@ services:
       DATABASE_URL: mysql+pymysql://yunchuan:yunchuan_dev@mysql:3306/yunchuan_zhihui
       CHROMA_HOST: chromadb
       CHROMA_PORT: 8000
+      REDIS_URL: redis://redis:6379/0
       OPENAI_API_BASE: ${OPENAI_API_BASE:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       PRIMARY_LLM_MODEL: ${PRIMARY_LLM_MODEL:-}
@@ -56,11 +69,14 @@ services:
       - ./storage:/app/storage
       - candidate_index_state:/app/storage/candidate-index
       - ./reports:/app/reports
+      - ./test_script:/app/test_script:ro
     depends_on:
       mysql:
         condition: service_healthy
       chromadb:
         condition: service_started
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=3)"]
       interval: 10s
@@ -94,3 +110,4 @@ volumes:
   chroma_data:
   frontend_node_modules:
   candidate_index_state:
+  redis_data:
