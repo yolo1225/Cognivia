@@ -39,6 +39,7 @@ def serialize_resource(
         "generation_decision": generation_task.decision if generation_task else None,
         "generated_at": _iso(resource.created_at),
         "task_created_at": _iso(generation_task.created_at) if generation_task else None,
+        "structured_content": resource.structured_content_json or None,
     }
 
 

@@ -80,6 +80,7 @@ def persist_generated_resources(
                 is_current=publish,
                 adaptation_reason=finalization.decision_reason,
                 knowledge_coverage_json=draft.knowledge_coverage,
+                structured_content_json=draft.structured_content.model_dump(mode="json"),
             )
             db.add(resource)
             db.flush()
@@ -94,6 +95,7 @@ def persist_generated_resources(
         resource.is_current = publish
         resource.adaptation_reason = finalization.decision_reason
         resource.knowledge_coverage_json = draft.knowledge_coverage
+        resource.structured_content_json = draft.structured_content.model_dump(mode="json")
         if not resource.series_id:
             resource.series_id = resource.public_id
         if publish and previous:

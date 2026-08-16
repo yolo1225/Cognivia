@@ -1,5 +1,76 @@
 import { getData, postData } from './client'
 
+export type QuizLevel = 'foundation' | 'improvement' | 'challenge'
+export type QuestionType = 'single_choice' | 'multiple_choice' | 'short_answer' | 'coding'
+
+export interface QuizQuestion {
+  question_id: string
+  level: QuizLevel
+  question_type: QuestionType
+  prompt: string
+  options: string[]
+  correct_answer: string
+  explanation: string
+  knowledge_id: string
+  difficulty: number
+  source_ref_ids: string[]
+  reference_question_ids?: string[]
+}
+
+export interface GradedQuizContent {
+  resource_type: 'graded_quiz'
+  title: string
+  target_audience: string
+  learning_objectives: string[]
+  questions: QuizQuestion[]
+}
+
+export interface ConceptBlock {
+  title: string
+  explanation: string
+  example?: string | null
+  source_ref_ids: string[]
+}
+
+export interface MisconceptionBlock {
+  misconception: string
+  correction: string
+  source_ref_ids: string[]
+}
+
+export interface LectureContent {
+  resource_type: 'lecture'
+  title: string
+  target_audience: string
+  learning_objectives: string[]
+  prerequisite_knowledge: string[]
+  core_concepts: ConceptBlock[]
+  misconceptions: MisconceptionBlock[]
+  summary: string
+}
+
+export interface PracticeStep {
+  order: number
+  title: string
+  instruction: string
+  code_or_command?: string | null
+  expected_result: string
+  troubleshooting?: string | null
+  source_ref_ids: string[]
+}
+
+export interface PracticeGuideContent {
+  resource_type: 'practice_guide'
+  title: string
+  target_audience: string
+  learning_objectives: string[]
+  environment_requirements: string[]
+  steps: PracticeStep[]
+  acceptance_criteria: string[]
+}
+
+export type StructuredResourceContent = LectureContent | PracticeGuideContent | GradedQuizContent
+
 export interface ResourceSummary {
   resource_id: string
   resource_type: string
@@ -21,6 +92,7 @@ export interface ResourceSummary {
   package_quality?: ResourceQualityMetrics | null
   package_status?: string
   failure_reason?: string | null
+  structured_content?: StructuredResourceContent | null
 }
 
 export interface ResourceQualityMetrics {

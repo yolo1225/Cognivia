@@ -52,6 +52,7 @@ class LearningResource(TimestampMixin, Base):
     is_current: Mapped[bool] = mapped_column(default=True, index=True)
     adaptation_reason: Mapped[str] = mapped_column(Text, default="")
     knowledge_coverage_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    structured_content_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
 class ReviewReport(TimestampMixin, Base):
