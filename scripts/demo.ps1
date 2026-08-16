@@ -117,7 +117,7 @@ function Sync-FrontendDependencies {
 
     $expectedHash = (Get-FileHash $lockFile -Algorithm SHA256).Hash.ToLowerInvariant()
     $currentHashOutput = & docker compose run --rm --no-deps frontend `
-        sh -c 'cat node_modules/.domainmind-package-lock.sha256 2>/dev/null || true'
+        sh -c 'cat node_modules/.cognivia-package-lock.sha256 2>/dev/null || true'
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to inspect the frontend dependency volume."
     }
@@ -135,7 +135,7 @@ function Sync-FrontendDependencies {
 
     Write-Host "Synchronizing frontend dependencies..."
     Invoke-Compose -Arguments @("stop", "frontend")
-    $installCommand = "npm ci && printf '%s' '$expectedHash' > node_modules/.domainmind-package-lock.sha256"
+    $installCommand = "npm ci && printf '%s' '$expectedHash' > node_modules/.cognivia-package-lock.sha256"
     Invoke-Compose -Arguments @("run", "--rm", "--no-deps", "frontend", "sh", "-c", $installCommand)
 }
 

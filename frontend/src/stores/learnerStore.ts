@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-const STORAGE_KEY = 'domainmind:selectedLearnerId'
+const STORAGE_KEY = 'cognivia:selectedLearnerId'
 function validLearnerId(value: unknown): string | null {
   const normalized = typeof value === 'string' ? value.trim() : ''
   return normalized && !['null', 'undefined'].includes(normalized.toLowerCase()) ? normalized : null
