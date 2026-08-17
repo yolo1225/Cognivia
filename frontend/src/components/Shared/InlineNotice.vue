@@ -1,0 +1,2 @@
+<template><section class="inline-notice" :class="`is-${type}`" :role="type === 'danger' ? 'alert' : undefined"><div><strong v-if="title">{{ title }}</strong><p v-if="description">{{ description }}</p><slot /></div><div v-if="$slots.action" class="inline-notice-action"><slot name="action" /></div></section></template>
+<script setup lang="ts">withDefaults(defineProps<{ type?: 'info' | 'success' | 'warning' | 'danger'; title?: string; description?: string }>(), { type: 'info', title: '', description: '' })</script>

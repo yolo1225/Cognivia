@@ -3,11 +3,17 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.core.db import get_db
 from app.core.security import Principal, get_current_user, principal_learner, require_resource, require_task
-from app.models import GenerationTask, Learner, LearningResource, ReviewReport
+from app.models import (
+    GenerationTask,
+    Learner,
+    LearningPackageResource,
+    LearningResource,
+    ReviewReport,
+)
 from app.schemas.common import ApiResponse, ok
 from app.services.demo_flow_service import serialize_resource
 from app.services.feedback_service import record_quick_feedback, serialize_feedback_decision
@@ -16,6 +22,7 @@ from app.services.profile_service import default_profile_for_learner
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.services.resource_export_service import export_resource, resolve_export_path
 from app.workers.generation_worker import run_generation_task
+from app.services.learning_package_service import current_package, ensure_package_members
 
 router = APIRouter()
 
@@ -41,25 +48,44 @@ def list_resources(
         learner_id = task_learner.public_id
     elif principal.role != "admin":
         learner_id = principal.learner_id
-    statement = (
-        select(LearningResource, GenerationTask)
-        .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
-        .order_by(GenerationTask.created_at.desc(), LearningResource.id.asc())
-        .limit(100)
-    )
-    if not include_unpublished:
-        statement = statement.where(
-            LearningResource.is_current.is_(True),
-            LearningResource.review_status == "passed",
+    package_task = task if task_id else None
+    if package_task is None and learner_id:
+        selected_learner = db.scalar(select(Learner).where(Learner.public_id == learner_id))
+        if selected_learner is not None:
+            package_task = current_package(
+                db,
+                learner_id=selected_learner.id,
+                domain_code=domain_code or "ai_app_dev",
+            )
+    creation_task = aliased(GenerationTask)
+    if package_task is not None:
+        ensure_package_members(db, package_task)
+        statement = (
+            select(LearningResource, creation_task)
+            .join(
+                LearningPackageResource,
+                LearningPackageResource.resource_id == LearningResource.id,
+            )
+            .join(creation_task, creation_task.id == LearningResource.generation_task_id)
+            .where(LearningPackageResource.package_task_id == package_task.id)
+            .order_by(LearningPackageResource.sort_order, LearningPackageResource.id)
+            .limit(100)
         )
-    if task_id:
-        statement = statement.where(GenerationTask.public_id == task_id)
+    else:
+        statement = (
+            select(LearningResource, creation_task)
+            .join(creation_task, creation_task.id == LearningResource.generation_task_id)
+            .order_by(creation_task.created_at.desc(), LearningResource.id.asc())
+            .limit(100)
+        )
+    if not include_unpublished:
+        statement = statement.where(LearningResource.review_status == "passed")
     if learner_id:
-        statement = statement.join(Learner, Learner.id == GenerationTask.learner_id).where(
+        statement = statement.join(Learner, Learner.id == creation_task.learner_id).where(
             Learner.public_id == learner_id
         )
     if domain_code:
-        statement = statement.where(GenerationTask.domain_code == domain_code)
+        statement = statement.where(creation_task.domain_code == domain_code)
     rows = list(db.execute(statement))
     resource_ids = [resource.id for resource, _ in rows]
     reports = list(

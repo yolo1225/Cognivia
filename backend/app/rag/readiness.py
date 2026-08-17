@@ -85,6 +85,7 @@ def candidate_rag_status(domain_code: str) -> dict[str, Any]:
         "ready": True,
         "domain_code": domain_code,
         "active_collection": manifest.active_collection,
+        "indexed_chunk_count": manifest.indexed_chunk_count,
         "index_version": manifest.index_version,
         "source_data_version": manifest.source_data_version,
         "embedding_model": manifest.embedding_model,

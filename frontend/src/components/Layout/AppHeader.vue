@@ -47,6 +47,7 @@ const labels: Record<string, string> = {
   '/metrics': '任务记录',
   '/learners': '用户管理',
   '/domain-hub': '领域管理',
+  '/model-settings': '模型配置',
   '/review': '人工复核',
 }
 

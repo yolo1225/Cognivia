@@ -1,7 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.rag.candidate_index_access import CandidateIndexAccess, CandidateIndexUnavailable
-from app.rag.vector_store import VectorStore
+from app.rag.readiness import candidate_rag_status
 from app.repositories.domain_repo import DomainRepository
 
 
@@ -21,28 +20,30 @@ class DomainApiService:
             for domain in self.repository.list()
         ]
 
-    def validate(self, domain_code: str, vector_store: VectorStore) -> dict:
+    def validate(self, domain_code: str) -> dict:
         knowledge_count = self.repository.knowledge_count(domain_code)
         question_count = self.repository.question_count(domain_code)
-        try:
-            manifest, _ = CandidateIndexAccess(vector_store.client).active(domain_code)
-            vector_count = manifest.indexed_chunk_count
-            candidate_issue = None
-        except CandidateIndexUnavailable as exc:
-            vector_count = 0
-            candidate_issue = str(exc)
+        rag = candidate_rag_status(domain_code)
+        rag_ready = bool(rag.get("ready"))
+        vector_count = int(rag.get("indexed_chunk_count", 0)) if rag_ready else 0
         targets = {
             "knowledge_items": 50,
             "diagnostic_questions": 60,
             "vector_chunks": knowledge_count,
         }
         issues = []
-        if candidate_issue:
-            issues.append({"level": "warning", "message": "Candidate V3 索引不可用", "actual": candidate_issue, "target": "ready"})
+        if not rag_ready:
+            issues.append(
+                {
+                    "level": "warning",
+                    "message": "Candidate RAG 索引不可用",
+                    "actual": rag.get("reason", "candidate_index_unavailable"),
+                    "target": "ready",
+                }
+            )
         for key, message, actual, target in (
             ("knowledge_items", "知识点数量未达到 M1 目标", knowledge_count, targets["knowledge_items"]),
             ("diagnostic_questions", "诊断题数量未达到 M1 目标", question_count, targets["diagnostic_questions"]),
-            ("vector_chunks", "Candidate V3 向量数量少于知识点数量", vector_count, targets["vector_chunks"]),
         ):
             if actual < target:
                 issues.append({"level": "warning", "message": message, "actual": actual, "target": target})
@@ -56,4 +57,5 @@ class DomainApiService:
             },
             "targets": targets,
             "issues": issues,
+            "rag": rag,
         }

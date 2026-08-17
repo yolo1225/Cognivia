@@ -10,8 +10,13 @@ from app.models import (
     GenerationTask,
     KnowledgeItem,
     KnowledgeRelation,
+    LearningPackageResource,
     LearningPath,
     LearningResource,
+)
+from app.services.learning_package_service import (
+    ensure_package_members,
+    record_package_impact,
 )
 
 
@@ -112,22 +117,43 @@ def mark_affected_content(
         path_count += 1
 
     resource_count = 0
-    resources = list(
+    current_packages = list(
         db.scalars(
-            select(LearningResource)
-            .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
-            .where(GenerationTask.domain_code == domain_code, LearningResource.is_current.is_(True))
+            select(GenerationTask).where(
+                GenerationTask.domain_code == domain_code,
+                GenerationTask.is_current_package.is_(True),
+            )
         )
     )
-    for resource in resources:
-        source_ids = {
-            str(source.get("knowledge_id"))
-            for source in (resource.sources_json or [])
-            if isinstance(source, dict) and source.get("knowledge_id")
-        }
-        if not (source_ids & affected_knowledge_ids):
+    for task in current_packages:
+        ensure_package_members(db, task)
+        rows = list(
+            db.execute(
+                select(LearningPackageResource, LearningResource)
+                .join(LearningResource, LearningResource.id == LearningPackageResource.resource_id)
+                .where(LearningPackageResource.package_task_id == task.id)
+            )
+        )
+        affected_resources: list[LearningResource] = []
+        for member, resource in rows:
+            source_ids = {
+                str(source.get("knowledge_id"))
+                for source in (resource.sources_json or [])
+                if isinstance(source, dict) and source.get("knowledge_id")
+            }
+            if not (source_ids & affected_knowledge_ids):
+                continue
+            member.freshness_status = "knowledge_changed"
+            affected_resources.append(resource)
+        if not affected_resources:
             continue
-        resource.review_status = "review_stale"
-        resource_count += 1
+        record_package_impact(
+            db,
+            task=task,
+            affected_knowledge_ids=affected_knowledge_ids,
+            affected_resources=affected_resources,
+            reason=reason,
+        )
+        resource_count += len(affected_resources)
 
     return {"learning_paths": path_count, "resources": resource_count}

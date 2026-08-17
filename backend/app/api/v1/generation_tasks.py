@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.schemas.common import ApiResponse, ok
 from app.services.feedback_service import create_feedback_task
+from app.services.learning_package_service import package_member_rows
 from app.services.profile_service import is_initial_profile_ready, latest_profile_for_learner, profile_source, public_id
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.workers.generation_worker import run_generation_task
@@ -86,28 +87,70 @@ def _profile_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
 
 def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
     learner = db.get(Learner, task.learner_id)
-    resources = list(
-        db.scalars(
-            select(LearningResource)
-            .where(LearningResource.generation_task_id == task.id)
-            .order_by(LearningResource.id)
-        )
-    )
+    package_rows = package_member_rows(db, task) if task.status == "completed" else []
+    if package_rows:
+        resources = []
+        for member, resource in package_rows:
+            payload = _resource_summary(resource)
+            payload["membership_type"] = member.membership_type
+            payload["freshness_status"] = member.freshness_status
+            resources.append(payload)
+    else:
+        resources = [
+            _resource_summary(item)
+            for item in db.scalars(
+                select(LearningResource)
+                .where(LearningResource.generation_task_id == task.id)
+                .order_by(LearningResource.id)
+            )
+        ]
+    source_feedback = None
+    if task.source_feedback_id is not None:
+        feedback = db.get(Feedback, task.source_feedback_id)
+        if feedback is not None:
+            source_feedback = {
+                "feedback_type": feedback.feedback_type,
+                "triggered_action": feedback.triggered_action,
+                "recommended_action": feedback.recommended_action,
+                "comment": feedback.comment,
+                "rating": feedback.rating,
+            }
+    source_resource = None
+    if task.source_resource_id is not None:
+        resource = db.get(LearningResource, task.source_resource_id)
+        if resource is not None:
+            source_resource = {
+                "resource_id": resource.public_id,
+                "title": resource.title,
+                "resource_type": resource.resource_type,
+                "version": resource.version,
+            }
     return {
         "task_id": task.public_id,
         "thread_id": task.public_id,
         "status": task.status,
         "progress": task.progress,
         "trigger_type": task.trigger_type,
+        "event_type": task.event_type,
+        "source_task_id": (
+            db.get(GenerationTask, task.source_task_id).public_id if task.source_task_id else None
+        ),
+        "is_current_package": task.is_current_package,
         "execution_mode": task.execution_mode,
         "learner_id": learner.public_id if learner else None,
         **_profile_summary(db, task),
         "revision_count": task.revision_count,
         "decision": task.decision,
         "package_coverage": task.package_coverage_json or {},
+        "package_quality": task.package_quality_json or None,
         "created_at": task.created_at.isoformat() if task.created_at else None,
         "updated_at": task.updated_at.isoformat() if task.updated_at else None,
-        "resources": [_resource_summary(item) for item in resources],
+        "resources": resources,
+        "inherited_resource_count": sum(
+            1 for item in resources if item.get("membership_type") == "inherited"
+        ),
+        "source_feedback": source_feedback,
+        "source_resource": source_resource,
     }
 
 

@@ -1,96 +1,143 @@
 <template>
-  <section class="page">
-    <div class="head">
-      <div><h1>学习报告</h1><p class="sub">集中查看能力画像、薄弱知识与当前推荐学习路径。</p></div>
-      <div class="actions"><span class="tag">当前学习者：{{ learnerId }}</span><button class="btn" :disabled="loading" @click="loadReport">{{ loading ? '刷新中...' : '刷新报告' }}</button></div>
-    </div>
+  <section class="page report-page">
+    <PageHeader title="学习报告" description="能力画像、多智能体闭环与推荐学习路径，一份报告看清「我是谁、系统怎么运转、下一步做什么」。">
+      <template #actions>
+        <span class="learner-tag">学习者 {{ learnerId || '-' }}</span>
+        <button class="btn" :disabled="loading" @click="loadReport">{{ loading ? '刷新中...' : '刷新报告' }}</button>
+      </template>
+    </PageHeader>
 
-    <div v-if="loading" class="panel" style="text-align:center;padding:40px;color:var(--muted)">加载报告中...</div>
+    <PageState v-if="loading" type="loading" title="正在加载学习报告" />
 
     <div v-else-if="errorMessage" class="error-state"><strong>报告加载失败</strong><p>{{ errorMessage }}</p><button class="btn" @click="loadReport">重新加载</button></div>
 
-    <div v-else-if="!report" class="panel" style="text-align:center;padding:60px;color:var(--muted)">
-      <div style="font-size:36px;margin-bottom:12px">📋</div>
-      <strong style="display:block;color:var(--ink);font-size:17px">尚未生成学习报告</strong>
-      <p class="sub" style="margin-top:8px">请先在学习中心完成学习背景建档和首次能力诊断，系统将据此生成能力画像与学习路线。</p>
-      <button class="btn primary" style="margin-top:18px" @click="router.push('/dashboard')">返回学习中心</button>
+    <div v-else-if="!report" class="card empty-state">
+      <div class="empty-icon"><AppIcon name="report" /></div>
+      <h2>尚未生成学习报告</h2>
+      <p>请先在学习中心完成学习背景建档和首次能力诊断，系统将据此生成能力画像与学习路线。</p>
+      <button class="btn primary" @click="router.push('/dashboard')">返回学习中心</button>
     </div>
 
     <template v-else>
-      <div class="panel profile-overview">
-        <div class="panel-head">
-          <div><h2>能力画像</h2><p class="section-note">基于最近一次诊断训练结果生成</p></div>
-          <span class="profile-badge">{{ profileTypeLabel(report.profile_type) }}</span>
+      <!-- 画像身份卡 -->
+      <header class="hero">
+        <div class="hero-id">
+          <span class="hero-kicker">个性化能力画像</span>
+          <h2>{{ profileTypeLabel(report.profile_type) }}</h2>
+          <p>基于诊断测评生成的能力画像，用于个性化资源生成与学习路径推荐。</p>
+          <div class="hero-tags">
+            <span v-for="d in directionList" :key="d" class="hero-tag">{{ d }}</span>
+            <span class="hero-tag">{{ contextSnapshot.education_level || '未填写' }} · {{ contextSnapshot.major || '未填写专业' }}</span>
+            <span v-if="contextSnapshot.experience_years != null" class="hero-tag">{{ contextSnapshot.experience_years }} 年经验</span>
+          </div>
         </div>
-        <div class="profile-layout">
-          <div class="radar-wrap"><RadarChart :values="report.radar" /></div>
-          <div class="ability-list">
-            <div v-for="item in abilityRows" :key="item.label" class="ability-row">
-              <div><span>{{ item.label }}</span><strong>{{ item.value }}</strong></div>
-              <div class="ability-track" role="progressbar" :aria-label="item.label" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="item.value">
-                <i :style="{ width: `${item.value}%` }"></i>
+        <div class="hero-stats">
+          <div class="stat"><strong>{{ diagnosticAccuracy }}%</strong><span>诊断正确率</span></div>
+          <div class="stat"><strong>{{ weakCount }}</strong><span>薄弱知识点</span></div>
+          <div class="stat"><strong>{{ resourceTotal }}</strong><span>已通过资源</span></div>
+        </div>
+      </header>
+
+      <!-- 能力画像 + 学习闭环 -->
+      <div class="report-grid">
+        <section class="card">
+          <div class="card-head">
+            <div><h2>能力画像</h2><p class="section-note">五项能力维度的当前水平</p></div>
+          </div>
+          <div class="profile-body">
+            <div class="radar-wrap"><RadarChart :values="report.radar" /></div>
+            <div class="ability-list">
+              <div v-for="item in abilityRows" :key="item.label" class="ability-row">
+                <div class="ability-meta"><span>{{ item.label }}</span><strong>{{ item.value }}</strong></div>
+                <div class="ability-track"><i :style="{ width: `${item.value}%` }"></i></div>
               </div>
             </div>
           </div>
-        </div>
-        <div v-if="report.diagnostic_summary?.answer_count" class="diagnostic-strip">
-          <div><span>已完成题目</span><strong>{{ report.diagnostic_summary.answer_count }}</strong></div>
-          <div><span>诊断正确率</span><strong>{{ (report.diagnostic_summary.accuracy || 0).toFixed(0) }}%</strong></div>
-          <div><span>当前学习资源</span><strong>{{ report.resource_summary?.total || 0 }}</strong></div>
-        </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div><h2>学习闭环</h2><p class="section-note">多智能体协同进度</p></div>
+            <span class="loop-progress">{{ doneSteps }}/{{ loopSteps.length }} 步完成</span>
+          </div>
+          <div class="loop-list">
+            <div v-for="(step, i) in loopSteps" :key="step.key" class="loop-step" :class="step.state">
+              <span class="loop-num">{{ i + 1 }}</span>
+              <div class="loop-body">
+                <strong>{{ step.label }}</strong>
+                <small>{{ step.note }}</small>
+              </div>
+              <span class="loop-badge">{{ step.stateLabel }}</span>
+            </div>
+          </div>
+        </section>
       </div>
 
-      <div class="panel evidence-panel">
-        <div class="panel-head"><div><h2>画像依据</h2><p class="section-note">先验背景用于学习目标和案例适配，能力结论以诊断测评为准。</p></div></div>
-        <div class="evidence-grid"><div><span>学习背景</span><strong>{{ contextSnapshot.education_level || '-' }} · {{ contextSnapshot.major || '-' }}</strong></div><div><span>相关经验</span><strong>{{ contextSnapshot.experience_years ?? '-' }} 年</strong></div><div><span>学习方向</span><strong>{{ directionLabels }}</strong></div><div><span>诊断依据</span><strong>{{ report.diagnostic_summary?.answer_count || 0 }} 道已评分题目</strong></div></div>
-      </div>
-
-      <div class="panel weakness-panel">
-        <div class="panel-head">
+      <!-- 薄弱知识点 -->
+      <section class="card">
+        <div class="card-head">
           <div><h2>薄弱知识点</h2><p class="section-note">按薄弱程度排序，优先处理高等级项目</p></div>
           <span v-if="sortedWeakKnowledge.length" class="weak-count">{{ sortedWeakKnowledge.length }} 项待巩固</span>
         </div>
-        <div v-if="sortedWeakKnowledge.length" class="weak-list">
-          <div v-for="(item, index) in sortedWeakKnowledge" :key="item.knowledge_id" class="weak-row">
-            <div class="weak-rank">{{ String(index + 1).padStart(2, '0') }}</div>
-            <div class="weak-main">
+        <div v-if="sortedWeakKnowledge.length" class="weak-grid">
+          <div v-for="(item, index) in sortedWeakKnowledge" :key="item.knowledge_id" class="weak-card" :class="severityLevel(item.weakness_level)">
+            <div class="weak-card-head">
+              <span class="weak-rank">{{ index + 1 }}</span>
               <div class="weak-title"><h3>{{ item.name }}</h3><span class="category-tag">{{ item.category }}</span></div>
-              <div class="severity-track" role="progressbar" :aria-label="`${item.name}薄弱程度`" aria-valuemin="1" aria-valuemax="5" :aria-valuenow="item.weakness_level">
-                <i v-for="level in 5" :key="level" :class="{ active: level <= item.weakness_level, high: item.weakness_level >= 4 }"></i>
-              </div>
             </div>
-            <div class="severity-copy" :class="{ high: item.weakness_level >= 4 }">
-              <strong>{{ item.weakness_level }}/5</strong><span>{{ weaknessLabel(item.weakness_level) }}</span>
+            <div class="severity-meter">
+              <span class="severity-dots"><i v-for="level in 5" :key="level" :class="{ on: level <= item.weakness_level }"></i></span>
+              <span class="severity-badge">{{ weaknessLabel(item.weakness_level) }}</span>
             </div>
           </div>
         </div>
         <div v-else class="weak-empty"><span aria-hidden="true">✓</span><div><strong>当前没有已确认的薄弱知识点</strong><p>继续完成训练与分阶测试，报告会根据有效证据更新。</p></div></div>
-      </div>
+      </section>
 
-      <div class="panel">
-        <div class="panel-head"><h2>推荐学习路径</h2><span class="status" :class="report.feedback_summary?.learning_path_needs_refresh?'wait':'ok'">{{ report.feedback_summary?.learning_path_needs_refresh?'待刷新':'当前版本' }}</span></div>
-        <div v-if="report.path_detail?.length" class="path"><div v-for="(stage,index) in report.path_detail" :key="index" class="node"><div class="node-num">{{ index+1 }}</div><div><h3>{{ stage.name }}</h3><p>{{ stage.description || '根据当前画像推荐' }}</p></div></div></div><div v-else class="empty-hint">尚未形成可展示的学习路径。</div>
-      </div>
+      <!-- 学习路径 -->
+      <section class="card">
+        <div class="card-head">
+          <div><h2>推荐学习路径</h2><p class="section-note">根据画像与薄弱点动态推荐</p></div>
+          <span class="status" :class="report.feedback_summary?.learning_path_needs_refresh ? 'wait' : 'ok'">{{ report.feedback_summary?.learning_path_needs_refresh ? '待刷新' : '当前版本' }}</span>
+        </div>
+        <div v-if="report.path_detail?.length" class="path-h">
+          <div v-for="(stage, index) in report.path_detail" :key="index" class="path-h-step">
+            <span class="path-num">{{ index + 1 }}</span>
+            <div><h3>{{ stage.name }}</h3><p>{{ stage.description || '根据当前画像推荐' }}</p></div>
+          </div>
+        </div>
+        <div v-else class="empty-hint">尚未形成可展示的学习路径。</div>
+      </section>
 
-      <div v-if="report.resource_summary?.recent?.length" class="panel">
-        <div class="panel-head"><h2>最近资源</h2></div>
-        <table><thead><tr><th>资源</th><th>类型</th><th>难度</th><th>审核状态</th><th>来源数</th></tr></thead>
-          <tbody>
-            <tr v-for="r in report.resource_summary.recent" :key="r.resource_id">
-              <td>{{ r.title }}</td><td><span class="tag">{{ r.resource_type_label || r.resource_type }}</span></td><td>{{ r.difficulty }}/5</td>
-              <td><span class="status" :class="r.review_status === 'passed' ? 'ok' : 'wait'">{{ r.review_status }}</span></td>
-              <td>{{ r.source_count }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <!-- 最近资源 -->
+      <section v-if="report.resource_summary?.recent?.length" class="card">
+          <div class="card-head"><div><h2>最近资源</h2><p class="section-note">已通过自动质量校验的个性化学习资源</p></div></div>
+        <div class="table-wrap">
+          <table class="resource-table">
+            <thead><tr><th>资源</th><th>类型</th><th>难度</th><th>质量状态</th><th>来源</th></tr></thead>
+            <tbody>
+              <tr v-for="r in report.resource_summary.recent" :key="r.resource_id">
+                <td class="cell-title">{{ r.title }}</td>
+                <td><span class="tag">{{ r.resource_type_label || r.resource_type }}</span></td>
+                <td>{{ r.difficulty }}/5</td>
+                <td><span class="status" :class="resourceQualityStatusTone(r.review_status)">{{ resourceQualityStatusLabel(r.review_status) }}</span></td>
+                <td>{{ r.source_count }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-      <div v-if="report.next_actions?.length" class="panel">
-        <div class="panel-head"><h2>建议下一步</h2></div>
-        <div class="actions">
+      <!-- 建议下一步 -->
+      <section v-if="report.next_actions?.length" class="card next-card">
+        <div class="next-copy">
+          <h2>建议下一步</h2>
+          <p>{{ report.next_actions[0].description }}</p>
+        </div>
+        <div class="next-actions">
           <button v-for="a in report.next_actions" :key="a.type" class="btn" :class="{ primary: a.type === 'generation' }" :disabled="creatingGeneration && a.type === 'generation'" @click="handleNextAction(a)">{{ creatingGeneration && a.type === 'generation' ? '正在创建学习包...' : a.label }}</button>
         </div>
-      </div>
+      </section>
     </template>
   </section>
 </template>
@@ -99,8 +146,12 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getLearningReport, type LearningReport } from '@/api/reports'
+import { resourceQualityStatusLabel, resourceQualityStatusTone } from '@/utils/resourceQualityStatus'
 import { createGenerationTask } from '@/api/generation'
 import RadarChart from '@/components/Charts/RadarChart.vue'
+import AppIcon from '@/components/Shared/AppIcon.vue'
+import PageHeader from '@/components/Shared/PageHeader.vue'
+import PageState from '@/components/Shared/PageState.vue'
 import { useAuthStore } from '@/stores/authStore'
 
 const router = useRouter()
@@ -119,23 +170,67 @@ const report = ref<LearningReport | null>(null)
 const loading = ref(false)
 const errorMessage = ref('')
 const creatingGeneration = ref(false)
+
 const radarLabels = ['理论基础', '实操能力', '问题解决', '知识广度', '学习速度']
+const DIRECTION_LABELS: Record<string, string> = {
+  llm_application: '大模型应用开发',
+  prompt_engineering: 'Prompt 工程',
+  rag_knowledge_base: 'RAG 知识库构建',
+  agent_orchestration: 'Agent 编排',
+}
+
 const abilityRows = computed(() => radarLabels.map((label, index) => ({
   label,
   value: Math.max(0, Math.min(100, Number(report.value?.radar?.[index] || 0))),
 })))
 const sortedWeakKnowledge = computed(() => [...(report.value?.weak_knowledge || [])].sort((a, b) => b.weakness_level - a.weakness_level))
 const contextSnapshot = computed<Record<string, unknown>>(() => report.value?.context_snapshot || {})
-const directionLabels = computed(() => (Array.isArray(contextSnapshot.value.direction_tags) ? contextSnapshot.value.direction_tags : report.value?.direction_tags || []).map((value) => ({ llm_application: '大模型应用开发', prompt_engineering: 'Prompt 工程', rag_knowledge_base: 'RAG 知识库构建', agent_orchestration: 'Agent 编排' } as Record<string, string>)[String(value)] || String(value)).join('、') || '-')
+const directionList = computed(() => {
+  const tags = (Array.isArray(contextSnapshot.value.direction_tags) ? contextSnapshot.value.direction_tags : report.value?.direction_tags) || []
+  return tags.map(value => DIRECTION_LABELS[String(value)] || String(value))
+})
+const diagnosticAccuracy = computed(() => Math.round(Number(report.value?.diagnostic_summary?.accuracy || 0)))
+const weakCount = computed(() => sortedWeakKnowledge.value.length)
+const resourceTotal = computed(() => report.value?.resource_summary?.total || 0)
+
+const LOOP_DEFS = [
+  { key: 'diagnosis', label: '诊断测评' },
+  { key: 'profile', label: '画像生成' },
+  { key: 'generation', label: '资源生成' },
+  { key: 'review', label: '质量审核' },
+  { key: 'feedback', label: '学习反馈' },
+  { key: 'path_update', label: '路径更新' },
+] as const
+const loopSteps = computed(() => LOOP_DEFS.map(def => {
+  const raw = String(report.value?.loop_status?.[def.key] ?? 'pending')
+  const state = ['completed', 'refreshed', 'current'].includes(raw) ? 'done' : raw === 'needs_refresh' ? 'stale' : 'pending'
+  const stateLabel = state === 'done' ? '已完成' : state === 'stale' ? '待刷新' : '待进行'
+  const note = {
+    diagnosis: '能力诊断与答题记录',
+    profile: '五项能力与画像类型',
+    generation: '讲义 / 实训 / 测验',
+    review: '事实、来源、难度、覆盖',
+    feedback: '补救解释与挑战任务',
+    path_update: '画像变化后重算路线',
+  }[def.key] || ''
+  return { ...def, state, stateLabel, note }
+}))
+const doneSteps = computed(() => loopSteps.value.filter(s => s.state === 'done').length)
 
 function profileTypeLabel(type?: string) {
-  return ({ beginner: '基础起步型', intermediate: '进阶提升型', advanced: '综合应用型', practice_oriented: '实操导向型' } as Record<string, string>)[type || ''] || type || '画像待确认'
+  return ({ beginner: '基础起步型学习者', intermediate: '进阶提升型学习者', advanced: '综合应用型学习者', practice_oriented: '实操导向型学习者' } as Record<string, string>)[type || ''] || type || '画像待确认'
 }
 
 function weaknessLabel(level: number) {
   if (level >= 4) return '优先补强'
   if (level === 3) return '重点巩固'
   return '持续练习'
+}
+
+function severityLevel(level: number) {
+  if (level >= 4) return 'high'
+  if (level === 3) return 'mid'
+  return 'low'
 }
 
 async function loadReport() {
@@ -175,57 +270,116 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
 </script>
 
 <style scoped>
-.section-note { margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }
-.profile-badge, .weak-count {
-  border-radius: 999px;
-  background: var(--blue2);
-  color: var(--blue);
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 750;
-}
-.profile-layout { display: grid; grid-template-columns: minmax(320px, .9fr) minmax(300px, 1.1fr); gap: 28px; align-items: center; }
+.report-page { gap: 20px; max-width: 1080px; margin: 0 auto; }
+
+/* 通用卡片 */
+.card { border: 1px solid var(--line); border-radius: 16px; background: #fff; padding: 24px 26px; box-shadow: 0 1px 2px rgb(16 24 40 / .03); }
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.card-head h2 { color: var(--ink); font-size: 17px; }
+.section-note { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.empty-state { display: grid; justify-items: center; gap: 8px; padding: 48px 32px; text-align: center; }
+.empty-icon { font-size: 40px; }
+.empty-state h2 { color: var(--ink); font-size: 18px; }
+.empty-state p { max-width: 420px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.empty-state .btn { margin-top: 12px; }
+
+/* Hero 身份卡 */
+.hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; border: 1px solid #e2e8f2; border-radius: 16px; padding: 26px 28px; background: linear-gradient(135deg, #eef3ff 0%, #f8fafc 55%, #eef8f3 100%); }
+.hero-kicker { color: var(--blue); font-size: 12px; font-weight: 750; }
+.hero-id h2 { margin-top: 6px; color: var(--ink); font-size: 24px; }
+.hero-id p { margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.hero-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
+.hero-tag { border: 1px solid #dbe4f0; border-radius: 999px; background: rgb(255 255 255 / .7); color: #405067; padding: 5px 11px; font-size: 12px; }
+.hero-stats { display: flex; gap: 12px; flex-shrink: 0; }
+.hero-stats .stat { min-width: 92px; display: grid; gap: 4px; border: 1px solid rgb(255 255 255 / .8); border-radius: 12px; background: rgb(255 255 255 / .75); padding: 14px 16px; text-align: center; }
+.hero-stats strong { color: var(--ink); font-size: 24px; line-height: 1; }
+.hero-stats span { color: var(--muted); font-size: 11px; }
+
+/* 两列网格 */
+.report-grid { display: grid; grid-template-columns: 1fr; gap: 20px; align-items: start; }
+
+/* 能力画像 */
+.profile-body { display: grid; grid-template-columns: minmax(300px, 1fr) minmax(240px, .85fr); gap: 24px; align-items: center; }
 .radar-wrap { min-width: 0; }
-.ability-list { display: grid; gap: 17px; }
-.ability-row > div:first-child { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
-.ability-row span { color: var(--muted); }
-.ability-row strong { font-size: 14px; }
-.ability-track { height: 7px; margin-top: 7px; border-radius: 999px; background: #e8edf3; overflow: hidden; }
-.ability-track i { display: block; height: 100%; border-radius: inherit; background: var(--blue); }
-.diagnostic-strip { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 8px; border-top: 1px solid var(--line); padding-top: 18px; }
-.diagnostic-strip div { padding: 0 18px; border-right: 1px solid var(--line); }
-.diagnostic-strip div:first-child { padding-left: 0; }
-.diagnostic-strip div:last-child { border-right: 0; }
-.diagnostic-strip span { color: var(--muted); font-size: 11px; }
-.diagnostic-strip strong { display: block; margin-top: 5px; font-size: 20px; }
-.weak-count { background: var(--amber2); color: var(--amber); }
-.weak-list { border-top: 1px solid var(--line); }
-.weak-row { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 16px 2px; border-bottom: 1px solid #edf0f4; }
-.weak-row:last-child { border-bottom: 0; padding-bottom: 2px; }
-.weak-rank { color: #8a97a9; font: 700 12px Consolas, monospace; }
-.weak-title { display: flex; align-items: center; gap: 9px; min-width: 0; }
-.weak-title h3 { min-width: 0; overflow-wrap: anywhere; }
-.category-tag { flex: 0 0 auto; border-radius: 6px; background: var(--soft); color: var(--muted); padding: 3px 7px; font-size: 10px; }
-.severity-track { display: grid; grid-template-columns: repeat(5, minmax(20px, 58px)); gap: 5px; margin-top: 9px; }
-.severity-track i { height: 5px; border-radius: 999px; background: #e5eaf0; }
-.severity-track i.active { background: var(--amber); }
-.severity-track i.active.high { background: var(--red); }
-.severity-copy { min-width: 72px; color: var(--amber); text-align: right; }
-.severity-copy.high { color: var(--red); }
-.severity-copy strong, .severity-copy span { display: block; }
-.severity-copy strong { font-size: 16px; }
-.severity-copy span { margin-top: 3px; font-size: 10px; }
-.weak-empty { display: flex; align-items: center; gap: 12px; border-radius: 10px; background: var(--green2); padding: 16px; color: var(--green); }
+.ability-list { display: grid; gap: 16px; }
+.ability-meta { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.ability-meta span { color: var(--muted); }
+.ability-meta strong { color: var(--ink); font-size: 14px; }
+.ability-track { height: 8px; margin-top: 7px; border-radius: 999px; background: #e8edf3; overflow: hidden; }
+.ability-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #6a8bc0, var(--blue)); }
+
+/* 学习闭环 */
+.loop-progress { border-radius: 999px; background: var(--blue2); color: var(--blue); padding: 6px 10px; font-size: 12px; font-weight: 700; }
+.loop-list { display: grid; gap: 10px; }
+.loop-step { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: center; border: 1px solid #edf1f6; border-radius: 12px; padding: 12px 14px; }
+.loop-num { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: var(--soft); color: var(--muted); font-size: 13px; font-weight: 700; }
+.loop-body strong { display: block; color: var(--ink); font-size: 13.5px; }
+.loop-body small { display: block; margin-top: 2px; color: var(--muted); font-size: 11.5px; }
+.loop-badge { border-radius: 6px; padding: 3px 8px; font-size: 11px; font-weight: 650; }
+.loop-step.done .loop-num { background: var(--green2); color: var(--green); }
+.loop-step.done .loop-badge { background: var(--green2); color: var(--green); }
+.loop-step.stale .loop-num { background: var(--amber2); color: var(--amber); }
+.loop-step.stale .loop-badge { background: var(--amber2); color: var(--amber); }
+.loop-step.pending .loop-num { background: var(--soft); color: #9aa7b8; }
+.loop-step.pending .loop-badge { background: var(--soft); color: #9aa7b8; }
+
+/* 薄弱知识点 */
+.weak-count { border-radius: 999px; background: var(--amber2); color: var(--amber); padding: 6px 10px; font-size: 12px; font-weight: 750; }
+.weak-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.weak-card { border: 1px solid #edf1f6; border-radius: 12px; background: var(--soft); padding: 14px 16px; }
+.weak-card-head { display: flex; align-items: flex-start; gap: 10px; }
+.weak-rank { width: 26px; height: 26px; flex-shrink: 0; display: grid; place-items: center; border-radius: 8px; background: #fff; color: var(--muted); font-size: 12px; font-weight: 700; }
+.weak-title { min-width: 0; display: grid; gap: 6px; }
+.weak-title h3 { min-width: 0; color: var(--ink); font-size: 13.5px; overflow-wrap: anywhere; }
+.category-tag { justify-self: start; border-radius: 6px; background: #fff; color: var(--muted); padding: 3px 7px; font-size: 10px; }
+.severity-meter { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #e4eaf2; }
+.severity-dots { display: inline-flex; gap: 4px; }
+.severity-dots i { width: 22px; height: 5px; border-radius: 999px; background: #dfe5ed; }
+.severity-badge { border-radius: 6px; padding: 3px 8px; font-size: 11px; font-weight: 650; }
+.weak-card.high { border-color: #f0cfcf; background: #fff7f7; }
+.weak-card.high .weak-rank { color: var(--red); }
+.weak-card.high .severity-dots i.on { background: var(--red); }
+.weak-card.high .severity-badge { background: #ffe4e4; color: var(--red); }
+.weak-card.mid { border-color: #f0e0c2; background: #fffaf1; }
+.weak-card.mid .weak-rank { color: var(--amber); }
+.weak-card.mid .severity-dots i.on { background: var(--amber); }
+.weak-card.mid .severity-badge { background: var(--amber2); color: var(--amber); }
+.weak-card.low { border-color: #d6e9de; background: #f4fbf7; }
+.weak-card.low .weak-rank { color: var(--green); }
+.weak-card.low .severity-dots i.on { background: var(--green); }
+.weak-card.low .severity-badge { background: var(--green2); color: var(--green); }
+.weak-empty { display: flex; align-items: center; gap: 12px; border-radius: 12px; background: var(--green2); padding: 16px; color: var(--green); }
 .weak-empty > span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: #fff; font-weight: 800; }
 .weak-empty p { margin-top: 4px; color: #3f735f; font-size: 11px; }
-.evidence-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; overflow: hidden; border-radius: 8px; background: var(--line); }.evidence-grid div { min-width: 0; background: var(--soft); padding: 13px 15px; }.evidence-grid span { display: block; color: var(--muted); font-size: 11px; }.evidence-grid strong { display: block; margin-top: 5px; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; }
-@media (max-width: 900px) { .profile-layout { grid-template-columns: 1fr; gap: 4px; } }
-@media (max-width: 600px) {
-  .diagnostic-strip { grid-template-columns: 1fr; }
-  .diagnostic-strip div, .diagnostic-strip div:first-child { padding: 10px 0; border-right: 0; border-bottom: 1px solid var(--line); }
-  .diagnostic-strip div:last-child { border-bottom: 0; }
-  .weak-row { grid-template-columns: 28px minmax(0, 1fr); }
-  .evidence-grid { grid-template-columns: 1fr; }
-  .severity-copy { grid-column: 2; display: flex; gap: 6px; align-items: baseline; text-align: left; }
+
+/* 学习路径 */
+.path-h { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.path-h-step { display: flex; align-items: flex-start; gap: 11px; border: 1px solid #edf1f6; border-radius: 12px; background: var(--soft); padding: 14px 15px; }
+.path-num { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: var(--blue); color: #fff; font-size: 13px; font-weight: 700; }
+.path-h-step h3 { color: var(--ink); font-size: 13.5px; }
+.path-h-step p { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+/* 最近资源 */
+.table-wrap { width: 100%; overflow-x: auto; }
+.resource-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.resource-table th { padding: 9px 12px; text-align: left; color: var(--muted); font-size: 12px; font-weight: 700; border-bottom: 1px solid var(--line); }
+.resource-table td { padding: 11px 12px; border-bottom: 1px solid #edf0f4; color: #405067; }
+.resource-table tr:last-child td { border-bottom: 0; }
+.cell-title { color: var(--ink); font-weight: 600; }
+
+/* 下一步 */
+.next-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-color: #cbd9f4; background: linear-gradient(135deg, #f5f8ff, #fafcff); }
+.next-copy h2 { color: var(--ink); font-size: 17px; }
+.next-copy p { margin-top: 5px; color: var(--muted); font-size: 13px; }
+.next-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+@media (max-width: 900px) {
+  .profile-body { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .hero { flex-direction: column; align-items: flex-start; }
+  .hero-stats { width: 100%; }
+  .hero-stats .stat { flex: 1; }
+  .next-card { flex-direction: column; align-items: flex-start; }
 }
 </style>

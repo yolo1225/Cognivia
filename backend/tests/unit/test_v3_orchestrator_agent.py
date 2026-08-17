@@ -75,6 +75,37 @@ def test_finalize_completes_atomic_package() -> None:
     assert set(completed.passed_resource_types) == set(ResourceType)
 
 
+@pytest.mark.parametrize("resource_count", [1, 2, 3])
+def test_finalize_completes_exact_requested_resource_set(resource_count: int) -> None:
+    base = _generation_finalize_input()
+    request = base.model_copy(
+        update={
+            "resources": base.resources[:resource_count],
+            "review_reports": base.review_reports[:resource_count],
+        }
+    )
+
+    completed = OrchestratorAgent().execute(request)
+
+    assert completed.decision == TaskDecision.COMPLETED
+    assert set(completed.passed_resource_types) == {
+        resource.resource_type for resource in request.resources
+    }
+
+
+def test_finalize_fails_when_report_types_do_not_match_requested_resources() -> None:
+    base = _generation_finalize_input()
+    request = base.model_copy(
+        update={
+            "resources": base.resources[:2],
+            "review_reports": [base.review_reports[0], base.review_reports[2]],
+        }
+    )
+
+    with pytest.raises(OrchestratorError, match="invalid_orchestrator_output"):
+        OrchestratorAgent().execute(request)
+
+
 def test_finalize_prioritizes_rejection() -> None:
     agent = OrchestratorAgent()
     request = _generation_finalize_input()

@@ -61,6 +61,7 @@ def build_review_resource_output(
     *,
     task_id: str,
     reports: list[ReviewReport],
+    expected_resource_types: list[ResourceType] | None = None,
     required_knowledge_ids: list[str],
     revision_count: int,
 ) -> ReviewResourceOutput:
@@ -92,6 +93,14 @@ def build_review_resource_output(
     )
     difficulty_score = difficulty_weight / max(1, difficulty_denominator)
     core_coverage = 0.0 if target_count == 0 else 100.0 * covered_count / target_count
+    expected_types = expected_resource_types or [report.resource_type for report in reports]
+    report_types = [report.resource_type for report in reports]
+    reports_complete = (
+        bool(expected_types)
+        and len(expected_types) == len(set(expected_types))
+        and len(report_types) == len(set(report_types))
+        and set(report_types) == set(expected_types)
+    )
     package_quality = GenerationPackageQuality(
         verifiable_claim_count=claim_count,
         hallucinated_claim_count=hallucinated_count,
@@ -101,7 +110,7 @@ def build_review_resource_output(
         target_core_knowledge_count=target_count,
         core_knowledge_coverage=round(core_coverage, 2),
         passed=(
-            len(reports) == 3
+            reports_complete
             and all(report.quality_metrics.passed for report in reports)
             and hallucination_rate < 5
             and difficulty_score >= 85
@@ -1473,6 +1482,9 @@ class ReviewValidationAgent:
             output = build_review_resource_output(
                 task_id=validated.task_id,
                 reports=reports,
+                expected_resource_types=[
+                    resource.resource_type for resource in validated.resources
+                ],
                 required_knowledge_ids=validated.requirements.required_knowledge_ids,
                 revision_count=revision_count,
             )

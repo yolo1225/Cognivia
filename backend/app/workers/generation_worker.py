@@ -32,6 +32,7 @@ from app.models import (
     AgentRun,
     Feedback,
     GenerationTask,
+    KnowledgeUpdateImpact,
     Learner,
     LearnerProfile,
     LearningPath,
@@ -409,6 +410,23 @@ def _failure_code(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def _restore_refresh_impact(db: Session, task: GenerationTask) -> None:
+    if task.event_type != "knowledge_refresh" or not task.source_task_id:
+        return
+    impact = db.scalar(
+        select(KnowledgeUpdateImpact)
+        .where(
+            KnowledgeUpdateImpact.package_task_id == task.source_task_id,
+            KnowledgeUpdateImpact.resolved_by_task_id == task.id,
+            KnowledgeUpdateImpact.status == "refreshing",
+        )
+        .order_by(KnowledgeUpdateImpact.id.desc())
+    )
+    if impact is not None:
+        impact.status = "pending"
+        impact.resolved_by_task_id = None
+
+
 def _persist_profile_update(
     db: Session, task: GenerationTask, original: LearnerProfile, state: GRAPH_STATE
 ) -> LearnerProfile:
@@ -674,6 +692,7 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
             else:
                 task.status = "failed"
                 task.failure_reason = result.decision_reason if result else "generation_failed"
+                _restore_refresh_impact(db, task)
             db.commit()
             resources = list(
                 db.scalars(
@@ -691,6 +710,7 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
         except Exception as exc:
             task.status = task.decision = "failed"
             task.failure_reason = _failure_code(exc)
+            _restore_refresh_impact(db, task)
             _message(
                 db,
                 task,

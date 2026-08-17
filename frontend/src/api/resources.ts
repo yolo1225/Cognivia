@@ -93,6 +93,8 @@ export interface ResourceSummary {
   package_status?: string
   failure_reason?: string | null
   structured_content?: StructuredResourceContent | null
+  membership_type?: 'generated' | 'inherited'
+  freshness_status?: 'current' | 'knowledge_changed'
 }
 
 export interface ResourceQualityMetrics {

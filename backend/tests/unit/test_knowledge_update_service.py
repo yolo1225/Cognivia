@@ -5,10 +5,12 @@ from app.models import (
     Base,
     GenerationTask,
     KnowledgeItem,
+    KnowledgeUpdateImpact,
     KnowledgeRelation,
     Learner,
     LearnerProfile,
     LearningPath,
+    LearningPackageResource,
     LearningResource,
 )
 from app.services.knowledge_update_service import mark_affected_content, related_knowledge_ids
@@ -81,6 +83,7 @@ def test_knowledge_impact_marks_only_referencing_paths_and_resources() -> None:
             profile_id=profile.id,
             domain_code="ai_app_dev",
             resource_types_json=["lecture"],
+            is_current_package=True,
         )
         db.add(task)
         db.flush()
@@ -124,4 +127,16 @@ def test_knowledge_impact_marks_only_referencing_paths_and_resources() -> None:
         paths = list(db.scalars(select(LearningPath).order_by(LearningPath.public_id)))
         resources = list(db.scalars(select(LearningResource).order_by(LearningResource.public_id)))
         assert [path.needs_refresh for path in paths] == [True, False]
-        assert [resource.review_status for resource in resources] == ["review_stale", "passed"]
+        assert [resource.review_status for resource in resources] == ["passed", "passed"]
+        members = list(
+            db.scalars(
+                select(LearningPackageResource).order_by(LearningPackageResource.resource_id)
+            )
+        )
+        assert [member.freshness_status for member in members] == [
+            "knowledge_changed",
+            "current",
+        ]
+        stored_impact = db.scalar(select(KnowledgeUpdateImpact))
+        assert stored_impact is not None
+        assert stored_impact.affected_resource_ids_json == ["resource_affected"]

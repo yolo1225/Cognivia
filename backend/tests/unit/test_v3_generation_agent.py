@@ -125,6 +125,23 @@ class CandidateRevisionGenerator:
         return candidate.model_copy(update={"structured_content": content, "difficulty": 5})
 
 
+class InvalidCandidateRevisionGenerator:
+    revise_calls = 0
+
+    def revise(self, _request, resource_type, _allowed_sources, _candidate):
+        self.revise_calls += 1
+        raise ModelResponseError(
+            "invalid structured output",
+            metadata={
+                "provider_mode": "live",
+                "model_name": "test-model",
+                "attempt_count": 2,
+                "status": "failed",
+                "validation_fields": ["structured_content.steps.0.expected_result"],
+            },
+        )
+
+
 class CoverageRepairGenerator(StubGenerator):
     repair_calls = 0
 
@@ -545,6 +562,69 @@ def test_generation_agent_revises_previous_candidate_instead_of_regenerating() -
         == "记录实际结果并与引用材料核对。"
     )
     assert revised.difficulty == previous.difficulty
+
+
+def test_revision_structure_failure_uses_valid_candidate_and_audited_fallback() -> None:
+    request = _input()
+    source = request.retrieved_chunks[0].source
+    target_ids = [source.knowledge_id]
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "required_knowledge_ids": target_ids,
+            "resource_knowledge_targets": {ResourceType.PRACTICE_GUIDE: target_ids},
+            "revision_plan": RevisionPlan(
+                revision_count=1,
+                resource_types=[ResourceType.PRACTICE_GUIDE],
+                field_paths_by_resource={
+                    ResourceType.PRACTICE_GUIDE: ["steps[0].expected_result[0]"]
+                },
+            ),
+        }
+    )
+    context = request.context.model_copy(
+        update={"requested_resource_types": [ResourceType.PRACTICE_GUIDE]}
+    )
+    request = request.model_copy(update={"context": context, "requirements": requirements})
+    candidate = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
+    content = candidate.structured_content.model_copy(deep=True)
+    assert isinstance(content, PracticeGuideContent)
+    rejected_claim = content.steps[0].expected_result
+    previous = GeneratedResourceArtifact(
+        resource_type=ResourceType.PRACTICE_GUIDE,
+        structured_content=content,
+        content_md="上一轮候选资源",
+        difficulty=candidate.difficulty,
+        source_refs=[source],
+        knowledge_coverage={source.knowledge_id: [source.source_ref_id]},
+    )
+    generator = InvalidCandidateRevisionGenerator()
+
+    with collect_model_calls() as collector:
+        output = ContentGenerationAgent(
+            generator=generator, renderer=render_resource_markdown
+        ).revise(
+            request,
+            [previous],
+            {
+                ResourceType.PRACTICE_GUIDE: {
+                    "steps[0].expected_result[0]": [rejected_claim]
+                }
+            },
+        )
+
+    revised = output.resources[0].structured_content
+    assert isinstance(revised, PracticeGuideContent)
+    assert generator.revise_calls == 1
+    assert "记录实际结果" in revised.steps[0].expected_result
+    assert "引用材料" in revised.steps[0].expected_result
+    assert rejected_claim not in revised.steps[0].expected_result
+    assert collector.snapshot()[0]["correction_kind"] == (
+        "field_revision_structure_fallback"
+    )
+    assert collector.snapshot()[0]["validation_fields"] == [
+        "structured_content.steps.0.expected_result"
+    ]
 
 
 def test_coverage_merge_only_appends_supported_missing_knowledge() -> None:

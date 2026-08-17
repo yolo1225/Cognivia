@@ -96,6 +96,14 @@ class OrchestratorAgent:
         passed_types = _passed_resource_types(validated)
 
         reports = validated.review_reports
+        resource_types = [resource.resource_type for resource in validated.resources]
+        report_types = [report.resource_type for report in reports]
+        reports_complete = (
+            bool(resource_types)
+            and len(resource_types) == len(set(resource_types))
+            and len(report_types) == len(set(report_types))
+            and set(report_types) == set(resource_types)
+        )
 
         if any(report.decision == ReviewDecision.REJECTED for report in reports):
             return _finalize_output(
@@ -106,7 +114,7 @@ class OrchestratorAgent:
             )
 
         if (
-            len(reports) == 3
+            reports_complete
             and all(report.passed for report in reports)
             and validated.package_passed
             and validated.package_quality is not None

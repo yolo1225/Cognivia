@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Feedback, GenerationTask, Learner, LearnerProfile, LearningResource
+from app.models import (
+    Feedback,
+    GenerationTask,
+    Learner,
+    LearnerProfile,
+    LearningPackageResource,
+    LearningResource,
+)
 from app.services.profile_service import public_id
 
 
@@ -31,6 +39,19 @@ def create_feedback_task(
     feedback: Feedback,
     resource_types: list[str] | None = None,
 ) -> GenerationTask:
+    source_package = db.scalar(
+        select(GenerationTask)
+        .join(
+            LearningPackageResource,
+            LearningPackageResource.package_task_id == GenerationTask.id,
+        )
+        .where(
+            GenerationTask.learner_id == learner.id,
+            GenerationTask.is_current_package.is_(True),
+            LearningPackageResource.resource_id == resource.id,
+        )
+        .order_by(GenerationTask.id.desc())
+    )
     task = GenerationTask(
         public_id=public_id("task"),
         learner_id=learner.id,
@@ -45,6 +66,8 @@ def create_feedback_task(
         learning_goal=f"根据资源 {resource.public_id} 的反馈执行辅导或复核",
         source_resource_id=resource.id,
         source_feedback_id=feedback.id,
+        source_task_id=source_package.id if source_package else resource.generation_task_id,
+        event_type="resource_feedback",
         progress=0,
     )
     db.add(task)

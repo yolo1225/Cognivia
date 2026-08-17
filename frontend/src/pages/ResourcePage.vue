@@ -1,20 +1,16 @@
 <template>
   <section class="page resource-page">
-    <header class="rp-head">
-      <div>
-        <h1>学习资源</h1>
-        <p>根据诊断画像生成的个性化学习包：先读讲义、再实操、最后用分级测验检验掌握程度。</p>
-      </div>
-      <div class="rp-head-actions">
+    <PageHeader title="学习资源" description="根据诊断画像生成的个性化学习包：先读讲义、再实操、最后用分级测验检验掌握程度。">
+      <template #actions>
         <button class="btn" :disabled="loading" @click="loadResources">刷新</button>
         <button class="btn" @click="openReport">学习画像</button>
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
-    <div v-if="taskDetail && !isTaskTerminal" class="panel generation-state">
-      <strong>{{ taskDetail.decision === 'revision_required' ? '正在自动修订资源' : '正在生成个性化学习资源' }}</strong>
-      <p class="sub">三类资源将在全部达到质量门槛后统一发布。</p>
-      <div class="progress-track"><i :style="{ width: `${taskDetail.progress || 5}%` }"></i></div>
+    <div v-if="isShowingProgress" class="panel generation-state">
+      <strong>{{ generationStatusTitle }}</strong>
+      <p class="sub">{{ generationStatusDescription }}</p>
+      <div class="progress-track"><i :style="{ width: `${taskDetail?.progress || 5}%` }"></i></div>
     </div>
 
     <div v-else-if="taskDetail?.status === 'failed'" class="error-state">
@@ -24,12 +20,27 @@
       <button class="btn primary" :disabled="retrying" @click="retryTask">{{ retrying ? '重新生成中...' : '重新生成' }}</button>
     </div>
 
-    <div v-if="loading" class="panel" style="text-align:center;padding:40px;color:var(--muted)">加载中...</div>
+    <section v-if="knowledgeImpact && isViewingPackageWithImpact && !isShowingProgress" class="knowledge-impact" :class="knowledgeImpact.status">
+      <div>
+        <strong>知识库更新影响{{ taskId ? '该学习包' : '' }} {{ knowledgeImpact.affected_resource_count }} 份资源</strong>
+        <p v-if="taskId && knowledgeImpact.status === 'resolved'">该学习包的受影响资源已在后续学习包中更新，此处仅保留历史记录。</p>
+        <p v-else-if="taskId && !canManageKnowledgeImpact">该学习包受到知识库更新影响，但它已不是当前学习包，此处仅保留历史记录。</p>
+        <p v-else-if="knowledgeImpact.index_status === 'updating'">向量索引正在更新，完成后可生成新的学习包。现有资源仍可继续使用。</p>
+        <p v-else-if="knowledgeImpact.status === 'dismissed'">你已选择暂不更新；现有资源继续可用，也可以随时生成新的学习包。</p>
+        <p v-else>只重新生成受影响资源，未受影响资源将直接继承到新的学习包。</p>
+      </div>
+      <div v-if="canManageKnowledgeImpact" class="impact-actions">
+        <button v-if="knowledgeImpact.status === 'pending'" class="btn" :disabled="impactSubmitting" @click="dismissImpact">暂不更新</button>
+        <button class="btn primary" :disabled="impactSubmitting || !knowledgeImpact.refresh_available" @click="refreshImpact">{{ impactSubmitting ? '正在处理...' : knowledgeImpact.index_status === 'updating' ? '等待索引更新' : `更新受影响的 ${knowledgeImpact.affected_resource_count} 份资源` }}</button>
+      </div>
+    </section>
+
+    <PageState v-if="loading" type="loading" title="正在加载学习资源" />
 
     <div v-else-if="errorMessage" class="error-state"><strong>资源加载失败</strong><p>{{ errorMessage }}</p><button class="btn" @click="loadResources">重新加载</button></div>
 
     <div v-else-if="taskDetail?.status !== 'failed' && resources.length === 0" class="empty-card">
-      <div class="empty-icon">📚</div>
+      <div class="empty-icon"><AppIcon name="resources" /></div>
       <h2>暂无学习资源</h2>
       <p>请先在「学习报告」确认初始画像与学习路线，再创建个性化学习包（讲义、实操指南、分阶测试）。</p>
       <button class="btn primary" @click="openReport">查看学习画像</button>
@@ -38,9 +49,9 @@
     <template v-else-if="taskDetail?.status !== 'failed'">
       <header v-if="resources.length" class="rp-hero">
         <div class="hero-copy">
-          <span class="hero-kicker">个性化学习包 · 已达标</span>
-          <h2>你的个性化学习包</h2>
-          <p>针对诊断画像生成的三类资源已全部通过质量审核，按「讲义 → 实训 → 测验」顺序完成学习。</p>
+          <span class="hero-kicker">{{ showKnowledgeChangedState ? '学习包 · 需要更新' : '个性化学习包 · 已达标' }}</span>
+          <h2>{{ showKnowledgeChangedState ? '部分资源需要重新生成' : '你的个性化学习包' }}</h2>
+          <p>{{ showKnowledgeChangedState ? '相关知识库已更新，当前资源仍可继续使用；你可以只更新受影响内容并形成新的学习包。' : '针对诊断画像生成的三类资源已通过自动质量校验，按「讲义 → 实训 → 测验」顺序完成学习。' }}</p>
         </div>
         <div v-if="packageQuality" class="hero-metrics">
           <div><span>幻觉率</span><strong>{{ fmt(packageQuality.hallucination_rate) }}%</strong></div>
@@ -73,7 +84,7 @@
             <div class="reader-title">
               <span class="reader-icon"><ResourceTypeIcon :type="selected.resource_type" /></span>
               <div>
-                <span class="reader-kicker">{{ typeLabel(selected.resource_type) }} · 难度 {{ selected.difficulty }}/5 · {{ selected.review_status === 'passed' ? '已通过审核' : '待审核' }} · 引用 {{ selected.sources.length }} 条</span>
+                <span class="reader-kicker">{{ typeLabel(selected.resource_type) }} · 难度 {{ selected.difficulty }}/5 · {{ resourceQualityStatusLabel(selected.review_status) }}<template v-if="selected.freshness_status === 'knowledge_changed'"> · 知识库已更新</template><template v-if="selected.membership_type === 'inherited'"> · 沿用上一学习包</template> · 引用 {{ selected.sources.length }} 条</span>
                 <h1>{{ selected.title }}</h1>
               </div>
             </div>
@@ -159,10 +170,15 @@ import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { listResources, exportResource, submitFeedback, type ResourceSummary } from '@/api/resources'
-import { getGenerationTask, retryGenerationTask, type GenerationTaskDetail } from '@/api/generation'
+import { resourceQualityStatusLabel } from '@/utils/resourceQualityStatus'
+import { dismissKnowledgeImpact, getCurrentLearningPackage, getLearningPackage, refreshAffectedResources, type LearningPackage } from '@/api/learningPackages'
+import { getActiveGenerationTask, getGenerationTask, retryGenerationTask, type GenerationTaskDetail } from '@/api/generation'
 import QualityMetrics from '@/components/ResourceViewer/QualityMetrics.vue'
 import AppDialog from '@/components/Shared/AppDialog.vue'
 import AppDrawer from '@/components/Shared/AppDrawer.vue'
+import AppIcon from '@/components/Shared/AppIcon.vue'
+import PageHeader from '@/components/Shared/PageHeader.vue'
+import PageState from '@/components/Shared/PageState.vue'
 import { createTutoringSession, getTutoringSession, pauseTutoringMessage, streamTutoringMessage, type TutoringSession } from '@/api/tutoring'
 import ResourceMarkdownViewer from '@/components/ResourceViewer/ResourceMarkdownViewer.vue'
 import GradedQuizViewer from '@/components/ResourceViewer/GradedQuizViewer.vue'
@@ -183,6 +199,8 @@ const errorMessage = ref('')
 const feedbackSubmitting = ref(false)
 const retrying = ref(false)
 const taskDetail = ref<GenerationTaskDetail | null>(null)
+const currentPackage = ref<LearningPackage | null>(null)
+const impactSubmitting = ref(false)
 const tutorOpen = ref(false)
 const tutorLoading = ref(false)
 const tutorSending = ref(false)
@@ -217,6 +235,8 @@ function scrollToHeading(id: string) {
 }
 
 const selected = computed(() => resources.value[selectedIdx.value] || null)
+const hasStaleResources = computed(() => resources.value.some((resource) => resource.freshness_status === 'knowledge_changed'))
+const knowledgeImpact = computed(() => currentPackage.value?.knowledge_impact || null)
 // 后端 render_resource_markdown 会在正文末尾统一追加「## 知识来源」，
 // 而页面下方已用更丰富的 source_details 渲染来源，故此处剥离避免重复。
 const bodyContent = computed(() => {
@@ -239,8 +259,38 @@ const currentLearnerId = computed(() => {
   return String(authStore.user?.learner_id || '').trim()
 })
 const isTaskTerminal = computed(() => ['completed', 'failed'].includes(taskDetail.value?.status || ''))
-const packageQuality = computed(() => taskDetail.value?.package_quality || resources.value[0]?.package_quality || null)
+const isShowingProgress = computed(() => Boolean(taskDetail.value && !isTaskTerminal.value))
+const isViewingPackageWithImpact = computed(() => Boolean(
+  currentPackage.value && (!taskId.value || currentPackage.value.task_id === taskId.value),
+))
+const canManageKnowledgeImpact = computed(() => Boolean(
+  currentPackage.value?.is_current_package
+  && !isShowingProgress.value
+  && knowledgeImpact.value?.status !== 'refreshing'
+  && knowledgeImpact.value?.status !== 'resolved',
+))
+const showKnowledgeChangedState = computed(() => hasStaleResources.value && !isShowingProgress.value)
+const generationStatusTitle = computed(() => {
+  if (taskDetail.value?.decision === 'revision_required') return '正在自动修订资源'
+  if (taskDetail.value?.event_type === 'knowledge_refresh') {
+    return `正在更新 ${taskDetail.value.resource_types?.length || 1} 份受影响资源`
+  }
+  return '正在生成个性化学习资源'
+})
+const generationStatusDescription = computed(() => (
+  taskDetail.value?.event_type === 'knowledge_refresh'
+    ? '当前学习包仍可继续使用，受影响资源通过质量校验后将统一切换。'
+    : '三类资源将在全部达到质量门槛后统一发布。'
+))
+const packageQuality = computed(() => taskDetail.value?.package_quality || currentPackage.value?.package_quality || resources.value[0]?.package_quality || null)
 let taskTimer: number | null = null
+let pollingTaskId = ''
+
+function clearTaskTimer() {
+  if (taskTimer !== null) window.clearTimeout(taskTimer)
+  taskTimer = null
+  pollingTaskId = ''
+}
 
 function scrollTutorToLatest() {
   nextTick(() => {
@@ -323,7 +373,26 @@ async function loadResources() {
   loading.value = true
   errorMessage.value = ''
   try {
-    resources.value = await listResources({ taskId: String(route.query.task_id || '') || undefined, learnerId: currentLearnerId.value || undefined, domainCode: 'ai_app_dev' })
+    if (taskId.value) {
+      const [latestPackage, requestedPackage, taskResources] = await Promise.all([
+        getCurrentLearningPackage(currentLearnerId.value || undefined),
+        getLearningPackage(taskId.value),
+        listResources({ taskId: taskId.value, learnerId: currentLearnerId.value || undefined, domainCode: 'ai_app_dev' }),
+      ])
+      currentPackage.value = requestedPackage
+      const isRefreshingLatestPackage = Boolean(
+        taskDetail.value
+        && !isTaskTerminal.value
+        && taskDetail.value.event_type === 'knowledge_refresh'
+        && taskDetail.value.source_task_id === latestPackage?.task_id,
+      )
+      resources.value = isRefreshingLatestPackage
+        ? latestPackage?.resources || []
+        : requestedPackage.resources.length ? requestedPackage.resources : taskResources
+    } else {
+      currentPackage.value = await getCurrentLearningPackage(currentLearnerId.value || undefined)
+      resources.value = currentPackage.value?.resources || []
+    }
   } catch {
     errorMessage.value = '无法读取学习资源，请确认后端服务可用。'
   } finally {
@@ -331,13 +400,65 @@ async function loadResources() {
   }
 }
 
-async function loadTask() {
-  if (!taskId.value) return
+async function dismissImpact() {
+  if (!currentPackage.value) return
+  impactSubmitting.value = true
   try {
-    taskDetail.value = await getGenerationTask(taskId.value)
-    if (taskDetail.value.status === 'completed') await loadResources()
-    if (!isTaskTerminal.value) taskTimer = window.setTimeout(loadTask, 1500)
+    currentPackage.value = await dismissKnowledgeImpact(currentPackage.value.task_id)
+    resources.value = currentPackage.value.resources
+    showToast('已暂不更新，现有资源仍可继续使用。')
+  } catch { showToast('暂时无法保存选择') }
+  finally { impactSubmitting.value = false }
+}
+
+async function refreshImpact() {
+  if (!currentPackage.value || !knowledgeImpact.value?.refresh_available) return
+  impactSubmitting.value = true
+  try {
+    const result = await refreshAffectedResources(currentPackage.value.task_id)
+    await router.push({ path: '/resources', query: { task_id: result.task_id, ...(currentLearnerId.value ? { learner_id: currentLearnerId.value } : {}) } })
+  } catch { showToast('无法创建局部更新任务，请确认向量索引已就绪。') }
+  finally { impactSubmitting.value = false }
+}
+
+async function pollTask(targetTaskId: string) {
+  clearTaskTimer()
+  pollingTaskId = targetTaskId
+  try {
+    const detail = await getGenerationTask(targetTaskId)
+    if (pollingTaskId !== targetTaskId) return
+    taskDetail.value = detail
+    if (isTaskTerminal.value) {
+      await loadResources()
+      return
+    }
+    taskTimer = window.setTimeout(() => pollTask(targetTaskId), 1500)
   } catch { errorMessage.value = '无法读取生成任务状态。' }
+}
+
+async function initializePage() {
+  clearTaskTimer()
+  taskDetail.value = null
+  selectedIdx.value = 0
+  if (taskId.value) {
+    try {
+      taskDetail.value = await getGenerationTask(taskId.value)
+      await loadResources()
+      if (!isTaskTerminal.value) await pollTask(taskId.value)
+    } catch { errorMessage.value = '无法读取生成任务状态。' }
+    return
+  }
+
+  await loadResources()
+  try {
+    const activeTask = await getActiveGenerationTask(currentLearnerId.value || undefined)
+    if (activeTask) {
+      taskDetail.value = activeTask
+      await pollTask(activeTask.task_id)
+    }
+  } catch {
+    // 资源仍可正常阅读，仅暂时无法恢复进度状态。
+  }
 }
 
 function openReport() {
@@ -353,7 +474,7 @@ function openReport() {
 async function retryTask() {
   if (!taskId.value) return
   retrying.value = true
-  try { taskDetail.value = await retryGenerationTask(taskId.value); await loadTask() }
+  try { taskDetail.value = await retryGenerationTask(taskId.value); await pollTask(taskId.value) }
   catch { showToast('重新生成失败') }
   finally { retrying.value = false }
 }
@@ -375,18 +496,23 @@ async function doExport() {
   } catch { showToast('导出失败') }
 }
 
-onMounted(async () => { if (taskId.value) await loadTask(); else await loadResources() })
-onUnmounted(() => { if (taskTimer !== null) window.clearTimeout(taskTimer) })
+watch(
+  () => [route.query.task_id, route.query.learner_id],
+  () => { void initializePage() },
+)
+onMounted(initializePage)
+onUnmounted(clearTaskTimer)
 </script>
 
 <style scoped>
-.resource-page { gap: 20px; }
-
-/* 页头 */
-.rp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
-.rp-head h1 { font-size: 26px; }
-.rp-head p { max-width: 720px; margin-top: 8px; color: var(--muted); font-size: 14px; line-height: 1.7; }
-.rp-head-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.resource-page { gap: 20px; max-width: 1080px; margin: 0 auto; }
+.knowledge-impact { display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #efd29f; border-radius: 12px; background: #fff9ed; padding: 16px 18px; }
+.knowledge-impact strong { color: #7a4a08; font-size: 14px; }
+.knowledge-impact p { margin-top: 5px; color: #8a6430; font-size: 12.5px; line-height: 1.6; }
+.knowledge-impact.dismissed { border-color: var(--line); background: var(--soft); }
+.knowledge-impact.dismissed strong { color: var(--ink); }
+.knowledge-impact.dismissed p { color: var(--muted); }
+.impact-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
 /* 空态 */
 .empty-card { display: grid; justify-items: center; gap: 8px; max-width: 560px; margin: 40px auto; border: 1px dashed var(--line); border-radius: 16px; background: #fff; padding: 48px 32px; text-align: center; }
@@ -488,6 +614,8 @@ onUnmounted(() => { if (taskTimer !== null) window.clearTimeout(taskTimer) })
 @media (max-width: 900px) {
   .rp-nav { grid-template-columns: 1fr; }
   .rp-hero { flex-direction: column; align-items: flex-start; }
+  .knowledge-impact { align-items: stretch; flex-direction: column; }
+  .impact-actions { display: grid; }
 }
 @media (max-width: 480px) {
   .tutor-form { grid-template-columns: 1fr; }

@@ -470,18 +470,45 @@ class ContentGenerationAgent:
                         difficulty=previous_candidate.difficulty,
                     )
                     revise = getattr(self._generator, "revise", None)
-                    proposed = (
-                        GeneratedContentResponse.model_validate(
-                            revise(
-                                validated,
-                                resource_type,
-                                allowed_sources,
-                                candidate_response,
+                    try:
+                        proposed = (
+                            GeneratedContentResponse.model_validate(
+                                revise(
+                                    validated,
+                                    resource_type,
+                                    allowed_sources,
+                                    candidate_response,
+                                )
                             )
+                            if callable(revise)
+                            else candidate_response
                         )
-                        if callable(revise)
-                        else candidate_response
-                    )
+                    except ModelResponseError as exc:
+                        # The previous candidate already passed the frozen contract.  A
+                        # malformed model response must not destroy that valid recovery
+                        # point.  Record only sanitized validation metadata, then let the
+                        # deterministic merge remove the audited claims below.  The result
+                        # still goes through source, coverage and dual-model quality gates.
+                        record_model_call(
+                            exc.metadata,
+                            role="generation_model",
+                            resource_type=resource_type.value,
+                            correction_attempt=(
+                                validated.requirements.revision_plan.revision_count
+                            ),
+                            correction_kind="field_revision_structure_fallback",
+                        )
+                        self._logger.warning(
+                            "generation_revision_structure_fallback task_id=%s "
+                            "resource_type=%s validation_fields=%s",
+                            validated.task_id,
+                            resource_type.value,
+                            [
+                                str(field)[:160]
+                                for field in exc.metadata.get("validation_fields", [])
+                            ][:20],
+                        )
+                        proposed = candidate_response
                     response = _merge_revision_candidate(
                         candidate_response,
                         proposed,

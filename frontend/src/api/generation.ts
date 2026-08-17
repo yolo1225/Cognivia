@@ -26,8 +26,12 @@ export interface GenerationTaskResult {
     title: string
     difficulty: number
     review_status: string
+    version?: number
+    is_current?: boolean
     sources: string[]
     knowledge_coverage?: Record<string, string[]>
+    membership_type?: 'generated' | 'inherited'
+    freshness_status?: 'current' | 'knowledge_changed'
   }>
 }
 
@@ -43,6 +47,11 @@ export interface GenerationTaskDetail {
   progress?: number
   trigger_type?: string
   execution_mode?: string
+  resource_types?: string[]
+  event_type?: string
+  source_task_id?: string | null
+  is_current_package?: boolean
+  inherited_resource_count?: number
   revision_count: number
   decision: string
   package_quality?: ResourceQualityMetrics | null
@@ -54,6 +63,19 @@ export interface GenerationTaskDetail {
     coverage_score?: number
     passed?: boolean
   }
+  source_feedback?: {
+    feedback_type: string
+    triggered_action: string
+    recommended_action?: string | null
+    comment: string
+    rating?: number | null
+  } | null
+  source_resource?: {
+    resource_id: string
+    title: string
+    resource_type: string
+    version: number
+  } | null
   created_at?: string | null
   updated_at?: string | null
   resources: GenerationTaskResult['resources']

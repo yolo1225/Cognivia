@@ -1165,3 +1165,38 @@ def test_package_quality_uses_weighted_counts_after_partial_revision() -> None:
     assert output.package_quality.revision_count == 1
     assert not output.package_quality.passed
     assert not output.package_passed
+
+
+@pytest.mark.parametrize("resource_count", [1, 2, 3])
+def test_package_quality_accepts_exact_requested_resource_set(resource_count: int) -> None:
+    flow = initial_generation_flow_example()
+    reports = flow["review_resource"]["output"].reports[:resource_count]
+
+    output = build_review_resource_output(
+        task_id="task_partial_refresh",
+        reports=reports,
+        expected_resource_types=[report.resource_type for report in reports],
+        required_knowledge_ids=sorted(
+            {knowledge_id for report in reports for knowledge_id in report.target_knowledge_ids}
+        ),
+        revision_count=0,
+    )
+
+    assert output.package_quality.passed
+    assert output.package_passed
+
+
+def test_package_quality_rejects_mismatched_requested_resource_set() -> None:
+    flow = initial_generation_flow_example()
+    reports = flow["review_resource"]["output"].reports[:2]
+
+    output = build_review_resource_output(
+        task_id="task_partial_refresh",
+        reports=reports,
+        expected_resource_types=[ResourceType.LECTURE, ResourceType.GRADED_QUIZ],
+        required_knowledge_ids=[],
+        revision_count=0,
+    )
+
+    assert not output.package_quality.passed
+    assert not output.package_passed
