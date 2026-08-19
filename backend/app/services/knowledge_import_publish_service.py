@@ -12,6 +12,9 @@ from app.models import (
     KnowledgeItem,
     KnowledgeRelation,
 )
+from app.rag.candidate_manifest import CandidateManifestStore
+from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
+from app.rag.vector_store import VectorStore
 
 
 class KnowledgeImportPublishError(ValueError):
@@ -136,6 +139,8 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
                             "answer": payload["answer"],
                             "rubric": payload.get("rubric") or [],
                             "explanation": payload.get("explanation", ""),
+                            "source_locator": f"knowledge:{item.public_id}#chunk=0",
+                            "source_ref_ids": [item.public_id],
                         },
                         difficulty=int(payload.get("difficulty", 2)),
                     )
@@ -151,3 +156,90 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
         "relations": relation_count,
         "questions": question_count,
     }
+
+
+def ensure_import_source_locators(db: Session, document: KnowledgeDocument) -> int:
+    """Backfill traceability for imports materialized before the M1 locator fix."""
+    items = list(
+        db.scalars(select(KnowledgeItem).where(KnowledgeItem.source_document_id == document.id))
+    )
+    by_id = {item.id: item for item in items}
+    if not by_id:
+        return 0
+    changed = 0
+    questions = list(
+        db.scalars(
+            select(DiagnosticQuestion).where(DiagnosticQuestion.knowledge_item_id.in_(by_id))
+        )
+    )
+    for question in questions:
+        item = by_id[question.knowledge_item_id]
+        answer = dict(question.answer_key_json or {})
+        expected = f"knowledge:{item.public_id}#chunk=0"
+        if answer.get("source_locator") != expected:
+            answer["source_locator"] = expected
+            answer["source_ref_ids"] = [item.public_id]
+            question.answer_key_json = answer
+            changed += 1
+    if changed:
+        db.flush()
+    return changed
+
+
+def smoke_import_index(
+    db: Session,
+    document: KnowledgeDocument,
+    *,
+    provider: OpenAICompatibleEmbeddingProvider | None = None,
+    client: object | None = None,
+    manifest_store: CandidateManifestStore | None = None,
+) -> dict[str, object]:
+    items = list(
+        db.scalars(
+            select(KnowledgeItem)
+            .where(KnowledgeItem.source_document_id == document.id)
+            .order_by(KnowledgeItem.id)
+        )
+    )
+    if not items:
+        raise KnowledgeImportPublishError("导入没有可用于检索冒烟的知识点")
+    store = manifest_store or CandidateManifestStore()
+    vector_client = client or VectorStore().client
+    manifest = store.load(
+        document.domain_code,
+        collection_exists=lambda name: _collection_exists(vector_client, name),
+    )
+    if manifest is None:
+        raise KnowledgeImportPublishError("Candidate 活动 manifest 不存在")
+    collection = vector_client.get_collection(name=manifest.active_collection)
+    target = items[0]
+    queries = {"name": target.name, "definition": target.content_md[:300]}
+    vectors = (provider or OpenAICompatibleEmbeddingProvider()).embed_texts(list(queries.values()))
+    imported_ids = {item.public_id for item in items}
+    checks: dict[str, dict[str, object]] = {}
+    for (query_type, _), vector in zip(queries.items(), vectors, strict=True):
+        result = collection.query(
+            query_embeddings=[vector],
+            n_results=min(5, manifest.indexed_chunk_count),
+            include=["metadatas", "distances"],
+        )
+        metadatas = (result.get("metadatas") or [[]])[0]
+        matched_ids = [str(metadata.get("knowledge_id", "")) for metadata in metadatas]
+        passed = any(knowledge_id in imported_ids for knowledge_id in matched_ids)
+        checks[query_type] = {"passed": passed, "matched_knowledge_ids": matched_ids}
+    if not all(bool(check["passed"]) for check in checks.values()):
+        raise KnowledgeImportPublishError("名称或释义检索未命中本次导入知识")
+    return {
+        "passed": True,
+        "active_collection": manifest.active_collection,
+        "target_knowledge_id": target.public_id,
+        "checks": checks,
+    }
+
+
+def _collection_exists(client: object, name: str) -> bool:
+    try:
+        client.get_collection(name=name)
+    except Exception:
+        return False
+    return True

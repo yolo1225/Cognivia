@@ -1,13 +1,24 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.models import Base, KnowledgeDocument, KnowledgeImportCandidate, KnowledgeItem
+from app.models import (
+    Base,
+    DiagnosticQuestion,
+    KnowledgeDocument,
+    KnowledgeImportCandidate,
+    KnowledgeItem,
+)
 from app.services.knowledge_extraction_service import replace_candidates
-from app.services.knowledge_import_publish_service import approve_candidates, publish_approved
-from app.services.knowledge_import_publish_service import KnowledgeImportPublishError
+from app.services.knowledge_import_publish_service import (
+    KnowledgeImportPublishError,
+    approve_candidates,
+    publish_approved,
+    smoke_import_index,
+)
 from app.services.knowledge_import_validation_service import validate_import
 from app.services.knowledge_parser_service import parse_document
 
@@ -95,6 +106,11 @@ def test_approved_candidates_publish_multiple_items(tmp_path, monkeypatch) -> No
     items = list(db.scalars(select(KnowledgeItem)))
     assert len(items) == 2
     assert all(item.status == "published" and item.source_locator_json for item in items)
+    questions = list(db.scalars(select(DiagnosticQuestion)))
+    assert all(
+        question.answer_key_json["source_locator"].startswith("knowledge:ki_")
+        for question in questions
+    )
 
 
 def test_choice_answer_and_prerequisite_cycle_are_blocked(tmp_path, monkeypatch) -> None:
@@ -163,3 +179,53 @@ def test_partial_approval_requires_referenced_knowledge(tmp_path, monkeypatch) -
         raise AssertionError("approval accepted without referenced knowledge candidate")
     except KnowledgeImportPublishError as exc:
         assert "引用依赖" in str(exc)
+
+
+def test_name_and_definition_smoke_must_hit_imported_knowledge(tmp_path, monkeypatch) -> None:
+    from app.services import knowledge_document_service
+
+    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
+    db = _session()
+    document = _document(tmp_path)
+    db.add(document)
+    db.commit()
+    replace_candidates(db, document, parse_document(document))
+    db.commit()
+    validate_import(db, document.id)
+    approve_candidates(db, document)
+    publish_approved(db, document)
+    target = db.scalar(
+        select(KnowledgeItem)
+        .where(KnowledgeItem.source_document_id == document.id)
+        .order_by(KnowledgeItem.id)
+    )
+
+    class Provider:
+        def embed_texts(self, texts):
+            return [[1.0, 0.0] for _ in texts]
+
+    class Collection:
+        def query(self, **_kwargs):
+            return {
+                "metadatas": [[{"knowledge_id": target.public_id}]],
+                "distances": [[0.0]],
+            }
+
+    class Client:
+        def get_collection(self, **_kwargs):
+            return Collection()
+
+    class Store:
+        def load(self, *_args, **_kwargs):
+            return SimpleNamespace(active_collection="candidate", indexed_chunk_count=2)
+
+    result = smoke_import_index(
+        db,
+        document,
+        provider=Provider(),
+        client=Client(),
+        manifest_store=Store(),
+    )
+    assert result["passed"] is True
+    assert result["checks"]["name"]["passed"] is True
+    assert result["checks"]["definition"]["passed"] is True

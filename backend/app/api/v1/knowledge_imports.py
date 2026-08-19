@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.db import get_db
+from app.core.db import SessionLocal, get_db
 from app.models import KnowledgeDocument, KnowledgeImportCandidate
 from app.rag.readiness import candidate_rag_status
 from app.schemas.common import ApiResponse, ok
@@ -18,11 +18,28 @@ from app.services import candidate_index_job
 from app.services.knowledge_import_publish_service import (
     KnowledgeImportPublishError,
     approve_candidates,
+    ensure_import_source_locators,
     publish_approved,
+    smoke_import_index,
 )
 from app.services.knowledge_import_validation_service import validate_import
 
 router = APIRouter()
+
+
+def _run_import_index(job_id: int, domain_code: str, document_id: int) -> None:
+    candidate_index_job.run_rebuild(job_id, domain_code)
+    with SessionLocal() as db:
+        job = db.get(candidate_index_job.IndexBuildJob, job_id)
+        document = db.get(KnowledgeDocument, document_id)
+        if document is None or job is None:
+            return
+        if job.status == candidate_index_job.STATUS_FAILED:
+            document.status = "index_pending"
+            document.error_summary = job.message
+        else:
+            document.error_summary = None
+        db.commit()
 
 
 class CandidatePatch(BaseModel):
@@ -148,14 +165,26 @@ def build_index(
     import_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
 ) -> ApiResponse:
     document = _document(db, import_id)
-    if document.status != "index_pending":
+    previous_job = candidate_index_job.latest_job(db)
+    failed_retry = bool(
+        document.status == "indexing"
+        and previous_job
+        and previous_job.domain_code == document.domain_code
+        and previous_job.status
+        in {
+            candidate_index_job.STATUS_FAILED,
+            candidate_index_job.STATUS_INTERRUPTED,
+        }
+    )
+    if document.status != "index_pending" and not failed_retry:
         raise HTTPException(status_code=409, detail="导入尚未批准或已进入其他阶段")
+    ensure_import_source_locators(db, document)
     job = candidate_index_job.try_start(db, document.domain_code)
     if job is None:
         raise HTTPException(status_code=409, detail="候选索引正在重建")
     document.status = "indexing"
     db.commit()
-    background_tasks.add_task(candidate_index_job.run_rebuild, job.id, document.domain_code)
+    background_tasks.add_task(_run_import_index, job.id, document.domain_code, document.id)
     return ok({"job_id": job.id, "status": "running", "domain_code": document.domain_code})
 
 
@@ -171,12 +200,26 @@ def smoke_test(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
     )
     if not passed:
         raise HTTPException(status_code=409, detail="Candidate 索引尚未通过构建与就绪检查")
-    return ok({"passed": True, "rag": candidate_rag_status(document.domain_code)})
+    try:
+        retrieval = smoke_import_index(db, document)
+    except KnowledgeImportPublishError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    document.status = "smoke_passed"
+    document.error_summary = None
+    db.commit()
+    return ok(
+        {
+            **retrieval,
+            "rag": candidate_rag_status(document.domain_code),
+        }
+    )
 
 
 @router.post("/{import_id}/publish", response_model=ApiResponse)
 def publish_import(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
     document = _document(db, import_id)
+    if document.status != "smoke_passed":
+        raise HTTPException(status_code=409, detail="检索冒烟尚未通过，不能发布")
     job = candidate_index_job.latest_job(db)
     if (
         not job

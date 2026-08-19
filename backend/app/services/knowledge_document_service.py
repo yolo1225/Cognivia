@@ -12,7 +12,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
-from app.models import KnowledgeDocument, KnowledgeImportCandidate, KnowledgeItem, KnowledgeRelation
+from app.models import (
+    DiagnosticQuestion,
+    KnowledgeDocument,
+    KnowledgeImportCandidate,
+    KnowledgeItem,
+    KnowledgeRelation,
+)
 from app.services.knowledge_update_service import mark_affected_content
 
 KNOWLEDGE_STORAGE_ROOT = Path(__file__).resolve().parents[3] / "storage" / "knowledge"
@@ -168,6 +174,9 @@ def delete_document(db: Session, document: KnowledgeDocument) -> None:
     )
     if items:
         item_ids = [item.id for item in items]
+        db.execute(
+            delete(DiagnosticQuestion).where(DiagnosticQuestion.knowledge_item_id.in_(item_ids))
+        )
         db.execute(
             delete(KnowledgeRelation).where(
                 (KnowledgeRelation.source_item_id.in_(item_ids))

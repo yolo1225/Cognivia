@@ -1457,6 +1457,7 @@ function documentStatusLabel(status: KnowledgeDocumentStatus) {
         validating: "正在校验",
         review_pending: "等待复核",
         index_pending: "待构建索引",
+        smoke_passed: "冒烟已通过",
         indexing: "正在索引",
         ready: "已就绪",
         failed: "处理失败",
