@@ -42,6 +42,23 @@ python test_script/run_live.py --stage formal --resume-run-id live-formal-YYYYMM
 
 每项比例均保留分子、分母、失败案例 ID 和无法判定声明。
 
+## 阶段 0 主领域基线
+
+普通演示环境必须关闭 `ALLOW_FIXTURE_LLM` 和 `ENABLE_EVALUATION_OVERRIDES`。在提交所有
+运行时输入后，设置仅存在于进程环境中的 `EVALUATION_PASSWORD`，再运行：
+
+```powershell
+.\scripts\stage0-baseline.ps1 capture
+```
+
+脚本会执行 Docker 健康检查、后端/前端静态与测试检查、固定的真实演示分支和正式 50 例
+报告指纹校验。后续回归使用 `.\scripts\stage0-baseline.ps1 verify`；该命令不创建任务、
+不调用模型。固定演示分支也可以单独运行：
+
+```powershell
+python test_script/demo_acceptance.py --suite stage0
+```
+
 live 与稳定性报告会将失败归入 `program_defect`、`knowledge_data_gap`、
 `case_defect`、`external_service_failure` 或 `operations_failure`，并保存终态、
 字段路径和判定依据。`evidence_gap` 会先核对案例合同与本地知识证据能力，不能自动

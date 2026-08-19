@@ -12,6 +12,7 @@ from run_live import _api_json, _authenticate, _poll_task
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "reports" / "demo"
+STAGE0_BRANCH_IDS = ("initial_generation", "no_change", "incorrect_review")
 
 
 def _create_task(base_url: str, *, goal: str, resource_types: list[str]) -> dict[str, Any]:
@@ -58,6 +59,78 @@ def _profile_updated(runs: list[dict[str, Any]]) -> bool:
     )
 
 
+def _step_runs(runs: list[dict[str, Any]], step: str) -> list[dict[str, Any]]:
+    return [
+        run
+        for run in runs
+        if (run.get("input_summary") or {}).get("step") == step
+    ]
+
+
+def _stage0_task_evidence(
+    base_url: str,
+    task: dict[str, Any],
+    runs: list[dict[str, Any]],
+    *,
+    expect_three_resources: bool,
+) -> dict[str, Any]:
+    task_id = str(task["task_id"])
+    if task.get("thread_id") != task_id:
+        raise AssertionError("task_id and thread_id must match")
+    if task.get("status") != "completed":
+        raise AssertionError(f"task {task_id} did not complete: {task.get('status')}")
+
+    resources = _api_json(base_url, "GET", f"/resources?task_id={task_id}")
+    expected_types = {"lecture", "practice_guide", "graded_quiz"}
+    resource_types = {str(item.get("resource_type")) for item in resources}
+    if expect_three_resources and resource_types != expected_types:
+        raise AssertionError(f"task {task_id} did not publish all resource types: {resource_types}")
+    if not resources:
+        raise AssertionError(f"task {task_id} has no published resources")
+    for resource in resources:
+        if resource.get("review_status") != "passed":
+            raise AssertionError(f"resource {resource.get('resource_id')} is not passed")
+        if not resource.get("sources") or not resource.get("source_details"):
+            raise AssertionError(f"resource {resource.get('resource_id')} has no knowledge sources")
+        if not resource.get("difficulty") or not resource.get("quality_metrics"):
+            raise AssertionError(f"resource {resource.get('resource_id')} lacks quality metadata")
+
+    review_runs = _step_runs(runs, "review_resource")
+    model_roles = {
+        str(call.get("role"))
+        for run in review_runs
+        for call in ((run.get("output_summary") or {}).get("model_calls") or [])
+        if call.get("role")
+    }
+    if not {"primary_review_model", "secondary_review_model"}.issubset(model_roles):
+        raise AssertionError("review runs do not contain independent primary and secondary calls")
+    profile_decisions = [
+        bool((run.get("output_summary") or {}).get("profile_update_required"))
+        for run in _step_runs(runs, "analyze_profile")
+        if "profile_update_required" in (run.get("output_summary") or {})
+    ]
+    arbitration_count = sum(
+        1
+        for run in review_runs
+        if bool(((run.get("output_summary") or {}).get("arbitration") or {}).get("required"))
+    )
+    return {
+        "task_id": task_id,
+        "thread_id": task_id,
+        "resource_count": len(resources),
+        "resource_types": sorted(resource_types),
+        "review_model_roles": sorted(model_roles),
+        "review_call_count": sum(
+            len((run.get("output_summary") or {}).get("model_calls") or [])
+            for run in review_runs
+        ),
+        "profile_update_required": profile_decisions,
+        "arbitration_count": arbitration_count,
+        "revision_count": int(task.get("revision_count") or 0),
+        "duration_ms": sum(int(run.get("duration_ms") or 0) for run in runs),
+    }
+
+
 def _load_snapshot(path: Path | None) -> dict[str, Any]:
     if path is None:
         return {}
@@ -74,6 +147,12 @@ def _load_snapshot(path: Path | None) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the automated Docker demo acceptance branches.")
+    parser.add_argument(
+        "--suite",
+        choices=("full", "stage0"),
+        default="full",
+        help="stage0 runs only the frozen initial-generation and feedback branches",
+    )
     parser.add_argument("--base-url", default="http://localhost:8000/api/v1")
     parser.add_argument("--snapshot", type=Path, help="optional live snapshot for revision exhaustion")
     parser.add_argument("--username", default=os.getenv("EVALUATION_USERNAME", "admin"))
@@ -86,6 +165,8 @@ def main() -> None:
     health = _api_json(args.base_url, "GET", "/health/dependencies")
     if not health.get("ready_for_live_demo") or not (health.get("rag") or {}).get("ready"):
         raise SystemExit("real model channels or candidate RAG are not ready")
+    if args.suite == "stage0" and health.get("evaluation_overrides_enabled"):
+        raise SystemExit("stage0 requires ENABLE_EVALUATION_OVERRIDES=false")
     snapshots = _load_snapshot(args.snapshot)
     context: dict[str, Any] = {}
     branches: list[dict[str, Any]] = []
@@ -122,7 +203,10 @@ def main() -> None:
             raise AssertionError(f"initial task did not publish three resources: {task}")
         resource = _current_resource(args.base_url)
         context["resource_id"] = resource["resource_id"]
-        return {"task_id": task["task_id"], "resource_count": 3}
+        runs = _live_runs(args.base_url, task["task_id"])
+        return _stage0_task_evidence(
+            args.base_url, task, runs, expect_three_resources=True
+        )
 
     def no_change_explanation() -> dict[str, Any]:
         session = _api_json(
@@ -140,7 +224,15 @@ def main() -> None:
         if response.get("recommended_action") != "no_change" or response.get("task_id"):
             raise AssertionError(f"first subjective feedback must not change profile: {response}")
         context["session_id"] = session["session_id"]
-        return {"session_id": session["session_id"], "decision": "no_change"}
+        if response.get("profile_update_required"):
+            raise AssertionError(f"first subjective feedback updated profile: {response}")
+        return {
+            "session_id": session["session_id"],
+            "decision": "no_change",
+            "profile_update_required": False,
+            "feedback_task_count": 0,
+            "path_completed_node_count": 0,
+        }
 
     def evidence_profile_update() -> dict[str, Any]:
         response = _api_json(
@@ -183,9 +275,19 @@ def main() -> None:
         task_id = response.get("task_id")
         if not task_id:
             raise AssertionError("incorrect feedback did not create a review task")
-        _poll_task(args.base_url, task_id, 360)
-        _live_runs(args.base_url, task_id)
-        return {"task_id": task_id, "recommended_action": response["recommended_action"]}
+        task = _poll_task(args.base_url, task_id, 360)
+        runs = _live_runs(args.base_url, task_id)
+        evidence = _stage0_task_evidence(
+            args.base_url, task, runs, expect_three_resources=False
+        )
+        if any(evidence["profile_update_required"]):
+            raise AssertionError("incorrect feedback must not update the learner profile")
+        return {
+            **evidence,
+            "recommended_action": response["recommended_action"],
+            "feedback_task_count": 1,
+            "path_completed_node_count": 0,
+        }
 
     def challenge_task() -> dict[str, Any]:
         resource = _current_resource(args.base_url)
@@ -221,13 +323,16 @@ def main() -> None:
 
     run_branch("initial_generation", "首次生成三类资源", initial_generation)
     run_branch("no_change", "证据不足，仅解释且画像不变", no_change_explanation)
-    run_branch("profile_update", "多轮证据创建画像新版本", evidence_profile_update)
+    if args.suite == "full":
+        run_branch("profile_update", "多轮证据创建画像新版本", evidence_profile_update)
     run_branch("incorrect_review", "错误反馈触发资源复核", incorrect_review)
-    run_branch("challenge", "掌握后生成挑战任务", challenge_task)
-    run_branch("revision_exhausted", "两轮自动修订后失败", revision_exhausted)
+    if args.suite == "full":
+        run_branch("challenge", "掌握后生成挑战任务", challenge_task)
+        run_branch("revision_exhausted", "两轮自动修订后失败", revision_exhausted)
 
     report = {
         "status": "passed" if all(item["status"].startswith("passed") for item in branches) else "failed",
+        "suite": args.suite,
         "provider_mode": "live",
         "model_configuration": {
             "generation_model": health["generation_model"]["model_name"],

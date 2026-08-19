@@ -22,6 +22,9 @@ storage/candidate-index/
 reports/evaluation/latest*
 reports/evaluation/runs/
 
+# Full stage0 machine evidence is local; the redacted frozen manifest lives in docs/baselines/.
+reports/stage0/
+
 # Local preflight bundles may contain database exports and service snapshots.
 reports/preflight/
 
