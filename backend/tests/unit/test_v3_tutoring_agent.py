@@ -56,7 +56,7 @@ def test_v3_agent_exposes_identity_and_model_boundary_prompt() -> None:
     assert "不得决定画像更新" in agent.system_prompt
 
 
-def test_first_difficulty_returns_model_worded_follow_up_and_contract_output() -> None:
+def test_first_difficulty_returns_model_worded_no_change_prompt_and_contract_output() -> None:
     output = _execute(
         _request(),
         _semantic(
@@ -67,7 +67,7 @@ def test_first_difficulty_returns_model_worded_follow_up_and_contract_output() -
     )
 
     assert isinstance(output, InterpretFeedbackOutput)
-    assert output.recommended_action is RecommendedAction.ASK_FOLLOW_UP
+    assert output.recommended_action is RecommendedAction.NO_CHANGE
     assert not output.needs_generation
     assert output.reply == "你先说说是检索结果、来源标注还是验证步骤让你困惑？"
     assert output.evidence[-1].evidence_type is EvidenceType.QUICK_FEEDBACK
@@ -82,7 +82,7 @@ def test_model_candidate_cannot_claim_profile_or_publication_action() -> None:
         ),
     )
 
-    assert output.recommended_action is RecommendedAction.ASK_FOLLOW_UP
+    assert output.recommended_action is RecommendedAction.NO_CHANGE
     assert output.reply != "我会更新画像并发布新的资源。"
 
 
