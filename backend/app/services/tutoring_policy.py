@@ -67,6 +67,21 @@ def decide_tutoring_action(
             "已记录疑似资源错误。我会请求复核来源和内容，这不会影响你的能力画像。",
         )
 
+    # A first explicit difficulty statement is safe to classify deterministically:
+    # it only records a no-change teaching interaction and never serves as profile
+    # evidence.  This keeps the normal-demo path stable when structured model
+    # semantics are unavailable or under-classify an otherwise unambiguous phrase.
+    explicit_difficulty = _explicit_difficulty_intent(request)
+    if explicit_difficulty is not None and request.feedback.conversation.turn_count == 1:
+        return _decision(
+            explicit_difficulty,
+            RecommendedAction.NO_CHANGE,
+            False,
+            "首次明确的困难反馈仅返回解释与定位提示；不更新画像，也不创建下游任务。",
+            _difficulty_follow_up(semantic.difficulty_focus),
+            use_candidate_reply=True,
+        )
+
     if semantic.confidence < SEMANTIC_CONFIDENCE_THRESHOLD or semantic.intent is None:
         return _safe_follow_up("反馈意图置信度不足，先追问而不创建下游任务。")
 
@@ -85,9 +100,9 @@ def decide_tutoring_action(
             )
         return _decision(
             intent,
-            RecommendedAction.ASK_FOLLOW_UP,
+            RecommendedAction.NO_CHANGE,
             False,
-            "首次或尚未确认的困难反馈，先定位具体概念、步骤或验证环节。",
+            "首次或尚未确认的困难反馈仅返回定位提示；不更新画像，也不创建下游任务。",
             _difficulty_follow_up(semantic.difficulty_focus),
             use_candidate_reply=True,
         )
@@ -178,6 +193,18 @@ def _difficulty_follow_up(difficulty_focus: str | None) -> str:
     if difficulty_focus:
         return f"你在“{difficulty_focus}”的哪个步骤卡住了：概念理解、操作过程，还是结果验证？"
     return "你具体卡在概念理解、操作过程，还是结果验证？我先据此给出针对性提示。"
+
+
+def _explicit_difficulty_intent(request: InterpretFeedbackInput) -> FeedbackIntent | None:
+    summary = " ".join(
+        (
+            request.feedback.feedback_summary,
+            request.feedback.conversation.latest_message_summary,
+        )
+    )
+    if "太难" in summary:
+        return FeedbackIntent.TOO_HARD
+    return None
 
 
 def _safe_follow_up(reason: str) -> TutoringPolicyDecision:

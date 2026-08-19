@@ -31,14 +31,31 @@ def _semantic(intent: FeedbackIntent, **overrides: object) -> TutoringSemanticRe
 
 
 @pytest.mark.parametrize("intent", [FeedbackIntent.TOO_HARD, FeedbackIntent.CONFUSING])
-def test_first_difficulty_feedback_asks_follow_up(intent: FeedbackIntent) -> None:
+def test_first_difficulty_feedback_records_no_change(intent: FeedbackIntent) -> None:
     payload = _request().model_dump(mode="python")
     payload["feedback"]["quick_tag"] = intent
     request = InterpretFeedbackInput.model_validate(payload)
 
     decision = decide_tutoring_action(request, _semantic(intent, difficulty_focus="来源追溯"))
 
-    assert decision.recommended_action is RecommendedAction.ASK_FOLLOW_UP
+    assert decision.recommended_action is RecommendedAction.NO_CHANGE
+    assert not decision.needs_generation
+
+
+def test_first_explicit_difficulty_text_is_no_change_when_model_semantics_fail() -> None:
+    payload = _request().model_dump(mode="python")
+    payload["feedback"]["quick_tag"] = None
+    payload["feedback"]["feedback_summary"] = "这部分太难了，我第一次没有看懂。"
+    payload["feedback"]["conversation"]["latest_message_summary"] = "这部分太难了，我第一次没有看懂。"
+    request = InterpretFeedbackInput.model_validate(payload)
+
+    decision = decide_tutoring_action(
+        request,
+        TutoringSemanticResult(intent=None, confidence=0.0),
+    )
+
+    assert decision.feedback_intent is FeedbackIntent.TOO_HARD
+    assert decision.recommended_action is RecommendedAction.NO_CHANGE
     assert not decision.needs_generation
 
 
