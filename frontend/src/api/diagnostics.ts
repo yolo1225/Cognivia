@@ -49,6 +49,28 @@ export interface DiagnosticResult {
     }>
   }
   next_action: string
+  answer_results: DiagnosticAnswerResult[]
+}
+
+export interface DiagnosticCriterionResult {
+  criterion_id: string
+  score: number
+  rationale: string
+}
+
+export interface DiagnosticAnswerResult {
+  question_id: string
+  question_type: 'single_choice' | 'short_answer'
+  score: number
+  is_correct: boolean
+  scoring_method: 'deterministic' | 'ai_rubric' | string
+  ai_comment?: string | null
+  criteria: DiagnosticCriterionResult[]
+  matched_points: string[]
+  missing_points: string[]
+  factual_errors: string[]
+  confidence: number
+  scoring_uncertain: boolean
 }
 
 export function createDiagnosticSession(learnerId = 'learner_001') {

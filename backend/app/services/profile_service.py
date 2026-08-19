@@ -22,6 +22,7 @@ from app.models import (
 RADAR_KEYS = ["theory", "practice", "problem_solving", "breadth", "learning_speed"]
 RESOURCE_TYPES = ["lecture", "practice_guide", "graded_quiz"]
 MOJIBAKE_MARKERS = ("Ã", "Â", "å", "æ", "ç", "è", "é", "ð", "\x80", "\x81")
+_PATH_UNSET = object()
 
 
 def public_id(prefix: str) -> str:
@@ -59,24 +60,15 @@ def classify_profile_level(score: float) -> str:
     return "advanced"
 
 
-def score_answer(question: DiagnosticQuestion, answer: Any) -> tuple[float, bool]:
+def score_single_choice_answer(question: DiagnosticQuestion, answer: Any) -> tuple[float, bool]:
     answer_key = question.answer_key_json or {}
-    if question.question_type == "single_choice":
-        expected = answer_key.get("correct_option")
-        try:
-            selected = int(answer)
-        except (TypeError, ValueError):
-            selected = -1
-        is_correct = selected == expected
-        return (1.0 if is_correct else 0.0), is_correct
-
-    answer_text = str(answer or "")
-    rubric = answer_key.get("rubric", [])
-    if not rubric:
-        return (0.0, False)
-    matched = sum(1 for item in rubric if str(item) in answer_text)
-    score = matched / len(rubric)
-    return score, score >= 0.6
+    expected = answer_key.get("correct_option")
+    try:
+        selected = int(answer)
+    except (TypeError, ValueError):
+        selected = -1
+    is_correct = selected == expected
+    return (1.0 if is_correct else 0.0), is_correct
 
 
 def _bounded(value: float, low: int = 20, high: int = 95) -> int:
@@ -204,6 +196,23 @@ def build_learning_path_payload(
     score_percent: float,
     weak_knowledge: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    from app.services.learning_path_service import normalize_path_payload
+
+    return normalize_path_payload(
+        build_learning_path_raw_payload(
+            profile_type=profile_type,
+            score_percent=score_percent,
+            weak_knowledge=weak_knowledge,
+        )
+    )
+
+
+def build_learning_path_raw_payload(
+    *,
+    profile_type: str,
+    score_percent: float,
+    weak_knowledge: list[dict[str, Any]],
+) -> dict[str, Any]:
     prerequisite_ids: list[str] = []
     for item in weak_knowledge:
         for prerequisite in item.get("prerequisites", []):
@@ -263,140 +272,6 @@ def build_learning_path_from_snapshot(
         score_percent=score_percent,
         weak_knowledge=weak_knowledge,
     )
-
-
-def generate_profile_from_diagnostic(
-    db: Session,
-    *,
-    learner: Learner,
-    domain_code: str,
-    session_id: str,
-    questions: list[DiagnosticQuestion],
-    answer_by_question_id: dict[str, Any],
-) -> dict[str, Any]:
-    knowledge_item_ids = [question.knowledge_item_id for question in questions]
-    knowledge_items = {
-        item.id: item
-        for item in db.scalars(select(KnowledgeItem).where(KnowledgeItem.id.in_(knowledge_item_ids)))
-    }
-
-    total_score = 0.0
-    correct_count = 0
-    category_scores: dict[str, list[float]] = defaultdict(list)
-    weak_evidence: dict[int, dict[str, Any]] = {}
-    difficulty_total = 0
-
-    for question in questions:
-        answer = answer_by_question_id.get(question.public_id)
-        score, is_correct = score_answer(question, answer)
-        item = knowledge_items[question.knowledge_item_id]
-        total_score += score
-        correct_count += 1 if is_correct else 0
-        difficulty_total += question.difficulty
-        category_scores[item.category].append(score)
-
-        db.add(
-            AnswerRecord(
-                learner_id=learner.id,
-                question_id=question.id,
-                knowledge_item_id=item.id,
-                score=score,
-                is_correct=is_correct,
-                answer_summary_json={
-                    "session_id": session_id,
-                    "question_id": question.public_id,
-                    "answer_type": question.question_type,
-                    "score": round(score, 2),
-                },
-            )
-        )
-        if (not is_correct) or score < 0.6:
-            evidence = weak_evidence.setdefault(
-                item.id,
-                {
-                    "wrong_count": 0,
-                    "attempts": 0,
-                    "score_total": 0.0,
-                    "difficulty_total": 0.0,
-                },
-            )
-            evidence["wrong_count"] += 0 if is_correct else 1
-            evidence["attempts"] += 1
-            evidence["score_total"] += score
-            evidence["difficulty_total"] += question.difficulty
-
-    question_count = max(1, len(questions))
-    score_percent = round(total_score / question_count * 100, 1)
-    average_difficulty = difficulty_total / question_count
-    ability_profile = build_ability_profile(
-        score_percent,
-        category_scores,
-        average_difficulty=average_difficulty,
-    )
-    ability_profile = clean_display_payload(ability_profile)
-    weak_knowledge = build_weak_knowledge(db, weak_evidence)
-    learning_path_payload = build_learning_path_payload(
-        profile_type=ability_profile["profile_type"],
-        score_percent=score_percent,
-        weak_knowledge=weak_knowledge,
-    )
-
-    previous_profile = latest_profile_for_learner(db, learner)
-    profile = LearnerProfile(
-        public_id=public_id("profile"),
-        learner_id=learner.id,
-        domain_code=domain_code,
-        ability_profile_json=ability_profile,
-        weak_knowledge_json=weak_knowledge[:8],
-        profile_version=(int(previous_profile.profile_version or 1) + 1) if previous_profile else 1,
-        previous_profile_id=previous_profile.id if previous_profile else None,
-        changed_dimensions_json=["ability_scores", "weak_knowledge", "learning_path"],
-        evidence_refs_json=[
-            {
-                "evidence_id": f"diagnostic:{session_id}",
-                "evidence_type": "diagnostic_result",
-                "summary": f"diagnostic session with {len(questions)} questions",
-                "confidence": 0.9,
-                "confirmed": True,
-            }
-        ],
-        confidence=0.9,
-        decision_reason="diagnostic_result",
-    )
-    db.add(profile)
-    db.flush()
-
-    path = LearningPath(
-        public_id=public_id("path"),
-        learner_id=learner.id,
-        profile_id=profile.id,
-        domain_code=domain_code,
-        status="active",
-        path_json=learning_path_payload,
-        needs_refresh=False,
-    )
-    db.add(path)
-    db.flush()
-
-    return {
-        "session_id": session_id,
-        "learner_id": learner.public_id,
-        "status": "scored",
-        "score": score_percent,
-        "correct_count": correct_count,
-        "question_count": len(questions),
-        "profile_id": profile.public_id,
-        "profile_version": profile.profile_version,
-        "previous_profile_id": previous_profile.public_id if previous_profile else None,
-        "profile_changed_dimensions": profile.changed_dimensions_json,
-        "profile_source": "diagnostic_result",
-        "profile_type": ability_profile["profile_type"],
-        "ability_profile": ability_profile,
-        "weak_knowledge": weak_knowledge[:8],
-        "learning_path_id": path.public_id,
-        "learning_path": learning_path_payload,
-        "next_action": "create_generation_task",
-    }
 
 
 def profile_source(profile: LearnerProfile) -> str:
@@ -612,7 +487,10 @@ def diagnostic_summary_for_learner(db: Session, learner: Learner) -> dict[str, A
         "answer_count": total_count,
         "correct_count": correct_count,
         "accuracy": round(correct_count / total_count * 100, 1) if total_count else 0,
-        "latest_session_id": (latest_answer.answer_summary_json or {}).get("session_id")
+        "latest_session_id": (
+            latest_answer.session_id
+            or (latest_answer.answer_summary_json or {}).get("session_id")
+        )
         if latest_answer
         else None,
     }
@@ -622,6 +500,7 @@ def serialize_profile_detail(
     db: Session,
     learner: Learner,
     profile: LearnerProfile | None = None,
+    path: LearningPath | None | object = _PATH_UNSET,
 ) -> dict[str, Any]:
     profile = profile or latest_profile_for_learner(db, learner)
     if profile is None:
@@ -647,7 +526,14 @@ def serialize_profile_detail(
         }
 
     ability_profile = profile.ability_profile_json or {}
-    path = latest_path_for_profile(db, profile)
+    if path is _PATH_UNSET:
+        path = latest_path_for_profile(db, profile)
+    if path:
+        from app.services.learning_path_service import serialize_learning_path
+
+        learning_path = serialize_learning_path(path)
+    else:
+        learning_path = None
     return {
         "learner_id": learner.public_id,
         "domain_code": profile.domain_code,
@@ -665,6 +551,6 @@ def serialize_profile_detail(
         "category_mastery": clean_display_payload(ability_profile.get("category_mastery", {})),
         "weak_knowledge": clean_display_payload(profile.weak_knowledge_json or []),
         "context_snapshot": clean_display_payload(profile.context_snapshot_json or {}),
-        "learning_path": clean_display_payload(path.path_json) if path else None,
+        "learning_path": clean_display_payload(learning_path),
         "diagnostic_summary": diagnostic_summary_for_learner(db, learner),
     }

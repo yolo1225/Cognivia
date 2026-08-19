@@ -41,7 +41,7 @@
         <div class="actions" style="margin-top:22px;justify-content:flex-end">
           <button class="btn" @click="currentIdx = Math.max(0, currentIdx-1)" :disabled="currentIdx===0">上一题</button>
           <button v-if="!isLastQuestion" class="btn primary" @click="currentIdx++">下一题</button>
-          <button v-else class="btn primary" @click="submitAll" :disabled="submitting || !allAnswered">{{ submitting ? '提交中...' : allAnswered ? '提交诊断' : `还有 ${unansweredCount} 题未完成` }}</button>
+          <button v-else class="btn primary" @click="submitAll" :disabled="submitting || !allAnswered">{{ submitting ? '正在进行 AI 评分...' : scoringPending ? '重试 AI 评分' : allAnswered ? '提交诊断' : `还有 ${unansweredCount} 题未完成` }}</button>
         </div>
       </article>
     </div>
@@ -57,6 +57,23 @@
         <div><span>答对题数</span><strong>{{ result.correct_count }}/{{ result.question_count }}</strong></div>
         <div><span>正确题数</span><strong>{{ result.correct_count }}</strong></div>
         <div><span>正确率</span><strong>{{ accuracyPercent }}%</strong></div>
+      </div>
+      <div v-if="shortAnswerResults.length" class="ai-results">
+        <article v-for="item in shortAnswerResults" :key="item.question_id" class="ai-result">
+          <div class="ai-result-head">
+            <strong>简答题 AI 评分</strong>
+            <span :class="['status', item.scoring_uncertain ? 'wait' : 'ok']">{{ Math.round(item.score * 100) }} 分</span>
+          </div>
+          <p>{{ item.ai_comment || '已完成结构化评分。' }}</p>
+          <ul v-if="item.criteria.length" class="criteria-list">
+            <li v-for="criterion in item.criteria" :key="criterion.criterion_id">
+              <span>{{ criterion.rationale }}</span><strong>{{ Math.round(criterion.score * 100) }}</strong>
+            </li>
+          </ul>
+          <p v-if="item.missing_points.length" class="result-note">缺失点：{{ item.missing_points.join('、') }}</p>
+          <p v-if="item.factual_errors.length" class="result-error">事实错误：{{ item.factual_errors.join('、') }}</p>
+          <p v-if="item.scoring_uncertain" class="result-note">预检与模型结论存在分歧，系统已采用保守分数。</p>
+        </article>
       </div>
       <div class="actions completion-actions">
         <button class="btn" @click="router.push('/report')">查看学习报告</button>
@@ -86,6 +103,7 @@ const generating = ref(false)
 const currentIdx = ref(0)
 const session = ref<DiagnosticSession | null>(null)
 const result = ref<DiagnosticResult | null>(null)
+const scoringPending = ref(false)
 const answers = ref<Record<number, string>>({})
 
 const currentQuestion = computed(() => session.value?.questions[currentIdx.value] || null)
@@ -97,6 +115,7 @@ const routeLearnerId = String(route.query.learner_id || '').trim()
 if (routeLearnerId) learnerStore.setSelectedLearner(routeLearnerId)
 const learnerId = computed(() => routeLearnerId || learnerStore.selectedLearnerId)
 const accuracyPercent = computed(() => result.value ? Math.round((result.value.correct_count / Math.max(1, result.value.question_count)) * 100) : 0)
+const shortAnswerResults = computed(() => result.value?.answer_results?.filter(item => item.question_type === 'short_answer') || [])
 
 async function startSession() {
   if (!learnerId.value) { showToast('当前账号未关联学习者'); return }
@@ -105,6 +124,7 @@ async function startSession() {
     session.value = await createDiagnosticSession(learnerId.value)
     result.value = null
     answers.value = {}
+    scoringPending.value = false
     showToast('已创建 10 题诊断测评')
   } catch { showToast('创建测评失败') }
   finally { creatingSession.value = false }
@@ -119,8 +139,14 @@ async function submitAll() {
       answer,
     }))
     result.value = await submitDiagnosticSession(session.value.session_id, list, learnerId.value)
+    scoringPending.value = false
     showToast(`诊断完成，答对 ${result.value.correct_count}/${result.value.question_count} 题`)
-  } catch { showToast('提交失败') }
+  } catch (error: any) {
+    if (error?.response?.data?.error?.code === 'DIAGNOSTIC_SCORING_PENDING') {
+      scoringPending.value = true
+      showToast('AI 评分暂未完成，答案已保留，请重试。', 'error')
+    } else showToast('提交失败', 'error')
+  }
   finally { submitting.value = false }
 }
 
@@ -167,12 +193,21 @@ async function generateResources() {
 .completion-stats span { display: block; color: var(--muted); font-size: 11px; }
 .completion-stats strong { display: block; margin-top: 5px; font-size: 18px; }
 .completion-actions { grid-column: 2 / -1; justify-content: flex-end; }
+.ai-results { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ai-result { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--soft); }
+.ai-result-head, .criteria-list li { display: flex; justify-content: space-between; gap: 12px; }
+.ai-result p { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.criteria-list { display: grid; gap: 6px; margin-top: 10px; padding: 0; list-style: none; font-size: 12px; }
+.criteria-list span { color: var(--muted); }
+.result-error { color: var(--red) !important; }
+.result-note { color: var(--amber) !important; }
 @media (max-width: 900px) {
   .completion-panel { grid-template-columns: auto 1fr; }
   .completion-stats, .completion-actions { grid-column: 1 / -1; }
 }
 @media (max-width: 480px) {
   .completion-stats { grid-template-columns: 1fr; }
+  .ai-results { grid-template-columns: 1fr; }
   .completion-actions { display: grid; }
 }
 </style>

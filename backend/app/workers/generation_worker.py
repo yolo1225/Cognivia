@@ -13,11 +13,14 @@ from sqlalchemy.orm import Session
 from app.agents.checkpointer import MySQLLangGraphCheckpointer
 from app.agents.contracts import (
     ConversationSummary,
+    EvidenceRef,
+    EvidenceType,
     FeedbackContext,
     FeedbackIntent,
     FinalizeTaskOutput,
     LearningPathNodeSnapshot,
     LearningPathSnapshot,
+    KnowledgeAssessment,
     ResourceSummary,
     TaskRequest,
 )
@@ -31,10 +34,13 @@ from app.core.db import SessionLocal
 from app.models import (
     AgentMessageRecord,
     AgentRun,
+    AnswerRecord,
+    DiagnosticQuestion,
     Feedback,
     GenerationTask,
     GraphCheckpoint,
     KnowledgeUpdateImpact,
+    KnowledgeItem,
     Learner,
     LearnerProfile,
     LearningPath,
@@ -43,6 +49,7 @@ from app.models import (
     TutoringSession,
 )
 from app.services.generation_service import persist_generated_resources
+from app.services.learning_path_service import node_id_for, normalize_learning_path
 from app.services.profile_service import build_learning_path_from_snapshot, public_id
 from app.services.contract_mapping import ability_profile_payload, profile_snapshot
 
@@ -86,6 +93,7 @@ def _message(
     sender: str,
     payload: dict[str, Any],
     *,
+    receiver: str = "orchestrator_agent",
     message_type: str = "observation",
 ) -> None:
     db.add(
@@ -93,7 +101,7 @@ def _message(
             session_id=task.public_id,
             task_id=task.public_id,
             sender=sender,
-            receiver="orchestrator_agent",
+            receiver=receiver,
             message_type=message_type,
             payload_summary_json=payload,
         )
@@ -109,6 +117,64 @@ def _resource_summary(resource: LearningResource) -> dict[str, Any]:
         "review_status": resource.review_status,
         "sources": [item.get("knowledge_id") for item in (resource.sources_json or [])],
     }
+
+
+def _feedback_assessments(
+    db: Session,
+    task: GenerationTask,
+    learner: Learner,
+    feedback: Feedback | None,
+) -> tuple[list[EvidenceRef], list[KnowledgeAssessment]]:
+    if feedback is None or feedback.tutoring_session_id is None:
+        return [], []
+    evidence: list[EvidenceRef] = []
+    assessments: list[KnowledgeAssessment] = []
+    for record in db.scalars(
+        select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)
+    ):
+        summary = record.answer_summary_json or {}
+        if (
+            summary.get("tutoring_session_id") != feedback.tutoring_session_id
+            or summary.get("confirmed") is not True
+            or summary.get("consumed_by_profile_id") is not None
+        ):
+            continue
+        question = db.get(DiagnosticQuestion, record.question_id)
+        knowledge = db.get(KnowledgeItem, record.knowledge_item_id)
+        if (
+            question is None
+            or knowledge is None
+            or question.domain_code != task.domain_code
+            or knowledge.domain_code != task.domain_code
+        ):
+            continue
+        evidence_id = f"answer_record:{record.id}"
+        confidence = max(0.0, min(1.0, float(summary.get("confidence") or 0.9)))
+        evidence.append(
+            EvidenceRef(
+                evidence_id=evidence_id,
+                evidence_type=EvidenceType.SCORED_QUIZ,
+                summary="导学正式验证题已由服务端评分",
+                knowledge_id=knowledge.public_id,
+                source_ref_id=question.public_id,
+                confidence=confidence,
+                confirmed=True,
+            )
+        )
+        assessments.append(
+            KnowledgeAssessment(
+                assessment_id=str(
+                    summary.get("assessment_id") or f"assessment_{record.id}"
+                ),
+                evidence_id=evidence_id,
+                knowledge_id=knowledge.public_id,
+                score=record.score,
+                difficulty=question.difficulty,
+                attempted=True,
+                confidence=confidence,
+            )
+        )
+    return evidence, assessments
 
 
 def _initial_state(
@@ -194,6 +260,7 @@ def _initial_state(
         state["current_path_node"] = current_path_node
     if feedback is not None and resource is not None:
         quick_tag = feedback.feedback_intent or feedback.feedback_type
+        supporting_evidence, _ = _feedback_assessments(db, task, learner, feedback)
         state["feedback_context"] = FeedbackContext(
             resource=ResourceSummary(
                 resource_id=resource.public_id,
@@ -218,6 +285,7 @@ def _initial_state(
             if quick_tag in {item.value for item in FeedbackIntent}
             else FeedbackIntent.OTHER,
             rating=feedback.rating,
+            supporting_evidence=supporting_evidence,
         )
     return state
 
@@ -227,22 +295,28 @@ def _learning_path_snapshot(
 ) -> tuple[LearningPathSnapshot | None, LearningPathNodeSnapshot | None]:
     if path is None:
         return None, None
-    payload = path.path_json or {}
+    payload = normalize_learning_path(path)
     difficulty = max(1, min(5, round(sum(profile.ability_scores.model_dump().values()) / 60)))
     nodes: list[LearningPathNodeSnapshot] = []
-    for stage_index, stage in enumerate(payload.get("stages") or [], start=1):
-        for knowledge_index, knowledge_id in enumerate(stage.get("knowledge_ids") or [], start=1):
+    seen_knowledge_ids: set[str] = set()
+    for stage in payload.get("stages") or []:
+        for knowledge_id in stage.get("knowledge_ids") or []:
+            knowledge_id = str(knowledge_id)
+            if knowledge_id in seen_knowledge_ids:
+                continue
+            seen_knowledge_ids.add(knowledge_id)
             nodes.append(
                 LearningPathNodeSnapshot(
-                    path_node_id=f"{path.public_id}:{stage_index}:{knowledge_index}",
-                    knowledge_id=str(knowledge_id),
+                    path_node_id=node_id_for(knowledge_id),
+                    knowledge_id=knowledge_id,
                     title=str(stage.get("name") or knowledge_id),
                     path_order=len(nodes) + 1,
                     target_difficulty=difficulty,
                     learning_objective=str(stage.get("description") or f"掌握 {knowledge_id}"),
                 )
             )
-    current = nodes[0] if nodes else None
+    current_node_id = payload.get("current_node_id")
+    current = next((node for node in nodes if node.path_node_id == current_node_id), None)
     return (
         LearningPathSnapshot(
             path_id=path.public_id,
@@ -509,6 +583,52 @@ def _persist_profile_update(
     db.add(next_profile)
     db.flush()
     task.profile_id = next_profile.id
+    consumed_ids = {item.evidence_id for item in analysis.evidence_refs}
+    for record in db.scalars(
+        select(AnswerRecord).where(AnswerRecord.learner_id == original.learner_id)
+    ):
+        if f"answer_record:{record.id}" in consumed_ids:
+            summary = dict(record.answer_summary_json or {})
+            summary["consumed_by_profile_id"] = next_profile.id
+            record.answer_summary_json = summary
+    feedback = db.get(Feedback, task.source_feedback_id) if task.source_feedback_id else None
+    if feedback is not None:
+        affected_knowledge_ids = list(
+            dict.fromkeys(
+                [
+                    *analysis.affected_scope.knowledge_ids,
+                    *[
+                        item.knowledge_id
+                        for item in analysis.evidence_refs
+                        if item.knowledge_id
+                    ],
+                ]
+            )
+        )
+        learner_resources = db.scalars(
+            select(LearningResource)
+            .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
+            .where(
+                GenerationTask.learner_id == original.learner_id,
+                LearningResource.is_current.is_(True),
+            )
+        )
+        feedback.profile_update_required = True
+        feedback.decision_reason = analysis.decision_reason
+        feedback.decision_confidence = analysis.confidence
+        feedback.affected_knowledge_ids_json = affected_knowledge_ids
+        feedback.affected_path_node_ids_json = list(
+            analysis.affected_scope.path_node_ids
+        )
+        feedback.affected_resource_ids_json = [
+            resource.public_id
+            for resource in learner_resources
+            if any(
+                source.get("knowledge_id") in affected_knowledge_ids
+                for source in (resource.sources_json or [])
+                if isinstance(source, dict)
+            )
+        ]
     for path in db.scalars(select(LearningPath).where(LearningPath.profile_id == original.id)):
         path.needs_refresh = True
     db.add(
@@ -554,8 +674,9 @@ def _observable_node(
         _message(
             db,
             task,
-            agent_name,
+            "orchestrator_agent",
             {"step": step, "status": "running", "contract_version": "agent-contract-v6"},
+            receiver=agent_name,
         )
         db.commit()
         if step == "review_resource":
@@ -575,7 +696,12 @@ def _observable_node(
             model_calls = collector.snapshot()
             next_state = {**state, **patch}
             if step == "analyze_profile":
-                _persist_profile_update(db, task, profile, next_state)
+                updated_profile = _persist_profile_update(db, task, profile, next_state)
+                if updated_profile.id == profile.id and task.source_feedback_id:
+                    feedback = db.get(Feedback, task.source_feedback_id)
+                    if feedback is not None:
+                        feedback.profile_update_required = False
+                        feedback.decision_reason = patch["analyze_profile"].decision_reason
             if step == "finalize_task":
                 persist_generated_resources(
                     db, task, db.get(LearnerProfile, task.profile_id) or profile, next_state
@@ -598,6 +724,12 @@ def _observable_node(
                     "output": output,
                     "contract_version": "agent-contract-v6",
                 },
+                receiver=(
+                    "knowledge_retrieval_agent"
+                    if step == "analyze_profile"
+                    and patch["analyze_profile"].needs_generation
+                    else "orchestrator_agent"
+                ),
                 message_type="result",
             )
             db.commit()
@@ -811,6 +943,9 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
         db.commit()
         review_batch_cache = _load_review_batch_cache(db, task)
         runtime = AgentRuntime.production(review_batch_cache=review_batch_cache)
+        _, runtime.knowledge_assessments = _feedback_assessments(
+            db, task, learner, feedback
+        )
         checkpointer = MySQLLangGraphCheckpointer(SessionLocal)
         try:
             graph = _build_graph(db, task, profile, checkpointer, runtime)

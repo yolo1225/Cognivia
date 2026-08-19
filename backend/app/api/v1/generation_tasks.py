@@ -496,7 +496,10 @@ def _semantic_events(task: GenerationTask, payload: dict[str, Any]) -> list[tupl
             events.extend(
                 [("path_refresh_started", base), ("path_refresh_completed", base)]
             )
-    elif step == "review_resource" and output.get("arbitration_required"):
+    elif step == "review_resource" and any(
+        isinstance(item, dict) and item.get("required") is True
+        for item in (output.get("arbitration") or [])
+    ):
         events.extend([("review_disagreement", base), ("review_retrieval_started", base)])
     return events
 

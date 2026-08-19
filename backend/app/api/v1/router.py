@@ -13,6 +13,7 @@ from app.api.v1 import (
     knowledge_documents,
     learners,
     learning_packages,
+    learning_paths,
     model_settings,
     reports,
     resources,
@@ -37,6 +38,7 @@ api_router.include_router(
 )
 api_router.include_router(generation_tasks.router, prefix="/generation-tasks", tags=["generation-tasks"], dependencies=[Depends(get_current_user)])
 api_router.include_router(learning_packages.router, prefix="/learning-packages", tags=["learning-packages"], dependencies=[Depends(get_current_user)])
+api_router.include_router(learning_paths.router, prefix="/learning-paths", tags=["learning-paths"], dependencies=[Depends(get_current_user)])
 api_router.include_router(resources.router, prefix="/resources", tags=["resources"], dependencies=[Depends(get_current_user)])
 api_router.include_router(tutoring.router, prefix="/tutoring", tags=["tutoring"], dependencies=[Depends(get_current_user)])
 api_router.include_router(reports.router, prefix="/reports", tags=["reports"], dependencies=[Depends(get_current_user)])

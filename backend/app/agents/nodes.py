@@ -7,7 +7,7 @@ retrieval clients live in ``AgentRuntime`` and are captured by node closures.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.agents.contract_adapters import (
     analyze_profile_output_to_patch,
@@ -30,6 +30,7 @@ from app.agents.contracts import (
     GenerateResourceInput,
     GenerateResourceOutput,
     GenerationRequirements,
+    KnowledgeAssessment,
     ResourceType,
     RetrieveKnowledgeOutput,
     ReviewResourceInput,
@@ -61,6 +62,7 @@ class AgentRuntime:
     review_agent_factory: Callable[[TaskScopedArbitrationRetriever], ReviewValidationAgent]
     review_batch_cache: ReviewBatchCache
     orchestrator: OrchestratorAgent
+    knowledge_assessments: list[KnowledgeAssessment] = field(default_factory=list)
     _retrieval_agent: KnowledgeRetrievalAgent | None = None
 
     @classmethod
@@ -215,7 +217,11 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
 
     def analyze_profile(state: AgentGraphState) -> AgentGraphState:
         return analyze_profile_output_to_patch(
-            runtime.profile_agent.execute(build_analyze_profile_input(state))
+            runtime.profile_agent.execute(
+                build_analyze_profile_input(
+                    state, knowledge_assessments=runtime.knowledge_assessments
+                )
+            )
         )
 
     def retrieve_knowledge(state: AgentGraphState) -> AgentGraphState:

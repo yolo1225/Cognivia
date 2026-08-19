@@ -77,6 +77,16 @@ def create_feedback_task(
     feedback: Feedback,
     resource_types: list[str] | None = None,
 ) -> GenerationTask:
+    existing = db.scalar(
+        select(GenerationTask)
+        .where(
+            GenerationTask.source_feedback_id == feedback.id,
+            GenerationTask.event_type == "resource_feedback",
+        )
+        .order_by(GenerationTask.id.desc())
+    )
+    if existing is not None:
+        return existing
     source_task = require_v6_feedback_source(
         db,
         learner=learner,
@@ -89,7 +99,7 @@ def create_feedback_task(
         public_id=public_id("task"),
         learner_id=learner.id,
         profile_id=profile.id,
-        domain_code="ai_app_dev",
+        domain_code=source_task.domain_code,
         status="pending",
         resource_types_json=resource_types or [resource.resource_type],
         revision_count=0,

@@ -29,17 +29,23 @@ from app.models import (
     LearningPath,
 )
 from app.services.learner_service import get_or_create_demo_learner
+from app.services.diagnostic_scoring_service import score_short_answer_batch
+from app.services.llm_service import ModelGatewayError
 from app.services.profile_service import (
     build_learning_path_from_snapshot,
     default_profile_for_learner,
     is_initial_profile_ready,
     latest_path_for_profile,
     public_id,
-    score_answer,
+    score_single_choice_answer,
 )
 from app.services.contract_mapping import ability_profile_payload, profile_snapshot
 
 PROFILE_AGENT_NAME = "profile_analysis_agent"
+
+
+class DiagnosticScoringPending(RuntimeError):
+    pass
 
 
 def _question_payload(question: DiagnosticQuestion) -> dict[str, Any]:
@@ -344,14 +350,23 @@ def submit_diagnostic_session(
                 )
             )
         }
-        current_profile = default_profile_for_learner(db, learner)
-        current_snapshot = profile_snapshot(current_profile)
         evidence_refs: list[EvidenceRef] = []
         assessments: list[KnowledgeAssessment] = []
         correct_count = 0
         answered_count = 0
         total_score = 0.0
         category_scores: dict[str, list[float]] = defaultdict(list)
+        existing_records = {
+            record.question_id: record
+            for record in db.scalars(
+                select(AnswerRecord).where(
+                    AnswerRecord.learner_id == learner.id,
+                    AnswerRecord.session_id == session_id,
+                )
+            )
+        }
+        records: dict[int, AnswerRecord] = {}
+        short_answer_items: list[tuple[DiagnosticQuestion, str]] = []
 
         for question in questions:
             knowledge = knowledge_rows.get(question.knowledge_item_id)
@@ -359,7 +374,93 @@ def submit_diagnostic_session(
                 raise ValueError("diagnostic_question_missing_knowledge_item")
             answer = answer_by_question_id.get(question.public_id)
             attempted = answer is not None and str(answer).strip() != ""
-            score, is_correct = score_answer(question, answer) if attempted else (0.0, False)
+            answer_text = str(answer) if attempted else ""
+            record = existing_records.get(question.id)
+            if record is None:
+                record = AnswerRecord(
+                    learner_id=learner.id,
+                    question_id=question.id,
+                    knowledge_item_id=knowledge.id,
+                    session_id=session_id,
+                    answer_text=answer_text,
+                    score=0,
+                    is_correct=False,
+                    scoring_status="pending" if question.question_type == "short_answer" else "scored",
+                    scoring_method=(
+                        "ai_rubric" if question.question_type == "short_answer" else "deterministic"
+                    ),
+                    answer_summary_json={},
+                )
+                db.add(record)
+                db.flush()
+            elif record.answer_text != answer_text and record.scoring_status == "scored":
+                raise ValueError("diagnostic_answers_changed_during_retry")
+            records[question.id] = record
+
+            if question.question_type == "single_choice":
+                score, is_correct = score_single_choice_answer(question, answer) if attempted else (0.0, False)
+                record.score = score
+                record.is_correct = is_correct
+                record.scoring_status = "scored"
+                record.scoring_method = "deterministic"
+                record.confidence = 1.0
+            elif record.scoring_status != "scored":
+                short_answer_items.append((question, answer_text))
+
+        if short_answer_items:
+            try:
+                scored_answers, scoring_metadata = score_short_answer_batch(short_answer_items)
+            except (ModelGatewayError, ValueError) as exc:
+                for question, _answer in short_answer_items:
+                    records[question.id].scoring_status = "pending_scoring"
+                run.status = "failed"
+                run.error_message = "DIAGNOSTIC_SCORING_PENDING"
+                run.output_summary_json = {
+                    "session_id": session_id,
+                    "error_code": "DIAGNOSTIC_SCORING_PENDING",
+                    "pending_question_count": len(short_answer_items),
+                }
+                run.duration_ms = round((time.perf_counter() - started_at) * 1000)
+                db.commit()
+                raise DiagnosticScoringPending("DIAGNOSTIC_SCORING_PENDING") from exc
+            run.llm_calls = 1
+            run.tokens_input = int(scoring_metadata.get("tokens_input") or 0)
+            run.tokens_output = int(scoring_metadata.get("tokens_output") or 0)
+            run.tokens_used = run.tokens_input + run.tokens_output
+            run.model_name = str(scoring_metadata.get("model_name") or "") or None
+            for question, _answer in short_answer_items:
+                result_item = scored_answers[question.public_id]
+                record = records[question.id]
+                record.score = float(result_item["total_score"])
+                record.is_correct = bool(result_item["is_correct"])
+                record.scoring_status = "scored"
+                record.scoring_method = "ai_rubric"
+                record.rubric_version = str(result_item["rubric_version"])
+                record.scoring_detail_json = {
+                    key: value
+                    for key, value in result_item.items()
+                    if key
+                    not in {
+                        "question_id",
+                        "total_score",
+                        "is_correct",
+                        "rubric_version",
+                        "confidence",
+                        "scoring_uncertain",
+                        "ai_comment",
+                    }
+                }
+                record.confidence = float(result_item["confidence"])
+                record.scoring_uncertain = bool(result_item["scoring_uncertain"])
+                record.ai_comment = str(result_item["ai_comment"])
+
+        answer_results: list[dict[str, Any]] = []
+        for question in questions:
+            knowledge = knowledge_rows[question.knowledge_item_id]
+            answer = answer_by_question_id.get(question.public_id)
+            attempted = answer is not None and str(answer).strip() != ""
+            record = records[question.id]
+            score, is_correct = float(record.score), bool(record.is_correct)
             evidence_id = f"diag_{sha256(f'{session_id}:{question.public_id}'.encode()).hexdigest()[:32]}"
             assessment_id = f"assess_{sha256(evidence_id.encode()).hexdigest()[:32]}"
             evidence_refs.append(
@@ -368,7 +469,7 @@ def submit_diagnostic_session(
                     evidence_type=EvidenceType.DIAGNOSTIC_RESULT,
                     summary="诊断题已完成结构化评分" if attempted else "诊断题未作答",
                     knowledge_id=knowledge.public_id,
-                    confidence=0.9,
+                    confidence=record.confidence,
                     confirmed=True,
                 )
             )
@@ -380,24 +481,34 @@ def submit_diagnostic_session(
                     score=score if attempted else None,
                     difficulty=question.difficulty,
                     attempted=attempted,
-                    confidence=0.9,
+                    confidence=record.confidence,
                 )
             )
-            db.add(
-                AnswerRecord(
-                    learner_id=learner.id,
-                    question_id=question.id,
-                    knowledge_item_id=knowledge.id,
-                    score=score,
-                    is_correct=is_correct,
-                    answer_summary_json={
-                        "session_id": session_id,
-                        "question_id": question.public_id,
-                        "answer_type": question.question_type,
-                        "score": round(score, 2),
-                        "attempted": attempted,
-                    },
-                )
+            record.answer_summary_json = {
+                "session_id": session_id,
+                "question_id": question.public_id,
+                "answer_type": question.question_type,
+                "score": round(score, 2),
+                "attempted": attempted,
+                "scoring_method": record.scoring_method,
+                "scoring_uncertain": record.scoring_uncertain,
+            }
+            detail = record.scoring_detail_json or {}
+            answer_results.append(
+                {
+                    "question_id": question.public_id,
+                    "question_type": question.question_type,
+                    "score": round(score, 4),
+                    "is_correct": is_correct,
+                    "scoring_method": record.scoring_method,
+                    "ai_comment": record.ai_comment,
+                    "criteria": detail.get("criteria", []),
+                    "matched_points": detail.get("matched_points", []),
+                    "missing_points": detail.get("missing_points", []),
+                    "factual_errors": detail.get("factual_errors", []),
+                    "confidence": record.confidence,
+                    "scoring_uncertain": record.scoring_uncertain,
+                }
             )
             if attempted:
                 answered_count += 1
@@ -406,6 +517,8 @@ def submit_diagnostic_session(
                 category_scores[knowledge.category].append(score)
 
         score_percent = round(total_score / len(questions) * 100, 1)
+        current_profile = default_profile_for_learner(db, learner)
+        current_snapshot = profile_snapshot(current_profile)
         context = TaskContext(
             task_id=session_id,
             session_id=session_id,
@@ -506,6 +619,7 @@ def submit_diagnostic_session(
             "weak_knowledge": active_profile.weak_knowledge_json,
             "learning_path_id": path.public_id,
             "learning_path": path.path_json,
+            "answer_results": answer_results,
             "next_action": "create_generation_task",
         }
         output_summary = {
@@ -547,6 +661,8 @@ def submit_diagnostic_session(
             "agent_run_id": run.id,
             "agent_name": PROFILE_AGENT_NAME,
         }
+    except DiagnosticScoringPending:
+        raise
     except Exception as exc:
         run.status = "failed"
         error_code = str(exc) if isinstance(exc, ValueError) else type(exc).__name__

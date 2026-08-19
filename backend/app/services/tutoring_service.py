@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,10 +22,13 @@ from app.agents.tutoring_agent import TutoringAgent
 from app.models import (
     AgentMessageRecord,
     AgentRun,
+    AnswerRecord,
+    DiagnosticQuestion,
     Feedback,
     GenerationTask,
     Learner,
     LearnerProfile,
+    KnowledgeItem,
     LearningResource,
     TutoringMessage,
     TutoringSession,
@@ -38,6 +43,91 @@ from app.services.resource_tutoring_service import (
 
 
 TUTORING_AGENT_NAME = "tutoring_agent"
+
+
+@dataclass(frozen=True)
+class TutoringTurnResult:
+    learner_message: TutoringMessage
+    reply: TutoringMessage
+    feedback: Feedback
+    task: GenerationTask | None
+    output: dict[str, Any]
+
+    def serialize(self) -> dict[str, Any]:
+        metadata = self.reply.metadata_json or {}
+        return {
+            "session_id": self.output["session_id"],
+            "reply": {
+                "message_id": self.reply.public_id,
+                "message_type": self.reply.message_type,
+                "content": self.reply.content,
+                "sources": metadata.get("sources", []),
+                "scope_status": metadata.get("scope_status"),
+                "assessment": metadata.get("assessment"),
+                "assessment_unavailable": metadata.get("assessment_unavailable"),
+            },
+            "feedback_id": str(self.feedback.id),
+            "feedback_intent": self.feedback.feedback_intent,
+            "recommended_action": self.feedback.recommended_action,
+            "profile_update_required": bool(self.feedback.profile_update_required),
+            "decision_reason": self.feedback.decision_reason,
+            "task_id": self.task.public_id if self.task else None,
+        }
+
+
+def _formal_assessment(
+    db: Session,
+    *,
+    session: TutoringSession,
+    learner: Learner,
+    resource: LearningResource,
+    feedback: Feedback,
+    needed: bool,
+) -> tuple[dict[str, Any] | None, str | None]:
+    if not needed:
+        return None, None
+    knowledge_ids = [
+        str(item.get("knowledge_id"))
+        for item in (resource.sources_json or [])
+        if isinstance(item, dict) and item.get("knowledge_id")
+    ]
+    if not knowledge_ids:
+        return None, "assessment_unavailable"
+    attempted_question_ids = select(AnswerRecord.question_id).where(
+        AnswerRecord.learner_id == learner.id
+    )
+    source_task = db.get(GenerationTask, resource.generation_task_id)
+    if source_task is None:
+        return None, "assessment_unavailable"
+    question = db.scalar(
+        select(DiagnosticQuestion)
+        .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
+        .where(
+            DiagnosticQuestion.domain_code == source_task.domain_code,
+            DiagnosticQuestion.question_type == "single_choice",
+            KnowledgeItem.public_id.in_(knowledge_ids),
+            DiagnosticQuestion.id.not_in(attempted_question_ids),
+        )
+        .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.id)
+    )
+    if question is None:
+        return None, "assessment_unavailable"
+    knowledge = db.get(KnowledgeItem, question.knowledge_item_id)
+    assessment_id = public_id("tval")
+    return {
+        "assessment_id": assessment_id,
+        "question_id": question.public_id,
+        "knowledge_id": knowledge.public_id,
+        "question_type": question.question_type,
+        "difficulty": question.difficulty,
+        "stem": question.stem,
+        "options": question.options_json or [],
+        "status": "pending",
+        "feedback_id": str(feedback.id),
+        "session_id": session.public_id,
+        "learner_id": learner.public_id,
+        "domain_code": source_task.domain_code,
+    }, None
 
 
 def _agent_message(
@@ -358,7 +448,17 @@ def add_learner_message(
     output["reply"] = contextual_answer.answer
     output["sources"] = contextual_answer.sources
     output["scope_status"] = contextual_answer.scope_status
-    output["assessment"] = contextual_answer.assessment
+    assessment, assessment_unavailable = _formal_assessment(
+        db,
+        session=session,
+        learner=learner,
+        resource=resource,
+        feedback=feedback,
+        needed=output_model.feedback_intent.value in {"too_hard", "too_easy"},
+    )
+    output["assessment"] = assessment
+    output["assessment_unavailable"] = assessment_unavailable
+    output["session_id"] = session.public_id
     reply = TutoringMessage(
         public_id=public_id("msg"),
         session_id=session.id,
@@ -368,7 +468,9 @@ def add_learner_message(
         metadata_json={
             "sources": contextual_answer.sources,
             "scope_status": contextual_answer.scope_status,
-            "assessment": contextual_answer.assessment,
+            "assessment": assessment,
+            "assessment_unavailable": assessment_unavailable,
+            "stream_status": "completed",
         },
         feedback_id=feedback.id,
     )
@@ -382,18 +484,14 @@ def add_learner_message(
         and item.confidence >= 0.7
         for item in safe_evidence
     )
-    # Generation is user-confirmed; this step only records the recommendation.
+    # Resource correctness is independently reviewable and never changes mastery.
     if (
-        False
-        and has_confirmed_assessment
-        and output_model.needs_generation
-        and action
-        in {
-            "review",
-            "challenge",
-            "explain",
-            "regenerate",
-        }
+        action == "review"
+        or (
+            has_confirmed_assessment
+            and output_model.needs_generation
+            and action in {"challenge", "explain", "regenerate"}
+        )
     ):
         task = create_feedback_task(
             db,
@@ -404,6 +502,213 @@ def add_learner_message(
             resource_types=[resource.resource_type],
         )
     return learner_message, reply, feedback, task, output
+
+
+def execute_tutoring_turn(
+    db: Session,
+    *,
+    session: TutoringSession,
+    profile: LearnerProfile,
+    content: str,
+    evidence: list[dict] | None = None,
+) -> TutoringTurnResult:
+    learner_message, reply, feedback, task, output = add_learner_message(
+        db,
+        session=session,
+        profile=profile,
+        content=content,
+        evidence=evidence,
+    )
+    return TutoringTurnResult(learner_message, reply, feedback, task, output)
+
+
+def _assessment_message(
+    db: Session, *, session: TutoringSession, assessment_id: str
+) -> tuple[TutoringMessage, dict[str, Any]]:
+    messages = db.scalars(
+        select(TutoringMessage)
+        .where(TutoringMessage.session_id == session.id)
+        .order_by(TutoringMessage.id.desc())
+    )
+    for message in messages:
+        assessment = (message.metadata_json or {}).get("assessment")
+        if isinstance(assessment, dict) and assessment.get("assessment_id") == assessment_id:
+            return message, assessment
+    raise ValueError("tutoring_assessment_not_found")
+
+
+def _profile_evidence_gate(
+    db: Session, *, session: TutoringSession, records: list[AnswerRecord]
+) -> bool:
+    high_by_knowledge: dict[int, list[AnswerRecord]] = {}
+    high_scores: list[AnswerRecord] = []
+    failed_scores: list[AnswerRecord] = []
+    for record in records:
+        if record.score >= 0.75:
+            high_scores.append(record)
+            high_by_knowledge.setdefault(record.knowledge_item_id, []).append(record)
+        elif record.score < 0.4:
+            failed_scores.append(record)
+    three_same_knowledge = any(len(items) >= 3 for items in high_by_knowledge.values())
+    two_independent_with_application = len(high_scores) >= 2 and any(
+        question is not None and question.difficulty >= 3
+        for item in high_scores
+        for question in [db.get(DiagnosticQuestion, item.question_id)]
+    )
+    session_feedback = list(
+        db.scalars(
+            select(Feedback).where(Feedback.tutoring_session_id == session.id)
+        )
+    )
+    resource_error_reported = any(
+        item.feedback_intent == "incorrect" for item in session_feedback
+    )
+    remedial_explanations = sum(
+        item.recommended_action == "explain" for item in session_feedback
+    )
+    downward_gate = (
+        len(failed_scores) >= 2
+        and remedial_explanations >= 1
+        and not resource_error_reported
+    )
+    return three_same_knowledge or two_independent_with_application or downward_gate
+
+
+def submit_assessment_answer(
+    db: Session,
+    *,
+    session: TutoringSession,
+    profile: LearnerProfile,
+    assessment_id: str,
+    answer: Any,
+) -> tuple[AnswerRecord, Feedback, GenerationTask | None, dict[str, Any]]:
+    message, assessment = _assessment_message(
+        db, session=session, assessment_id=assessment_id
+    )
+    question = db.scalar(
+        select(DiagnosticQuestion).where(
+            DiagnosticQuestion.public_id == assessment.get("question_id")
+        )
+    )
+    feedback = db.get(Feedback, int(assessment.get("feedback_id") or 0))
+    learner = db.get(Learner, session.learner_id)
+    resource = db.get(LearningResource, session.resource_id)
+    if question is None or feedback is None or learner is None or resource is None:
+        raise ValueError("tutoring_assessment_source_missing")
+    if assessment.get("learner_id") != learner.public_id or learner.id != profile.learner_id:
+        raise ValueError("tutoring_assessment_learner_mismatch")
+    source_task = db.get(GenerationTask, resource.generation_task_id)
+    if (
+        source_task is None
+        or question.domain_code != source_task.domain_code
+        or question.knowledge_item_id != int(message.metadata_json["assessment"].get("knowledge_item_id", question.knowledge_item_id))
+    ):
+        raise ValueError("tutoring_assessment_domain_mismatch")
+
+    existing = next(
+        (
+            record
+            for record in db.scalars(
+                select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)
+            )
+            if (record.answer_summary_json or {}).get("assessment_id") == assessment_id
+        ),
+        None,
+    )
+    task = db.scalar(
+        select(GenerationTask).where(GenerationTask.source_feedback_id == feedback.id)
+    )
+    if existing is not None:
+        summary = existing.answer_summary_json or {}
+        return existing, feedback, task, {
+            "confirmed": bool(summary.get("confirmed")),
+            "profile_update_required": bool(feedback.profile_update_required),
+            "decision_reason": feedback.decision_reason,
+        }
+
+    try:
+        selected = int(answer)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid_single_choice_answer") from exc
+    correct = int((question.answer_key_json or {}).get("correct_option", -1))
+    if selected < 0 or selected >= len(question.options_json or []):
+        raise ValueError("invalid_single_choice_answer")
+    is_correct = selected == correct
+    score = 1.0 if is_correct else 0.0
+    evidence_id = f"answer_record:pending:{assessment_id}"
+    record = AnswerRecord(
+        learner_id=learner.id,
+        question_id=question.id,
+        knowledge_item_id=question.knowledge_item_id,
+        score=score,
+        is_correct=is_correct,
+        answer_summary_json={
+            "evidence_type": "tutoring_validation",
+            "contract_evidence_type": "scored_quiz",
+            "assessment_id": assessment_id,
+            "difficulty": question.difficulty,
+            "confidence": 0.9,
+            "confirmed": True,
+            "feedback_id": feedback.id,
+            "tutoring_session_id": session.id,
+            "consumed_by_profile_id": None,
+        },
+    )
+    db.add(record)
+    db.flush()
+    evidence_id = f"answer_record:{record.id}"
+    summary = dict(record.answer_summary_json or {})
+    summary["evidence_id"] = evidence_id
+    record.answer_summary_json = summary
+    assessment = dict(assessment)
+    assessment.update({"status": "scored", "score": score, "is_correct": is_correct})
+    metadata = dict(message.metadata_json or {})
+    metadata["assessment"] = assessment
+    message.metadata_json = metadata
+
+    knowledge = db.get(KnowledgeItem, question.knowledge_item_id)
+    evidence = {
+        "evidence_id": evidence_id,
+        "evidence_type": "scored_quiz",
+        "summary": "导学正式验证题已由服务端评分",
+        "knowledge_id": knowledge.public_id,
+        "source_ref_id": question.public_id,
+        "confidence": 0.9,
+        "confirmed": True,
+    }
+    feedback.profile_change_evidence_json = [
+        *list(feedback.profile_change_evidence_json or []),
+        evidence,
+    ]
+    feedback.recommended_action = "challenge" if is_correct else "explain"
+    feedback.triggered_action = feedback.recommended_action
+    feedback.decision_reason = "验证证据已记录，等待统一画像分析"
+    feedback.decision_confidence = 0.9
+
+    session_records = [
+        item
+        for item in db.scalars(
+            select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)
+        )
+        if (item.answer_summary_json or {}).get("tutoring_session_id") == session.id
+        and (item.answer_summary_json or {}).get("confirmed") is True
+    ]
+    gate_passed = _profile_evidence_gate(db, session=session, records=session_records)
+    task = None
+    if gate_passed:
+        task = create_feedback_task(
+            db,
+            learner=learner,
+            profile=profile,
+            resource=resource,
+            feedback=feedback,
+            resource_types=[resource.resource_type],
+        )
+    return record, feedback, task, {
+        "confirmed": True,
+        "profile_update_required": False,
+        "decision_reason": feedback.decision_reason,
+    }
 
 
 def serialize_session(db: Session, session: TutoringSession) -> dict:

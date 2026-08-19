@@ -12,10 +12,33 @@ export interface TutoringSession {
     created_at: string | null
     sources?: Array<{ knowledge_id: string; name: string; source_title: string }>
     scope_status?: string | null
-    assessment?: { assessment_id: string; kind: string; prompt: string; status: string } | null
+    assessment?: TutoringAssessment | null
+    assessment_unavailable?: string | null
     stream_status?: 'streaming' | 'completed' | 'paused' | 'interrupted' | 'failed'
     error_code?: string | null
   }>
+}
+
+export interface TutoringAssessment {
+  assessment_id: string
+  question_id: string
+  knowledge_id: string
+  question_type: 'single_choice'
+  difficulty: number
+  stem: string
+  options: string[]
+  status: 'pending' | 'scored'
+  score?: number
+  is_correct?: boolean
+}
+
+export interface TutoringDecision {
+  feedback_id: string
+  feedback_intent: string
+  recommended_action: string
+  profile_update_required: boolean
+  decision_reason: string
+  task_id: string | null
 }
 
 export function createTutoringSession(resourceId: string, learnerId?: string) {
@@ -33,14 +56,10 @@ export function sendTutoringMessage(sessionId: string, content: string) {
       message_id: string; message_type: string; content: string
       sources?: Array<{ knowledge_id: string; name: string; source_title: string }>
       scope_status?: string | null
-      assessment?: { assessment_id: string; kind: string; prompt: string; status: string } | null
+      assessment?: TutoringAssessment | null
+      assessment_unavailable?: string | null
     }
-    feedback_intent: string
-    recommended_action: string
-    profile_update_required: boolean
-    decision_reason: string
-    task_id: string | null
-  }>(`/tutoring/sessions/${sessionId}/messages`, { content })
+  } & TutoringDecision>(`/tutoring/sessions/${sessionId}/messages`, { content })
 }
 
 export function getTutoringSession(sessionId: string) {
@@ -49,8 +68,9 @@ export function getTutoringSession(sessionId: string) {
 
 export type TutoringStreamEvent =
   | { type: 'accepted'; learner_message_id: string; reply_message_id: string }
+  | { type: 'agent_status'; agent: string; status: string }
   | { type: 'delta'; reply_message_id: string; content: string }
-  | { type: 'completed'; reply_message_id: string; content: string; sources: NonNullable<TutoringSession['messages'][number]['sources']>; scope_status: string | null; assessment: TutoringSession['messages'][number]['assessment']; task_id: string | null }
+  | ({ type: 'completed'; reply_message_id: string; content: string; sources: NonNullable<TutoringSession['messages'][number]['sources']>; scope_status: string | null; assessment: TutoringSession['messages'][number]['assessment']; assessment_unavailable: string | null } & TutoringDecision)
   | { type: 'paused'; reply_message_id: string; content: string }
   | { type: 'error'; reply_message_id: string; code: string; recoverable: boolean }
 
@@ -70,6 +90,19 @@ export async function streamTutoringMessage(sessionId: string, content: string, 
     }
     if (done) break
   }
+}
+
+export function answerTutoringAssessment(sessionId: string, assessmentId: string, answer: number) {
+  return postData<{
+    answer_record_id: string
+    score: number
+    is_correct: boolean
+    confirmed: boolean
+    feedback_id: string
+    profile_update_required: boolean
+    decision_reason: string
+    task_id: string | null
+  }>(`/tutoring/sessions/${sessionId}/assessments/${assessmentId}/answers`, { answer })
 }
 
 export function pauseTutoringMessage(sessionId: string, replyMessageId: string) {

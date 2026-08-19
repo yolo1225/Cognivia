@@ -149,9 +149,18 @@
           <small v-if="message.stream_status === 'interrupted' || message.stream_status === 'failed'" class="tutor-stream-note">回复中断，可继续提问。</small>
           <small v-if="message.sources?.length" class="tutor-sources">依据：{{ message.sources.map(source => source.name).join('、') }}</small>
           <div v-if="message.assessment?.status === 'pending'" class="tutor-assessment">
-            <strong>掌握情况验证</strong><p>{{ message.assessment.prompt }}</p>
-            <small>回答后，系统会结合可验证证据判断是否需要调整画像。</small>
+            <strong>掌握情况验证 · 难度 {{ message.assessment.difficulty }}</strong>
+            <p>{{ message.assessment.stem }}</p>
+            <div class="assessment-options">
+              <button v-for="(option, optionIndex) in message.assessment.options" :key="optionIndex" type="button" :disabled="assessmentSubmitting === message.assessment.assessment_id" @click="submitAssessment(message, optionIndex)">{{ option }}</button>
+            </div>
+            <small>提交后由服务端按正式题库答案评分，证据达到门槛后才会调整画像。</small>
           </div>
+          <div v-else-if="message.assessment?.status === 'scored'" class="tutor-assessment" :class="message.assessment.is_correct ? 'is-correct' : 'is-wrong'">
+            <strong>{{ message.assessment.is_correct ? '验证通过' : '验证未通过' }}</strong>
+            <p>得分 {{ Math.round((message.assessment.score || 0) * 100) }}%</p>
+          </div>
+          <small v-if="message.assessment_unavailable" class="tutor-stream-note">当前知识点暂无可用的正式验证题，画像保持不变。</small>
         </div>
       </div>
       <template #footer>
@@ -179,7 +188,7 @@ import AppDrawer from '@/components/Shared/AppDrawer.vue'
 import AppIcon from '@/components/Shared/AppIcon.vue'
 import PageHeader from '@/components/Shared/PageHeader.vue'
 import PageState from '@/components/Shared/PageState.vue'
-import { createTutoringSession, getTutoringSession, pauseTutoringMessage, streamTutoringMessage, type TutoringSession } from '@/api/tutoring'
+import { answerTutoringAssessment, createTutoringSession, getTutoringSession, pauseTutoringMessage, streamTutoringMessage, type TutoringSession } from '@/api/tutoring'
 import ResourceMarkdownViewer from '@/components/ResourceViewer/ResourceMarkdownViewer.vue'
 import GradedQuizViewer from '@/components/ResourceViewer/GradedQuizViewer.vue'
 import ResourceTypeIcon from '@/components/ResourceViewer/ResourceTypeIcon.vue'
@@ -210,6 +219,7 @@ const tutorSession = ref<TutoringSession | null>(null)
 const messageList = ref<HTMLElement | null>(null)
 let streamController: AbortController | null = null
 let activeReplyId = ''
+const assessmentSubmitting = ref('')
 const feedbackOptions = [{ value: 'too_hard', label: '内容太难' }, { value: 'too_easy', label: '内容太简单' }, { value: 'confusing', label: '解释不清楚' }, { value: 'incorrect', label: '内容可能有误' }, { value: 'helpful', label: '对我有帮助' }]
 const formats = [
   { value: 'markdown', label: 'Markdown', desc: '保留标题、表格、代码块和知识来源结构。', tag: '源格式' },
@@ -332,10 +342,10 @@ async function sendTutorMessage() {
         const learner = tutorSession.value.messages.find(item => item.message_id === pendingId)
         if (learner) learner.message_id = event.learner_message_id
         tutorSession.value.messages.push({ message_id: activeReplyId, sender: 'tutoring_agent', message_type: 'explanation', content: '', created_at: null, stream_status: 'streaming' })
-      } else {
+      } else if (event.type !== 'agent_status') {
         const reply = tutorSession.value.messages.find(item => item.message_id === event.reply_message_id)
         if (event.type === 'delta' && reply) reply.content += event.content
-        if (event.type === 'completed' && reply) { reply.content = event.content; reply.sources = event.sources; reply.scope_status = event.scope_status; reply.assessment = event.assessment; reply.stream_status = 'completed'; if (event.task_id) showToast('已触发后续学习调整，可前往任务记录查看进度。') }
+        if (event.type === 'completed' && reply) { reply.content = event.content; reply.sources = event.sources; reply.scope_status = event.scope_status; reply.assessment = event.assessment; reply.assessment_unavailable = event.assessment_unavailable; reply.stream_status = 'completed'; showToast(event.decision_reason); if (event.task_id) showToast('已触发后续学习调整，可前往任务记录查看进度。') }
         if (event.type === 'paused' && reply) { reply.content = event.content; reply.stream_status = 'paused' }
         if (event.type === 'error' && reply) reply.stream_status = event.recoverable ? 'interrupted' : 'failed'
       }
@@ -348,6 +358,23 @@ async function sendTutorMessage() {
     tutorSending.value = false
     streamController = null
     activeReplyId = ''
+  }
+}
+
+async function submitAssessment(message: TutoringSession['messages'][number], answer: number) {
+  if (!tutorSession.value || !message.assessment || assessmentSubmitting.value) return
+  assessmentSubmitting.value = message.assessment.assessment_id
+  try {
+    const result = await answerTutoringAssessment(tutorSession.value.session_id, message.assessment.assessment_id, answer)
+    message.assessment.status = 'scored'
+    message.assessment.score = result.score
+    message.assessment.is_correct = result.is_correct
+    showToast(result.decision_reason)
+    if (result.task_id) showToast('验证证据已达到门槛，画像分析任务已启动。')
+  } catch {
+    showToast('验证答案提交失败，请稍后重试。')
+  } finally {
+    assessmentSubmitting.value = ''
   }
 }
 
@@ -603,6 +630,11 @@ onUnmounted(clearTaskTimer)
 .tutor-assessment { margin-top: 9px; border: 1px solid #cbd9f4; border-radius: 8px; background: #f5f8ff; padding: 10px; color: #27457f; font-size: 12px; line-height: 1.6; }
 .tutor-assessment p { margin: 5px 0; background: transparent; padding: 0; color: inherit; }
 .tutor-assessment small { color: #516788; }
+.assessment-options { display: grid; gap: 6px; margin: 8px 0; }
+.assessment-options button { border: 1px solid #b9cae9; border-radius: 6px; background: #fff; padding: 7px 9px; color: #27457f; text-align: left; cursor: pointer; }
+.assessment-options button:hover:not(:disabled) { border-color: var(--blue); background: #edf3ff; }
+.tutor-assessment.is-correct { border-color: #9ed8c1; background: #effaf5; color: #176a4f; }
+.tutor-assessment.is-wrong { border-color: #efc3bd; background: #fff5f3; color: #9c372d; }
 .tutor-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
 .tutor-form textarea { width: 100%; min-height: 78px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; color: var(--ink); line-height: 1.5; }
 @keyframes tutor-blink { 50% { opacity: 0; } }

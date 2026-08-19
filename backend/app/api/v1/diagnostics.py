@@ -1,12 +1,17 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import Principal, get_current_user, self_service_learner
-from app.schemas.common import ApiResponse, ok
-from app.services.diagnostic_service import create_diagnostic_session, submit_diagnostic_session
+from app.schemas.common import ApiResponse, fail, ok
+from app.services.diagnostic_service import (
+    DiagnosticScoringPending,
+    create_diagnostic_session,
+    submit_diagnostic_session,
+)
 
 router = APIRouter()
 
@@ -41,6 +46,13 @@ def submit_session(
             domain_code=payload.get("domain_code", "ai_app_dev"),
             answers=payload.get("answers", []),
         )
+    except DiagnosticScoringPending:
+        body = fail(
+            "DIAGNOSTIC_SCORING_PENDING",
+            "AI 评分暂未完成，请保留当前答案后重试。",
+            {"session_id": session_id, "retryable": True},
+        )
+        return JSONResponse(status_code=503, content=body.model_dump(mode="json"))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc).upper()) from exc
     return ok(result)

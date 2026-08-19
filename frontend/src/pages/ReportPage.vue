@@ -100,10 +100,23 @@
           <div><h2>推荐学习路径</h2><p class="section-note">根据画像与薄弱点动态推荐</p></div>
           <span class="status" :class="report.feedback_summary?.learning_path_needs_refresh ? 'wait' : 'ok'">{{ report.feedback_summary?.learning_path_needs_refresh ? '待刷新' : '当前版本' }}</span>
         </div>
-        <div v-if="report.path_detail?.length" class="path-h">
-          <div v-for="(stage, index) in report.path_detail" :key="index" class="path-h-step">
+        <div v-if="pathNodes.length" class="path-h">
+          <div v-for="(node, index) in pathNodes" :key="node.path_node_id" class="path-h-step" :class="`node-${node.status}`">
             <span class="path-num">{{ index + 1 }}</span>
-            <div><h3>{{ stage.name }}</h3><p>{{ stage.description || '根据当前画像推荐' }}</p></div>
+            <div class="path-node-copy">
+              <div class="path-node-title"><h3>{{ node.title }}</h3><span class="node-status">{{ pathStatusLabel(node.status) }}</span></div>
+              <p>{{ node.knowledge_id }} · 通过阈值 {{ Math.round(node.completion_condition.threshold * 100) }}%</p>
+              <div v-if="node.status === 'current'" class="path-actions">
+                <button class="btn" :disabled="pathActionLoading" @click="verifyCurrentNode(node.path_node_id)">{{ pathActionLoading ? '验证中...' : '验证掌握情况' }}</button>
+                <button v-if="verifiedNodeId === node.path_node_id" class="btn primary" :disabled="pathActionLoading" @click="completeCurrentNode(node.path_node_id)">完成并推进</button>
+              </div>
+              <p v-if="pathMessage && node.status === 'current'" class="path-message">{{ pathMessage }}</p>
+            </div>
+          </div>
+        </div>
+        <div v-else-if="report.path_detail?.length" class="path-h">
+          <div v-for="(stage, index) in report.path_detail" :key="index" class="path-h-step">
+            <span class="path-num">{{ index + 1 }}</span><div><h3>{{ stage.name }}</h3><p>{{ stage.description || '根据当前画像推荐' }}</p></div>
           </div>
         </div>
         <div v-else class="empty-hint">尚未形成可展示的学习路径。</div>
@@ -146,6 +159,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getLearningReport, type LearningReport } from '@/api/reports'
+import { completePathNode, verifyPathNode, type LearningPathNode } from '@/api/learningPaths'
+import { useToast } from '@/composables/useToast'
 import { resourceQualityStatusLabel, resourceQualityStatusTone } from '@/utils/resourceQualityStatus'
 import { createGenerationTask } from '@/api/generation'
 import RadarChart from '@/components/Charts/RadarChart.vue'
@@ -157,6 +172,7 @@ import { useAuthStore } from '@/stores/authStore'
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+const { showToast } = useToast()
 const taskId = computed(() => String(route.query.task_id || '').trim())
 const isAdminTaskContext = computed(() => authStore.role === 'admin' && Boolean(taskId.value))
 const learnerId = computed(() => {
@@ -170,6 +186,10 @@ const report = ref<LearningReport | null>(null)
 const loading = ref(false)
 const errorMessage = ref('')
 const creatingGeneration = ref(false)
+const pathActionLoading = ref(false)
+const verifiedNodeId = ref('')
+const verifiedEvidenceIds = ref<string[]>([])
+const pathMessage = ref('')
 
 const radarLabels = ['理论基础', '实操能力', '问题解决', '知识广度', '学习速度']
 const DIRECTION_LABELS: Record<string, string> = {
@@ -192,6 +212,43 @@ const directionList = computed(() => {
 const diagnosticAccuracy = computed(() => Math.round(Number(report.value?.diagnostic_summary?.accuracy || 0)))
 const weakCount = computed(() => sortedWeakKnowledge.value.length)
 const resourceTotal = computed(() => report.value?.resource_summary?.total || 0)
+const pathNodes = computed<LearningPathNode[]>(() => report.value?.learning_path?.nodes || [])
+
+function pathStatusLabel(status: LearningPathNode['status']) {
+  return ({ locked: '未解锁', current: '当前学习', completed: '已完成', skipped: '已跳过' } as const)[status]
+}
+
+async function verifyCurrentNode(nodeId: string) {
+  const pathId = report.value?.learning_path?.path_id
+  if (!pathId) return
+  pathActionLoading.value = true
+  pathMessage.value = ''
+  try {
+    const verification = await verifyPathNode(pathId, nodeId)
+    verifiedNodeId.value = verification.verified ? nodeId : ''
+    verifiedEvidenceIds.value = verification.evidence_ids
+    pathMessage.value = verification.verified
+      ? `已找到通过验证的掌握证据（${Math.round(Number(verification.best_score || 0) * 100)}%）。`
+      : '尚无达到阈值的已验证答题证据，请先完成导学验证题。'
+  } catch {
+    pathMessage.value = '节点验证失败，请稍后重试。'
+  } finally { pathActionLoading.value = false }
+}
+
+async function completeCurrentNode(nodeId: string) {
+  const pathId = report.value?.learning_path?.path_id
+  if (!pathId || !verifiedEvidenceIds.value.length) return
+  pathActionLoading.value = true
+  try {
+    await completePathNode(pathId, nodeId, verifiedEvidenceIds.value)
+    verifiedNodeId.value = ''
+    verifiedEvidenceIds.value = []
+    pathMessage.value = ''
+    showToast('当前节点已完成，学习路径已推进。', 'success')
+    await loadReport()
+  } catch { showToast('路径推进失败，证据可能已失效。', 'error') }
+  finally { pathActionLoading.value = false }
+}
 
 const LOOP_DEFS = [
   { key: 'diagnosis', label: '诊断测评' },
@@ -355,6 +412,17 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
 /* 学习路径 */
 .path-h { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
 .path-h-step { display: flex; align-items: flex-start; gap: 11px; border: 1px solid #edf1f6; border-radius: 12px; background: var(--soft); padding: 14px 15px; }
+.path-node-copy { min-width: 0; flex: 1; }
+.path-node-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.node-status { flex-shrink: 0; border-radius: 6px; padding: 3px 7px; background: #fff; color: var(--muted); font-size: 10px; }
+.node-current { border-color: #b9caeb; background: #f5f8ff; }
+.node-current .node-status { color: var(--blue); }
+.node-completed { border-color: #cfe7d8; background: #f4fbf7; }
+.node-completed .path-num { background: var(--green); }
+.node-completed .node-status { color: var(--green); }
+.node-locked { opacity: .72; }
+.path-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.path-message { color: var(--blue) !important; }
 .path-num { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: var(--blue); color: #fff; font-size: 13px; font-weight: 700; }
 .path-h-step h3 { color: var(--ink); font-size: 13.5px; }
 .path-h-step p { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.6; }

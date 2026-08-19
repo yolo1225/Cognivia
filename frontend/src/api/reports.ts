@@ -1,4 +1,5 @@
 import { getData } from './client'
+import type { LearningPathState } from './learningPaths'
 
 export interface LearningReport {
   diagnosis_completed?: boolean
@@ -23,6 +24,7 @@ export interface LearningReport {
     name: string
     description?: string
   }>
+  learning_path?: LearningPathState
   weak_knowledge?: Array<{
     knowledge_id: string
     name: string

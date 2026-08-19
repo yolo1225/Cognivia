@@ -20,10 +20,20 @@
 | GET | `/api/v1/health/dependencies` | 数据库、Chroma、模型通道和真实演示就绪状态 |
 | PATCH | `/api/v1/knowledge/items/{id}` | 修改知识点、关系并标记局部影响范围 |
 | POST | `/api/v1/knowledge/rebuild-index` | 同步增量重建待处理知识向量 |
+| POST | `/api/v1/diagnostics/sessions/{id}/submit` | 提交诊断；简答题返回 AI 分项评分、评语和不确定标记 |
+| POST | `/api/v1/learning-paths/{path_id}/nodes/{node_id}/verify` | 从服务端已确认答题记录验证当前路径节点 |
+| POST | `/api/v1/learning-paths/{path_id}/nodes/{node_id}/complete` | 使用已验证证据完成节点并解锁后继节点 |
 
 学习者资源列表默认仅返回 `is_current=true && review_status=passed`；管理员使用 `include_unpublished=true` 查看未发布版本。
 
 健康接口只返回模型名称和是否配置，不返回 API 密钥。正式验收必须满足 `ready_for_live_demo=true`。
+
+## M4B 诊断与路径约定
+
+- 简答题未完成模型评分时返回 HTTP 503，`error.code=DIAGNOSTIC_SCORING_PENDING`，`details.retryable=true`；不生成新画像或路径。
+- 诊断成功响应的 `answer_results` 包含 `scoring_method`、`criteria`、`ai_comment`、`confidence`、`scoring_uncertain`、缺失点和事实错误。
+- 路径节点状态为 `locked | current | completed | skipped`；学习者本阶段不能主动跳过节点。
+- `verify` 不接受客户端分数；`complete` 必须提交 `evidence_ids`，服务端会重新验证学习者、领域、知识点和分数阈值。
 
 ## SSE 事件
 
