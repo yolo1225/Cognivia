@@ -109,11 +109,14 @@ def _stage0_task_evidence(
         for run in _step_runs(runs, "analyze_profile")
         if "profile_update_required" in (run.get("output_summary") or {})
     ]
-    arbitration_count = sum(
-        1
-        for run in review_runs
-        if bool(((run.get("output_summary") or {}).get("arbitration") or {}).get("required"))
-    )
+    arbitration_count = 0
+    for run in review_runs:
+        arbitration = (run.get("output_summary") or {}).get("arbitration") or []
+        if isinstance(arbitration, dict):
+            arbitration = [arbitration]
+        arbitration_count += sum(
+            1 for item in arbitration if isinstance(item, dict) and item.get("required")
+        )
     return {
         "task_id": task_id,
         "thread_id": task_id,
@@ -220,6 +223,7 @@ def main() -> None:
             "POST",
             f"/tutoring/sessions/{session['session_id']}/messages",
             {"content": "这部分太难了，我第一次没有看懂。"},
+            timeout=120,
         )
         if response.get("recommended_action") != "no_change" or response.get("task_id"):
             raise AssertionError(f"first subjective feedback must not change profile: {response}")

@@ -59,7 +59,7 @@ def _runs(*, include_secondary: bool = True) -> list[dict]:
             "input_summary": {"step": "review_resource"},
             "output_summary": {
                 "model_calls": [{"role": role} for role in roles],
-                "arbitration": {"required": False},
+                "arbitration": [{"required": True}, {"required": False}],
             },
             "duration_ms": 20,
         },
@@ -79,6 +79,7 @@ def test_stage0_task_evidence_requires_resources_sources_quality_and_dual_review
     assert evidence["resource_types"] == ["graded_quiz", "lecture", "practice_guide"]
     assert evidence["review_model_roles"] == ["primary_review_model", "secondary_review_model"]
     assert evidence["profile_update_required"] == [False]
+    assert evidence["arbitration_count"] == 1
     assert evidence["duration_ms"] == 32
 
 
