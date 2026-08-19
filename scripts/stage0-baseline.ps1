@@ -194,7 +194,12 @@ function Invoke-Stage0DemoAcceptance {
     }
     $venvPython = Join-Path $ProjectRoot "backend/.venv/Scripts/python.exe"
     $python = if (Test-Path -LiteralPath $venvPython) { $venvPython } else { "python" }
-    Invoke-Checked "Stage0 live demo acceptance" { & $python test_script/demo_acceptance.py --suite stage0 }
+    # The acceptance script writes its human-readable JSON to stdout. Route that
+    # stream to the host so it cannot become a second function return value and
+    # obscure the parsed, redacted report returned below.
+    Invoke-Checked "Stage0 live demo acceptance" {
+        & $python test_script/demo_acceptance.py --suite stage0 | Out-Host
+    }
     $demoReportPath = Join-Path $ProjectRoot "reports/demo/latest.json"
     if (-not (Test-Path -LiteralPath $demoReportPath)) {
         throw "Stage0 demo acceptance did not create reports/demo/latest.json."
