@@ -99,6 +99,7 @@ def post_tutoring_message(
             },
             "feedback_intent": output["feedback_intent"],
             "recommended_action": feedback.recommended_action,
+            "feedback_id": feedback.id,
             "profile_update_required": feedback.feedback_intent in {"too_hard", "too_easy"}
             and any(
                 item.get("type") in {"scored_quiz", "diagnostic_result", "validated_behavior"}

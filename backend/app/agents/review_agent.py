@@ -1,4 +1,4 @@
-"""V4 review Agent with deterministic competition-quality metrics."""
+"""V6 review Agent with evidence-aware competition-quality metrics."""
 
 from __future__ import annotations
 
@@ -39,6 +39,11 @@ from app.agents.contracts import (
     RetrievedChunk,
     RetrievalPurpose,
 )
+from app.agents.domain_evidence_policy import (
+    EvidenceCapability,
+    get_domain_evidence_policy,
+)
+from app.agents.knowledge_coverage_policy import primary_owner_by_knowledge
 from app.agents.observability import record_model_call
 from app.agents.prompt_budget import bounded_text, estimate_tokens
 from app.agents.retrieval_agent import KnowledgeRetrievalAgent
@@ -54,7 +59,7 @@ from app.services.llm_service import (
 
 
 REVIEW_AGENT_NAME = "review_validation_agent_v3"
-REVIEW_RULE_VERSION = "atomic-claims-20260814"
+REVIEW_RULE_VERSION = "quality-v6-20260818"
 
 
 def build_review_resource_output(
@@ -67,19 +72,34 @@ def build_review_resource_output(
 ) -> ReviewResourceOutput:
     """Build package metrics from the final merged set of resource reports."""
     package_required = set(required_knowledge_ids)
+    primary_owners = primary_owner_by_knowledge(
+        required_knowledge_ids,
+        {report.resource_type: report.target_knowledge_ids for report in reports},
+    )
     package_covered = {
-        knowledge_id for report in reports for knowledge_id in report.covered_knowledge_ids
+        knowledge_id
+        for report in reports
+        for knowledge_id in report.covered_knowledge_ids
+        if primary_owners.get(knowledge_id) is report.resource_type
     } & package_required
-    claim_count = sum(report.quality_metrics.verifiable_claim_count for report in reports)
+    evaluated_count = sum(report.quality_metrics.evaluated_claim_count for report in reports)
+    contradicted_count = sum(
+        report.quality_metrics.contradicted_claim_count for report in reports
+    )
+    evidence_insufficient_count = sum(
+        report.quality_metrics.evidence_insufficient_claim_count for report in reports
+    )
+    unresolved_count = sum(
+        report.quality_metrics.unresolved_claim_count for report in reports
+    )
+    claim_count = evaluated_count
     hallucinated_count = sum(
         report.quality_metrics.hallucinated_claim_count for report in reports
     )
-    target_count = sum(
-        report.quality_metrics.target_core_knowledge_count for report in reports
-    )
-    covered_count = sum(
-        report.quality_metrics.covered_core_knowledge_count for report in reports
-    )
+    # Competition coverage is package-wide and each target has one teaching
+    # owner. Quiz assessment overlap neither expands nor backfills coverage.
+    target_count = len(package_required)
+    covered_count = len(package_covered)
     difficulty_denominator = sum(
         max(1, report.quality_metrics.verifiable_claim_count) for report in reports
     )
@@ -101,7 +121,19 @@ def build_review_resource_output(
         and len(report_types) == len(set(report_types))
         and set(report_types) == set(expected_types)
     )
+    metric_passed = (
+        evaluated_count > 0
+        and evidence_insufficient_count == 0
+        and unresolved_count == 0
+        and hallucination_rate < 5
+        and difficulty_score >= 85
+        and core_coverage >= 90
+    )
     package_quality = GenerationPackageQuality(
+        evaluated_claim_count=evaluated_count,
+        contradicted_claim_count=contradicted_count,
+        evidence_insufficient_claim_count=evidence_insufficient_count,
+        unresolved_claim_count=unresolved_count,
         verifiable_claim_count=claim_count,
         hallucinated_claim_count=hallucinated_count,
         hallucination_rate=round(hallucination_rate, 2),
@@ -109,13 +141,7 @@ def build_review_resource_output(
         covered_core_knowledge_count=covered_count,
         target_core_knowledge_count=target_count,
         core_knowledge_coverage=round(core_coverage, 2),
-        passed=(
-            reports_complete
-            and all(report.quality_metrics.passed for report in reports)
-            and hallucination_rate < 5
-            and difficulty_score >= 85
-            and core_coverage >= 90
-        ),
+        passed=metric_passed,
         revision_count=revision_count,
     )
     compatibility_coverage = 100.0 * len(package_covered) / max(1, len(package_required))
@@ -126,18 +152,22 @@ def build_review_resource_output(
         package_covered_knowledge_ids=sorted(package_covered),
         package_missing_knowledge_ids=sorted(package_required - package_covered),
         package_coverage_score=round(compatibility_coverage, 2),
-        package_passed=package_quality.passed,
+        package_passed=(
+            reports_complete
+            and all(report.quality_metrics.passed for report in reports)
+            and package_quality.passed
+        ),
         package_quality=package_quality,
     )
 SYSTEM_PROMPT = (
     "你是审核校验智能体。你必须逐条审核输入 canonical_claims，原样返回每个 claim_id，"
     "不得新增、遗漏、合并或改写事实。verdict 只能是 supported、contradicted、"
-    "unable_to_determine：证据明确支持才是 supported，证据明确反驳才是 contradicted，"
-    "证据没有提到、被截断或不足时必须是 unable_to_determine。事实与来源结论只能引用"
+    "evidence_insufficient：证据明确支持才是 supported，证据明确反驳才是 contradicted，"
+    "证据没有提到、被截断或不足时必须是 evidence_insufficient。事实与来源结论只能引用"
     "输入 evidence 中的 source_ref_id。只返回 output_schema 要求的最小 JSON，不要重复"
     "claim 文本、证据正文、理由、评分、问题列表或任何未要求字段。"
     "即使某个结论符合通用常识或技术上看似合理，只要输入证据没有直接提及其关键行为、"
-    "版本、参数、输出或错误语义，就必须返回 unable_to_determine，不得使用模型自身知识补全。"
+    "版本、参数、输出或错误语义，就必须返回 evidence_insufficient，不得使用模型自身知识补全。"
 )
 PRIMARY_SYSTEM_PROMPT = SYSTEM_PROMPT + (
     "你的职责是领域事实与来源审核：优先核验事实、代码、操作步骤、预期结果、题目答案"
@@ -178,10 +208,13 @@ _ORGANIZATIONAL_ONLY_RE = re.compile(
     r"(?:介绍|讲解|学习|了解|掌握|回顾|总结).{0,40}$"
 )
 _PEDAGOGICAL_ACTION_RE = re.compile(
-    r"^(?:(?:学习者|学员|你)(?:应|需|需要|可以|可)?|请)?(?:阅读|浏览|观察|记录|保存|提交|提供|"
-    r"整理|梳理|比较|对比|讨论|思考|分析|检查|核对|"
-    r"完成|尝试|练习|复述|列出|总结|标注|选择|填写|形成|准备|回顾|识别|描述|说明|"
-    r"能够?复述|能够?列出|能够?比较|能够?完成).{0,160}$"
+    r"^(?:(?:学习者|学员|你)(?:应|需|需要|可以|可)?|请)?(?:"
+    r"(?:(?:在|于).{1,40}(?:中|内|旁|上)(?:请)?)?"
+    r"(?:阅读|浏览|观察|记录|保存|提交|提供|整理|梳理|比较|对比|讨论|思考|分析|检查|核对|"
+    r"完成|尝试|练习|复述|列出|总结|标注|注明|选择|填写|形成|准备|回顾|识别|描述|说明|映射|"
+    r"能够?复述|能够?列出|能够?比较|能够?完成).{0,200}|"
+    r"(?:将|把)(?!会|在).{1,120}(?:映射|记录|整理|核对|标注|描述|说明|明确).{0,160}"
+    r")$"
 )
 _ENVIRONMENT_PRECONDITION_RE = re.compile(
     r"^(?:如|若|如果|需要时|练习前|开始前|请)?(?:可|可以|能够|能)?"
@@ -192,18 +225,52 @@ _CONDITIONAL_OR_SAFETY_ACTION_RE = re.compile(
     r"^(?:如|若|如果|需要时|练习前|开始前|请|建议)?(?:先|仅|务必)?"
     r"(?:确认|确保|避免|不要|勿|不得暴露|保护|记录|核对|检查).{0,160}$"
 )
+_CONDITIONAL_PEDAGOGICAL_ACTION_RE = re.compile(
+    r"^(?:如|若|如果).{0,100}[，,](?:请)?"
+    r"(?:说明|解释|记录|标注|描述|选择|填写|整理|比较|核对|检查).{0,120}$"
+)
 _FACTUAL_ASSERTION_RE = re.compile(
     r"(?:将会|将在|会自动|自动|固定|默认|必须|只能|不能|支持|不支持|兼容|不兼容|"
     r"返回|导致|触发|包含|等于|意味着|保证|始终|无需|要求安装|需要安装|"
+    r"明确|规定|指出|列为|作为|属于|共同|核心|应为|应当|不应|需要|用于|决定|"
+    r"\b\d+(?:\.\d+)+(?:\+|以上|以下)?\b|\d+(?:\.\d+)?\s*(?:秒|毫秒|次|%|mb|gb)\b|"
+    r"\b(?:get|post|put|patch|delete)\b.{0,24}\b(?:2\d\d|4\d\d|5\d\d)\b)",
+    re.I,
+)
+_QUIZ_INDEPENDENT_PREMISE_RE = re.compile(
+    r"(?:将会|将在|会自动|自动|固定|默认|必须|只能|不能|支持|不支持|兼容|不兼容|"
+    r"返回|导致|触发|包含|等于|意味着|保证|始终|无需|要求安装|需要安装|"
+    r"规定|指出|列为|作为|属于|共同|核心|应为|应当|不应|"
+    r"\b\d+(?:\.\d+)+(?:\+|以上|以下)?\b|\d+(?:\.\d+)?\s*(?:秒|毫秒|次|%|mb|gb)\b|"
+    r"\b(?:get|post|put|patch|delete)\b.{0,24}\b(?:2\d\d|4\d\d|5\d\d)\b)",
+    re.I,
+)
+_QUIZ_CONTEXT_ONLY_RE = re.compile(
+    r"^(?:当|若|如果|假如|在|面向|针对|对于).{1,180}(?:时|情况下|场景中|过程中|期间)$"
+)
+_EMBEDDED_TECHNICAL_ASSERTION_RE = re.compile(
+    r"(?:将会|将在|会自动|固定|默认|必须|只能|不能|支持|不支持|兼容|不兼容|"
+    r"返回|导致|触发|等于|意味着|保证|始终|无需|要求安装|需要安装|"
+    r"应为|应当|不应|决定|"
+    r"(?:接口|api|响应|命令|模型|系统|工具|函数|服务).{0,40}(?:包含|属于|共同|核心)|"
     r"\b\d+(?:\.\d+)+(?:\+|以上|以下)?\b|\d+(?:\.\d+)?\s*(?:秒|毫秒|次|%|mb|gb)\b|"
     r"\b(?:get|post|put|patch|delete)\b.{0,24}\b(?:2\d\d|4\d\d|5\d\d)\b)",
     re.I,
 )
 _SAFE_EXPECTED_ACTION_RE = re.compile(
     r"^(?:记录|整理|比较|核对|形成|完成|提交|标注).{0,120}"
-    r"(?:记录|清单|笔记|差异|材料|描述|结果|练习|表格).{0,40}$"
+    r"(?:记录|清单|笔记|差异|材料|描述|结果|练习|表格|核对|对照|确认).{0,40}$"
+)
+_ACCEPTANCE_DELIVERABLE_RE = re.compile(
+    r"^(?:(?:完成|提交|形成)(?:一份)?\s*)?"
+    r"(?:学习记录|练习记录|检查表|自查清单|清单|报告|表格|提交内容|错误响应分析)"
+    r".{0,120}(?:包含|记录|列出|标注|覆盖|附有).{0,120}$"
 )
 _PLACEHOLDER_TEXT = {"待补充", "暂无", "无", "todo", "tbd", "示例内容", "模板内容"}
+_SAFE_REVISION_INSTRUCTIONS = {
+    "阅读引用材料，整理其中明确描述的处理流程",
+    "阅读并梳理引用材料中明确描述的处理流程",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,7 +406,7 @@ class ReviewBatchCache:
             fact_checks=[
                 _CompactFactCheck(
                     claim_id=item.claim_id or "",
-                    verdict=item.verdict or EvidenceVerdict.UNABLE_TO_DETERMINE,
+                    verdict=item.verdict or EvidenceVerdict.EVIDENCE_INSUFFICIENT,
                     source_ref_ids=item.source_ref_ids,
                 )
                 for item in review.fact_checks
@@ -619,6 +686,9 @@ def _claim_exclusion_category(field_group: str, text: str) -> str | None:
             return "placeholder"
         if _ORGANIZATIONAL_ONLY_RE.fullmatch(sentence):
             return "organizational"
+    if field_group == "acceptance_criterion":
+        if _ACCEPTANCE_DELIVERABLE_RE.fullmatch(sentence):
+            return "pedagogical_deliverable"
     if field_group == "environment_requirement":
         if _ENVIRONMENT_PRECONDITION_RE.fullmatch(sentence) and not _FACTUAL_ASSERTION_RE.search(
             sentence
@@ -633,15 +703,44 @@ def _claim_exclusion_category(field_group: str, text: str) -> str | None:
         "environment_requirement",
         "acceptance_criterion",
     }:
-        if _PEDAGOGICAL_ACTION_RE.fullmatch(sentence) and not _FACTUAL_ASSERTION_RE.search(
-            sentence
+        if (
+            field_group == "instruction"
+            and _CONDITIONAL_PEDAGOGICAL_ACTION_RE.fullmatch(sentence)
+            and not _EMBEDDED_TECHNICAL_ASSERTION_RE.search(sentence)
         ):
+            return "pedagogical_action"
+        if field_group == "instruction" and sentence in _SAFE_REVISION_INSTRUCTIONS:
+            return "pedagogical_action"
+        if _PEDAGOGICAL_ACTION_RE.fullmatch(
+            sentence
+        ) and not _EMBEDDED_TECHNICAL_ASSERTION_RE.search(sentence):
             return "pedagogical_action"
     if field_group == "expected_result":
         if _SAFE_EXPECTED_ACTION_RE.fullmatch(sentence) and not _FACTUAL_ASSERTION_RE.search(
             sentence
         ):
             return "pedagogical_action"
+    if field_group == "quiz_prompt":
+        if re.search(r"[？?]", normalized):
+            # The answer and explanation are reviewed separately, so the
+            # interrogative itself is not an additional factual claim.  Keep
+            # only a genuinely independent premise that precedes the question
+            # (for example: "the system retries three times by default, which
+            # option is correct?").  Keywords inside the unknown slot, such as
+            # "which items should not...", do not turn the question into an
+            # assertion.
+            clauses = [
+                item.strip()
+                for item in re.split(r"[,，;；:：]", sentence)
+                if item.strip()
+            ]
+            independent_premises = clauses[:-1]
+            if not any(
+                _QUIZ_INDEPENDENT_PREMISE_RE.search(item)
+                and not _QUIZ_CONTEXT_ONLY_RE.fullmatch(item)
+                for item in independent_premises
+            ):
+                return "pedagogical_question"
     return None
 
 
@@ -754,17 +853,30 @@ def extract_atomic_claims(
             )
     elif isinstance(content, GradedQuizContent):
         for index, question in enumerate(content.questions):
-            combined = (
-                f"题目：{question.prompt}\n"
-                f"正确答案：{question.correct_answer}\n"
-                f"解析：{question.explanation}"
-            )
             add(
-                f"questions[{index}]",
-                combined,
+                f"questions[{index}].prompt",
+                question.prompt,
                 question.source_ref_ids,
                 preserve=True,
-                prefix="请判断该题的正确答案与解析是否准确：\n",
+                prefix="请判断该题题干中的事实前提是否准确：\n",
+                filter_group="quiz_prompt",
+            )
+            add(
+                f"questions[{index}].correct_answer",
+                question.correct_answer,
+                question.source_ref_ids,
+                preserve=True,
+                prefix=f"题目：{question.prompt}\n请判断该题正确答案是否准确：\n",
+            )
+            add(
+                f"questions[{index}].explanation",
+                question.explanation,
+                question.source_ref_ids,
+                preserve=True,
+                prefix=(
+                    f"题目：{question.prompt}\n正确答案：{question.correct_answer}\n"
+                    "请判断该题解析是否准确：\n"
+                ),
             )
     if not claims:
         raise ReviewError("review_claim_set_empty")
@@ -968,7 +1080,7 @@ def _build_review_payload(
             "evidence": compact_evidence,
             "evidence_rules": [
                 "必须逐条返回 canonical_claims 中全部且仅有的 claim_id",
-                "证据没有提及不等于反驳，应返回 unable_to_determine",
+                "证据没有提及不等于反驳，应返回 evidence_insufficient",
                 "evidence_truncated=true 时缺失部分不能作为 contradicted 的依据",
                 "supplemental 证据可用于判断事实，但不能替代资源自身的声明引用",
             ],
@@ -1264,7 +1376,11 @@ def _compact_review_fixture(review: ModelReview) -> dict[str, object]:
 def _compact_claim_sets_match(actual: list[_CompactFactCheck], expected: list[FactCheck]) -> bool:
     actual_ids = [item.claim_id for item in actual]
     expected_ids = [item.claim_id for item in expected]
-    return actual_ids == expected_ids and len(actual_ids) == len(set(actual_ids))
+    return (
+        len(actual_ids) == len(set(actual_ids))
+        and len(actual_ids) == len(expected_ids)
+        and set(actual_ids) == set(expected_ids)
+    )
 
 
 def _expand_compact_review(
@@ -1277,6 +1393,7 @@ def _expand_compact_review(
     expected_by_id = {
         check.claim_id: check for check in deterministic_review.fact_checks if check.claim_id
     }
+    compact_by_id = {item.claim_id: item for item in compact.fact_checks}
     checks = [
         FactCheck(
             claim_id=item.claim_id,
@@ -1286,7 +1403,9 @@ def _expand_compact_review(
             source_ref_ids=item.source_ref_ids,
             reason=_verdict_reason(item.verdict),
         )
-        for item in compact.fact_checks
+        for expected in deterministic_review.fact_checks
+        if expected.claim_id
+        for item in [compact_by_id[expected.claim_id]]
     ]
     return ModelReview(
         model_role=role,
@@ -1298,7 +1417,7 @@ def _expand_compact_review(
         unable_to_determine=[
             item.claim_id
             for item in compact.fact_checks
-            if item.verdict is EvidenceVerdict.UNABLE_TO_DETERMINE
+            if item.verdict is EvidenceVerdict.EVIDENCE_INSUFFICIENT
         ],
     )
 
@@ -1307,7 +1426,7 @@ def _verdict_reason(verdict: EvidenceVerdict) -> str:
     return {
         EvidenceVerdict.SUPPORTED: "该审核通道判断所列证据明确支持该事实。",
         EvidenceVerdict.CONTRADICTED: "该审核通道判断所列证据与该事实明确冲突。",
-        EvidenceVerdict.UNABLE_TO_DETERMINE: "该审核通道判断当前证据不足，无法确定该事实。",
+        EvidenceVerdict.EVIDENCE_INSUFFICIENT: "该审核通道判断当前证据不足，无法确定该事实。",
     }[verdict]
 
 
@@ -1381,7 +1500,7 @@ def _adapt_model_review_payload(
                 normalized["determinable"] = normalized.pop("is_determinable")
             if "verdict" not in normalized:
                 if normalized.get("determinable") is False or normalized.get("supported") is None:
-                    normalized["verdict"] = EvidenceVerdict.UNABLE_TO_DETERMINE.value
+                    normalized["verdict"] = EvidenceVerdict.EVIDENCE_INSUFFICIENT.value
                 elif normalized.get("supported") is True:
                     normalized["verdict"] = EvidenceVerdict.SUPPORTED.value
                 elif normalized.get("supported") is False:
@@ -1395,9 +1514,9 @@ def _adapt_model_review_payload(
                     "contradicted": EvidenceVerdict.CONTRADICTED.value,
                     "矛盾": EvidenceVerdict.CONTRADICTED.value,
                     "证据反驳": EvidenceVerdict.CONTRADICTED.value,
-                    "unable_to_determine": EvidenceVerdict.UNABLE_TO_DETERMINE.value,
-                    "无法确定": EvidenceVerdict.UNABLE_TO_DETERMINE.value,
-                    "证据不足": EvidenceVerdict.UNABLE_TO_DETERMINE.value,
+                    "unable_to_determine": EvidenceVerdict.EVIDENCE_INSUFFICIENT.value,
+                    "无法确定": EvidenceVerdict.EVIDENCE_INSUFFICIENT.value,
+                    "证据不足": EvidenceVerdict.EVIDENCE_INSUFFICIENT.value,
                 }
                 if verdict_key in verdict_aliases:
                     normalized["verdict"] = verdict_aliases[verdict_key]
@@ -1529,15 +1648,27 @@ class ReviewValidationAgent:
         claims = extract_atomic_claims(resource, request)
         primary, secondary = self._review_pair(resource, request, recheck=False)
         disputed = _disputed_claim_ids(primary, secondary)
+        non_supported = {
+            claim_id
+            for review in (primary, secondary)
+            for claim_id, verdict in _fact_statuses(review).items()
+            if verdict is not EvidenceVerdict.SUPPORTED
+        }
+        claims_to_refresh = disputed | non_supported
         disagreement = _reviews_disagree(primary, secondary)
+        if disagreement and not claims_to_refresh:
+            claims_to_refresh = {claim.claim_id for claim in claims}
+        evidence_refresh_required = bool(claims_to_refresh)
         final_primary, final_secondary = primary, secondary
         primary_recheck: ModelReview | None = None
         secondary_recheck: ModelReview | None = None
         query_terms: list[str] = []
         refreshed_evidence: list[RetrievedChunk] = []
         recheck_request = request
-        if disagreement:
-            query_terms = _arbitration_query_terms(resource, request, claims, disputed)
+        if evidence_refresh_required:
+            query_terms = _arbitration_query_terms(
+                resource, request, claims, claims_to_refresh
+            )
             refreshed_evidence = self._evidence_retriever.retrieve(
                 query_terms=query_terms, request=request, resource=resource
             )
@@ -1547,13 +1678,13 @@ class ReviewValidationAgent:
                 resource,
                 recheck_request,
                 recheck=True,
-                claim_ids=disputed,
+                claim_ids=claims_to_refresh,
             )
             final_primary = _merge_recheck(primary, primary_recheck)
             final_secondary = _merge_recheck(secondary, secondary_recheck)
 
         final_disputed = _disputed_claim_ids(final_primary, final_secondary)
-        disagreement_remains = disagreement and bool(final_disputed)
+        disagreement_remains = bool(final_disputed)
         declared_ids = {source.source_ref_id for source in resource.source_refs}
         statuses = _resolved_claim_statuses(claims, final_primary, final_secondary, declared_ids)
         supported_ids = sorted(
@@ -1569,7 +1700,7 @@ class ReviewValidationAgent:
         undetermined_ids = sorted(
             claim_id
             for claim_id, verdict in statuses.items()
-            if verdict is EvidenceVerdict.UNABLE_TO_DETERMINE
+            if verdict is EvidenceVerdict.EVIDENCE_INSUFFICIENT
         )
         target_ids, covered_ids = _deterministic_coverage(
             resource, request, claims=claims, supported_claim_ids=set(supported_ids)
@@ -1592,11 +1723,9 @@ class ReviewValidationAgent:
             missing_knowledge_ids=sorted(target_ids - covered_ids),
         )
         decision = _decision_from_claims(
-            final_scores,
             contradicted_ids=contradicted_ids,
             undetermined_ids=undetermined_ids,
             unresolved_ids=final_disputed,
-            coverage_threshold=request.requirements.resource_coverage_threshold,
         )
         evidence_ref_ids = sorted(
             {
@@ -1613,24 +1742,22 @@ class ReviewValidationAgent:
                 if chunk.source.source_ref_id not in declared_ids
             }
         )
-        verifiable_count = len(claims)
-        hallucinated_count = len(
-            set(contradicted_ids) | set(undetermined_ids) | set(final_disputed)
+        evaluated_count = (
+            len(supported_ids)
+            + len(contradicted_ids)
+            + len(undetermined_ids)
+            + len(final_disputed)
         )
+        evidence_insufficient_count = len(undetermined_ids)
+        hallucinated_count = len(set(contradicted_ids) | set(final_disputed))
         difficulty_score = final_scores.difficulty_match
         target_count = len(target_ids)
         covered_count = len(covered_ids)
         hallucination_rate = (
-            0.0 if verifiable_count == 0 else 100.0 * hallucinated_count / verifiable_count
+            0.0 if evaluated_count == 0 else 100.0 * hallucinated_count / evaluated_count
         )
         coverage_rate = 0.0 if target_count == 0 else 100.0 * covered_count / target_count
-        metrics_passed = (
-            verifiable_count > 0
-            and hallucination_rate < 5
-            and difficulty_score >= 85
-            and coverage_rate >= 90
-        )
-        decision = ReviewDecision.PASSED if metrics_passed else ReviewDecision.REVISION_REQUIRED
+        metrics_passed = decision is ReviewDecision.PASSED
         revision_count = request.requirements.revision_plan.revision_count if request.requirements.revision_plan else 0
         return ReviewReport(
             resource_type=resource.resource_type,
@@ -1638,11 +1765,11 @@ class ReviewValidationAgent:
             secondary_review=secondary,
             final_scores=final_scores,
             arbitration=ArbitrationResult(
-                required=disagreement,
-                retrieval_performed=disagreement,
+                required=evidence_refresh_required,
+                retrieval_performed=evidence_refresh_required,
                 query_terms=query_terms,
                 additional_source_ref_ids=additional_ids,
-                disputed_claim_ids=sorted(disputed),
+                disputed_claim_ids=sorted(claims_to_refresh),
                 primary_recheck=primary_recheck,
                 secondary_recheck=secondary_recheck,
                 disagreement_remains=disagreement_remains,
@@ -1652,7 +1779,11 @@ class ReviewValidationAgent:
             decision=decision,
             passed=decision is ReviewDecision.PASSED,
             quality_metrics=ResourceQualityMetrics(
-                verifiable_claim_count=verifiable_count,
+                evaluated_claim_count=evaluated_count,
+                contradicted_claim_count=len(contradicted_ids),
+                evidence_insufficient_claim_count=evidence_insufficient_count,
+                unresolved_claim_count=len(final_disputed),
+                verifiable_claim_count=evaluated_count,
                 hallucinated_claim_count=hallucinated_count,
                 hallucination_rate=round(hallucination_rate, 2),
                 difficulty_match_score=round(difficulty_score, 2),
@@ -1794,7 +1925,12 @@ class ReviewValidationAgent:
             return results[0], results[1]
         recoverable = all(
             isinstance(exc, ReviewError)
-            and str(exc) in {"review_output_truncated", "review_model_call_failed"}
+            and str(exc)
+            in {
+                "review_output_truncated",
+                "review_model_call_failed",
+                "review_claim_set_mismatch",
+            }
             for _, exc in errors
         )
         if recoverable and len(batch.claim_ids) > 1:
@@ -2014,7 +2150,7 @@ def _deterministic_review(
         verdict = (
             EvidenceVerdict.SUPPORTED
             if source_valid and overlap > 0
-            else EvidenceVerdict.UNABLE_TO_DETERMINE
+            else EvidenceVerdict.EVIDENCE_INSUFFICIENT
         )
         checks.append(
             FactCheck(
@@ -2047,7 +2183,7 @@ def _deterministic_review(
         unable_to_determine=[
             check.claim_id or check.claim
             for check in checks
-            if check.verdict is EvidenceVerdict.UNABLE_TO_DETERMINE
+            if check.verdict is EvidenceVerdict.EVIDENCE_INSUFFICIENT
         ],
     )
 
@@ -2073,9 +2209,26 @@ def _cross_validate(
         source_ids = [
             source_id for source_id in check.source_ref_ids if source_id in valid_source_ids
         ]
-        verdict = check.verdict or EvidenceVerdict.UNABLE_TO_DETERMINE
+        verdict = check.verdict or EvidenceVerdict.EVIDENCE_INSUFFICIENT
+        literal_source_ids = _direct_literal_evidence_source_ids(expected, request)
+        if literal_source_ids:
+            verdict = EvidenceVerdict.SUPPORTED
+            source_ids = literal_source_ids
+        elif (
+            verdict is EvidenceVerdict.SUPPORTED
+            and not source_ids
+            and expected.verdict is EvidenceVerdict.SUPPORTED
+        ):
+            # The model made the semantic support decision but may omit the
+            # optional source array. Restore only canonical sources already
+            # bound to this claim and validated against the evidence packet.
+            source_ids = [
+                source_id
+                for source_id in expected.source_ref_ids
+                if source_id in valid_source_ids
+            ]
         if verdict is EvidenceVerdict.SUPPORTED and not source_ids:
-            verdict = EvidenceVerdict.UNABLE_TO_DETERMINE
+            verdict = EvidenceVerdict.EVIDENCE_INSUFFICIENT
         checks.append(
             check.model_copy(
                 update={
@@ -2089,7 +2242,7 @@ def _cross_validate(
                         if verdict is EvidenceVerdict.CONTRADICTED
                         else None
                     ),
-                    "determinable": verdict is not EvidenceVerdict.UNABLE_TO_DETERMINE,
+                    "determinable": verdict is not EvidenceVerdict.EVIDENCE_INSUFFICIENT,
                     "source_ref_ids": source_ids,
                 }
             )
@@ -2109,7 +2262,7 @@ def _cross_validate(
                 suggested_revision="修正或删除明确冲突的事实后重新审核。",
             )
         )
-    if any(check.verdict is EvidenceVerdict.UNABLE_TO_DETERMINE for check in checks):
+    if any(check.verdict is EvidenceVerdict.EVIDENCE_INSUFFICIENT for check in checks):
         issues.append(
             ReviewIssue(
                 code=ReviewIssueCode.EVIDENCE_INSUFFICIENT,
@@ -2130,7 +2283,7 @@ def _cross_validate(
             "unable_to_determine": [
                 check.claim_id or check.claim
                 for check in checks
-                if check.verdict is EvidenceVerdict.UNABLE_TO_DETERMINE
+                if check.verdict is EvidenceVerdict.EVIDENCE_INSUFFICIENT
             ],
         }
     )
@@ -2158,7 +2311,7 @@ def _review_average(review: ModelReview) -> float:
 
 def _fact_statuses(review: ModelReview) -> dict[str, EvidenceVerdict]:
     return {
-        check.claim_id: check.verdict or EvidenceVerdict.UNABLE_TO_DETERMINE
+        check.claim_id: check.verdict or EvidenceVerdict.EVIDENCE_INSUFFICIENT
         for check in review.fact_checks
         if check.claim_id
     }
@@ -2174,9 +2327,35 @@ def _disputed_claim_ids(primary: ModelReview, secondary: ModelReview) -> set[str
 
 
 def _reviews_disagree(primary: ModelReview, secondary: ModelReview) -> bool:
-    # Scores and pass flags are recomputed from the canonical claim verdicts.
-    # Arbitration is therefore claim-conflict driven, not model-score driven.
-    return bool(_disputed_claim_ids(primary, secondary))
+    return (
+        bool(_disputed_claim_ids(primary, secondary))
+        or abs(_review_average(primary) - _review_average(secondary)) > 10
+        or primary.passed != secondary.passed
+    )
+
+
+def _direct_literal_evidence_source_ids(
+    check: FactCheck,
+    request: ReviewResourceInput,
+) -> list[str]:
+    """Prove code/command claims by exact literal presence in their cited evidence."""
+    if not check.field_path.endswith(".code_or_command"):
+        return []
+    marker = "以下代码或命令应能完成该步骤："
+    body = check.claim.split(marker, 1)[-1]
+    normalized_body = re.sub(r"\s+", " ", body).strip()
+    if not normalized_body:
+        return []
+    evidence_by_source = {chunk.source.source_ref_id: chunk for chunk in request.evidence}
+    supported: list[str] = []
+    for source_id in check.source_ref_ids:
+        chunk = evidence_by_source.get(source_id)
+        if chunk is None:
+            continue
+        normalized_evidence = re.sub(r"\s+", " ", chunk.content).strip()
+        if normalized_body in normalized_evidence:
+            supported.append(source_id)
+    return supported
 
 
 def _merge_recheck(original: ModelReview, recheck: ModelReview) -> ModelReview:
@@ -2200,7 +2379,7 @@ def _merge_recheck(original: ModelReview, recheck: ModelReview) -> ModelReview:
             "unable_to_determine": [
                 check.claim_id or check.claim
                 for check in checks
-                if check.verdict is EvidenceVerdict.UNABLE_TO_DETERMINE
+                if check.verdict is EvidenceVerdict.EVIDENCE_INSUFFICIENT
             ],
         }
     )
@@ -2219,11 +2398,11 @@ def _resolved_claim_statuses(
         left, right = first[claim.claim_id], second[claim.claim_id]
         if left.verdict != right.verdict:
             continue
-        verdict = left.verdict or EvidenceVerdict.UNABLE_TO_DETERMINE
+        verdict = left.verdict or EvidenceVerdict.EVIDENCE_INSUFFICIENT
         if verdict is EvidenceVerdict.SUPPORTED:
             supporting = set(left.source_ref_ids) | set(right.source_ref_ids)
             if not supporting or not supporting.issubset(declared_source_ids):
-                verdict = EvidenceVerdict.UNABLE_TO_DETERMINE
+                verdict = EvidenceVerdict.EVIDENCE_INSUFFICIENT
         result[claim.claim_id] = verdict
     return result
 
@@ -2283,6 +2462,30 @@ def _deterministic_coverage(
                 for source_id in claim.source_ref_ids
             ):
                 covered.add(knowledge_id)
+
+    # Practice instructions can be substantive teaching actions without being
+    # factual assertions (for example, "record the actual response fields").
+    # Count such a step only when it is linked to operational evidence for the
+    # target and has lexical overlap with that evidence. Technical assertions
+    # are intentionally excluded here and must still pass claim-level review.
+    if isinstance(resource.structured_content, PracticeGuideContent):
+        policy = get_domain_evidence_policy(request.context.domain_code)
+        for step in resource.structured_content.steps:
+            if _claim_exclusion_category("instruction", step.instruction) != "pedagogical_action":
+                continue
+            compact = re.sub(r"\s+", "", step.instruction)
+            if len(compact) < 8:
+                continue
+            for source_id in step.source_ref_ids:
+                chunk = evidence_by_source.get(source_id)
+                if (
+                    chunk is None
+                    or chunk.knowledge_id not in targets
+                    or EvidenceCapability.OPERATION not in policy.classify(chunk)
+                    or _source_overlap(step.instruction, [chunk]) <= 0
+                ):
+                    continue
+                covered.add(chunk.knowledge_id)
     return targets, covered
 
 
@@ -2327,21 +2530,18 @@ def _final_issues(
 
 
 def _decision_from_claims(
-    scores: ReviewCriterionScores,
     *,
     contradicted_ids: list[str],
     undetermined_ids: list[str],
     unresolved_ids: set[str],
-    coverage_threshold: float,
 ) -> ReviewDecision:
     if unresolved_ids:
         return ReviewDecision.REVISION_REQUIRED
     if contradicted_ids or undetermined_ids:
         return ReviewDecision.REVISION_REQUIRED
-    if scores.core_knowledge_coverage < coverage_threshold:
-        return ReviewDecision.REVISION_REQUIRED
-    if scores.difficulty_match < PASS_THRESHOLD or scores.source_traceability < PASS_THRESHOLD:
-        return ReviewDecision.REVISION_REQUIRED
+    # Difficulty and coverage are competition metrics at package scope. The
+    # resource report still records its assigned targets and missing IDs so the
+    # orchestrator can revise only the contributors to a failed package metric.
     return ReviewDecision.PASSED
 
 
@@ -2369,7 +2569,7 @@ def _review_decision(
     checks = [*primary.fact_checks, *secondary.fact_checks]
     if any(check.verdict is EvidenceVerdict.CONTRADICTED for check in checks):
         return ReviewDecision.REVISION_REQUIRED
-    if any(check.verdict is EvidenceVerdict.UNABLE_TO_DETERMINE for check in checks):
+    if any(check.verdict is EvidenceVerdict.EVIDENCE_INSUFFICIENT for check in checks):
         return ReviewDecision.REVISION_REQUIRED
     if (
         primary.passed

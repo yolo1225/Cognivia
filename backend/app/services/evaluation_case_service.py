@@ -1,4 +1,4 @@
-"""Explicit, opt-in V3 evaluation profile lookup for local live acceptance."""
+"""Explicit, opt-in V4 evaluation profile lookup for local live acceptance."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ from app.agents.contracts import AbilityScores, MasteryType, ProfileSnapshot, Pr
 from app.core.config import settings
 
 
-CASE_MARKER = re.compile(r"\[\[evaluation_case:(V3-EVAL-\d{3})\]\]")
+CASE_MARKER = re.compile(r"\[\[evaluation_case:(V4-EVAL-\d{3})\]\]")
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-CASES_PATH = PROJECT_ROOT / "data" / "evaluation_cases" / "v3" / "p0_cases.json"
+CASES_PATH = PROJECT_ROOT / "data" / "evaluation_cases" / "v4" / "p0_cases.json"
 
 
 @lru_cache
@@ -53,7 +53,7 @@ def evaluation_profile_override(learning_goal: str) -> ProfileSnapshot | None:
                 category="evaluation",
                 weakness_level=3,
                 mastery_type=MasteryType.PARTIAL_MASTERY,
-                reason="V3 版本化评测画像中的待巩固知识点",
+                reason="V4 版本化评测画像中的待巩固知识点",
             )
             for knowledge_id in weak_ids
         ],

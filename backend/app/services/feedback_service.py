@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.contracts import QUALITY_RULE_VERSION
 from app.models import (
     Feedback,
     GenerationTask,
@@ -14,6 +15,14 @@ from app.models import (
     LearningResource,
 )
 from app.services.profile_service import public_id
+
+
+V6_FULL_REGENERATION_REQUIRED = "V6_FULL_REGENERATION_REQUIRED"
+
+
+class FeedbackSourceCompatibilityError(ValueError):
+    def __init__(self) -> None:
+        super().__init__(V6_FULL_REGENERATION_REQUIRED)
 
 
 RECOMMENDED_ACTIONS = {
@@ -30,14 +39,11 @@ def decide_feedback_action(feedback_type: str) -> str:
     return RECOMMENDED_ACTIONS.get(feedback_type, "no_change")
 
 
-def create_feedback_task(
+def require_v6_feedback_source(
     db: Session,
     *,
     learner: Learner,
-    profile: LearnerProfile,
     resource: LearningResource,
-    feedback: Feedback,
-    resource_types: list[str] | None = None,
 ) -> GenerationTask:
     source_package = db.scalar(
         select(GenerationTask)
@@ -52,6 +58,33 @@ def create_feedback_task(
         )
         .order_by(GenerationTask.id.desc())
     )
+    source_task = source_package or db.get(GenerationTask, resource.generation_task_id)
+    if (
+        source_task is None
+        or (source_task.package_quality_json or {}).get("quality_rule_version")
+        != QUALITY_RULE_VERSION
+    ):
+        raise FeedbackSourceCompatibilityError
+    return source_task
+
+
+def create_feedback_task(
+    db: Session,
+    *,
+    learner: Learner,
+    profile: LearnerProfile,
+    resource: LearningResource,
+    feedback: Feedback,
+    resource_types: list[str] | None = None,
+) -> GenerationTask:
+    source_task = require_v6_feedback_source(
+        db,
+        learner=learner,
+        resource=resource,
+    )
+    inherited_goal = source_task.learning_goal.strip()
+    feedback_goal = f"根据资源 {resource.public_id} 的反馈执行辅导或复核"
+    learning_goal = f"{inherited_goal}\n{feedback_goal}" if inherited_goal else feedback_goal
     task = GenerationTask(
         public_id=public_id("task"),
         learner_id=learner.id,
@@ -63,10 +96,10 @@ def create_feedback_task(
         decision="pending",
         trigger_type="resource_feedback",
         execution_mode="auto",
-        learning_goal=f"根据资源 {resource.public_id} 的反馈执行辅导或复核",
+        learning_goal=learning_goal[:512],
         source_resource_id=resource.id,
         source_feedback_id=feedback.id,
-        source_task_id=source_package.id if source_package else resource.generation_task_id,
+        source_task_id=source_task.id,
         event_type="resource_feedback",
         progress=0,
     )

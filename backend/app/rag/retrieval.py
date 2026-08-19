@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import math
 import hashlib
+import json
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterable
@@ -30,7 +31,11 @@ from app.rag.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 
 
 ALGORITHM_VERSION = "v3-candidate-retrieval-1.0"
-MAX_EXPLICIT_CHUNKS = 3
+# Explicit targets are already bounded by the contract. Keep enough chunks to
+# include later heading sections such as "操作步骤" and "验收标准" before
+# capability-aware ranking; truncating to the first three made valid practice
+# evidence disappear for longer knowledge items.
+MAX_EXPLICIT_CHUNKS = 12
 MAX_RELATION_CANDIDATES = 24
 MAX_RELATIONS_PER_SEED = 2
 MATCH_PRECEDENCE = {
@@ -642,6 +647,26 @@ class CandidateRetriever:
         def practice_evidence_score(record: CandidateRecord) -> int:
             if not practice_requested:
                 return 0
+            try:
+                heading_path = json.loads(_clean_text(record.metadata.get("heading_path")) or "[]")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                heading_path = []
+            normalized_headings = {
+                _clean_text(value).replace(" ", "")
+                for value in heading_path
+                if isinstance(value, str)
+            }
+            # A section's declared role is stronger evidence than keyword overlap in
+            # nearby error or acceptance sections. The large bonus makes the direct
+            # operation section deterministic for each explicit practice target.
+            heading_bonus = 100 if normalized_headings & {
+                "操作步骤",
+                "分步操作",
+                "实操",
+                "实践任务",
+                "实验步骤",
+                "操作方法",
+            } else 0
             capabilities = evidence_policy.classify_content(record.document)
             weights = {
                 EvidenceCapability.OPERATION: 8,
@@ -650,7 +675,9 @@ class CandidateRetriever:
                 EvidenceCapability.EXPECTED_RESULT: 2,
                 EvidenceCapability.ERROR_HANDLING: 1,
             }
-            return sum(weight for capability, weight in weights.items() if capability in capabilities)
+            return heading_bonus + sum(
+                weight for capability, weight in weights.items() if capability in capabilities
+            )
 
         ranked = sorted(
             available,

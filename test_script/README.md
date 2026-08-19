@@ -14,9 +14,22 @@ python test_script/evaluate.py --xlsx
 python test_script/run_live.py --stage smoke
 python test_script/run_live.py --stage regression
 python test_script/run_live.py --stage formal --xlsx
+python test_script/stability.py
+```
+
+每个案例完成后都会写入运行检查点。若客户端或 Docker 在长跑中断，使用报告文件名中的
+运行 ID 恢复，脚本会校验阶段、完整案例集与阶段案例集哈希、模型配置、知识库版本、RAG
+索引和案例范围后只运行缺失案例：
+
+```powershell
+python test_script/run_live.py --stage formal --resume-run-id live-formal-YYYYMMDDTHHMMSSZ --xlsx
 ```
 
 运行前必须配置三个真实模型并设置 `ALLOW_FIXTURE_LLM=false`。live runner 通过 `/api/v1` 创建任务、等待任务终态、读取脱敏 Agent 运行记录，并将原始运行证据保存到 `reports/evaluation/runs/{run_id}.json`。
+
+`regression` 只接受与当前完整案例集、模型、知识版本和RAG配置完全一致的 `smoke`
+通过记录；`formal` 同理只接受当前配置的 `regression`。单案例 `--case-id` 是独立诊断，固定
+标记为 `diagnostic_only`，不会成为后续阶段凭据。
 
 脚本会校验案例唯一性，计算幻觉率、难度匹配、核心知识覆盖、审核/画像结论准确率及任务和 Agent P50/P95，并输出：
 
@@ -28,3 +41,9 @@ python test_script/run_live.py --stage formal --xlsx
 - `reports/evaluation/latest-live.xlsx`（正式运行使用 `--xlsx` 时）
 
 每项比例均保留分子、分母、失败案例 ID 和无法判定声明。
+
+live 与稳定性报告会将失败归入 `program_defect`、`knowledge_data_gap`、
+`case_defect`、`external_service_failure` 或 `operations_failure`，并保存终态、
+字段路径和判定依据。`evidence_gap` 会先核对案例合同与本地知识证据能力，不能自动
+归咎于知识数据或案例。稳定性报告逐任务写入 `reports/stability/`，包含5次完整生成、
+5次部分刷新、唯一主目标映射、完整案例集哈希、知识版本、模型和RAG配置。

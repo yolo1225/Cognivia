@@ -16,6 +16,7 @@ class KnowledgeItem(TimestampMixin, Base):
     category: Mapped[str] = mapped_column(String(64))
     difficulty: Mapped[int] = mapped_column(default=1)
     tags_json: Mapped[list] = mapped_column(JSON, default=list)
+    evidence_capabilities_json: Mapped[list] = mapped_column(JSON, default=list)
     content_md: Mapped[str] = mapped_column(Text)
     source_title: Mapped[str] = mapped_column(String(255))
     source_url: Mapped[str | None] = mapped_column(String(512), nullable=True)

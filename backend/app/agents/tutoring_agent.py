@@ -147,6 +147,20 @@ def _fixture_semantics(request: InterpretFeedbackInput) -> dict[str, object]:
 
 
 def _safe_fallback_semantics(request: InterpretFeedbackInput) -> TutoringSemanticResult:
+    summary = " ".join(
+        (
+            request.feedback.feedback_summary,
+            request.feedback.conversation.latest_message_summary,
+        )
+    )
+    if "太简单" in summary:
+        # This fallback recognizes only the explicit intent. The deterministic
+        # policy still requires controlled mastery evidence before CHALLENGE and
+        # never treats this phrase alone as a profile update.
+        return TutoringSemanticResult(
+            intent="too_easy",
+            confidence=1.0,
+        )
     return TutoringSemanticResult(
         intent=request.feedback.quick_tag,
         confidence=0.0,

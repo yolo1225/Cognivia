@@ -116,6 +116,7 @@ def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
             "category": payload["category"],
             "difficulty": payload.get("difficulty", 1),
             "tags_json": payload.get("tags", []),
+            "evidence_capabilities_json": payload.get("evidence_capabilities", ["concept"]),
             "content_md": payload["content"],
             "source_title": payload.get("source_title", "自建 AI 应用开发实训知识库"),
             "source_url": payload.get("source_url"),

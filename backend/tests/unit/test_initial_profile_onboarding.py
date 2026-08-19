@@ -90,6 +90,7 @@ def test_context_snapshot_is_required_and_profile_readiness_requires_it() -> Non
         background="本科｜软件工程",
         experience_years=2,
         learning_style="mixed",
+        target_domain="ai_app_dev",
         direction_tags_json=["agent_orchestration"],
     )
     snapshot = _initial_context_snapshot(learner)

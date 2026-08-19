@@ -73,6 +73,11 @@ def refresh_affected_resources(
     source_task = require_task(db, principal, task_id)
     if not source_task.is_current_package:
         raise HTTPException(status_code=409, detail="PACKAGE_IS_NOT_CURRENT")
+    if (source_task.package_quality_json or {}).get("quality_rule_version") != "quality-v6-20260818":
+        raise HTTPException(
+            status_code=409,
+            detail="V6_FULL_REGENERATION_REQUIRED",
+        )
     impact = latest_impact(db, source_task)
     if impact is None or impact.status not in {"pending", "dismissed"}:
         raise HTTPException(status_code=409, detail="NO_PENDING_KNOWLEDGE_IMPACT")

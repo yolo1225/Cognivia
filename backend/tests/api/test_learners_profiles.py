@@ -238,6 +238,9 @@ def test_get_profile_and_report_share_radar_values() -> None:
         db.commit()
 
     app.dependency_overrides[get_db] = make_override(testing_session)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "test_learner", "learner", "learner_ready"
+    )
     try:
         client = TestClient(app)
         profile_response = client.get("/api/v1/learners/learner_ready/profile")

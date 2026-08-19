@@ -15,6 +15,8 @@ from app.agents.contract_adapters import (
     review_resource_output_to_patch,
 )
 from app.agents.contract_examples import initial_generation_flow_example
+from app.agents.contracts import FinalizeTaskOutput, TaskDecision
+from app.agents.generation_agent import GenerationError
 from app.models import (
     AgentMessageRecord,
     AgentRun,
@@ -36,6 +38,22 @@ class _Runtime:
 
     def close(self) -> None:
         pass
+
+
+def test_worker_maps_final_decisions_to_stable_terminal_failure_codes() -> None:
+    exhausted = FinalizeTaskOutput(
+        task_id="task_failure_codes",
+        decision=TaskDecision.FAILED,
+        revision_count=2,
+        decision_reason="自动定向修订已达到上限。",
+    )
+    rejected = exhausted.model_copy(
+        update={"decision": TaskDecision.REJECTED, "revision_count": 0}
+    )
+
+    assert generation_worker._finalization_failure_code(exhausted) == "revision_exhausted"
+    assert generation_worker._finalization_failure_code(rejected) == "resource_rejected"
+    assert generation_worker._finalization_failure_code(None) == "generation_failed"
 
 
 def _node_overrides():
@@ -132,7 +150,7 @@ def test_v3_worker_persists_checkpoint_runs_messages_resources_and_review(
     assert len(messages) >= len(runs)
     assert len(resources) == 3 and all(item.review_status == "passed" for item in resources)
     assert len(reports) == 3 and all(
-        item.review_rule_version == "atomic-claims-20260814" for item in reports
+        item.review_rule_version == "quality-v6-20260818" for item in reports
     )
 
     repeated = generation_worker.run_generation_task("task_v3_worker")
@@ -210,10 +228,8 @@ def test_failed_review_resumes_from_checkpoint_without_regeneration(
         classmethod(lambda _cls, **_kwargs: _Runtime()),
     )
 
-    failed = generation_worker.run_generation_task("task_v3_resume")
     resumed = generation_worker.run_generation_task("task_v3_resume")
 
-    assert failed["status"] == "failed"
     assert resumed["status"] == "completed", resumed
     assert calls == {"generate": 1, "review": 2}
     with sessions() as db:
@@ -305,3 +321,152 @@ def test_failed_review_run_preserves_and_reloads_completed_batch_cache(tmp_path)
     assert failed_run.status == "failed"
     assert snapshot["entry_count"] == 1
     assert reloaded.snapshot()["entry_count"] == 1
+
+
+def test_generation_validation_failure_persists_sanitized_field_paths(tmp_path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'generation-field-paths.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    with sessions() as db:
+        learner = Learner(public_id="learner_field_paths", target_domain="ai_app_dev")
+        db.add(learner)
+        db.flush()
+        profile = LearnerProfile(
+            public_id="profile_field_paths",
+            learner_id=learner.id,
+            domain_code="ai_app_dev",
+            ability_profile_json={"profile_type": "beginner"},
+            weak_knowledge_json=[],
+        )
+        db.add(profile)
+        db.flush()
+        task = GenerationTask(
+            public_id="task_field_paths",
+            learner_id=learner.id,
+            profile_id=profile.id,
+            status="running",
+            decision="pending",
+            resource_types_json=["graded_quiz"],
+        )
+        db.add(task)
+        db.commit()
+
+        def fail_validation(_state):
+            raise GenerationError(
+                "generated_structure_validation_failed",
+                field_paths=[
+                    "structured_content.questions.5.options",
+                    "x" * 500,
+                ],
+            )
+
+        wrapped = generation_worker._observable_node(
+            db,
+            task,
+            profile,
+            "generate_resource",
+            fail_validation,
+            _Runtime(),
+        )
+        with pytest.raises(GenerationError, match="generated_structure_validation_failed"):
+            wrapped({})
+
+        run = db.scalar(
+            select(AgentRun).where(AgentRun.generation_task_id == task.id)
+        )
+        message = db.scalar(
+            select(AgentMessageRecord)
+            .where(AgentMessageRecord.task_id == task.public_id)
+            .where(AgentMessageRecord.message_type == "error")
+        )
+
+    expected = ["structured_content.questions.5.options", "x" * 200]
+    assert run.output_summary_json["failure_code"] == (
+        "generated_structure_validation_failed"
+    )
+    assert run.output_summary_json["field_paths"] == expected
+    assert message.payload_summary_json["field_paths"] == expected
+
+
+def test_interrupted_task_is_claimed_for_one_startup_recovery(
+    monkeypatch, tmp_path
+) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'startup-recovery.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    with sessions() as db:
+        learner = Learner(public_id="learner_startup_recovery", target_domain="ai_app_dev")
+        db.add(learner)
+        db.flush()
+        profile = LearnerProfile(
+            public_id="profile_startup_recovery",
+            learner_id=learner.id,
+            domain_code="ai_app_dev",
+            ability_profile_json={"profile_type": "beginner"},
+            weak_knowledge_json=[],
+        )
+        db.add(profile)
+        db.flush()
+        task = GenerationTask(
+            public_id="task_startup_recovery",
+            learner_id=learner.id,
+            profile_id=profile.id,
+            status="running",
+            decision="pending",
+            resource_types_json=["lecture"],
+        )
+        db.add(task)
+        db.flush()
+        db.add(
+            GraphCheckpoint(
+                task_id=task.public_id,
+                checkpoint_id="checkpoint-startup",
+                state_json={"native_checkpoint": True},
+                status="saved",
+            )
+        )
+        db.add(
+            AgentRun(
+                generation_task_id=task.id,
+                agent_name="review_validation_agent",
+                status="running",
+                input_summary_json={"step": "review_resource"},
+                output_summary_json={"review_batch_cache": {"entries": []}},
+            )
+        )
+        db.commit()
+
+    monkeypatch.setattr(generation_worker, "SessionLocal", sessions)
+
+    assert generation_worker.recover_interrupted_generation_tasks() == [
+        "task_startup_recovery"
+    ]
+    with sessions() as db:
+        task = db.scalar(
+            select(GenerationTask).where(
+                GenerationTask.public_id == "task_startup_recovery"
+            )
+        )
+        checkpoint = db.scalar(
+            select(GraphCheckpoint).where(
+                GraphCheckpoint.task_id == "task_startup_recovery"
+            )
+        )
+        run = db.scalar(
+            select(AgentRun).where(AgentRun.generation_task_id == task.id)
+        )
+        assert task.status == "retry_pending"
+        assert checkpoint.state_json["auto_recovery_count"] == 1
+        assert run.status == "failed"
+        assert run.output_summary_json["failure_code"] == "persistence_interrupted"
+        assert run.output_summary_json["recoverable"] is True
+
+    assert generation_worker.recover_interrupted_generation_tasks() == []
+    with sessions() as db:
+        task = db.scalar(
+            select(GenerationTask).where(
+                GenerationTask.public_id == "task_startup_recovery"
+            )
+        )
+        assert task.status == "failed"
+        assert task.failure_reason == "checkpoint_recovery_exhausted"

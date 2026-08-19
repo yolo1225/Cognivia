@@ -23,6 +23,9 @@ class DomainApiService:
     def validate(self, domain_code: str) -> dict:
         knowledge_count = self.repository.knowledge_count(domain_code)
         question_count = self.repository.question_count(domain_code)
+        capability_tagged_count, operation_evidence_count = (
+            self.repository.evidence_capability_counts(domain_code)
+        )
         rag = candidate_rag_status(domain_code)
         rag_ready = bool(rag.get("ready"))
         vector_count = int(rag.get("indexed_chunk_count", 0)) if rag_ready else 0
@@ -30,6 +33,8 @@ class DomainApiService:
             "knowledge_items": 50,
             "diagnostic_questions": 60,
             "vector_chunks": knowledge_count,
+            "capability_tagged_items": knowledge_count,
+            "operation_evidence_items": 1,
         }
         issues = []
         if not rag_ready:
@@ -44,6 +49,18 @@ class DomainApiService:
         for key, message, actual, target in (
             ("knowledge_items", "知识点数量未达到 M1 目标", knowledge_count, targets["knowledge_items"]),
             ("diagnostic_questions", "诊断题数量未达到 M1 目标", question_count, targets["diagnostic_questions"]),
+            (
+                "capability_tagged_items",
+                "存在未声明证据能力的知识点",
+                capability_tagged_count,
+                targets["capability_tagged_items"],
+            ),
+            (
+                "operation_evidence_items",
+                "实操指南缺少可分配的操作型证据",
+                operation_evidence_count,
+                targets["operation_evidence_items"],
+            ),
         ):
             if actual < target:
                 issues.append({"level": "warning", "message": message, "actual": actual, "target": target})
@@ -54,6 +71,8 @@ class DomainApiService:
                 "knowledge_items": knowledge_count,
                 "diagnostic_questions": question_count,
                 "chroma_vectors": vector_count,
+                "capability_tagged_items": capability_tagged_count,
+                "operation_evidence_items": operation_evidence_count,
             },
             "targets": targets,
             "issues": issues,

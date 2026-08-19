@@ -1,18 +1,22 @@
 from app.agents.contracts import ResourceType
 from app.agents.contract_examples import initial_generation_flow_example
-from app.agents.knowledge_coverage_policy import allocate_resource_knowledge_targets
+import pytest
+
+from app.agents.knowledge_coverage_policy import (
+    EvidenceGapError,
+    allocate_resource_knowledge_targets,
+    primary_owner_by_knowledge,
+)
 
 
-def test_quiz_owns_all_targets_and_requested_resources_are_non_empty() -> None:
+def test_practice_resource_without_operation_evidence_fails_preflight() -> None:
     targets = ["K1", "K2"]
-    allocated = allocate_resource_knowledge_targets(
-        targets,
-        [],
-        [ResourceType.LECTURE, ResourceType.PRACTICE_GUIDE, ResourceType.GRADED_QUIZ],
-    )
-    assert allocated[ResourceType.GRADED_QUIZ] == targets
-    assert set().union(*map(set, allocated.values())) == set(targets)
-    assert all(allocated.values())
+    with pytest.raises(EvidenceGapError, match="evidence_gap"):
+        allocate_resource_knowledge_targets(
+            targets,
+            [],
+            [ResourceType.LECTURE, ResourceType.PRACTICE_GUIDE, ResourceType.GRADED_QUIZ],
+        )
 
 
 def test_only_structured_operation_evidence_is_allocated_to_practice() -> None:
@@ -40,3 +44,9 @@ def test_only_structured_operation_evidence_is_allocated_to_practice() -> None:
 
     assert allocated[ResourceType.LECTURE] == ["concept"]
     assert allocated[ResourceType.PRACTICE_GUIDE] == ["operation"]
+    assert primary_owner_by_knowledge(
+        ["concept", "operation"], allocated
+    ) == {
+        "concept": ResourceType.LECTURE,
+        "operation": ResourceType.PRACTICE_GUIDE,
+    }

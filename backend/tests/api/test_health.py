@@ -26,6 +26,7 @@ def test_dependency_health_hides_key_and_reports_model_readiness(monkeypatch):
     monkeypatch.setattr(settings, "primary_review_model", "review-model-a")
     monkeypatch.setattr(settings, "secondary_review_model", "review-model-b")
     monkeypatch.setattr(settings, "allow_fixture_llm", False)
+    monkeypatch.setattr(settings, "enable_evaluation_overrides", False)
 
     response = TestClient(app).get("/api/v1/health/dependencies")
 
@@ -33,4 +34,5 @@ def test_dependency_health_hides_key_and_reports_model_readiness(monkeypatch):
     data = response.json()["data"]
     assert data["ready_for_live_demo"] is True
     assert data["review_models_distinct"] is True
+    assert data["evaluation_overrides_enabled"] is False
     assert "secret-key" not in response.text

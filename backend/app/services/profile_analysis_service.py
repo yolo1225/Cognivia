@@ -21,7 +21,7 @@ from app.agents.contracts import (
     RetrievalPlan,
     WeakKnowledge,
 )
-from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V1, ProfileAnalysisConfig
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2, ProfileAnalysisConfig
 
 
 class ProfileAnalysisError(ValueError):
@@ -30,7 +30,7 @@ class ProfileAnalysisError(ValueError):
 
 def analyze_profile(
     node_input: AnalyzeProfileInput,
-    config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V1,
+    config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V2,
 ) -> AnalyzeProfileOutput:
     if node_input.task_id != node_input.context.task_id:
         raise ProfileAnalysisError("task_id_context_mismatch")

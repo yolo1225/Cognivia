@@ -19,9 +19,9 @@ from app.agents.contracts import (
 
 
 class AgentGraphState(TypedDict, total=False):
-    """Agent Contract V4 state shape for production workflows."""
+    """Agent Contract V6 state shape for production workflows."""
 
-    contract_version: Literal["agent-contract-v5"]
+    contract_version: Literal["agent-contract-v6"]
     task_request: TaskRequest
     current_profile: ProfileSnapshot
     learning_path: LearningPathSnapshot

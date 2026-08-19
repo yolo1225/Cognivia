@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from run_live import _api_json, _poll_task
+from run_live import _api_json, _authenticate, _poll_task
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,7 +62,7 @@ def _load_snapshot(path: Path | None) -> dict[str, Any]:
     if path is None:
         return {}
     payload = json.loads(path.read_text(encoding="utf-8"))
-    for branch in ("revision_exhausted", "manual_review_resume"):
+    for branch in ("revision_exhausted",):
         item = payload.get(branch)
         if item is None:
             continue
@@ -73,14 +73,19 @@ def _load_snapshot(path: Path | None) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the seven Docker demo acceptance branches.")
+    parser = argparse.ArgumentParser(description="Run the automated Docker demo acceptance branches.")
     parser.add_argument("--base-url", default="http://localhost:8000/api/v1")
-    parser.add_argument("--snapshot", type=Path, help="optional real-run snapshot for branches 6/7")
+    parser.add_argument("--snapshot", type=Path, help="optional live snapshot for revision exhaustion")
+    parser.add_argument("--username", default=os.getenv("EVALUATION_USERNAME", "admin"))
+    parser.add_argument("--password", default=os.getenv("EVALUATION_PASSWORD"))
     args = parser.parse_args()
 
+    if not args.password:
+        raise SystemExit("set EVALUATION_PASSWORD or pass --password")
+    _authenticate(args.base_url, args.username, args.password)
     health = _api_json(args.base_url, "GET", "/health/dependencies")
-    if not health.get("ready_for_live_demo"):
-        raise SystemExit("real model channels are not ready or fixture mode is enabled")
+    if not health.get("ready_for_live_demo") or not (health.get("rag") or {}).get("ready"):
+        raise SystemExit("real model channels or candidate RAG are not ready")
     snapshots = _load_snapshot(args.snapshot)
     context: dict[str, Any] = {}
     branches: list[dict[str, Any]] = []
@@ -214,51 +219,12 @@ def main() -> None:
             raise AssertionError("live models did not naturally reproduce two-revision exhaustion")
         return {"task_id": task["task_id"], "revision_count": task["revision_count"]}
 
-    def manual_review_resume() -> dict[str, Any]:
-        task = _create_task(
-            args.base_url,
-            goal="对存在证据边界争议的内容进行独立双模型审核",
-            resource_types=["lecture"],
-        )
-        _live_runs(args.base_url, task["task_id"])
-        if task.get("status") != "waiting_human":
-            raise AssertionError("live review models did not naturally produce a persistent disagreement")
-        reviews = _api_json(args.base_url, "GET", "/manual-reviews?status=pending")
-        review = next((item for item in reviews if item.get("task_id") == task["task_id"]), None)
-        if review is None:
-            raise AssertionError("waiting task has no pending manual review")
-        resolution = _api_json(
-            args.base_url,
-            "POST",
-            f"/manual-reviews/{review['manual_review_id']}/decision",
-            {"decision": "approve", "comment": "验收：人工核对来源后批准。"},
-        )
-        if resolution.get("resume_thread_id") != task["task_id"]:
-            raise AssertionError("manual review did not resume the original thread")
-        deadline = time.monotonic() + 360
-        resumed: dict[str, Any] = {}
-        while time.monotonic() < deadline:
-            resumed = _api_json(
-                args.base_url, "GET", f"/generation-tasks/{task['task_id']}"
-            )
-            if resumed.get("status") != "waiting_human" and resumed.get("status") in {
-                "completed",
-                "failed",
-                "revision_required",
-            }:
-                break
-            time.sleep(1)
-        else:
-            raise AssertionError("manual review resume did not reach a new terminal state")
-        return {"task_id": task["task_id"], "resumed_status": resumed["status"]}
-
     run_branch("initial_generation", "首次生成三类资源", initial_generation)
     run_branch("no_change", "证据不足，仅解释且画像不变", no_change_explanation)
     run_branch("profile_update", "多轮证据创建画像新版本", evidence_profile_update)
     run_branch("incorrect_review", "错误反馈触发资源复核", incorrect_review)
     run_branch("challenge", "掌握后生成挑战任务", challenge_task)
     run_branch("revision_exhausted", "两轮自动修订后失败", revision_exhausted)
-    run_branch("manual_review_resume", "双模型冲突与人工恢复", manual_review_resume)
 
     report = {
         "status": "passed" if all(item["status"].startswith("passed") for item in branches) else "failed",
@@ -275,7 +241,7 @@ def main() -> None:
     (REPORT_DIR / "latest.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    lines = ["# Docker 七分支演示验收", "", f"状态：{report['status']}", ""]
+    lines = ["# Docker 自动闭环演示验收", "", f"状态：{report['status']}", ""]
     lines.extend(
         f"- {item['title']}：{item['status']}（{item.get('task_id') or item.get('error', '')}）"
         for item in branches

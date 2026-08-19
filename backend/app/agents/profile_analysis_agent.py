@@ -7,7 +7,7 @@ import logging
 from pydantic import ValidationError
 
 from app.agents.contracts import AnalyzeProfileInput, AnalyzeProfileOutput
-from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V1, ProfileAnalysisConfig
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2, ProfileAnalysisConfig
 from app.services.profile_analysis_service import ProfileAnalysisError, analyze_profile
 
 
@@ -26,7 +26,7 @@ class ProfileAnalysisAgent:
 
     def __init__(
         self,
-        config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V1,
+        config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V2,
         logger: logging.Logger | None = None,
     ) -> None:
         self._config = config

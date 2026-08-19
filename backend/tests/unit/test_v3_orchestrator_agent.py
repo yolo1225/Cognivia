@@ -41,7 +41,9 @@ def _report_with_decision(report, decision: ReviewDecision, resource_type=Resour
             "passed": passed,
             "quality_metrics": report.quality_metrics.model_copy(
                 update={
+                    "evaluated_claim_count": 20,
                     "verifiable_claim_count": 20,
+                    "contradicted_claim_count": 0 if passed else 1,
                     "hallucinated_claim_count": 0 if passed else 1,
                     "hallucination_rate": 0 if passed else 5,
                     "passed": passed,
@@ -62,7 +64,7 @@ def test_prepare_routes_initial_and_feedback_tasks() -> None:
 
     assert initial_output.next_node == "analyze_profile"
     assert feedback_output.next_node == "interpret_feedback"
-    assert initial_output.contract_version == "agent-contract-v5"
+    assert initial_output.contract_version == "agent-contract-v6"
     assert initial_output.task_id == initial_output.context.task_id
 
 
@@ -161,6 +163,56 @@ def test_finalize_enforces_two_revision_limit(
         assert "补充核心知识及其来源。" in output.revision_plan.required_changes
     else:
         assert output.revision_plan is None
+
+
+def test_finalize_revises_only_resource_causing_package_coverage_failure() -> None:
+    request = _generation_finalize_input()
+    report = request.review_reports[0]
+    target_ids = list(report.target_knowledge_ids)
+    missing_id = target_ids[-1]
+    covered_ids = target_ids[:-1]
+    resource_quality = report.quality_metrics.model_copy(
+        update={
+            "covered_core_knowledge_count": len(covered_ids),
+            "target_core_knowledge_count": len(target_ids),
+            "core_knowledge_coverage": round(100 * len(covered_ids) / len(target_ids), 2),
+            "passed": True,
+        }
+    )
+    report = report.model_copy(
+        update={
+            "quality_metrics": resource_quality,
+            "covered_knowledge_ids": covered_ids,
+            "missing_knowledge_ids": [missing_id],
+        }
+    )
+    package_target_count = request.package_quality.target_core_knowledge_count
+    package_covered_count = package_target_count - 1
+    package_quality = request.package_quality.model_copy(
+        update={
+            "covered_core_knowledge_count": package_covered_count,
+            "core_knowledge_coverage": round(
+                100 * package_covered_count / package_target_count, 2
+            ),
+            "passed": False,
+        }
+    )
+    failing = request.model_copy(
+        update={
+            "review_reports": [report, *request.review_reports[1:]],
+            "package_passed": False,
+            "package_quality": package_quality,
+        }
+    )
+
+    output = OrchestratorAgent().execute(failing)
+
+    assert output.decision is TaskDecision.REVISION_REQUIRED
+    assert output.revision_plan is not None
+    assert output.revision_plan.resource_types == [report.resource_type]
+    assert output.revision_plan.missing_knowledge_ids_by_resource[report.resource_type] == [
+        missing_id
+    ]
 
 
 def test_finalize_preserves_passed_types_and_revises_only_failed_type() -> None:

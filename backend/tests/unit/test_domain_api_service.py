@@ -12,6 +12,9 @@ class FakeRepository:
     def question_count(self, _domain_code: str) -> int:
         return self.question_count_value
 
+    def evidence_capability_counts(self, _domain_code: str) -> tuple[int, int]:
+        return self.knowledge_count_value, min(8, self.knowledge_count_value)
+
 
 def build_service(knowledge_count: int = 50, question_count: int = 60) -> DomainApiService:
     service = DomainApiService.__new__(DomainApiService)

@@ -177,6 +177,11 @@ def _quality_metrics(report: ReviewReport | None) -> dict | None:
     if report is None:
         return None
     return {
+        "quality_rule_version": report.quality_rule_version,
+        "evaluated_claim_count": report.evaluated_claim_count,
+        "contradicted_claim_count": report.contradicted_claim_count,
+        "evidence_insufficient_claim_count": report.evidence_insufficient_claim_count,
+        "unresolved_claim_count": report.unresolved_claim_count,
         "verifiable_claim_count": report.verifiable_claim_count,
         "hallucinated_claim_count": report.hallucinated_claim_count,
         "hallucination_rate": report.hallucination_rate,

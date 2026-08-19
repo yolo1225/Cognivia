@@ -16,7 +16,12 @@ from app.models import (
 )
 from app.schemas.common import ApiResponse, ok
 from app.services.demo_flow_service import serialize_resource
-from app.services.feedback_service import record_quick_feedback, serialize_feedback_decision
+from app.services.feedback_service import (
+    FeedbackSourceCompatibilityError,
+    record_quick_feedback,
+    require_v6_feedback_source,
+    serialize_feedback_decision,
+)
 from app.services.learner_service import get_or_create_demo_learner
 from app.services.profile_service import default_profile_for_learner
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
@@ -113,6 +118,11 @@ def _quality_metrics(report: ReviewReport | None) -> dict[str, Any] | None:
     if report is None:
         return None
     return {
+        "quality_rule_version": report.quality_rule_version,
+        "evaluated_claim_count": report.evaluated_claim_count,
+        "contradicted_claim_count": report.contradicted_claim_count,
+        "evidence_insufficient_claim_count": report.evidence_insufficient_claim_count,
+        "unresolved_claim_count": report.unresolved_claim_count,
         "verifiable_claim_count": report.verifiable_claim_count,
         "hallucinated_claim_count": report.hallucinated_claim_count,
         "hallucination_rate": report.hallucination_rate,
@@ -152,9 +162,16 @@ def submit_resource_feedback(
     if resource is None:
         raise HTTPException(status_code=404, detail=f"Resource not found: {resource_id}")
     if feedback_type in {"incorrect", "has_error"}:
-        source_task = db.get(GenerationTask, resource.generation_task_id)
         try:
-            require_candidate_rag(source_task.domain_code if source_task else "ai_app_dev")
+            source_task = require_v6_feedback_source(
+                db,
+                learner=learner,
+                resource=resource,
+            )
+        except FeedbackSourceCompatibilityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        try:
+            require_candidate_rag(source_task.domain_code)
         except CandidateRagNotReady as exc:
             raise HTTPException(status_code=503, detail=f"{RAG_NOT_READY_CODE}:{exc}") from exc
     profile = default_profile_for_learner(db, learner)

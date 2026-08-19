@@ -20,11 +20,15 @@ from app.services.generation_service import (
     _compose_published_package,
     recover_misclassified_refresh_task,
 )
-from app.services.feedback_service import create_feedback_task
+from app.services.feedback_service import (
+    FeedbackSourceCompatibilityError,
+    create_feedback_task,
+)
 from app.services.learning_package_service import ensure_package_members, package_member_rows
 
 
 def _report(resource: LearningResource, task: GenerationTask) -> ReviewReport:
+    knowledge_id = f"knowledge_{resource.resource_type}"
     return ReviewReport(
         resource_id=resource.id,
         task_id=task.id,
@@ -33,16 +37,26 @@ def _report(resource: LearningResource, task: GenerationTask) -> ReviewReport:
         passed=True,
         quality_passed=True,
         decision="passed",
+        review_rule_version="quality-v6-20260818",
+        quality_rule_version="quality-v6-20260818",
         verifiable_claim_count=10,
+        evaluated_claim_count=10,
+        contradicted_claim_count=0,
+        evidence_insufficient_claim_count=0,
+        unresolved_claim_count=0,
         hallucinated_claim_count=0,
         difficulty_match_score=90,
-        covered_core_knowledge_count=9,
-        target_core_knowledge_count=10,
-        core_knowledge_coverage=0.9,
+        target_knowledge_ids_json=[knowledge_id],
+        covered_knowledge_ids_json=[knowledge_id],
+        covered_core_knowledge_count=1,
+        target_core_knowledge_count=1,
+        core_knowledge_coverage=100,
     )
 
 
-def _package_fixture(db):
+def _package_fixture(
+    db, resource_types=("lecture", "practice_guide", "graded_quiz")
+):
     learner = Learner(public_id="learner_package", target_domain="ai_app_dev")
     db.add(learner)
     db.flush()
@@ -62,13 +76,15 @@ def _package_fixture(db):
         domain_code="ai_app_dev",
         status="completed",
         decision="completed",
-        resource_types_json=["lecture", "practice_guide", "graded_quiz"],
+        learning_goal="[[evaluation_case:V4-EVAL-041]] 反馈任务目标继承验证",
+        resource_types_json=list(resource_types),
         is_current_package=True,
+        package_quality_json={"quality_rule_version": "quality-v6-20260818"},
     )
     db.add(source_task)
     db.flush()
     resources = {}
-    for resource_type in ("lecture", "practice_guide", "graded_quiz"):
+    for resource_type in resource_types:
         resource = LearningResource(
             public_id=f"resource_{resource_type}_v1",
             generation_task_id=source_task.id,
@@ -88,6 +104,56 @@ def _package_fixture(db):
     ensure_package_members(db, source_task)
     db.flush()
     return learner, profile, source_task, resources
+
+
+def test_feedback_refresh_preserves_single_resource_package_scope() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        learner, profile, source_task, source_resources = _package_fixture(
+            db, ("practice_guide",)
+        )
+        refresh_task = GenerationTask(
+            public_id="task_single_feedback",
+            learner_id=learner.id,
+            profile_id=profile.id,
+            domain_code="ai_app_dev",
+            status="running",
+            resource_types_json=["practice_guide"],
+            source_task_id=source_task.id,
+            source_resource_id=source_resources["practice_guide"].id,
+            trigger_type="resource_feedback",
+            event_type="resource_feedback",
+        )
+        db.add(refresh_task)
+        db.flush()
+        generated = LearningResource(
+            public_id="resource_practice_guide_v2",
+            generation_task_id=refresh_task.id,
+            resource_type="practice_guide",
+            title="practice guide v2",
+            content_md="new content",
+            sources_json=[{"knowledge_id": "knowledge_practice_guide"}],
+            review_status="passed",
+            version=2,
+            series_id=source_resources["practice_guide"].series_id,
+            previous_resource_id=source_resources["practice_guide"].id,
+            is_current=True,
+        )
+        db.add(generated)
+        db.flush()
+        db.add(_report(generated, refresh_task))
+        db.flush()
+
+        _compose_published_package(db, refresh_task)
+
+        rows = package_member_rows(db, refresh_task)
+        assert len(rows) == 1
+        assert rows[0][0].membership_type == "generated"
+        assert rows[0][1].resource_type == "practice_guide"
+        assert refresh_task.is_current_package is True
+        assert source_task.is_current_package is False
 
 
 def test_partial_refresh_composes_new_package_with_inherited_resource() -> None:
@@ -166,7 +232,12 @@ def test_partial_refresh_composes_new_package_with_inherited_resource() -> None:
         assert impact.status == "resolved"
         assert refresh_task.package_quality_json["passed"] is True
         assert refresh_task.package_quality_json["hallucination_rate"] == 0
-        assert refresh_task.package_quality_json["core_knowledge_coverage"] == 90
+        assert refresh_task.package_quality_json["core_knowledge_coverage"] == 100
+        assert refresh_task.package_coverage_json["primary_owner"] == {
+            "knowledge_lecture": "lecture",
+            "knowledge_practice_guide": "practice_guide",
+            "knowledge_graded_quiz": "graded_quiz",
+        }
 
 
 def test_profile_feedback_task_composes_complete_package_from_new_profile() -> None:
@@ -228,6 +299,7 @@ def test_profile_feedback_task_composes_complete_package_from_new_profile() -> N
         rows = package_member_rows(db, task)
 
         assert task.source_task_id == source_task.id
+        assert source_task.learning_goal in task.learning_goal
         assert task.event_type == "resource_feedback"
         assert task.profile_id == updated_profile.id
         assert task.is_current_package is True
@@ -240,6 +312,42 @@ def test_profile_feedback_task_composes_complete_package_from_new_profile() -> N
         ]
         assert rows[0][1].id == source_resources["lecture"].id
         assert rows[2][1].id == source_resources["graded_quiz"].id
+
+
+def test_feedback_task_rejects_v5_source_package_before_partial_regeneration() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        learner, profile, source_task, resources = _package_fixture(db)
+        source_task.package_quality_json = {
+            "quality_rule_version": "quality-v5-20260729"
+        }
+        feedback = Feedback(
+            resource_id=resources["lecture"].id,
+            learner_id=learner.id,
+            feedback_type="has_error",
+            triggered_action="review",
+        )
+        db.add(feedback)
+        db.flush()
+
+        with pytest.raises(
+            FeedbackSourceCompatibilityError,
+            match="V6_FULL_REGENERATION_REQUIRED",
+        ):
+            create_feedback_task(
+                db,
+                learner=learner,
+                profile=profile,
+                resource=resources["lecture"],
+                feedback=feedback,
+            )
+
+        derived = db.scalar(
+            select(GenerationTask).where(GenerationTask.source_feedback_id == feedback.id)
+        )
+        assert derived is None
 
 
 def test_package_composition_rejects_incomplete_feedback_source() -> None:
@@ -275,6 +383,56 @@ def test_package_composition_rejects_incomplete_feedback_source() -> None:
             _compose_published_package(db, task)
 
         assert task.is_current_package is False
+
+
+def test_initial_generation_can_publish_requested_resource_subset() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        learner = Learner(public_id="learner_single", target_domain="ai_app_dev")
+        db.add(learner)
+        db.flush()
+        profile = LearnerProfile(
+            public_id="profile_single",
+            learner_id=learner.id,
+            ability_profile_json={},
+            weak_knowledge_json=[],
+            diagnosis_completed=True,
+        )
+        db.add(profile)
+        db.flush()
+        task = GenerationTask(
+            public_id="task_single",
+            learner_id=learner.id,
+            profile_id=profile.id,
+            domain_code="ai_app_dev",
+            status="running",
+            trigger_type="initial_generation",
+            resource_types_json=["lecture"],
+        )
+        db.add(task)
+        db.flush()
+        resource = LearningResource(
+            public_id="resource_single_lecture",
+            generation_task_id=task.id,
+            resource_type="lecture",
+            title="single lecture",
+            content_md="content",
+            sources_json=[{"knowledge_id": "knowledge_lecture"}],
+            review_status="passed",
+        )
+        db.add(resource)
+        db.flush()
+        db.add(_report(resource, task))
+        db.flush()
+
+        _compose_published_package(db, task)
+
+        rows = package_member_rows(db, task)
+        assert [item.resource_type for _member, item in rows] == ["lecture"]
+        assert task.is_current_package is True
+        assert task.package_quality_json["passed"] is True
 
 
 @pytest.mark.parametrize("resource_count", [1, 2, 3])
@@ -349,7 +507,7 @@ def test_recover_misclassified_refresh_task_is_atomic_and_idempotent(
         assert sum(member.membership_type == "generated" for member, _resource in rows) == resource_count
         assert recovered.package_quality_json["passed"] is True
         assert recovered.package_quality_json["hallucination_rate"] == 0
-        assert recovered.package_quality_json["core_knowledge_coverage"] == 90
+        assert recovered.package_quality_json["core_knowledge_coverage"] == 100
 
 
 def test_refresh_task_uses_source_package_profile_and_server_impact_scope(monkeypatch) -> None:

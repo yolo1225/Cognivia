@@ -15,6 +15,7 @@ from app.agents.contracts import (
     ConversationSummary,
     FeedbackContext,
     FeedbackIntent,
+    FinalizeTaskOutput,
     LearningPathNodeSnapshot,
     LearningPathSnapshot,
     ResourceSummary,
@@ -32,6 +33,7 @@ from app.models import (
     AgentRun,
     Feedback,
     GenerationTask,
+    GraphCheckpoint,
     KnowledgeUpdateImpact,
     Learner,
     LearnerProfile,
@@ -64,6 +66,18 @@ NODE_PROGRESS = {
     "review_resource": 78,
     "finalize_task": 95,
 }
+RECOVERABLE_CHECKPOINT_FAILURES = {
+    "generated_structured_output_invalid",
+    "generated_structure_validation_failed",
+    # Read-only compatibility for checkpoints created before V6 error typing.
+    "invalid_generate_resource_output",
+    "generation_execution_failed",
+    "review_model_call_failed",
+    "review_output_truncated",
+    "review_structured_output_invalid",
+    "review_execution_failed",
+}
+INTERRUPTED_TASK_STATUSES = {"running", "retry_pending"}
 
 
 def _message(
@@ -119,6 +133,22 @@ def _initial_state(
     )
     if task.trigger_type == "resource_feedback" and (feedback is None or resource is None):
         raise ValueError("resource_feedback_task_missing_source_references")
+    inherited_targets: dict[str, list[str]] = {}
+    if task.source_task_id:
+        source_task = db.get(GenerationTask, task.source_task_id)
+        if source_task is None:
+            raise ValueError("source_package_not_found")
+        if (source_task.package_quality_json or {}).get("quality_rule_version") != "quality-v6-20260818":
+            raise ValueError("v6_full_regeneration_required")
+        stored_targets = (source_task.package_coverage_json or {}).get(
+            "resource_knowledge_targets"
+        ) or {}
+        inherited_targets = {
+            resource_type: list(stored_targets.get(resource_type) or [])
+            for resource_type in (task.resource_types_json or [])
+        }
+        if any(not values for values in inherited_targets.values()):
+            raise ValueError("v6_source_target_mapping_missing")
     request = TaskRequest(
         task_id=task.public_id,
         session_id=task.public_id,
@@ -129,21 +159,28 @@ def _initial_state(
         domain_code=task.domain_code,
         resource_types=task.resource_types_json or ["lecture"],
         learning_goal=task.learning_goal or "根据诊断结果生成个性化学习资源",
+        resource_knowledge_targets=inherited_targets,
         resource_id=resource.public_id if resource else None,
         feedback_id=str(feedback.id) if feedback else None,
         tutoring_session_id=session.public_id if session else None,
         tutoring_message_id=message.public_id if message else None,
     )
-    active_profile = evaluation_profile_override(request.learning_goal) or profile_snapshot(profile)
-    learning_path = db.scalar(
-        select(LearningPath)
-        .where(
-            LearningPath.learner_id == learner.id,
-            LearningPath.domain_code == task.domain_code,
-            LearningPath.status == "active",
+    evaluation_profile = evaluation_profile_override(request.learning_goal)
+    active_profile = evaluation_profile or profile_snapshot(profile)
+    # An evaluation case owns its complete non-persistent profile snapshot.
+    # Mixing it with a persisted learner path would override the case's target
+    # difficulty and make the live metric depend on unrelated fixture history.
+    learning_path = None
+    if evaluation_profile is None:
+        learning_path = db.scalar(
+            select(LearningPath)
+            .where(
+                LearningPath.learner_id == learner.id,
+                LearningPath.domain_code == task.domain_code,
+                LearningPath.status == "active",
+            )
+            .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
         )
-        .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
-    )
     path_snapshot, current_path_node = _learning_path_snapshot(learning_path, active_profile)
     state: GRAPH_STATE = {
         "contract_version": AGENT_CONTRACT_VERSION,
@@ -315,6 +352,7 @@ def _compact_review_report(report: dict[str, Any]) -> dict[str, Any]:
         "claim_counts": {
             "supported": len(report.get("supported_claim_ids", [])),
             "contradicted": len(report.get("contradicted_claim_ids", [])),
+            "evidence_insufficient": len(report.get("undetermined_claim_ids", [])),
             "unable_to_determine": len(report.get("undetermined_claim_ids", [])),
             "unresolved": len(report.get("unresolved_claim_ids", [])),
         },
@@ -410,6 +448,17 @@ def _failure_code(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def _finalization_failure_code(result: FinalizeTaskOutput | None) -> str:
+    """Map a valid final decision to a stable, machine-readable terminal reason."""
+    if result is None:
+        return "generation_failed"
+    if result.decision.value == "failed" and result.revision_count >= 2:
+        return "revision_exhausted"
+    if result.decision.value == "rejected":
+        return "resource_rejected"
+    return "generation_incomplete"
+
+
 def _restore_refresh_impact(db: Session, task: GenerationTask) -> None:
     if task.event_type != "knowledge_refresh" or not task.source_task_id:
         return
@@ -499,14 +548,14 @@ def _observable_node(
             status="running",
             input_summary_json={"task_id": task.public_id, "step": step},
             output_summary_json=initial_output,
-            prompt_version="v3",
+            prompt_version="v6",
         )
         db.add(run)
         _message(
             db,
             task,
             agent_name,
-            {"step": step, "status": "running", "contract_version": "agent-contract-v5"},
+            {"step": step, "status": "running", "contract_version": "agent-contract-v6"},
         )
         db.commit()
         if step == "review_resource":
@@ -547,7 +596,7 @@ def _observable_node(
                     "step": step,
                     "status": "completed",
                     "output": output,
-                    "contract_version": "agent-contract-v5",
+                    "contract_version": "agent-contract-v6",
                 },
                 message_type="result",
             )
@@ -580,21 +629,27 @@ def _observable_node(
                     dict.fromkeys(str(item.get("role")) for item in model_calls if item.get("role"))
                 ),
             }
+            field_paths = getattr(exc, "field_paths", None)
+            if isinstance(field_paths, list) and field_paths:
+                output["field_paths"] = [str(path)[:200] for path in field_paths[:20]]
             if step == "review_resource":
                 output["review_batch_cache"] = runtime.review_batch_cache.snapshot()
             _apply_model_call_metrics(run, output, model_calls)
             run.output_summary_json = output
             run.duration_ms = round((time.perf_counter() - started) * 1000)
+            error_payload = {
+                "step": step,
+                "status": "failed",
+                "error": type(exc).__name__,
+                "failure_code": _failure_code(exc),
+            }
+            if output.get("field_paths"):
+                error_payload["field_paths"] = output["field_paths"]
             _message(
                 db,
                 task,
                 agent_name,
-                {
-                    "step": step,
-                    "status": "failed",
-                    "error": type(exc).__name__,
-                    "failure_code": _failure_code(exc),
-                },
+                error_payload,
                 message_type="error",
             )
             db.commit()
@@ -636,6 +691,93 @@ def _load_review_batch_cache(db: Session, task: GenerationTask) -> ReviewBatchCa
         if isinstance(snapshot, dict) and snapshot.get("entries"):
             return ReviewBatchCache(snapshot)
     return ReviewBatchCache()
+
+
+def recover_interrupted_generation_tasks() -> list[str]:
+    """Claim interrupted tasks for one checkpoint-backed startup recovery."""
+
+    claimed: list[str] = []
+    with SessionLocal() as db:
+        tasks = list(
+            db.scalars(
+                select(GenerationTask)
+                .where(GenerationTask.status.in_(INTERRUPTED_TASK_STATUSES))
+                .order_by(GenerationTask.id)
+            )
+        )
+        for task in tasks:
+            checkpoint = db.scalar(
+                select(GraphCheckpoint).where(GraphCheckpoint.task_id == task.public_id)
+            )
+            checkpoint_payload = dict(checkpoint.state_json or {}) if checkpoint else {}
+            recovery_count = int(checkpoint_payload.get("auto_recovery_count") or 0)
+            has_native_checkpoint = bool(checkpoint_payload.get("native_checkpoint"))
+            running_runs = list(
+                db.scalars(
+                    select(AgentRun)
+                    .where(AgentRun.generation_task_id == task.id)
+                    .where(AgentRun.status == "running")
+                    .order_by(AgentRun.id)
+                )
+            )
+            failure_code = (
+                "checkpoint_recovery_exhausted"
+                if has_native_checkpoint and recovery_count >= 1
+                else "checkpoint_missing_after_interruption"
+            )
+            for run in running_runs:
+                output = dict(run.output_summary_json or {})
+                output.update(
+                    {
+                        "error": "ProcessInterrupted",
+                        "failure_code": "persistence_interrupted",
+                        "failed_step": (run.input_summary_json or {}).get("step"),
+                        "recoverable": has_native_checkpoint and recovery_count < 1,
+                    }
+                )
+                run.status = "failed"
+                run.error_message = "persistence_interrupted"
+                run.output_summary_json = output
+
+            if has_native_checkpoint and recovery_count < 1:
+                checkpoint_payload["auto_recovery_count"] = recovery_count + 1
+                checkpoint.state_json = checkpoint_payload
+                checkpoint.status = "recovery_scheduled"
+                task.status = "retry_pending"
+                task.decision = "pending"
+                task.failure_reason = ""
+                claimed.append(task.public_id)
+                _message(
+                    db,
+                    task,
+                    "generation_worker",
+                    {
+                        "task_id": task.public_id,
+                        "status": "checkpoint_auto_recovery",
+                        "failure_code": "persistence_interrupted",
+                        "retry_count": recovery_count + 1,
+                    },
+                    message_type="event",
+                )
+            else:
+                task.status = "failed"
+                task.decision = "failed"
+                task.failure_reason = failure_code
+                _restore_refresh_impact(db, task)
+                _message(
+                    db,
+                    task,
+                    "generation_worker",
+                    {
+                        "task_id": task.public_id,
+                        "status": "failed",
+                        "failure_code": failure_code,
+                        "failed_step": "generation_worker",
+                    },
+                    message_type="error",
+                )
+        db.commit()
+    return claimed
 
 
 def run_generation_task(task_id: str) -> dict[str, Any]:
@@ -681,7 +823,36 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
                 # intact. Invoking with None resumes that node and preserves the
                 # generated resources already present in state.
                 graph_input = None
-            final = graph.invoke(graph_input, config=graph_config)
+            final = None
+            for checkpoint_attempt in range(2):
+                try:
+                    final = graph.invoke(graph_input, config=graph_config)
+                    break
+                except Exception as exc:
+                    failure_code = _failure_code(exc)
+                    can_resume = (
+                        checkpoint_attempt == 0
+                        and failure_code in RECOVERABLE_CHECKPOINT_FAILURES
+                        and checkpointer.get_tuple(graph_config) is not None
+                    )
+                    if not can_resume:
+                        raise
+                    _message(
+                        db,
+                        task,
+                        "generation_worker",
+                        {
+                            "task_id": task.public_id,
+                            "status": "checkpoint_retry",
+                            "failure_code": failure_code,
+                            "retry_count": 1,
+                        },
+                        message_type="event",
+                    )
+                    db.commit()
+                    graph_input = None
+            if final is None:  # pragma: no cover - loop either returns or raises
+                raise RuntimeError("checkpoint_resume_failed")
             result = final.get("finalize_task")
             task.revision_count = result.revision_count if result else 0
             task.decision = result.decision.value if result else "failed"
@@ -691,7 +862,7 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
                 checkpointer.mark_status(task.public_id, "resolved")
             else:
                 task.status = "failed"
-                task.failure_reason = result.decision_reason if result else "generation_failed"
+                task.failure_reason = _finalization_failure_code(result)
                 _restore_refresh_impact(db, task)
             db.commit()
             resources = list(

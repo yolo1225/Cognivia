@@ -1,10 +1,10 @@
 {
-  "baseline_version": "ai_app_dev_profile_v1_acceptance_2",
-  "fixture_version": "ai_app_dev_profile_v1",
-  "config_version": "ai_app_dev_profile_v1",
-  "seed_sha256": "d761650e26845c9d0a7acf93ee05d2e0804df3ae9ae2679f3d23ae1fde757da7",
-  "reviewed_on": "2026-08-15",
-  "review_method": "rule-reviewed formula + unchanged seed relations + expanded content",
+  "baseline_version": "ai_app_dev_profile_v2_acceptance_1",
+  "fixture_version": "ai_app_dev_profile_v2",
+  "config_version": "ai_app_dev_profile_v2",
+  "seed_sha256": "12776c708fd2e0cea5787b5274fe1e2ff33a94d69795088cda5249ea9f1298d7",
+  "reviewed_on": "2026-08-19",
+  "review_method": "rule-reviewed formula + unchanged profile inputs and relations + V6 evidence metadata, explicit minimal-call privacy boundary, explicit Git staging commands, clarified error wording, and automatic revision terminology",
   "case_sha256": {
     "accept-initial-01": "7bc243cdd4282153c6d7a44b2c8b738945d5a6614c3107a8d0c36934b59c9c3b",
     "accept-initial-02": "716d4fd0f24db3280f611dded1349f97bd040fa1d7469cc4e7edf48d55e6ab98",
@@ -28,5 +28,5 @@
     "accept-review-02": "0f4c691dc637f1cfc3f1e7dbcb86a64d3d745a33e231b15d892125a07736917f"
   },
   "fixture_hash_algorithm": "canonical-json-sha256-v1",
-  "fixture_canonical_sha256": "8be120d56e21c89a4819466c5e4bc78b561623044bd4b07131082f3249264929"
+  "fixture_canonical_sha256": "1db72ea1d6cf7f6ce4a91b3070dbd26e460324caa2ac6a7bebac42d3653b2fc8"
 }

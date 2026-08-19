@@ -161,6 +161,40 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
         app.dependency_overrides.clear()
 
 
+def test_v5_resource_feedback_requires_full_v6_regeneration(monkeypatch) -> None:
+    testing_session = build_test_session()
+    with testing_session() as db:
+        seed_resource(db)
+
+    rag_checked = False
+
+    def unexpected_rag_check(_domain_code: str):
+        nonlocal rag_checked
+        rag_checked = True
+        raise AssertionError("V5 compatibility must be checked before RAG readiness")
+
+    monkeypatch.setattr(
+        "app.api.v1.resources.require_candidate_rag",
+        unexpected_rag_check,
+    )
+    app.dependency_overrides[get_db] = override(testing_session)
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/v1/resources/resource_visible/feedback",
+            json={"feedback_type": "has_error", "rating": 1},
+        )
+        assert response.status_code == 409
+        error = response.json()["error"]
+        assert error["code"] == "V6_FULL_REGENERATION_REQUIRED"
+        assert error["message"] == "V6_FULL_REGENERATION_REQUIRED"
+        assert rag_checked is False
+        with testing_session() as db:
+            assert db.query(GenerationTask).count() == 1
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_task_resource_query_uses_task_owner_when_client_learner_is_stale() -> None:
     testing_session = build_test_session()
     with testing_session() as db:

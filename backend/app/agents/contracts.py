@@ -5,7 +5,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION = "agent-contract-v5"
+CONTRACT_VERSION = "agent-contract-v6"
+QUALITY_RULE_VERSION = "quality-v6-20260818"
 
 
 class ContractModel(BaseModel):
@@ -13,7 +14,7 @@ class ContractModel(BaseModel):
 
 
 class NodeContract(ContractModel):
-    contract_version: Literal["agent-contract-v5"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v6"] = CONTRACT_VERSION
     task_id: str = Field(min_length=1, max_length=64)
 
 
@@ -101,7 +102,8 @@ class ReviewDecision(StrEnum):
 class EvidenceVerdict(StrEnum):
     SUPPORTED = "supported"
     CONTRADICTED = "contradicted"
-    UNABLE_TO_DETERMINE = "unable_to_determine"
+    EVIDENCE_INSUFFICIENT = "evidence_insufficient"
+    UNRESOLVED = "unresolved"
 
 
 class MessageType(StrEnum):
@@ -184,7 +186,7 @@ class MessagePayload(ContractModel):
 
 
 class AgentMessage(ContractModel):
-    contract_version: Literal["agent-contract-v5"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v6"] = CONTRACT_VERSION
     message_id: str = Field(default_factory=lambda: str(uuid4()))
     sender: AgentName
     receiver: AgentName
@@ -289,6 +291,9 @@ class TaskRequest(ContractModel):
     domain_code: str = Field(min_length=1, max_length=64)
     resource_types: list[ResourceType] = Field(min_length=1, max_length=3)
     learning_goal: str = Field(min_length=1, max_length=512)
+    resource_knowledge_targets: dict[ResourceType, list[str]] = Field(
+        default_factory=dict
+    )
     resource_id: str | None = Field(default=None, max_length=64)
     feedback_id: str | None = Field(default=None, max_length=64)
     tutoring_session_id: str | None = Field(default=None, max_length=64)
@@ -298,6 +303,11 @@ class TaskRequest(ContractModel):
     def validate_feedback_references(self) -> "TaskRequest":
         if len(self.resource_types) != len(set(self.resource_types)):
             raise ValueError("resource_types must be unique")
+        if self.resource_knowledge_targets:
+            if set(self.resource_knowledge_targets) != set(self.resource_types):
+                raise ValueError("inherited resource targets must match requested resource types")
+            if any(not values for values in self.resource_knowledge_targets.values()):
+                raise ValueError("inherited resource targets cannot be empty")
         if self.trigger_type == TriggerType.RESOURCE_FEEDBACK:
             if not self.resource_id or not self.feedback_id:
                 raise ValueError("resource feedback requires resource_id and feedback_id")
@@ -305,7 +315,7 @@ class TaskRequest(ContractModel):
 
 
 class TaskContext(TaskRequest):
-    contract_version: Literal["agent-contract-v5"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v6"] = CONTRACT_VERSION
 
 
 class ContextNodeContract(NodeContract):
@@ -557,7 +567,7 @@ class GenerationRequirements(ContractModel):
     required_knowledge_ids: list[str] = Field(min_length=1, max_length=30)
     resource_knowledge_targets: dict[ResourceType, list[str]] = Field(default_factory=dict)
     package_coverage_threshold: float = Field(default=90, ge=0, le=100)
-    resource_coverage_threshold: float = Field(default=90, ge=0, le=100)
+    resource_coverage_threshold: float = Field(default=100, ge=0, le=100)
     source_whitelist: list[str] = Field(min_length=1, max_length=30)
     adaptation_notes: list[str] = Field(default_factory=list, max_length=20)
     revision_plan: RevisionPlan | None = None
@@ -760,12 +770,15 @@ class FactCheck(ContractModel):
     def validate_support_state(self) -> "FactCheck":
         if self.verdict is None:
             if not self.determinable or self.supported is None:
-                self.verdict = EvidenceVerdict.UNABLE_TO_DETERMINE
+                self.verdict = EvidenceVerdict.EVIDENCE_INSUFFICIENT
             elif self.supported:
                 self.verdict = EvidenceVerdict.SUPPORTED
             else:
                 self.verdict = EvidenceVerdict.CONTRADICTED
-        if self.verdict is EvidenceVerdict.UNABLE_TO_DETERMINE:
+        if self.verdict in {
+            EvidenceVerdict.EVIDENCE_INSUFFICIENT,
+            EvidenceVerdict.UNRESOLVED,
+        }:
             self.determinable = False
             self.supported = None
         else:
@@ -829,6 +842,11 @@ class ArbitrationResult(ContractModel):
 
 
 class ResourceQualityMetrics(ContractModel):
+    quality_rule_version: Literal["quality-v6-20260818"] = QUALITY_RULE_VERSION
+    evaluated_claim_count: int = Field(ge=0)
+    contradicted_claim_count: int = Field(ge=0)
+    evidence_insufficient_claim_count: int = Field(ge=0)
+    unresolved_claim_count: int = Field(ge=0)
     verifiable_claim_count: int = Field(ge=0)
     hallucinated_claim_count: int = Field(ge=0)
     hallucination_rate: float = Field(ge=0, le=100)
@@ -841,6 +859,19 @@ class ResourceQualityMetrics(ContractModel):
 
     @model_validator(mode="after")
     def validate_deterministic_metrics(self) -> "ResourceQualityMetrics":
+        if self.verifiable_claim_count != self.evaluated_claim_count:
+            raise ValueError("verifiable_claim_count must equal evaluated_claim_count in V6")
+        classified_failure_count = (
+            self.contradicted_claim_count
+            + self.evidence_insufficient_claim_count
+            + self.unresolved_claim_count
+        )
+        if classified_failure_count > self.evaluated_claim_count:
+            raise ValueError("claim verdict counts cannot exceed evaluated claims")
+        if self.hallucinated_claim_count != (
+            self.contradicted_claim_count + self.unresolved_claim_count
+        ):
+            raise ValueError("hallucinated claims must equal contradicted plus unresolved claims")
         if self.hallucinated_claim_count > self.verifiable_claim_count:
             raise ValueError("hallucinated claims cannot exceed verifiable claims")
         if self.covered_core_knowledge_count > self.target_core_knowledge_count:
@@ -862,17 +893,23 @@ class ResourceQualityMetrics(ContractModel):
         if abs(self.core_knowledge_coverage - expected_coverage) > 0.011:
             raise ValueError("core_knowledge_coverage must be derived from knowledge counts")
         expected_passed = (
-            self.verifiable_claim_count > 0
-            and self.hallucination_rate < 5
-            and self.difficulty_match_score >= 85
-            and self.core_knowledge_coverage >= 90
+            self.evaluated_claim_count > 0
+            and self.contradicted_claim_count == 0
+            and self.evidence_insufficient_claim_count == 0
+            and self.unresolved_claim_count == 0
+            and self.target_core_knowledge_count > 0
         )
         if self.passed != expected_passed:
-            raise ValueError("passed must match the three competition thresholds")
+            raise ValueError("resource passed must match V6 claim publication gates")
         return self
 
 
 class GenerationPackageQuality(ContractModel):
+    quality_rule_version: Literal["quality-v6-20260818"] = QUALITY_RULE_VERSION
+    evaluated_claim_count: int = Field(ge=0)
+    contradicted_claim_count: int = Field(ge=0)
+    evidence_insufficient_claim_count: int = Field(ge=0)
+    unresolved_claim_count: int = Field(ge=0)
     verifiable_claim_count: int = Field(ge=0)
     hallucinated_claim_count: int = Field(ge=0)
     hallucination_rate: float = Field(ge=0, le=100)
@@ -883,8 +920,52 @@ class GenerationPackageQuality(ContractModel):
     passed: bool
     revision_count: int = Field(default=0, ge=0, le=2)
 
+    @model_validator(mode="after")
+    def validate_deterministic_metrics(self) -> "GenerationPackageQuality":
+        if self.verifiable_claim_count != self.evaluated_claim_count:
+            raise ValueError("verifiable_claim_count must equal evaluated_claim_count in V6")
+        classified_failure_count = (
+            self.contradicted_claim_count
+            + self.evidence_insufficient_claim_count
+            + self.unresolved_claim_count
+        )
+        if classified_failure_count > self.evaluated_claim_count:
+            raise ValueError("claim verdict counts cannot exceed evaluated claims")
+        if self.hallucinated_claim_count != (
+            self.contradicted_claim_count + self.unresolved_claim_count
+        ):
+            raise ValueError("hallucinated claims must equal contradicted plus unresolved claims")
+        if self.covered_core_knowledge_count > self.target_core_knowledge_count:
+            raise ValueError("covered knowledge cannot exceed target knowledge")
+        expected_hallucination = (
+            0.0
+            if self.evaluated_claim_count == 0
+            else 100.0 * self.hallucinated_claim_count / self.evaluated_claim_count
+        )
+        expected_coverage = (
+            0.0
+            if self.target_core_knowledge_count == 0
+            else 100.0 * self.covered_core_knowledge_count / self.target_core_knowledge_count
+        )
+        if abs(self.hallucination_rate - expected_hallucination) > 0.011:
+            raise ValueError("hallucination_rate must be derived from V6 claim counts")
+        if abs(self.core_knowledge_coverage - expected_coverage) > 0.011:
+            raise ValueError("core_knowledge_coverage must be derived from unique package targets")
+        expected_passed = (
+            self.evaluated_claim_count > 0
+            and self.evidence_insufficient_claim_count == 0
+            and self.unresolved_claim_count == 0
+            and self.hallucination_rate < 5
+            and self.difficulty_match_score >= 85
+            and self.core_knowledge_coverage >= 90
+        )
+        if self.passed != expected_passed:
+            raise ValueError("package passed must match V6 publication gates")
+        return self
+
 
 class ReviewReport(ContractModel):
+    quality_rule_version: Literal["quality-v6-20260818"] = QUALITY_RULE_VERSION
     resource_type: ResourceType
     primary_review: ModelReview
     secondary_review: ModelReview

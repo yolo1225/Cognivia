@@ -1,6 +1,7 @@
 from sqlalchemy import select, update
 
-from app.agents.contracts import ReviewReport as ContractReviewReport
+from app.agents.contracts import ResourceType, ReviewReport as ContractReviewReport
+from app.agents.knowledge_coverage_policy import primary_owner_by_knowledge
 from app.agents.nodes import GRAPH_STATE
 from app.models import (
     GenerationTask,
@@ -78,10 +79,24 @@ def _compose_published_package(db, task: GenerationTask) -> None:
             select(LearningResource).where(LearningResource.id.in_(member_resource_ids))
         )
     )
+    source_types = set(_source_resources(db, task))
+    is_feedback = (
+        task.trigger_type == "resource_feedback"
+        or task.event_type == "resource_feedback"
+    )
+    if is_feedback and not source_types:
+        # Feedback must be tied to a published source package. Keep this
+        # invalid even when the requested resource itself was generated.
+        expected_types = set(RESOURCE_ORDER)
+    elif source_types:
+        expected_types = source_types | requested_types
+    else:
+        expected_types = requested_types
     if (
-        len(member_resource_ids) != len(RESOURCE_ORDER)
+        not expected_types
+        or len(member_resource_ids) != len(expected_types)
         or len(set(member_resource_ids)) != len(member_resource_ids)
-        or {resource.resource_type for resource in member_resources} != set(RESOURCE_ORDER)
+        or {resource.resource_type for resource in member_resources} != expected_types
     ):
         raise ValueError("published_package_members_incomplete")
     existing_resource_ids = set(
@@ -139,25 +154,71 @@ def _recalculate_package_quality(db, task: GenerationTask) -> None:
     selected = [latest[resource_id] for resource_id in resource_ids if resource_id in latest]
     if len(selected) != len(resource_ids):
         return
-    claim_count = sum(item.verifiable_claim_count for item in selected)
+    evaluated_count = sum(item.evaluated_claim_count for item in selected)
+    contradicted_count = sum(item.contradicted_claim_count for item in selected)
+    evidence_insufficient_count = sum(
+        item.evidence_insufficient_claim_count for item in selected
+    )
+    unresolved_count = sum(item.unresolved_claim_count for item in selected)
+    claim_count = evaluated_count
     hallucinated = sum(item.hallucinated_claim_count for item in selected)
-    target_count = sum(item.target_core_knowledge_count for item in selected)
-    covered_count = sum(item.covered_core_knowledge_count for item in selected)
+    target_ids = {
+        knowledge_id
+        for item in selected
+        for knowledge_id in (item.target_knowledge_ids_json or [])
+    }
+    resource_targets = {
+        resource.resource_type: list(latest[resource.id].target_knowledge_ids_json or [])
+        for _member, resource in rows
+    }
+    primary_owners = primary_owner_by_knowledge(sorted(target_ids), resource_targets)
+    covered_ids = {
+        knowledge_id
+        for _member, resource in rows
+        for knowledge_id in (latest[resource.id].covered_knowledge_ids_json or [])
+        if primary_owners.get(knowledge_id) is ResourceType(resource.resource_type)
+    } & target_ids
+    target_count = len(target_ids)
+    covered_count = len(covered_ids)
+    hallucination_rate = round(100 * hallucinated / claim_count, 2) if claim_count else 0.0
+    difficulty_score = round(
+        sum(item.difficulty_match_score for item in selected) / len(selected), 2
+    )
+    coverage_score = round(100 * covered_count / target_count, 2) if target_count else 0.0
+    task.package_coverage_json = {
+        "quality_rule_version": "quality-v6-20260818",
+        "required_knowledge_ids": sorted(target_ids),
+        "covered_knowledge_ids": sorted(covered_ids),
+        "missing_knowledge_ids": sorted(target_ids - covered_ids),
+        "coverage_score": coverage_score,
+        "passed": coverage_score >= 90,
+        "resource_knowledge_targets": resource_targets,
+        "primary_owner": {
+            knowledge_id: owner.value for knowledge_id, owner in primary_owners.items()
+        },
+    }
     task.package_quality_json = {
+        "quality_rule_version": "quality-v6-20260818",
+        "evaluated_claim_count": evaluated_count,
+        "contradicted_claim_count": contradicted_count,
+        "evidence_insufficient_claim_count": evidence_insufficient_count,
+        "unresolved_claim_count": unresolved_count,
         "verifiable_claim_count": claim_count,
         "hallucinated_claim_count": hallucinated,
-        "hallucination_rate": (
-            round(100 * hallucinated / claim_count, 2) if claim_count else 0.0
-        ),
-        "difficulty_match_score": round(
-            sum(item.difficulty_match_score for item in selected) / len(selected), 2
-        ),
+        "hallucination_rate": hallucination_rate,
+        "difficulty_match_score": difficulty_score,
         "covered_core_knowledge_count": covered_count,
         "target_core_knowledge_count": target_count,
-        "core_knowledge_coverage": (
-            round(100 * covered_count / target_count, 2) if target_count else 100.0
+        "core_knowledge_coverage": coverage_score,
+        "passed": (
+            all(item.quality_passed for item in selected)
+            and evaluated_count > 0
+            and evidence_insufficient_count == 0
+            and unresolved_count == 0
+            and hallucination_rate < 5
+            and difficulty_score >= 85
+            and coverage_score >= 90
         ),
-        "passed": all(item.quality_passed for item in selected),
         "revision_count": max((item.revision_count for item in selected), default=0),
     }
 
@@ -278,12 +339,24 @@ def persist_generated_resources(
     if generation is None or review is None or finalization is None:
         return
     reports = {item.resource_type: item for item in review.reports}
+    primary_owners = primary_owner_by_knowledge(
+        review.package_required_knowledge_ids,
+        {report.resource_type: report.target_knowledge_ids for report in review.reports},
+    )
     task.package_coverage_json = {
+        "quality_rule_version": review.package_quality.quality_rule_version,
         "required_knowledge_ids": review.package_required_knowledge_ids,
         "covered_knowledge_ids": review.package_covered_knowledge_ids,
         "missing_knowledge_ids": review.package_missing_knowledge_ids,
         "coverage_score": review.package_coverage_score,
         "passed": review.package_passed,
+        "resource_knowledge_targets": {
+            report.resource_type.value: report.target_knowledge_ids
+            for report in review.reports
+        },
+        "primary_owner": {
+            knowledge_id: owner.value for knowledge_id, owner in primary_owners.items()
+        },
     }
     task.package_quality_json = review.package_quality.model_dump(mode="json")
     expected_types = set(task.resource_types_json or [])
@@ -383,13 +456,20 @@ def persist_generated_resources(
                     "undetermined_claim_ids": report.undetermined_claim_ids,
                     "unresolved_claim_ids": report.unresolved_claim_ids,
                 },
-                review_rule_version="atomic-claims-20260814",
+                review_rule_version="quality-v6-20260818",
+                quality_rule_version=report.quality_rule_version,
                 issues_json=[item.model_dump(mode="json") for item in report.issues],
                 suggestions_json=[item.suggested_revision for item in report.issues],
                 target_knowledge_ids_json=report.target_knowledge_ids,
                 covered_knowledge_ids_json=report.covered_knowledge_ids,
                 missing_knowledge_ids_json=report.missing_knowledge_ids,
                 verifiable_claim_count=report.quality_metrics.verifiable_claim_count,
+                evaluated_claim_count=report.quality_metrics.evaluated_claim_count,
+                contradicted_claim_count=report.quality_metrics.contradicted_claim_count,
+                evidence_insufficient_claim_count=(
+                    report.quality_metrics.evidence_insufficient_claim_count
+                ),
+                unresolved_claim_count=report.quality_metrics.unresolved_claim_count,
                 hallucinated_claim_count=report.quality_metrics.hallucinated_claim_count,
                 hallucination_rate=report.quality_metrics.hallucination_rate,
                 covered_core_knowledge_count=report.quality_metrics.covered_core_knowledge_count,
@@ -397,7 +477,7 @@ def persist_generated_resources(
                 core_knowledge_coverage=report.quality_metrics.core_knowledge_coverage,
                 quality_passed=report.quality_metrics.passed,
                 revision_count=report.quality_metrics.revision_count,
-                model_role_version="review-v4",
+                model_role_version="review-v6",
         )
         for key, value in values.items():
             setattr(stored_report, key, value)

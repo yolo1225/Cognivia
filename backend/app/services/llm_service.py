@@ -108,8 +108,7 @@ class OpenAICompatibleGateway:
         tokens_input = 0
         tokens_output = 0
         attempt = 0
-        transport_retries = 0
-        provider_retries = 0
+        retry_count = 0
         timeout_delays = tuple(
             self.RETRY_DELAYS
             if transport_retry_delays is None
@@ -135,7 +134,7 @@ class OpenAICompatibleGateway:
                     if any(field.endswith(".verdict") for field in invalid_fields):
                         correction += (
                             ". Every verdict must be exactly one of: supported, contradicted, "
-                            "unable_to_determine. Do not use unknown or unsupported."
+                            "evidence_insufficient. Do not use unknown or unsupported."
                         )
                     messages.extend(
                         [
@@ -212,10 +211,13 @@ class OpenAICompatibleGateway:
                 )
                 if truncated and not repair_truncated_output:
                     break
-                if validation_failures >= 2:
+                if retry_count >= len(self.RETRY_DELAYS):
                     break
-                # Structured-output failures get one immediate, targeted repair
-                # instead of consuming all transport retries with the same prompt.
+                delay = self.RETRY_DELAYS[retry_count]
+                retry_count += 1
+                # Structured-output failures get a targeted correction while
+                # sharing the same bounded 1/3/5-second retry budget as provider
+                # and transport failures.
                 # Never echo a token-limit-sized partial response into the repair
                 # prompt; it makes the second request larger and more likely to
                 # time out.  The schema and correction instruction are sufficient.
@@ -225,6 +227,8 @@ class OpenAICompatibleGateway:
                     if truncated
                     else validation_fields or ["invalid_json"]
                 )
+                time.sleep(delay)
+                continue
             except Exception as exc:  # provider exceptions vary across compatible APIs
                 last_error = exc
                 logger.warning(
@@ -236,14 +240,12 @@ class OpenAICompatibleGateway:
                     getattr(exc, "code", None),
                 )
                 retry_kind = _provider_retry_kind(exc)
-                if retry_kind == "provider" and provider_retries < len(self.RETRY_DELAYS):
-                    delay = self.RETRY_DELAYS[provider_retries]
-                    provider_retries += 1
-                    time.sleep(delay)
-                    continue
-                if retry_kind == "transport" and transport_retries < len(timeout_delays):
-                    delay = timeout_delays[transport_retries]
-                    transport_retries += 1
+                retry_delays = (
+                    self.RETRY_DELAYS if retry_kind == "provider" else timeout_delays
+                )
+                if retry_kind is not None and retry_count < len(retry_delays):
+                    delay = retry_delays[retry_count]
+                    retry_count += 1
                     time.sleep(delay)
                     continue
                 break
@@ -401,6 +403,7 @@ class OpenAICompatibleGateway:
             },
             "review_models_distinct": review_models_distinct,
             "fixture_enabled": settings.allow_fixture_llm,
+            "evaluation_overrides_enabled": settings.enable_evaluation_overrides,
             "ready_for_live_demo": ready_for_live_demo,
         }
 

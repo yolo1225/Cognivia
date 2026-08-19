@@ -130,6 +130,13 @@ class OrchestratorAgent:
         if any(report.decision == ReviewDecision.REVISION_REQUIRED for report in reports):
             return self._revision_or_failure(validated, passed_types)
 
+        if reports_complete and all(report.passed for report in reports):
+            return self._revision_or_failure(
+                validated,
+                passed_types,
+                package_failure=True,
+            )
+
         if (
             not validated.resources
             and not reports
@@ -155,6 +162,7 @@ class OrchestratorAgent:
         passed_types: list[ResourceType],
         *,
         force_all: bool = False,
+        package_failure: bool = False,
     ) -> FinalizeTaskOutput:
         if request.revision_count >= 2:
             return _finalize_output(
@@ -169,8 +177,13 @@ class OrchestratorAgent:
             request,
             revision_count=next_count,
             force_all=force_all,
+            package_failure=package_failure,
         )
-        reason = "审核发现可修订问题，重新检索并生成受影响资源。"
+        reason = (
+            "资源包难度或唯一知识覆盖未达到比赛门槛，修订受影响资源。"
+            if package_failure
+            else "审核发现可修订问题，重新检索并生成受影响资源。"
+        )
         return FinalizeTaskOutput(
             task_id=request.task_id,
             decision=TaskDecision.REVISION_REQUIRED,
@@ -239,11 +252,22 @@ def _build_revision_plan(
     *,
     revision_count: int,
     force_all: bool,
+    package_failure: bool,
 ) -> RevisionPlan:
     selected_reports = [
         report
         for report in request.review_reports
-        if force_all or report.decision == ReviewDecision.REVISION_REQUIRED
+        if (
+            force_all
+            or report.decision == ReviewDecision.REVISION_REQUIRED
+            or (
+                package_failure
+                and (
+                    bool(report.missing_knowledge_ids)
+                    or report.final_scores.difficulty_match < 85
+                )
+            )
+        )
     ]
     resource_types = list(dict.fromkeys(report.resource_type for report in selected_reports))
     if not resource_types:

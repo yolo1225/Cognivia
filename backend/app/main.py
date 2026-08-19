@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from threading import Thread
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -26,6 +27,29 @@ def _load_model_config_overrides() -> None:
         pass
 
 
+def _recover_interrupted_generation() -> None:
+    """Resume checkpoint-backed work without delaying application startup."""
+
+    from app.workers.generation_worker import (
+        recover_interrupted_generation_tasks,
+        run_generation_task,
+    )
+
+    task_ids = recover_interrupted_generation_tasks()
+    if not task_ids:
+        return
+
+    def resume_claimed_tasks() -> None:
+        for task_id in task_ids:
+            run_generation_task(task_id)
+
+    Thread(
+        target=resume_claimed_tasks,
+        name="generation-checkpoint-recovery",
+        daemon=True,
+    ).start()
+
+
 def create_app() -> FastAPI:
     settings.validate_auth_config()
 
@@ -39,6 +63,13 @@ def create_app() -> FastAPI:
         except Exception:
             # The job table may not exist yet on a fresh volume (migrations run
             # after first boot); stale-running cleanup is best effort.
+            pass
+        try:
+            _recover_interrupted_generation()
+        except Exception:
+            # Fresh databases may not have the generation/checkpoint tables yet.
+            # Once migrations exist, interrupted tasks are claimed atomically by
+            # their persisted retry state and resumed at most once.
             pass
         yield
 

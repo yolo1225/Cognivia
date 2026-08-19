@@ -64,7 +64,10 @@ class FlowRetriever:
                 name=f"知识点 {knowledge_id}",
                 category="ai_app_dev",
                 difficulty=request.retrieval_plan.target_difficulty,
-                content=f"{knowledge_id} 的可追溯学习证据。",
+                content=(
+                    f"{knowledge_id} 的可追溯学习证据。\n"
+                    "操作步骤：\n1. 执行以下配置检查并记录结果。"
+                ),
                 similarity=0.95 - index * 0.01,
                 matched_by=(
                     RetrievalMatchType.PRIORITY
@@ -225,10 +228,8 @@ def test_v3_profile_retrieval_generation_review_flow(case_id: str) -> None:
         assert finalize_output.revision_count == 1
         assert finalize_output.revision_plan is not None
         assert finalize_output.revision_plan.resource_types == expected_revision_types
-    elif len(review_output.reports) == 3:
-        assert finalize_output.decision.value == "completed"
     else:
-        assert finalize_output.decision.value == "failed"
+        assert finalize_output.decision.value == "completed"
     state.update(finalize_task_output_to_patch(finalize_output))
 
     assert state["review_resource"] == review_output
@@ -257,6 +258,14 @@ def test_v3_full_chain_requires_revision_when_high_scores_lack_field_evidence() 
     state.update(generate_resource_output_to_patch(generation_input, generation_output))
 
     review_input = build_review_resource_input(state)
+    review_input = review_input.model_copy(
+        update={
+            "evidence": [
+                chunk.model_copy(update={"content": "仅包含与生成字段无关的背景材料。"})
+                for chunk in review_input.evidence
+            ]
+        }
+    )
     review_output = ReviewValidationAgent(channel=PassingReviewChannel()).execute(review_input)
     assert any(
         report.decision is ReviewDecision.REVISION_REQUIRED for report in review_output.reports

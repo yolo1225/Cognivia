@@ -211,11 +211,27 @@ def _prerequisite_chunk() -> RetrievedChunk:
 
 
 def _requirements(resource_types: list[ResourceType]) -> GenerationRequirements:
+    all_targets = {
+        ResourceType.LECTURE: ["AIAPP-K028"],
+        ResourceType.PRACTICE_GUIDE: ["AIAPP-K029"],
+        ResourceType.GRADED_QUIZ: ["AIAPP-K029"],
+    }
+    resource_targets = {
+        resource_type: all_targets[resource_type] for resource_type in resource_types
+    }
+    required_ids = list(
+        dict.fromkeys(
+            knowledge_id
+            for values in resource_targets.values()
+            for knowledge_id in values
+        )
+    )
     return GenerationRequirements(
         resource_types=resource_types,
         target_difficulty=2,
         strategy=GenerationStrategy.REMEDIAL,
-        required_knowledge_ids=["AIAPP-K029", "AIAPP-K028"],
+        required_knowledge_ids=required_ids,
+        resource_knowledge_targets=resource_targets,
         source_whitelist=[SOURCE.source_ref_id, PREREQUISITE_SOURCE.source_ref_id],
         adaptation_notes=["使用小步解释和明确检查点"],
     )
@@ -257,7 +273,6 @@ def _lecture_artifact() -> GeneratedResourceArtifact:
         difficulty=2,
         source_refs=[SOURCE, PREREQUISITE_SOURCE],
         knowledge_coverage={
-            "AIAPP-K029": [SOURCE.source_ref_id],
             "AIAPP-K028": [PREREQUISITE_SOURCE.source_ref_id],
         },
     )
@@ -288,6 +303,7 @@ def _practice_artifact() -> GeneratedResourceArtifact:
         content_md=render_resource_markdown(content, [SOURCE]),
         difficulty=2,
         source_refs=[SOURCE],
+        knowledge_coverage={"AIAPP-K029": [SOURCE.source_ref_id]},
     )
 
 
@@ -329,6 +345,7 @@ def _quiz_artifact() -> GeneratedResourceArtifact:
         content_md=render_resource_markdown(content, [SOURCE]),
         difficulty=2,
         source_refs=[SOURCE],
+        knowledge_coverage={"AIAPP-K029": [SOURCE.source_ref_id]},
     )
 
 
@@ -365,6 +382,11 @@ def _passed_review(resource_type: ResourceType) -> ReviewReport:
         passed=True,
         fact_checks=[fact_check],
     )
+    target_ids = {
+        ResourceType.LECTURE: ["AIAPP-K028"],
+        ResourceType.PRACTICE_GUIDE: ["AIAPP-K029"],
+        ResourceType.GRADED_QUIZ: ["AIAPP-K029"],
+    }[resource_type]
     return ReviewReport(
         resource_type=resource_type,
         primary_review=primary,
@@ -378,13 +400,19 @@ def _passed_review(resource_type: ResourceType) -> ReviewReport:
         evidence_ref_ids=[SOURCE.source_ref_id],
         decision=ReviewDecision.PASSED,
         passed=True,
+        target_knowledge_ids=target_ids,
+        covered_knowledge_ids=target_ids,
         quality_metrics=ResourceQualityMetrics(
+            evaluated_claim_count=1,
+            contradicted_claim_count=0,
+            evidence_insufficient_claim_count=0,
+            unresolved_claim_count=0,
             verifiable_claim_count=1,
             hallucinated_claim_count=0,
             hallucination_rate=0,
             difficulty_match_score=92,
-            covered_core_knowledge_count=1,
-            target_core_knowledge_count=1,
+            covered_core_knowledge_count=len(target_ids),
+            target_core_knowledge_count=len(target_ids),
             core_knowledge_coverage=100,
             passed=True,
             revision_count=0,
@@ -485,12 +513,16 @@ def initial_generation_flow_example() -> dict[str, object]:
     )
     reports = [_passed_review(resource_type) for resource_type in ResourceType]
     package_quality = GenerationPackageQuality(
+        evaluated_claim_count=3,
+        contradicted_claim_count=0,
+        evidence_insufficient_claim_count=0,
+        unresolved_claim_count=0,
         verifiable_claim_count=3,
         hallucinated_claim_count=0,
         hallucination_rate=0,
         difficulty_match_score=92,
-        covered_core_knowledge_count=3,
-        target_core_knowledge_count=3,
+        covered_core_knowledge_count=2,
+        target_core_knowledge_count=2,
         core_knowledge_coverage=100,
         passed=True,
         revision_count=0,

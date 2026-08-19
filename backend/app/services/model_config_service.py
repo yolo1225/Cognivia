@@ -27,7 +27,6 @@ from openai import (
     PermissionDeniedError,
     RateLimitError,
 )
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings

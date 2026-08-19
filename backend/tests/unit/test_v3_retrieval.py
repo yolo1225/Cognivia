@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -120,6 +121,7 @@ def _record(knowledge_id: str, index: int, vector: list[float], *, source=True) 
             "source_url": "https://example.com" if source else "",
             "license_note": "Official documentation" if source else "",
             "chunk_index": index,
+            "heading_path": "[]",
             "embedding_model": "test-embedding",
             "embedding_dimensions": 3,
         },
@@ -219,6 +221,7 @@ def test_practice_retrieval_prefers_operational_chunk_for_same_knowledge(
     conceptual = _record("practice-target", 0, [1.0, 0.0, 0.0])
     operational = _record("practice-target", 1, [0.7, 0.0, 0.0])
     operational["document"] = "## 操作步骤\n1. 检查以下配置文件。"
+    operational["metadata"]["heading_path"] = json.dumps(["操作步骤"], ensure_ascii=False)
     records = [conceptual, operational]
     with sessions() as db:
         db.add(_item("practice-target"))
@@ -233,6 +236,59 @@ def test_practice_retrieval_prefers_operational_chunk_for_same_knowledge(
         )
 
     assert result.chunks[0].chunk_id == "practice-target::chunk::1"
+    assert not any("practice_operation_evidence_missing" in item for item in result.warnings)
+
+
+def test_practice_retrieval_prefers_operation_heading_over_error_keyword_overlap(
+    tmp_path: Path,
+) -> None:
+    sessions = _session()
+    operation = _record("practice-target", 4, [0.7, 0.0, 0.0])
+    operation["document"] = "1. 发起最小真实调用，并记录响应结构。"
+    operation["metadata"]["heading_path"] = json.dumps(["操作步骤"], ensure_ascii=False)
+    common_error = _record("practice-target", 6, [1.0, 0.0, 0.0])
+    common_error["document"] = "常见错误包括：调用请求时记录完整隐私数据。"
+    common_error["metadata"]["heading_path"] = json.dumps(["常见错误"], ensure_ascii=False)
+    records = [operation, common_error]
+    with sessions() as db:
+        db.add(_item("practice-target"))
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        result = retriever.execute(
+            _input(
+                priority=["practice-target"],
+                n_results=1,
+                resource_types=["practice_guide"],
+            )
+        )
+
+    assert result.chunks[0].chunk_id == "practice-target::chunk::4"
+
+
+def test_practice_retrieval_keeps_late_operational_explicit_chunk(tmp_path: Path) -> None:
+    sessions = _session()
+    records = [
+        _record("long-practice-target", index, [1.0 - index * 0.05, 0.0, 0.0])
+        for index in range(5)
+    ]
+    records[4]["document"] = (
+        "标题：调用输入 > 操作步骤\n\n"
+        "1. 对照目标服务文档列出必需配置。"
+    )
+    records[4]["metadata"]["heading_path"] = json.dumps(["调用输入", "操作步骤"], ensure_ascii=False)
+    with sessions() as db:
+        db.add(_item("long-practice-target"))
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        result = retriever.execute(
+            _input(
+                priority=["long-practice-target"],
+                n_results=1,
+                resource_types=["practice_guide"],
+            )
+        )
+
+    assert result.chunks[0].chunk_id == "long-practice-target::chunk::4"
     assert not any("practice_operation_evidence_missing" in item for item in result.warnings)
 
 
@@ -334,4 +390,4 @@ def test_v3_retrieval_ablation_modes_do_not_change_contract_shape(tmp_path: Path
             result = retriever.execute(_input(priority=["priority"]))
             assert result.task_id == "task-v3-1"
             assert len(result.chunks) <= 12
-    assert result.model_dump()["contract_version"] == "agent-contract-v5"
+    assert result.model_dump()["contract_version"] == "agent-contract-v6"

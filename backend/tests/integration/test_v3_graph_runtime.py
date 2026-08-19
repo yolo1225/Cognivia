@@ -61,7 +61,9 @@ def test_v3_graph_stops_after_two_revisions_using_prior_finalize_output() -> Non
                 "passed": False,
                 "quality_metrics": review["output"].reports[0].quality_metrics.model_copy(
                     update={
+                        "evaluated_claim_count": 20,
                         "verifiable_claim_count": 20,
+                        "contradicted_claim_count": 1,
                         "hallucinated_claim_count": 1,
                         "hallucination_rate": 5,
                         "passed": False,
@@ -71,7 +73,9 @@ def test_v3_graph_stops_after_two_revisions_using_prior_finalize_output() -> Non
     )
     failed_package = review["output"].package_quality.model_copy(
         update={
+            "evaluated_claim_count": 20,
             "verifiable_claim_count": 20,
+            "contradicted_claim_count": 1,
             "hallucinated_claim_count": 1,
             "hallucination_rate": 5,
             "passed": False,
@@ -101,7 +105,7 @@ def test_v3_graph_stops_after_two_revisions_using_prior_finalize_output() -> Non
 
     state = graph.invoke(
         {
-            "contract_version": "agent-contract-v5",
+                    "contract_version": "agent-contract-v6",
             "task_request": prepare["input"].request,
             "current_profile": analyze["input"].current_profile,
             "diagnostic_summary": analyze["input"].diagnostic_summary,

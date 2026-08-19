@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.db import get_db
+from app.core.security import Principal, get_current_user
 from app.main import app
 from app.models import (
     Base,
@@ -55,6 +56,9 @@ def test_report_returns_empty_loop_summary_for_new_learner() -> None:
         db.commit()
 
     app.dependency_overrides[get_db] = make_override(testing_session)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "test_learner", "learner", "learner_report_empty"
+    )
     try:
         response = TestClient(app).get("/api/v1/reports/learners/learner_report_empty")
     finally:
@@ -96,6 +100,13 @@ def test_report_summarizes_resources_reviews_feedback_and_path_refresh() -> None
                 "learning_speed": 72,
             },
             weak_knowledge_json=[],
+            diagnosis_completed=True,
+            context_snapshot_json={
+                "education_level": "本科",
+                "major": "软件工程",
+                "direction_tags": ["rag_knowledge_base"],
+                "confirmed_at": "2026-08-18T00:00:00+00:00",
+            },
         )
         db.add(profile)
         db.flush()
@@ -187,6 +198,9 @@ def test_report_summarizes_resources_reviews_feedback_and_path_refresh() -> None
         db.commit()
 
     app.dependency_overrides[get_db] = make_override(testing_session)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "test_learner", "learner", "learner_report_ready"
+    )
     try:
         response = TestClient(app).get("/api/v1/reports/learners/learner_report_ready")
     finally:

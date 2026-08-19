@@ -14,13 +14,14 @@ from app.rag.candidate_index import (
     CandidateIndexError,
     database_source_snapshot,
 )
+from app.rag.candidate_chunker import chunk_knowledge_item
 from app.rag.candidate_manifest import CandidateManifestStore
-from app.scripts.seed_data import seed_knowledge_items
+from app.scripts.seed_data import load_json, seed_knowledge_items
 from app.scripts.validate_rag_seed import source_data_version
 
 
 EXPECTED_SOURCE_VERSION = (
-    "sha256:7d7449e87a00a5bc027718e10a1e3f8699f5efc3644184bf63355e1258ed886b"
+    "sha256:a02334aa3f59325c21cfa48ecb58cf36b3e4056f5fffea01f890943c8508e5ba"
 )
 
 
@@ -135,6 +136,49 @@ def test_database_snapshot_reproduces_frozen_seed_version() -> None:
         items = list(db.scalars(select(KnowledgeItem).order_by(KnowledgeItem.public_id)))
 
         assert source_data_version(database_source_snapshot(db, items)) == EXPECTED_SOURCE_VERSION
+
+
+def test_llm_api_common_error_chunk_keeps_explicit_error_semantics() -> None:
+    payload = next(
+        item for item in load_json("knowledge_items.json") if item["knowledge_id"] == "llm_api_calling"
+    )
+    chunks = chunk_knowledge_item(
+        knowledge_id=payload["knowledge_id"],
+        name=payload["name"],
+        category=payload["category"],
+        difficulty=payload["difficulty"],
+        tags=payload["tags"],
+        content_md=payload["content"],
+    )
+
+    common_error_chunks = [chunk for chunk in chunks if "常见错误" in chunk.heading_path]
+
+    assert common_error_chunks
+    assert any(
+        "常见错误包括：把兼容接口当作行为完全一致" in chunk.content
+        for chunk in common_error_chunks
+    )
+
+
+def test_git_operation_chunk_contains_staging_and_commit_commands() -> None:
+    payload = next(
+        item for item in load_json("knowledge_items.json") if item["knowledge_id"] == "git_collaboration"
+    )
+    chunks = chunk_knowledge_item(
+        knowledge_id=payload["knowledge_id"],
+        name=payload["name"],
+        category=payload["category"],
+        difficulty=payload["difficulty"],
+        tags=payload["tags"],
+        content_md=payload["content"],
+    )
+
+    operation_chunks = [chunk for chunk in chunks if "操作步骤" in chunk.heading_path]
+
+    assert operation_chunks
+    operation_text = "\n".join(chunk.content for chunk in operation_chunks)
+    assert "git add <file1> <file2>" in operation_text
+    assert 'git commit -m "<intent-based message>"' in operation_text
 
 
 def test_reseeding_unchanged_items_does_not_require_reembedding() -> None:

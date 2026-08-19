@@ -165,6 +165,34 @@ def test_invalid_or_failed_model_semantics_safely_fall_back(semantic: Any) -> No
     assert not output.needs_generation
 
 
+def test_failed_model_semantics_recognizes_explicit_too_easy_with_evidence() -> None:
+    payload = _request().model_dump(mode="python")
+    payload["feedback"]["feedback_summary"] = "这部分太简单了，我已经掌握。"
+    payload["feedback"]["quick_tag"] = None
+    payload["feedback"]["conversation"]["latest_message_summary"] = (
+        "这部分太简单了，我已经掌握。"
+    )
+    payload["feedback"]["supporting_evidence"] = [
+        {
+            "evidence_id": "validated_mastery",
+            "evidence_type": "validated_behavior",
+            "summary": "已确认的迁移任务完成行为",
+            "knowledge_id": "AIAPP-K029",
+            "confidence": 0.9,
+            "confirmed": True,
+        }
+    ]
+
+    output = _execute(
+        InterpretFeedbackInput.model_validate(payload),
+        RuntimeError("model transport failure"),
+    )
+
+    assert output.feedback_intent is FeedbackIntent.TOO_EASY
+    assert output.recommended_action is RecommendedAction.CHALLENGE
+    assert output.needs_generation
+
+
 def test_agent_rejects_raw_dict() -> None:
     with pytest.raises(TutoringAgentError, match="invalid_interpret_feedback_input_type"):
         TutoringAgent(interpreter=FakeInterpreter(_semantic(FeedbackIntent.TOO_HARD))).execute(  # type: ignore[arg-type]

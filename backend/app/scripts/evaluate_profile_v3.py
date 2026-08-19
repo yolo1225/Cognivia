@@ -11,7 +11,7 @@ from typing import Any, Callable
 from pydantic import ValidationError
 
 from app.agents.contracts import AnalyzeProfileInput, AnalyzeProfileOutput, EvidenceType
-from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V1
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.services.profile_analysis_service import ProfileAnalysisError, analyze_profile
 from app.services.profile_v3_fixture_service import (
     ProfileFixtureError,
@@ -112,7 +112,7 @@ def _affected_scope_errors(
 ) -> list[str]:
     """Check only scope facts provable from the frozen input and configuration."""
     scope = output.affected_scope
-    catalog = AI_APP_DEV_PROFILE_V1.knowledge_catalog
+    catalog = AI_APP_DEV_PROFILE_V2.knowledge_catalog
     errors: list[str] = []
     if scope.path_node_ids or scope.resource_ids:
         errors.append("unprovable_path_or_resource_scope")
@@ -262,8 +262,8 @@ def evaluate_profile_v3(analyzer: Analyzer | None = None) -> dict[str, Any]:
         "schema_version": REPORT_SCHEMA_VERSION,
         "generated_at": datetime.now(UTC).isoformat(),
         "algorithm_version": ALGORITHM_VERSION,
-        "config_version": AI_APP_DEV_PROFILE_V1.version,
-        "seed_sha256": AI_APP_DEV_PROFILE_V1.seed_sha256,
+        "config_version": AI_APP_DEV_PROFILE_V2.version,
+        "seed_sha256": AI_APP_DEV_PROFILE_V2.seed_sha256,
         "case_count": len(cases),
         "development": _case_metric(30, failures["development"]),
         "acceptance": _case_metric(20, failures["acceptance"]),

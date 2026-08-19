@@ -22,7 +22,11 @@ from app.models import (
     LearningResource,
 )
 from app.schemas.common import ApiResponse, ok
-from app.services.feedback_service import create_feedback_task
+from app.services.feedback_service import (
+    FeedbackSourceCompatibilityError,
+    create_feedback_task,
+    require_v6_feedback_source,
+)
 from app.services.learning_package_service import package_member_rows
 from app.services.profile_service import is_initial_profile_ready, latest_profile_for_learner, profile_source, public_id
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
@@ -125,6 +129,17 @@ def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
                 "resource_type": resource.resource_type,
                 "version": resource.version,
             }
+    latest_failed_run = None
+    if task.status == "failed":
+        latest_failed_run = db.scalar(
+            select(AgentRun)
+            .where(AgentRun.generation_task_id == task.id)
+            .where(AgentRun.status == "failed")
+            .order_by(AgentRun.id.desc())
+        )
+    failure_output = (
+        latest_failed_run.output_summary_json or {} if latest_failed_run is not None else {}
+    )
     return {
         "task_id": task.public_id,
         "thread_id": task.public_id,
@@ -141,6 +156,14 @@ def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
         **_profile_summary(db, task),
         "revision_count": task.revision_count,
         "decision": task.decision,
+        "failure_reason": task.failure_reason or None,
+        "failure_details": {
+            "failed_step": failure_output.get("failed_step"),
+            "field_paths": list(failure_output.get("field_paths") or [])[:20],
+            "recoverable": bool(failure_output.get("recoverable")),
+        }
+        if task.status == "failed"
+        else None,
         "package_coverage": task.package_coverage_json or {},
         "package_quality": task.package_quality_json or None,
         "created_at": task.created_at.isoformat() if task.created_at else None,
@@ -251,12 +274,26 @@ def confirm_feedback_generation(
         raise HTTPException(status_code=409, detail="PROFILE_NOT_READY")
     if resource is None or feedback.recommended_action not in {"review", "challenge", "explain", "regenerate"}:
         raise HTTPException(status_code=409, detail="GENERATION_NOT_RECOMMENDED")
-    source_task = db.get(GenerationTask, resource.generation_task_id)
     try:
-        require_candidate_rag(source_task.domain_code if source_task else "ai_app_dev")
+        source_task = require_v6_feedback_source(
+            db,
+            learner=learner,
+            resource=resource,
+        )
+    except FeedbackSourceCompatibilityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    try:
+        require_candidate_rag(source_task.domain_code)
     except CandidateRagNotReady as exc:
         raise HTTPException(status_code=503, detail=f"{RAG_NOT_READY_CODE}:{exc}") from exc
-    task = create_feedback_task(db, learner=learner, profile=profile, resource=resource, feedback=feedback, resource_types=[resource.resource_type])
+    task = create_feedback_task(
+        db,
+        learner=learner,
+        profile=profile,
+        resource=resource,
+        feedback=feedback,
+        resource_types=[resource.resource_type],
+    )
     db.commit()
     background_tasks.add_task(run_generation_task, task.public_id)
     return ok(_task_detail_summary(db, task))

@@ -9,14 +9,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V1, ProfileAnalysisConfig
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2, ProfileAnalysisConfig
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_FIXTURE_DIR = PROJECT_ROOT / "backend" / "tests" / "fixtures" / "profile_v3"
 CASE_FILES = ("development_cases.json", "acceptance_cases.json")
 ACCEPTANCE_MANIFEST_FILE = "acceptance_baseline_manifest.json"
-ACCEPTANCE_BASELINE_VERSION = "ai_app_dev_profile_v1_acceptance_2"
+ACCEPTANCE_BASELINE_VERSION = "ai_app_dev_profile_v2_acceptance_1"
 CANONICAL_HASH_ALGORITHM = "canonical-json-sha256-v1"
 
 
@@ -79,7 +79,7 @@ def all_case_documents(
 
 def rendered_cases(
     fixture_dir: Path = DEFAULT_FIXTURE_DIR,
-    config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V1,
+    config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V2,
 ) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
     """Preserve the established tuple API used by algorithm and boundary tests."""
     return [
@@ -90,7 +90,7 @@ def rendered_cases(
 
 def rendered_case_records(
     fixture_dir: Path = DEFAULT_FIXTURE_DIR,
-    config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V1,
+    config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V2,
 ) -> list[RenderedProfileCase]:
     """Render fixtures while preserving scenario metadata for offline evaluation."""
     rendered: list[RenderedProfileCase] = []
@@ -133,7 +133,7 @@ def rendered_case_records(
 
 def validate_acceptance_manifest(
     fixture_dir: Path = DEFAULT_FIXTURE_DIR,
-    config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V1,
+    config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V2,
 ) -> dict[str, Any]:
     acceptance = load_json(fixture_dir / "acceptance_cases.json")
     manifest = load_json(fixture_dir / ACCEPTANCE_MANIFEST_FILE)

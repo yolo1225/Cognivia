@@ -126,6 +126,9 @@ AI_APP_DEV_ABILITY_WEIGHTS: dict[str, dict[str, float]] = {
 AI_APP_DEV_PROFILE_V1_SEED_SHA256 = (
     "d761650e26845c9d0a7acf93ee05d2e0804df3ae9ae2679f3d23ae1fde757da7"
 )
+AI_APP_DEV_PROFILE_V2_SEED_SHA256 = (
+    "12776c708fd2e0cea5787b5274fe1e2ff33a94d69795088cda5249ea9f1298d7"
+)
 MASTERY_BASELINES = {
     "known": 0.90,
     "partial_mastery": 0.70,
@@ -139,7 +142,9 @@ def _seed_path() -> Path:
     return Path(__file__).resolve().parents[3] / "data" / "seed" / "knowledge_items.json"
 
 
-def _load_knowledge_catalog() -> tuple[dict[str, KnowledgeProfileMetadata], str]:
+def _load_knowledge_catalog(
+    *, expected_seed_sha256: str
+) -> tuple[dict[str, KnowledgeProfileMetadata], str]:
     seed_bytes = _seed_path().read_bytes()
     payload = json.loads(seed_bytes.decode("utf-8"))
     canonical_seed = json.dumps(
@@ -149,7 +154,7 @@ def _load_knowledge_catalog() -> tuple[dict[str, KnowledgeProfileMetadata], str]
         separators=(",", ":"),
     ).encode("utf-8")
     seed_sha256 = hashlib.sha256(canonical_seed).hexdigest()
-    if seed_sha256 != AI_APP_DEV_PROFILE_V1_SEED_SHA256:
+    if seed_sha256 != expected_seed_sha256:
         raise ValueError(
             "ai_app_dev profile configuration fingerprint mismatch; "
             "create a new configuration version and re-review fixtures"
@@ -200,7 +205,9 @@ def validate_ai_app_dev_profile_config(
 
 
 def load_ai_app_dev_profile_v1() -> ProfileAnalysisConfig:
-    catalog, seed_sha256 = _load_knowledge_catalog()
+    catalog, seed_sha256 = _load_knowledge_catalog(
+        expected_seed_sha256=AI_APP_DEV_PROFILE_V1_SEED_SHA256
+    )
     config = ProfileAnalysisConfig(
         version="ai_app_dev_profile_v1",
         seed_sha256=seed_sha256,
@@ -221,4 +228,30 @@ def load_ai_app_dev_profile_v1() -> ProfileAnalysisConfig:
     return config
 
 
-AI_APP_DEV_PROFILE_V1 = load_ai_app_dev_profile_v1()
+def load_ai_app_dev_profile_v2() -> ProfileAnalysisConfig:
+    catalog, seed_sha256 = _load_knowledge_catalog(
+        expected_seed_sha256=AI_APP_DEV_PROFILE_V2_SEED_SHA256
+    )
+    config = ProfileAnalysisConfig(
+        version="ai_app_dev_profile_v2",
+        seed_sha256=seed_sha256,
+        prior_mastery=0.5,
+        prior_weight=1.0,
+        mastery_thresholds=(0.40, 0.60, 0.80),
+        minimum_effective_change=5,
+        max_ability_change_per_update=10,
+        max_weakness_level_change_per_update=1,
+        default_n_results=8,
+        multi_priority_remedial_n_results=10,
+        maximum_n_results=12,
+        ability_weights=AI_APP_DEV_ABILITY_WEIGHTS,
+        knowledge_catalog=catalog,
+        mastery_baselines=MASTERY_BASELINES,
+    )
+    validate_ai_app_dev_profile_config(set(catalog), config)
+    return config
+
+
+# V1's loader and fingerprint remain available for historical verification.  The
+# active seed contains V6 evidence-capability metadata and therefore uses V2.
+AI_APP_DEV_PROFILE_V2 = load_ai_app_dev_profile_v2()
