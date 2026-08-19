@@ -293,14 +293,14 @@
 
         <div v-else-if="assetView === 'documents'" class="asset-body">
           <div class="experimental-note">
-            <span>实验能力</span>
+            <span>结构化导入</span>
             <p>
-              文档上传仅执行全文解析和切片，不会自动形成正式知识点或诊断题。
+              文档会生成知识点、关系和诊断题候选，经复核、校验和索引冒烟后发布。
             </p>
           </div>
           <div v-if="documents.length === 0" class="empty-view">
             <strong>当前领域暂无来源文档</strong>
-            <p>可以上传 PDF、Markdown 或 TXT 作为实验性检索材料。</p>
+            <p>上传 PDF、Markdown 或 TXT，进入可追溯的知识导入流程。</p>
             <button class="btn primary" @click="uploadOpen = true">
               上传实验文档
             </button>
@@ -344,6 +344,10 @@
                     <span v-if="document.is_system" class="system-label"
                       >系统内置</span
                     ><button
+                      v-if="!document.is_system && document.status !== 'parsing'"
+                      class="btn text"
+                      @click="openImportReview(document)"
+                    >复核候选</button><button
                       v-else-if="document.status === 'failed'"
                       class="btn text"
                       @click="retry(document)"
@@ -633,12 +637,12 @@
 
     <AppDrawer
       v-model="uploadOpen"
-      title="上传实验文档"
-      :subtitle="`${selectedDomain?.name || selectedCode} · 不会自动形成正式知识点`"
+      title="导入领域文档"
+      :subtitle="`${selectedDomain?.name || selectedCode} · 生成候选后由管理员复核`"
       ><div class="upload-warning">
-        <strong>实验性文档解析</strong>
+        <strong>结构化知识导入</strong>
         <p>
-          系统只会保存文件、尝试解析全文并建立切片。正式知识点与诊断题仍需单独维护。
+          系统保留页码、标题或段落位置，并生成知识、关系和诊断题候选。
         </p>
       </div>
       <div
@@ -685,6 +689,35 @@
         </div>
       </div></AppDrawer
     >
+
+    <AppDrawer
+      v-model="importReviewOpen"
+      title="复核导入候选"
+      :subtitle="importSummary ? `${importSummary.import_id} · ${importSummary.status}` : ''"
+    >
+      <div v-if="importLoading" class="empty-view"><strong>正在加载候选</strong></div>
+      <div v-else-if="!importCandidates.length" class="empty-view">
+        <strong>暂无候选</strong><p>文档可能仍在解析，稍后重新打开。</p>
+      </div>
+      <div v-else class="candidate-list">
+        <article v-for="candidate in importCandidates" :key="candidate.candidate_id" class="candidate-item">
+          <header><strong>{{ candidateTypeLabel(candidate.candidate_type) }}</strong><StatusBadge :label="candidate.status" :type="candidate.validation_errors.length ? 'danger' : 'wait'" /></header>
+          <label v-if="candidate.candidate_type === 'knowledge_item'">名称<input v-model="candidate.payload.name" class="field" /></label>
+          <label v-if="candidate.candidate_type === 'knowledge_item'">难度<input v-model.number="candidate.payload.difficulty" class="field" type="number" min="1" max="5" /></label>
+          <label v-if="candidate.candidate_type === 'diagnostic_question'">题干<textarea v-model="candidate.payload.stem" class="field" rows="2" /></label>
+          <p class="candidate-source">来源：{{ sourceLabel(candidate.source_locator) }}</p>
+          <p v-if="candidate.validation_errors.length" class="document-error">{{ candidate.validation_errors.join('；') }}</p>
+          <button class="btn text" :disabled="importActionLoading" @click="saveCandidate(candidate)">保存修改</button>
+        </article>
+      </div>
+      <template #footer>
+        <button class="btn" :disabled="importActionLoading" @click="runImportValidation">校验</button>
+        <button class="btn" :disabled="importActionLoading" @click="approveImport">批准并写入</button>
+        <button class="btn" :disabled="importActionLoading" @click="buildImportIndex">构建索引</button>
+        <button class="btn" :disabled="importActionLoading" @click="smokeImport">冒烟</button>
+        <button class="btn primary" :disabled="importActionLoading" @click="publishImport">发布</button>
+      </template>
+    </AppDrawer>
 
     <AppDialog
       ref="deleteDialog"
@@ -745,6 +778,19 @@ import {
   type KnowledgeDocumentItem,
   type KnowledgeDocumentStatus,
 } from "@/api/knowledgeDocuments";
+import {
+  approveKnowledgeImport,
+  buildKnowledgeImportIndex,
+  getKnowledgeImport,
+  listImportCandidates,
+  publishKnowledgeImport,
+  smokeKnowledgeImport,
+  updateImportCandidate,
+  validateKnowledgeImport,
+  type ImportCandidate,
+  type ImportCandidateType,
+  type KnowledgeImportSummary,
+} from "@/api/knowledgeImports";
 import { useDomainStore } from "@/stores/domainStore";
 import { useToast } from "@/composables/useToast";
 import { formatBeijingDateTime } from "@/utils/dateTime";
@@ -817,6 +863,12 @@ const uploadOpen = ref(false),
   uploadResults = ref<Array<{ name: string; ok: boolean; message: string }>>(
     [],
   );
+const importReviewOpen = ref(false),
+  importLoading = ref(false),
+  importActionLoading = ref(false),
+  importSummary = ref<KnowledgeImportSummary | null>(null),
+  importCandidates = ref<ImportCandidate[]>([]),
+  activeImportId = ref("");
 const deleteDialog = ref<InstanceType<typeof AppDialog> | null>(null),
   deleteTarget = ref<KnowledgeDocumentItem | null>(null),
   deleting = ref(false);
@@ -1214,7 +1266,7 @@ async function uploadFiles(files: File[]) {
       uploadResults.value.push({
         name: file.name,
         ok: true,
-        message: "已进入实验性解析流程",
+        message: "已进入结构化候选解析流程",
       });
     } catch (error: any) {
       uploadResults.value.push({
@@ -1228,6 +1280,39 @@ async function uploadFiles(files: File[]) {
   if (fileInput.value) fileInput.value.value = "";
   await loadDocuments();
 }
+async function loadImportReview() {
+  if (!activeImportId.value) return;
+  importLoading.value = true;
+  try {
+    [importSummary.value, importCandidates.value] = await Promise.all([
+      getKnowledgeImport(activeImportId.value),
+      listImportCandidates(activeImportId.value),
+    ]);
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "导入候选加载失败");
+  } finally {
+    importLoading.value = false;
+  }
+}
+function openImportReview(document: KnowledgeDocumentItem) {
+  activeImportId.value = document.document_id;
+  importReviewOpen.value = true;
+  loadImportReview();
+}
+async function withImportAction(action: () => Promise<unknown>, success: string) {
+  importActionLoading.value = true;
+  try { await action(); showToast(success); await loadImportReview(); await loadDomain(); }
+  catch (error: any) { showToast(error?.response?.data?.detail || "导入操作失败"); }
+  finally { importActionLoading.value = false; }
+}
+function saveCandidate(candidate: ImportCandidate) { return withImportAction(() => updateImportCandidate(activeImportId.value, candidate.candidate_id, candidate.payload), "候选已保存"); }
+function runImportValidation() { return withImportAction(() => validateKnowledgeImport(activeImportId.value), "候选校验完成"); }
+function approveImport() { return withImportAction(() => approveKnowledgeImport(activeImportId.value), "候选已写入正式知识库"); }
+function buildImportIndex() { return withImportAction(() => buildKnowledgeImportIndex(activeImportId.value), "Candidate 索引任务已启动"); }
+function smokeImport() { return withImportAction(() => smokeKnowledgeImport(activeImportId.value), "检索冒烟通过"); }
+function publishImport() { return withImportAction(() => publishKnowledgeImport(activeImportId.value), "知识导入已发布"); }
+function candidateTypeLabel(type: ImportCandidateType) { return ({ knowledge_item: "知识点", knowledge_relation: "知识关系", diagnostic_question: "诊断题" } as Record<ImportCandidateType, string>)[type]; }
+function sourceLabel(locator: Record<string, any>) { return locator.page_start ? `第 ${locator.page_start} 页` : (locator.heading_path || []).join(" / ") || "已定位段落"; }
 function handleFileInput(event: Event) {
   uploadFiles(Array.from((event.target as HTMLInputElement).files || []));
 }
@@ -1361,7 +1446,7 @@ async function validate() {
   }
 }
 function isProcessing(status: KnowledgeDocumentStatus) {
-  return ["queued", "parsing", "indexing"].includes(status);
+  return ["queued", "parsing", "validating", "indexing"].includes(status);
 }
 function documentStatusLabel(status: KnowledgeDocumentStatus) {
   return (
@@ -1369,6 +1454,10 @@ function documentStatusLabel(status: KnowledgeDocumentStatus) {
       {
         queued: "等待处理",
         parsing: "正在解析",
+        validating: "正在校验",
+        review_pending: "等待复核",
+        approved: "已批准",
+        index_pending: "待构建索引",
         indexing: "正在索引",
         ready: "已就绪",
         failed: "处理失败",
@@ -2093,6 +2182,37 @@ onBeforeUnmount(() => {
 }
 .upload-fields {
   margin-top: 16px;
+}
+
+.candidate-list {
+  display: grid;
+  gap: 12px;
+}
+
+.candidate-item {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line-color, #d9dee8);
+  border-radius: 6px;
+}
+
+.candidate-item header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.candidate-item label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.candidate-source {
+  margin: 0;
+  color: #667085;
+  font-size: 12px;
 }
 .delete-message {
   display: grid;

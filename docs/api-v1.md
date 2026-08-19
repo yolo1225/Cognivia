@@ -58,3 +58,13 @@ task_completed | task_failed
 ## 其他 MVP 接口
 
 健康检查、演示账号、学习者画像、诊断、知识库、报告和领域配置继续使用原 `/api/v1` 路由，不引入 JWT、Redis、Neo4j、WebSocket 或 `/api/v2`。
+# M1 结构化知识导入
+
+- `GET /api/v1/knowledge/imports/{import_id}`：查看导入状态与候选统计。
+- `GET/PATCH /api/v1/knowledge/imports/{import_id}/candidates`：查看或修改知识、关系和诊断题候选。
+- `POST /api/v1/knowledge/imports/{import_id}/validate`：运行来源、字段、重复和关系环校验。
+- `POST /api/v1/knowledge/imports/{import_id}/approve`：批准候选并事务性写入正式知识库。
+- `POST /api/v1/knowledge/imports/{import_id}/build-index`：启动 Candidate 索引构建。
+- `POST /api/v1/knowledge/imports/{import_id}/smoke-test`：检查活动索引与数据版本。
+- `POST /api/v1/knowledge/imports/{import_id}/publish`：冒烟通过后发布导入。
+- `GET /api/v1/knowledge/imports/{import_id}/events`：读取导入状态 SSE 事件。

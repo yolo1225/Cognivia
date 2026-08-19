@@ -58,13 +58,9 @@ def _item_payload(item: KnowledgeItem) -> dict[str, Any]:
     }
 
 
-def database_source_snapshot(
-    db: Session, items: list[KnowledgeItem]
-) -> list[dict[str, Any]]:
+def database_source_snapshot(db: Session, items: list[KnowledgeItem]) -> list[dict[str, Any]]:
     payloads = {item.id: _item_payload(item) for item in items}
-    relations = list(
-        db.scalars(select(KnowledgeRelation).order_by(KnowledgeRelation.id))
-    )
+    relations = list(db.scalars(select(KnowledgeRelation).order_by(KnowledgeRelation.id)))
     for relation in relations:
         owner = payloads.get(relation.target_item_id)
         referenced = payloads.get(relation.source_item_id)
@@ -101,9 +97,7 @@ def validate_knowledge_integrity(
         for chunk in chunks:
             if not chunk.embedding_text.strip():
                 raise CandidateIndexError(f"candidate chunk is empty: {chunk.chunk_id}")
-            checksum = hashlib.sha256(
-                " ".join(chunk.content.split()).encode("utf-8")
-            ).hexdigest()
+            checksum = hashlib.sha256(" ".join(chunk.content.split()).encode("utf-8")).hexdigest()
             previous = seen_checksums.get(checksum)
             if previous is not None:
                 raise CandidateIndexError(
@@ -116,12 +110,10 @@ def validate_knowledge_integrity(
         touches_domain = (
             relation.source_item_id in item_db_ids or relation.target_item_id in item_db_ids
         )
-        if touches_domain and not {
-            relation.source_item_id, relation.target_item_id
-        }.issubset(item_db_ids):
-            raise CandidateIndexError(
-                f"orphan or cross-domain knowledge relation: {relation.id}"
-            )
+        if touches_domain and not {relation.source_item_id, relation.target_item_id}.issubset(
+            item_db_ids
+        ):
+            raise CandidateIndexError(f"orphan or cross-domain knowledge relation: {relation.id}")
 
     questions = list(
         db.scalars(
@@ -189,9 +181,7 @@ class CandidateIndexBuilder:
         return True
 
     def _load_manifest(self, domain_code: str) -> CandidateIndexManifest | None:
-        return self.manifests.load(
-            domain_code, collection_exists=self._collection_exists
-        )
+        return self.manifests.load(domain_code, collection_exists=self._collection_exists)
 
     @staticmethod
     def _chunks_for(items: list[KnowledgeItem]) -> dict[str, list[CandidateChunk]]:
@@ -236,9 +226,7 @@ class CandidateIndexBuilder:
             "chunk_index": chunk.chunk_index,
             "chunk_count": chunk_count,
             "heading_path": json.dumps(chunk.heading_path, ensure_ascii=False),
-            "content_checksum": hashlib.sha256(
-                chunk.embedding_text.encode("utf-8")
-            ).hexdigest(),
+            "content_checksum": hashlib.sha256(chunk.embedding_text.encode("utf-8")).hexdigest(),
             "source_locator": (
                 f"document:{item.source_document_id}#chunk={chunk.chunk_index}"
                 if item.source_document_id
@@ -271,9 +259,7 @@ class CandidateIndexBuilder:
         ]
 
     @staticmethod
-    def _validate_compatibility(
-        manifest: CandidateIndexManifest, *, model: str
-    ) -> None:
+    def _validate_compatibility(manifest: CandidateIndexManifest, *, model: str) -> None:
         mismatches: list[str] = []
         if manifest.embedding_model != model:
             mismatches.append("embedding_model")
@@ -365,7 +351,9 @@ class CandidateIndexBuilder:
         if len(actual_ids) != len(set(actual_ids)):
             raise CandidateIndexError("candidate collection contains duplicate chunk IDs")
         if set(actual_ids) != expected_chunk_ids:
-            raise CandidateIndexError("candidate collection chunk IDs do not match database content")
+            raise CandidateIndexError(
+                "candidate collection chunk IDs do not match database content"
+            )
         if collection.count() != len(expected_chunk_ids):
             raise CandidateIndexError("candidate collection count does not match expected chunks")
 
@@ -382,9 +370,7 @@ class CandidateIndexBuilder:
             for field in ("source_title", "license_note"):
                 if not str(metadata.get(field, "")).strip():
                     raise CandidateIndexError(f"candidate chunk is missing {field}")
-            expected_checksum = hashlib.sha256(
-                str(record["document"]).encode("utf-8")
-            ).hexdigest()
+            expected_checksum = hashlib.sha256(str(record["document"]).encode("utf-8")).hexdigest()
             if metadata.get("content_checksum") != expected_checksum:
                 raise CandidateIndexError("candidate chunk content checksum is inconsistent")
             if not str(metadata.get("source_locator", "")).strip():
@@ -400,9 +386,7 @@ class CandidateIndexBuilder:
         for knowledge_id, values in indexes.items():
             if sorted(values) != list(range(len(chunks_by_id[knowledge_id]))):
                 raise CandidateIndexError("candidate chunk indexes are not contiguous")
-        actual_dimensions = self._validate_vectors(
-            [record["embedding"] for record in records]
-        )
+        actual_dimensions = self._validate_vectors([record["embedding"] for record in records])
         if actual_dimensions != dimensions:
             raise CandidateIndexError("stored candidate vector dimensions are inconsistent")
 
@@ -422,7 +406,9 @@ class CandidateIndexBuilder:
         items = list(
             self.db.scalars(
                 select(KnowledgeItem)
-                .where(KnowledgeItem.domain_code == domain_code)
+                .where(
+                    KnowledgeItem.domain_code == domain_code, KnowledgeItem.status == "published"
+                )
                 .order_by(KnowledgeItem.public_id)
             )
         )
@@ -451,13 +437,10 @@ class CandidateIndexBuilder:
             self._validate_compatibility(manifest, model=self.provider.model_name)
             active = self.client.get_collection(name=manifest.active_collection)
             old_records = self._records(active)
-            changed_ids = self._changed_ids(
-                items=items, old_records=old_records
-            )
+            changed_ids = self._changed_ids(items=items, old_records=old_records)
             current_ids = {item.public_id for item in items}
             old_ids = {
-                str((record["metadata"] or {}).get("knowledge_id", ""))
-                for record in old_records
+                str((record["metadata"] or {}).get("knowledge_id", "")) for record in old_records
             }
             orphan_ids = old_ids - current_ids
             if (
@@ -492,13 +475,9 @@ class CandidateIndexBuilder:
             in item_by_id.keys() - changed_ids
         ]
         changed_chunks = [
-            chunk
-            for knowledge_id in sorted(changed_ids)
-            for chunk in chunks_by_id[knowledge_id]
+            chunk for knowledge_id in sorted(changed_ids) for chunk in chunks_by_id[knowledge_id]
         ]
-        new_vectors = self.provider.embed_texts(
-            [chunk.embedding_text for chunk in changed_chunks]
-        )
+        new_vectors = self.provider.embed_texts([chunk.embedding_text for chunk in changed_chunks])
         all_vectors = [record["embedding"] for record in reused_records] + new_vectors
         dimensions = self._validate_vectors(all_vectors)
         if manifest is not None and not reset and dimensions != manifest.embedding_dimensions:

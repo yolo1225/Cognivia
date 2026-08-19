@@ -45,7 +45,10 @@ def candidate_rag_status(domain_code: str) -> dict[str, Any]:
             items = list(
                 db.scalars(
                     select(KnowledgeItem)
-                    .where(KnowledgeItem.domain_code == domain_code)
+                    .where(
+                        KnowledgeItem.domain_code == domain_code,
+                        KnowledgeItem.status == "published",
+                    )
                     .order_by(KnowledgeItem.public_id)
                 )
             )

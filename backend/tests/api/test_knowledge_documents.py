@@ -7,7 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.db import get_db
 from app.main import app
-from app.models import Base, Domain, KnowledgeDocument, KnowledgeItem
+from app.models import Base, Domain, KnowledgeDocument, KnowledgeImportCandidate, KnowledgeItem
 from app.services import knowledge_document_service
 
 
@@ -84,9 +84,7 @@ def test_document_upload_rejects_invalid_and_oversized_files(tmp_path, monkeypat
         pass
 
 
-def test_text_document_is_parsed_and_marked_for_candidate_rebuild(
-    tmp_path, monkeypatch
-) -> None:
+def test_text_document_is_parsed_into_review_candidates(tmp_path, monkeypatch) -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", poolclass=StaticPool)
     Base.metadata.create_all(bind=engine)
     testing_session = sessionmaker(bind=engine, autocommit=False, autoflush=False)
@@ -111,16 +109,24 @@ def test_text_document_is_parsed_and_marked_for_candidate_rebuild(
         stored = db.scalar(
             select(KnowledgeDocument).where(KnowledgeDocument.public_id == document_id)
         )
-        item = db.scalar(
-            select(KnowledgeItem).where(KnowledgeItem.source_document_id == stored.id)
+        candidates = list(
+            db.scalars(
+                select(KnowledgeImportCandidate).where(
+                    KnowledgeImportCandidate.document_id == stored.id
+                )
+            )
         )
-        assert stored.status == "queued"
+        item = db.scalar(select(KnowledgeItem).where(KnowledgeItem.source_document_id == stored.id))
+        assert stored.status == "review_pending"
         assert stored.chunk_count >= 1
         assert stored.embedding_model is None
-        assert "candidate" in stored.error_summary
-        assert item is not None
-        assert item.domain_code == "domain_a"
-        assert item.source_title == "RAG Guide"
+        assert stored.error_summary is None
+        assert item is None
+        assert {candidate.candidate_type for candidate in candidates} == {
+            "knowledge_item",
+            "diagnostic_question",
+        }
+        assert all(candidate.source_locator_json for candidate in candidates)
     try:
         knowledge_document_service.validate_upload(
             "large.txt", b"x" * (knowledge_document_service.MAX_FILE_BYTES + 1)

@@ -348,7 +348,11 @@ class CandidateRetriever:
             return []
         items = self.db.scalars(
             select(KnowledgeItem.public_id)
-            .where(KnowledgeItem.domain_code == domain_code, KnowledgeItem.public_id.in_(ids))
+            .where(
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.status == "published",
+                KnowledgeItem.public_id.in_(ids),
+            )
             .order_by(KnowledgeItem.public_id)
         )
         found = set(items)
@@ -367,7 +371,9 @@ class CandidateRetriever:
         items = list(
             self.db.scalars(
                 select(KnowledgeItem)
-                .where(KnowledgeItem.domain_code == domain_code)
+                .where(
+                    KnowledgeItem.domain_code == domain_code, KnowledgeItem.status == "published"
+                )
                 .order_by(KnowledgeItem.public_id)
             )
         )
@@ -659,14 +665,19 @@ class CandidateRetriever:
             # A section's declared role is stronger evidence than keyword overlap in
             # nearby error or acceptance sections. The large bonus makes the direct
             # operation section deterministic for each explicit practice target.
-            heading_bonus = 100 if normalized_headings & {
-                "操作步骤",
-                "分步操作",
-                "实操",
-                "实践任务",
-                "实验步骤",
-                "操作方法",
-            } else 0
+            heading_bonus = (
+                100
+                if normalized_headings
+                & {
+                    "操作步骤",
+                    "分步操作",
+                    "实操",
+                    "实践任务",
+                    "实验步骤",
+                    "操作方法",
+                }
+                else 0
+            )
             capabilities = evidence_policy.classify_content(record.document)
             weights = {
                 EvidenceCapability.OPERATION: 8,
@@ -707,8 +718,10 @@ class CandidateRetriever:
                 missing.append(knowledge_id)
                 continue
             chosen = matches[0]
-            if practice_requested and EvidenceCapability.OPERATION not in evidence_policy.classify_content(
-                chosen.document
+            if (
+                practice_requested
+                and EvidenceCapability.OPERATION
+                not in evidence_policy.classify_content(chosen.document)
             ):
                 self._warn(warnings, f"practice_operation_evidence_missing:{knowledge_id}")
             if chosen.chunk_id not in selected_ids:

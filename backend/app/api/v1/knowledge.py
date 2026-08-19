@@ -26,9 +26,7 @@ def list_knowledge_relations(
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
-    items = list(
-        db.scalars(select(KnowledgeItem).where(KnowledgeItem.domain_code == domain_code))
-    )
+    items = list(db.scalars(select(KnowledgeItem).where(KnowledgeItem.domain_code == domain_code)))
     item_by_id = {item.id: item for item in items}
     if not item_by_id:
         return ok([])
@@ -95,6 +93,9 @@ def serialize_knowledge_item(item: KnowledgeItem) -> dict[str, Any]:
         "source_url": item.source_url,
         "license_note": item.license_note,
         "needs_reembedding": item.needs_reembedding,
+        "ability_weights": item.ability_weights_json or {},
+        "source_locator": item.source_locator_json or {},
+        "status": item.status,
     }
 
 
@@ -144,7 +145,9 @@ def create_knowledge_item(
         )
     )
     if duplicate is not None:
-        raise HTTPException(status_code=409, detail=f"Knowledge item already exists: {payload.name}")
+        raise HTTPException(
+            status_code=409, detail=f"Knowledge item already exists: {payload.name}"
+        )
 
     item = KnowledgeItem(
         public_id=f"ki_{uuid4().hex[:12]}",
@@ -158,6 +161,7 @@ def create_knowledge_item(
         source_url=payload.source_url,
         license_note=payload.license_note.strip(),
         needs_reembedding=True,
+        status="published",
     )
     db.add(item)
     db.flush()

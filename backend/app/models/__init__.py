@@ -5,7 +5,12 @@ from app.models.domain import Domain
 from app.models.evaluation import EvaluationCase
 from app.models.feedback import Feedback
 from app.models.index_build_job import IndexBuildJob
-from app.models.knowledge import KnowledgeDocument, KnowledgeItem, KnowledgeRelation
+from app.models.knowledge import (
+    KnowledgeDocument,
+    KnowledgeImportCandidate,
+    KnowledgeItem,
+    KnowledgeRelation,
+)
 from app.models.learner import Learner, LearnerProfile, LearningPath
 from app.models.model_config import ModelConfig
 from app.models.resource import (
@@ -35,6 +40,7 @@ __all__ = [
     "IndexBuildJob",
     "KnowledgeItem",
     "KnowledgeDocument",
+    "KnowledgeImportCandidate",
     "KnowledgeRelation",
     "Learner",
     "LearnerProfile",

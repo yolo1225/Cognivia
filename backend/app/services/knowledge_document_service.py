@@ -18,8 +18,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
-from app.models import KnowledgeDocument, KnowledgeItem, KnowledgeRelation
-from app.rag.candidate_chunker import chunk_knowledge_item
+from app.models import KnowledgeDocument, KnowledgeImportCandidate, KnowledgeItem, KnowledgeRelation
 from app.services.knowledge_update_service import mark_affected_content
 
 KNOWLEDGE_STORAGE_ROOT = Path(__file__).resolve().parents[3] / "storage" / "knowledge"
@@ -123,7 +122,11 @@ def extract_text(document: KnowledgeDocument) -> str:
             raise KnowledgeDocumentError("文本文件必须使用 UTF-8 编码") from exc
     normalized = text.replace("\x00", "").strip()
     if len(normalized) < 10:
-        message = "PDF 未提取到有效文本，当前版本暂不支持扫描件 OCR" if document.file_type == "pdf" else "文件没有足够的有效文本"
+        message = (
+            "PDF 未提取到有效文本，当前版本暂不支持扫描件 OCR"
+            if document.file_type == "pdf"
+            else "文件没有足够的有效文本"
+        )
         raise KnowledgeDocumentError(message)
     return normalized
 
@@ -139,51 +142,24 @@ def process_knowledge_document(document_id: str) -> None:
             document.status = "parsing"
             document.error_summary = None
             db.commit()
-            text = extract_text(document)
-            item = db.scalar(
-                select(KnowledgeItem).where(KnowledgeItem.source_document_id == document.id)
-            )
-            if item is None:
-                item = KnowledgeItem(
-                    public_id=f"kdocitem_{uuid4().hex[:14]}",
-                    domain_code=document.domain_code,
-                    name=Path(document.original_name).stem[:255],
-                    category="上传文档",
-                    difficulty=2,
-                    tags_json=["uploaded-document", document.file_type],
-                    content_md=text,
-                    source_title=document.source_title,
-                    source_url=None,
-                    license_note=document.license_note,
-                    needs_reembedding=True,
-                    source_document_id=document.id,
-                )
-                db.add(item)
-            else:
-                item.content_md = text
-                item.source_title = document.source_title
-                item.license_note = document.license_note
-                item.needs_reembedding = True
-            db.flush()
-            chunks = chunk_knowledge_item(
-                knowledge_id=item.public_id,
-                name=item.name,
-                category=item.category,
-                difficulty=item.difficulty,
-                tags=list(item.tags_json or []),
-                content_md=item.content_md,
-            )
-            mark_affected_content(
-                db,
-                domain_code=document.domain_code,
-                affected_knowledge_ids={item.public_id},
-                reason="knowledge_document_uploaded",
-            )
-            document.status = "queued"
-            document.knowledge_item_count = 1
-            document.chunk_count = len(chunks)
+            from app.services.knowledge_extraction_service import replace_candidates
+            from app.services.knowledge_import_validation_service import validate_import
+            from app.services.knowledge_parser_service import parse_document
+
+            sections = parse_document(document)
+            candidates = replace_candidates(db, document, sections)
+            document.status = "validating"
+            document.chunk_count = len(sections)
             db.commit()
-            document.error_summary = "等待管理员执行真实 candidate 索引重建"
+            result = validate_import(db, document.id)
+            document = db.get(KnowledgeDocument, document.id)
+            document.status = "review_pending"
+            document.error_summary = (
+                None if not result["invalid"] else f"{result['invalid']} 个候选需要修改"
+            )
+            document.knowledge_item_count = sum(
+                item.candidate_type == "knowledge_item" for item in candidates
+            )
             db.commit()
         except Exception as exc:
             db.rollback()
@@ -199,7 +175,7 @@ def process_knowledge_document(document_id: str) -> None:
 def retry_document(db: Session, document: KnowledgeDocument) -> None:
     if document.file_type == "seed_package":
         raise KnowledgeDocumentError("系统知识包不需要重新处理")
-    if document.status not in {"failed", "queued"}:
+    if document.status not in {"failed", "queued", "review_pending"}:
         raise KnowledgeDocumentError("只有失败或排队中的文件可以重新处理")
     document.status = "queued"
     document.error_summary = None
@@ -213,6 +189,9 @@ def delete_document(db: Session, document: KnowledgeDocument) -> None:
         raise KnowledgeDocumentError("文件正在处理中，暂时不能删除")
     items = list(
         db.scalars(select(KnowledgeItem).where(KnowledgeItem.source_document_id == document.id))
+    )
+    db.execute(
+        delete(KnowledgeImportCandidate).where(KnowledgeImportCandidate.document_id == document.id)
     )
     if items:
         item_ids = [item.id for item in items]
