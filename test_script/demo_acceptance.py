@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -13,6 +14,14 @@ from run_live import _api_json, _authenticate, _poll_task
 ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = ROOT / "reports" / "demo"
 STAGE0_BRANCH_IDS = ("initial_generation", "no_change", "incorrect_review")
+
+
+def _report_error(exc: Exception) -> str:
+    """Keep machine evidence useful without retaining reply or resource bodies."""
+    message = " ".join(str(exc).split())
+    if "{" in message:
+        message = message.split("{", 1)[0].rstrip(" :")
+    return message[:500] or type(exc).__name__
 
 
 def _create_task(base_url: str, *, goal: str, resource_types: list[str]) -> dict[str, Any]:
@@ -187,12 +196,17 @@ def main() -> None:
                         "title": title,
                         "status": "passed_from_live_snapshot",
                         "live_snapshot": snapshot,
-                        "live_attempt_error": str(exc),
+                        "live_attempt_error": _report_error(exc),
                     }
                 )
             else:
                 branches.append(
-                    {"branch_id": branch_id, "title": title, "status": "failed", "error": str(exc)}
+                    {
+                        "branch_id": branch_id,
+                        "title": title,
+                        "status": "failed",
+                        "error": _report_error(exc),
+                    }
                 )
 
     def initial_generation() -> dict[str, Any]:
@@ -356,6 +370,10 @@ def main() -> None:
         for item in branches
     )
     (REPORT_DIR / "latest.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # The acceptance evidence is UTF-8 JSON.  Reconfigure Windows console output
+    # so a provider reply can never make a completed run fail during reporting.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     print(json.dumps(report, ensure_ascii=False, indent=2))
     if report["status"] != "passed":
         raise SystemExit(1)

@@ -93,3 +93,15 @@ def test_stage0_task_evidence_rejects_missing_secondary_review(monkeypatch):
             _runs(include_secondary=False),
             expect_three_resources=True,
         )
+
+
+def test_stage0_error_reporting_redacts_embedded_response_payloads():
+    error = AssertionError(
+        "first subjective feedback must not change profile: "
+        "{'reply': {'content': '完整资源正文不能进入报告'}}"
+    )
+
+    summary = demo_acceptance._report_error(error)
+
+    assert summary == "first subjective feedback must not change profile"
+    assert "完整资源正文" not in summary
