@@ -130,7 +130,7 @@ def approve_import(
     import_id: str, payload: ApproveRequest, db: Session = Depends(get_db)
 ) -> ApiResponse:
     document = _document(db, import_id)
-    if document.status not in {"review_pending", "approved"}:
+    if document.status != "review_pending":
         raise HTTPException(status_code=409, detail="只有待复核导入可以批准")
     result = validate_import(db, document.id)
     if result["invalid"]:

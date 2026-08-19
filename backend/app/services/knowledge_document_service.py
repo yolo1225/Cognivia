@@ -1,9 +1,4 @@
-"""Experimental document staging.
-
-This module currently turns a whole uploaded document into one provisional
-knowledge item. It does not extract normalized knowledge points or assessment
-questions and is not the completed knowledge-base import capability.
-"""
+"""Knowledge document upload lifecycle and background import entrypoint."""
 
 from __future__ import annotations
 
@@ -13,7 +8,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from pypdf import PdfReader
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -108,27 +102,6 @@ def _document_path(document: KnowledgeDocument) -> Path:
     if root not in path.parents:
         raise KnowledgeDocumentError("文档存储路径非法")
     return path
-
-
-def extract_text(document: KnowledgeDocument) -> str:
-    path = _document_path(document)
-    if document.file_type == "pdf":
-        reader = PdfReader(str(path))
-        text = "\n\n".join((page.extract_text() or "").strip() for page in reader.pages)
-    else:
-        try:
-            text = path.read_text(encoding="utf-8-sig")
-        except UnicodeDecodeError as exc:
-            raise KnowledgeDocumentError("文本文件必须使用 UTF-8 编码") from exc
-    normalized = text.replace("\x00", "").strip()
-    if len(normalized) < 10:
-        message = (
-            "PDF 未提取到有效文本，当前版本暂不支持扫描件 OCR"
-            if document.file_type == "pdf"
-            else "文件没有足够的有效文本"
-        )
-        raise KnowledgeDocumentError(message)
-    return normalized
 
 
 def process_knowledge_document(document_id: str) -> None:

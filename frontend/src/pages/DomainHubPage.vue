@@ -1456,7 +1456,6 @@ function documentStatusLabel(status: KnowledgeDocumentStatus) {
         parsing: "正在解析",
         validating: "正在校验",
         review_pending: "等待复核",
-        approved: "已批准",
         index_pending: "待构建索引",
         indexing: "正在索引",
         ready: "已就绪",

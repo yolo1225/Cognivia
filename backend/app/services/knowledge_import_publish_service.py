@@ -64,8 +64,7 @@ def approve_candidates(
         if item.public_id in selected:
             item.status = "approved"
             count += 1
-    document.status = "approved"
-    db.commit()
+    db.flush()
     return count
 
 
