@@ -27,6 +27,45 @@ def test_single_question_provider_shape_is_wrapped_as_batch() -> None:
     }
 
 
+def test_scores_provider_shape_is_normalized_to_results() -> None:
+    payload = {"scores": [{"question_id": "q1"}], "summary": "ok"}
+    assert service._adapt_batch_response(payload) == {
+        "scores": [{"question_id": "q1"}],
+        "results": [{"question_id": "q1"}],
+        "summary": "ok",
+    }
+
+
+def test_missing_criteria_are_conservatively_derived_from_requested_rubric() -> None:
+    payload = {
+        "scores": [
+            {
+                "question_id": "q1",
+                "total_score": 0.8,
+                "confidence": 0.9,
+                "ai_comment": "总体正确。",
+            }
+        ]
+    }
+    adapted = service._adapt_batch_response(
+        payload,
+        {
+            "q1": [
+                {
+                    "criterion_id": "criterion_1",
+                    "description": "核心概念",
+                    "max_score": 1.0,
+                    "required_concepts": [],
+                    "equivalent_expressions": [],
+                }
+            ]
+        },
+    )
+    assert adapted["results"][0]["criteria"] == [
+        {"criterion_id": "criterion_1", "score": 0.8, "rationale": "总体正确。"}
+    ]
+
+
 def test_semantic_synonym_gets_partial_credit_but_uncertain_result_cannot_pass(monkeypatch) -> None:
     def complete_json(**_kwargs):
         return (

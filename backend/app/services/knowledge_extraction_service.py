@@ -10,10 +10,10 @@ from app.models import KnowledgeDocument, KnowledgeImportCandidate
 
 
 DEFAULT_WEIGHTS = {
-    "theory": 0.35,
-    "practice": 0.35,
+    "theory": 0.3,
+    "practice": 0.25,
     "problem_solving": 0.2,
-    "breadth": 0.1,
+    "knowledge_breadth": 0.25,
     "learning_speed": 0.0,
 }
 

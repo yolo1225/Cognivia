@@ -65,6 +65,14 @@ def test_multisection_document_creates_traceable_candidates(tmp_path, monkeypatc
     assert len(sections) == 2
     assert sum(item.candidate_type == "knowledge_item" for item in candidates) == 2
     assert all(item.source_locator_json.get("checksum") for item in candidates)
+    knowledge = next(item for item in candidates if item.candidate_type == "knowledge_item")
+    assert set(knowledge.payload_json["ability_weights"]) == {
+        "theory",
+        "practice",
+        "problem_solving",
+        "knowledge_breadth",
+        "learning_speed",
+    }
     assert validate_import(db, document.id)["invalid"] == 0
 
 

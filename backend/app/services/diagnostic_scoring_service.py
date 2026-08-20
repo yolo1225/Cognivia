@@ -124,12 +124,43 @@ def _fixture_result(items: list[dict[str, Any]]) -> dict[str, Any]:
     return {"results": results}
 
 
-def _adapt_batch_response(value: dict[str, Any]) -> dict[str, Any]:
+def _adapt_batch_response(
+    value: dict[str, Any], rubric_by_question: dict[str, list[dict[str, Any]]] | None = None
+) -> dict[str, Any]:
     if "results" in value:
+        adapted = value
+    elif isinstance(value.get("scores"), list):
+        adapted = {**value, "results": value["scores"]}
+    elif value.get("question_id"):
+        adapted = {"results": [value]}
+    else:
         return value
-    if value.get("question_id"):
-        return {"results": [value]}
-    return value
+    if not rubric_by_question:
+        return adapted
+    results = []
+    for raw in adapted.get("results") or []:
+        item = dict(raw)
+        rubric = rubric_by_question.get(str(item.get("question_id") or ""), [])
+        if (
+            not item.get("criteria")
+            and rubric
+            and isinstance(item.get("total_score"), (int, float))
+        ):
+            total_score = float(item["total_score"])
+            rationale = str(item.get("ai_comment") or "模型返回总分，按 rubric 权重保守分配。")
+            item["criteria"] = [
+                {
+                    "criterion_id": criterion["criterion_id"],
+                    "score": min(
+                        float(criterion["max_score"]),
+                        max(0.0, float(criterion["max_score"]) * total_score),
+                    ),
+                    "rationale": rationale,
+                }
+                for criterion in rubric
+            ]
+        results.append(item)
+    return {**adapted, "results": results}
 
 
 def score_short_answer_batch(
@@ -162,7 +193,9 @@ def score_short_answer_batch(
         payload={"questions": payload_items, "rubric_version": RUBRIC_VERSION},
         fixture_factory=lambda: _fixture_result(payload_items),
         response_model=ShortAnswerBatch,
-        response_adapter=_adapt_batch_response,
+        response_adapter=lambda value: _adapt_batch_response(
+            value, {item["question_id"]: item["rubric"] for item in payload_items}
+        ),
         max_output_tokens=2400,
     )
     by_id = {item["question_id"]: item for item in result["results"]}
@@ -179,7 +212,9 @@ def score_short_answer_batch(
         )
         # A semantic synonym may legitimately have a zero literal precheck.
         # Preserve partial credit while keeping disputed answers below the pass gate.
-        final_score = min(model_score, max(precheck, PASS_SCORE - 0.05)) if uncertain else model_score
+        final_score = (
+            min(model_score, max(precheck, PASS_SCORE - 0.05)) if uncertain else model_score
+        )
         controlled[question.public_id] = {
             **scored,
             "model_score": round(model_score, 4),

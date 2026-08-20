@@ -57,18 +57,28 @@
 
 ## M2/M3 收口证据（2026-08-20）
 
-- 工作树基线提交：`40b6725`；M2/M3 变更已收口为独立可审查提交，运行产物不纳入源码提交。
+- M2/M3 实现提交：`542bb0a`（基于 M1 收口提交 `40b6725`）；运行产物不纳入源码提交。
 - 迁移：现有 MySQL 已升级到 `20260820_0022 (head)`。专用临时空库从零升级到 head 后，
   主领域种子初始化得到 50 个知识点、60 道诊断题，领域状态为 `ready`；临时库已删除。
 - 历史数据修复：`0021` 回填空权重，`0022` 将旧 `breadth` 等非五维权重规范化；主领域
   readiness 实测通过，当前为 53 个已发布知识点、63 道可用题、83 条关系，阻断项为空。
 - 后端：Docker 内 Ruff 静态检查通过，`compileall app tests` 通过，完整测试
-  `452 passed, 3 skipped`。冻结的 V6 合同、State、适配器及合同测试未修改。
+  `456 passed, 3 skipped`。冻结的 V6 合同、State、适配器及合同测试未修改。
 - 前端：Vitest `47 passed`，TypeScript 检查和 Vite 生产构建通过。
 - 运行态：MySQL、ChromaDB、Redis、Backend、Frontend 均健康；主领域 Candidate RAG
   `ready=true`，索引 112 chunks；`evaluation_overrides_enabled=false`，双审核模型独立，
   `ready_for_live_demo=true`。
 
-仍需在形成可审查提交后执行一次有界的人工 M3 演示验收（空领域创建、文档上传、候选批准、
-索引冒烟、发布、学习者诊断/三资源生成、停用后历史可读），并在确需刷新竞赛基线时再运行
-会产生模型费用的 Stage 0/真实评测；不得以降低双审核、来源或 readiness 门槛代替该验收。
+- M3 真实闭环验收已于 2026-08-20 通过，证据见 `reports/m3-live-acceptance.json`：管理员创建
+  `m3_live_acceptance`，真实 Markdown 导入并批准 10 个知识点、10 道诊断题和 9 条前置关系；
+  Candidate 索引使用 `qwen3.7-text-embedding`（1024 维）完成真实向量冒烟，readiness 无阻断并发布。
+- 学习者完成 10 题诊断（6 道选择题、4 道简答题，理论/实操各 5 道），生成画像
+  `profile_3649c629bcd1` 与路径 `path_0c5122ca5a2d`。任务 `task_ecfe44716ea7` 使用
+  `qwen-plus` 生成，并由独立的 `qwen-max` / `qwen-plus` 双通道审核；经 1 次局部修订后，
+  `lecture / practice_guide / graded_quiz` 三类资源全部通过，全部知识来源属于该测试领域。
+- 验收末尾将测试领域停用；新任务被 ready 门禁阻止，已完成任务仍为 `completed`，3 个历史资源
+  保持可读。运行中发现并修复了导入五维权重/单选答案、诊断模型响应兼容、实训修订证据回填和
+  非问号简答题指令误判；未降低双审核、来源、质量阈值或 readiness 门槛。
+- 最终运行态复核：迁移 `20260820_0022 (head)`；后端、前端、MySQL、ChromaDB、Redis 均健康；
+  `evaluation_overrides_enabled=false`，双审核模型保持独立。Stage 0/50 案例真实评测仅在需要刷新
+  竞赛性能基线时另行运行，不作为已通过的 M3 管理闭环验收替代项。

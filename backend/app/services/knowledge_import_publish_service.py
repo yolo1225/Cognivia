@@ -128,21 +128,36 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
         elif candidate.candidate_type == "diagnostic_question":
             item = knowledge_map.get(payload.get("knowledge_candidate_id"))
             if item:
+                question_type = payload.get("question_type", "short_answer")
+                options = payload.get("options") or []
+                if question_type == "single_choice":
+                    raw_answer = payload["answer"]
+                    correct_option = (
+                        raw_answer if isinstance(raw_answer, int) else options.index(raw_answer)
+                    )
+                    answer_key = {
+                        "correct_option": correct_option,
+                        "explanation": payload.get("explanation", ""),
+                        "source_locator": f"knowledge:{item.public_id}#chunk=0",
+                        "source_ref_ids": [item.public_id],
+                    }
+                else:
+                    answer_key = {
+                        "answer": payload["answer"],
+                        "rubric": payload.get("rubric") or [],
+                        "explanation": payload.get("explanation", ""),
+                        "source_locator": f"knowledge:{item.public_id}#chunk=0",
+                        "source_ref_ids": [item.public_id],
+                    }
                 db.add(
                     DiagnosticQuestion(
                         public_id=f"dq_{uuid4().hex[:12]}",
                         domain_code=document.domain_code,
                         knowledge_item_id=item.id,
-                        question_type=payload.get("question_type", "short_answer"),
+                        question_type=question_type,
                         stem=payload["stem"],
-                        options_json=payload.get("options") or [],
-                        answer_key_json={
-                            "answer": payload["answer"],
-                            "rubric": payload.get("rubric") or [],
-                            "explanation": payload.get("explanation", ""),
-                            "source_locator": f"knowledge:{item.public_id}#chunk=0",
-                            "source_ref_ids": [item.public_id],
-                        },
+                        options_json=options,
+                        answer_key_json=answer_key,
                         difficulty=int(payload.get("difficulty", 2)),
                     )
                 )

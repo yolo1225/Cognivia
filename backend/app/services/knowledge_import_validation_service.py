@@ -47,7 +47,12 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
                 abs(
                     sum(
                         float(weights.get(key, 0))
-                        for key in ("theory", "practice", "problem_solving", "breadth")
+                        for key in (
+                            "theory",
+                            "practice",
+                            "problem_solving",
+                            "knowledge_breadth",
+                        )
                     )
                     - 1
                 )
@@ -78,10 +83,12 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
                 or not payload.get("explanation")
             ):
                 errors.append("题干、答案和解析不能为空")
-            if payload.get("question_type") == "choice" and payload.get("answer") not in (
-                payload.get("options") or []
-            ):
-                errors.append("选择题答案不在选项中")
+            if payload.get("question_type") in {"choice", "single_choice"}:
+                options = payload.get("options") or []
+                answer = payload.get("answer")
+                answer_is_index = isinstance(answer, int) and 0 <= answer < len(options)
+                if not answer_is_index and answer not in options:
+                    errors.append("选择题答案不在选项中")
         elif item.candidate_type == "knowledge_relation":
             source, target = payload.get("source_candidate_id"), payload.get("target_candidate_id")
             if source == target:

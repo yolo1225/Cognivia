@@ -449,6 +449,31 @@ def test_quiz_prompt_excludes_questions_but_keeps_independent_factual_premises()
     assert "questions[0].explanation" in paths
 
 
+def test_quiz_prompt_excludes_short_answer_directive_without_question_mark() -> None:
+    request = _input()
+    quiz = resource_examples()[2]
+    content = quiz.structured_content.model_copy(deep=True)
+    content.questions[0].prompt = "请概括材料直接说明的关键要点。"
+    quiz = quiz.model_copy(update={"structured_content": content})
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.GRADED_QUIZ],
+            "resource_knowledge_targets": {
+                ResourceType.GRADED_QUIZ: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    quiz_request = request.model_copy(
+        update={"resources": [quiz], "requirements": requirements}
+    )
+
+    paths = {claim.field_path for claim in extract_atomic_claims(quiz, quiz_request)}
+
+    assert "questions[0].prompt" not in paths
+    assert "questions[0].correct_answer" in paths
+    assert "questions[0].explanation" in paths
+
+
 def test_quiz_prompt_does_not_audit_the_unknown_answer_slot_twice() -> None:
     request = _input()
     quiz = resource_examples()[2]

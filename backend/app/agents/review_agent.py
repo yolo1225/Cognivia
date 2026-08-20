@@ -248,6 +248,9 @@ _QUIZ_INDEPENDENT_PREMISE_RE = re.compile(
 _QUIZ_CONTEXT_ONLY_RE = re.compile(
     r"^(?:当|若|如果|假如|在|面向|针对|对于).{1,180}(?:时|情况下|场景中|过程中|期间)$"
 )
+_QUIZ_DIRECTIVE_RE = re.compile(
+    r"^请(?:用.{0,30})?(?:概括|说明|列举|回答|选择|判断|完成|写出|指出).{1,220}$"
+)
 _EMBEDDED_TECHNICAL_ASSERTION_RE = re.compile(
     r"(?:将会|将在|会自动|固定|默认|必须|只能|不能|支持|不支持|兼容|不兼容|"
     r"返回|导致|触发|等于|意味着|保证|始终|无需|要求安装|需要安装|"
@@ -721,6 +724,10 @@ def _claim_exclusion_category(field_group: str, text: str) -> str | None:
         ):
             return "pedagogical_action"
     if field_group == "quiz_prompt":
+        # Imperative short-answer prompts ask the learner to supply the fact;
+        # the answer and explanation below are the auditable assertions.
+        if _QUIZ_DIRECTIVE_RE.fullmatch(sentence):
+            return "pedagogical_question"
         if re.search(r"[？?]", normalized):
             # The answer and explanation are reviewed separately, so the
             # interrogative itself is not an additional factual claim.  Keep

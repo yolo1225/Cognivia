@@ -624,6 +624,7 @@ class ContentGenerationAgent:
                         changed_paths,
                         sorted(set(after_fingerprints) - set(changed_paths)),
                     )
+                    response = _ground_practice_revision_fallbacks(response, validated)
                 whitelist = {source.source_ref_id for source in allowed_sources}
                 for attempt in range(MAX_SOURCE_REPAIR_ATTEMPTS + 1):
                     if response.structured_content.resource_type != resource_type.value:
@@ -1498,6 +1499,51 @@ def _revision_fallback_text(path: str) -> str:
     if path.startswith("questions["):
         return "请根据引用材料完成该题并核对答案。"
     return "阅读引用材料并完成对应学习记录。"
+
+
+def _ground_practice_revision_fallbacks(
+    response: GeneratedContentResponse,
+    request: GenerateResourceInput,
+) -> GeneratedContentResponse:
+    """Replace claim-free practice placeholders with literal cited evidence.
+
+    A rejected operational assertion may leave an instruction containing only the
+    non-factual safety placeholder.  Such a guide has no auditable claim and used to
+    abort the following review node.  Copying the already-whitelisted evidence body
+    keeps the revision conservative while ensuring the dual reviewers still receive
+    a factual statement to verify.
+    """
+    content = response.structured_content
+    if not isinstance(content, PracticeGuideContent):
+        return response
+    placeholder = _revision_fallback_text("steps[0].instruction")
+    chunks_by_source = {
+        chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks
+    }
+    changed = False
+    steps = []
+    for step in content.steps:
+        instruction = step.instruction
+        if instruction.strip() == placeholder:
+            chunk = next(
+                (
+                    chunks_by_source[source_id]
+                    for source_id in step.source_ref_ids
+                    if source_id in chunks_by_source
+                ),
+                None,
+            )
+            if chunk is not None:
+                grounded = _candidate_evidence_body(chunk.content).strip()
+                if grounded:
+                    instruction = grounded[:6000]
+                    changed = True
+        steps.append(step.model_copy(update={"instruction": instruction}))
+    if not changed:
+        return response
+    return response.model_copy(
+        update={"structured_content": content.model_copy(update={"steps": steps})}
+    )
 
 
 def _audited_quiz_slot_violations(

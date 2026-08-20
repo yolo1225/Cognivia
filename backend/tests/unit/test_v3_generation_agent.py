@@ -30,6 +30,7 @@ from app.agents.generation_agent import (
     _quiz_blueprint,
     _quiz_blueprint_violations,
     _fixture_response,
+    _ground_practice_revision_fallbacks,
     _apply_content_policy_fallback,
     _apply_practice_evidence_fallback,
     _content_policy_violations,
@@ -810,6 +811,23 @@ def test_practice_revision_cannot_replace_rejected_instruction_with_equivalent_c
     assert revised.structured_content.steps[0].instruction == (
         "阅读引用材料，整理其中明确描述的处理流程。"
     )
+
+
+def test_practice_revision_claim_free_instruction_is_grounded_in_cited_evidence() -> None:
+    request = _input()
+    source = request.retrieved_chunks[0].source
+    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
+    content = response.structured_content.model_copy(deep=True)
+    assert isinstance(content, PracticeGuideContent)
+    content.steps[0].instruction = "阅读引用材料，整理其中明确描述的处理流程。"
+
+    grounded = _ground_practice_revision_fallbacks(
+        response.model_copy(update={"structured_content": content}), request
+    )
+
+    assert isinstance(grounded.structured_content, PracticeGuideContent)
+    assert grounded.structured_content.steps[0].instruction != content.steps[0].instruction
+    assert request.retrieved_chunks[0].content in grounded.structured_content.steps[0].instruction
 
 
 @pytest.mark.parametrize(
