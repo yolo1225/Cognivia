@@ -163,6 +163,7 @@ import { completePathNode, verifyPathNode, type LearningPathNode } from '@/api/l
 import { useToast } from '@/composables/useToast'
 import { resourceQualityStatusLabel, resourceQualityStatusTone } from '@/utils/resourceQualityStatus'
 import { createGenerationTask } from '@/api/generation'
+import { validateDomain } from '@/api/domains'
 import RadarChart from '@/components/Charts/RadarChart.vue'
 import AppIcon from '@/components/Shared/AppIcon.vue'
 import PageHeader from '@/components/Shared/PageHeader.vue'
@@ -310,7 +311,12 @@ async function handleNextAction(action: LearningReport['next_actions'][number]) 
   if (!report.value?.profile_id || !learnerId.value) return
   creatingGeneration.value = true
   try {
-    const task = await createGenerationTask(report.value.profile_id, learnerId.value)
+    const readiness = await validateDomain(report.value.domain_code)
+    if (!readiness.generation_ready) {
+      errorMessage.value = `当前领域尚未满足生成条件：${readiness.runtime_reasons?.join('、') || 'Candidate RAG 未就绪'}`
+      return
+    }
+    const task = await createGenerationTask(report.value.domain_code, report.value.profile_id, learnerId.value)
     router.push({ path: '/resources', query: { learner_id: learnerId.value, task_id: task.task_id } })
   } catch {
     errorMessage.value = '创建学习包失败，请确认画像状态和生成环境后重试。'

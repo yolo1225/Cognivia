@@ -24,6 +24,7 @@ from app.models import (
     AgentRun,
     AnswerRecord,
     DiagnosticQuestion,
+    Domain,
     Feedback,
     GenerationTask,
     Learner,
@@ -210,6 +211,13 @@ def create_streaming_messages(
     resource = db.get(LearningResource, session.resource_id) if session.resource_id else None
     if resource is None:
         raise ValueError("tutoring session resource not found")
+    learner = db.get(Learner, session.learner_id)
+    source_task = db.get(GenerationTask, resource.generation_task_id)
+    if learner is None or source_task is None or source_task.domain_code != learner.target_domain:
+        raise ValueError("tutoring_domain_mismatch")
+    domain = db.scalar(select(Domain).where(Domain.domain_code == source_task.domain_code))
+    if domain is None or not domain.name.strip():
+        raise ValueError("tutoring_domain_not_found")
     learner_message = TutoringMessage(
         public_id=public_id("msg"),
         session_id=session.id,
@@ -283,6 +291,16 @@ def add_learner_message(
         raise ValueError("learner not found")
     if resource is None:
         raise ValueError("tutoring session resource not found")
+    source_task = db.get(GenerationTask, resource.generation_task_id)
+    if (
+        source_task is None
+        or source_task.domain_code != profile.domain_code
+        or source_task.domain_code != learner.target_domain
+    ):
+        raise ValueError("tutoring_domain_mismatch")
+    domain = db.scalar(select(Domain).where(Domain.domain_code == source_task.domain_code))
+    if domain is None or not domain.name.strip():
+        raise ValueError("tutoring_domain_not_found")
 
     learner_message = TutoringMessage(
         public_id=public_id("msg"),
@@ -397,7 +415,7 @@ def add_learner_message(
         payload={"node_name": "interpret_feedback", "turn_count": session.turn_count},
     )
     with collect_model_calls() as collector:
-        output_model = TutoringAgent().execute(request)
+        output_model = TutoringAgent(domain_display_name=domain.name).execute(request)
     model_calls = collector.snapshot()
     output = output_model.model_dump(mode="json")
     action = output_model.recommended_action.value
@@ -485,13 +503,10 @@ def add_learner_message(
         for item in safe_evidence
     )
     # Resource correctness is independently reviewable and never changes mastery.
-    if (
-        action == "review"
-        or (
-            has_confirmed_assessment
-            and output_model.needs_generation
-            and action in {"challenge", "explain", "regenerate"}
-        )
+    if action == "review" or (
+        has_confirmed_assessment
+        and output_model.needs_generation
+        and action in {"challenge", "explain", "regenerate"}
     ):
         task = create_feedback_task(
             db,
@@ -556,20 +571,12 @@ def _profile_evidence_gate(
         for question in [db.get(DiagnosticQuestion, item.question_id)]
     )
     session_feedback = list(
-        db.scalars(
-            select(Feedback).where(Feedback.tutoring_session_id == session.id)
-        )
+        db.scalars(select(Feedback).where(Feedback.tutoring_session_id == session.id))
     )
-    resource_error_reported = any(
-        item.feedback_intent == "incorrect" for item in session_feedback
-    )
-    remedial_explanations = sum(
-        item.recommended_action == "explain" for item in session_feedback
-    )
+    resource_error_reported = any(item.feedback_intent == "incorrect" for item in session_feedback)
+    remedial_explanations = sum(item.recommended_action == "explain" for item in session_feedback)
     downward_gate = (
-        len(failed_scores) >= 2
-        and remedial_explanations >= 1
-        and not resource_error_reported
+        len(failed_scores) >= 2 and remedial_explanations >= 1 and not resource_error_reported
     )
     return three_same_knowledge or two_independent_with_application or downward_gate
 
@@ -582,9 +589,7 @@ def submit_assessment_answer(
     assessment_id: str,
     answer: Any,
 ) -> tuple[AnswerRecord, Feedback, GenerationTask | None, dict[str, Any]]:
-    message, assessment = _assessment_message(
-        db, session=session, assessment_id=assessment_id
-    )
+    message, assessment = _assessment_message(db, session=session, assessment_id=assessment_id)
     question = db.scalar(
         select(DiagnosticQuestion).where(
             DiagnosticQuestion.public_id == assessment.get("question_id")
@@ -601,7 +606,10 @@ def submit_assessment_answer(
     if (
         source_task is None
         or question.domain_code != source_task.domain_code
-        or question.knowledge_item_id != int(message.metadata_json["assessment"].get("knowledge_item_id", question.knowledge_item_id))
+        or question.knowledge_item_id
+        != int(
+            message.metadata_json["assessment"].get("knowledge_item_id", question.knowledge_item_id)
+        )
     ):
         raise ValueError("tutoring_assessment_domain_mismatch")
 
@@ -615,16 +623,19 @@ def submit_assessment_answer(
         ),
         None,
     )
-    task = db.scalar(
-        select(GenerationTask).where(GenerationTask.source_feedback_id == feedback.id)
-    )
+    task = db.scalar(select(GenerationTask).where(GenerationTask.source_feedback_id == feedback.id))
     if existing is not None:
         summary = existing.answer_summary_json or {}
-        return existing, feedback, task, {
-            "confirmed": bool(summary.get("confirmed")),
-            "profile_update_required": bool(feedback.profile_update_required),
-            "decision_reason": feedback.decision_reason,
-        }
+        return (
+            existing,
+            feedback,
+            task,
+            {
+                "confirmed": bool(summary.get("confirmed")),
+                "profile_update_required": bool(feedback.profile_update_required),
+                "decision_reason": feedback.decision_reason,
+            },
+        )
 
     try:
         selected = int(answer)
@@ -687,9 +698,7 @@ def submit_assessment_answer(
 
     session_records = [
         item
-        for item in db.scalars(
-            select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)
-        )
+        for item in db.scalars(select(AnswerRecord).where(AnswerRecord.learner_id == learner.id))
         if (item.answer_summary_json or {}).get("tutoring_session_id") == session.id
         and (item.answer_summary_json or {}).get("confirmed") is True
     ]
@@ -704,11 +713,16 @@ def submit_assessment_answer(
             feedback=feedback,
             resource_types=[resource.resource_type],
         )
-    return record, feedback, task, {
-        "confirmed": True,
-        "profile_update_required": False,
-        "decision_reason": feedback.decision_reason,
-    }
+    return (
+        record,
+        feedback,
+        task,
+        {
+            "confirmed": True,
+            "profile_update_required": False,
+            "decision_reason": feedback.decision_reason,
+        },
+    )
 
 
 def serialize_session(db: Session, session: TutoringSession) -> dict:

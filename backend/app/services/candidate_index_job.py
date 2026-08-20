@@ -52,16 +52,17 @@ def serialize_job(job: IndexBuildJob) -> dict[str, Any]:
     }
 
 
-def latest_job(db: Session) -> IndexBuildJob | None:
-    return db.scalar(select(IndexBuildJob).order_by(IndexBuildJob.id.desc()))
+def latest_job(db: Session, domain_code: str | None = None) -> IndexBuildJob | None:
+    statement = select(IndexBuildJob).order_by(IndexBuildJob.id.desc())
+    if domain_code:
+        statement = statement.where(IndexBuildJob.domain_code == domain_code)
+    return db.scalar(statement)
 
 
 def try_start(db: Session, domain_code: str) -> IndexBuildJob | None:
     """Create a ``running`` job, or return None if one is already running."""
     with _start_lock:
-        running = db.scalar(
-            select(IndexBuildJob).where(IndexBuildJob.status == STATUS_RUNNING)
-        )
+        running = db.scalar(select(IndexBuildJob).where(IndexBuildJob.status == STATUS_RUNNING))
         if running is not None:
             return None
         job = IndexBuildJob(
@@ -82,9 +83,7 @@ def mark_interrupted_on_startup() -> None:
     try:
         with SessionLocal() as db:
             stale = list(
-                db.scalars(
-                    select(IndexBuildJob).where(IndexBuildJob.status == STATUS_RUNNING)
-                )
+                db.scalars(select(IndexBuildJob).where(IndexBuildJob.status == STATUS_RUNNING))
             )
             for job in stale:
                 job.status = STATUS_INTERRUPTED
@@ -146,8 +145,8 @@ def run_rebuild(job_id: int, domain_code: str) -> None:
         )
 
 
-def status(db: Session) -> dict[str, Any]:
-    job = latest_job(db)
+def status(db: Session, domain_code: str | None = None) -> dict[str, Any]:
+    job = latest_job(db, domain_code)
     if job is None:
         return {
             "job_id": None,

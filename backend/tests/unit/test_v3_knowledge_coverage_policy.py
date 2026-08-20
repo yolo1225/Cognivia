@@ -16,6 +16,7 @@ def test_practice_resource_without_operation_evidence_fails_preflight() -> None:
             targets,
             [],
             [ResourceType.LECTURE, ResourceType.PRACTICE_GUIDE, ResourceType.GRADED_QUIZ],
+            "ai_app_dev",
         )
 
 
@@ -40,13 +41,12 @@ def test_only_structured_operation_evidence_is_allocated_to_practice() -> None:
         ["concept", "operation"],
         [concept, operation],
         [ResourceType.LECTURE, ResourceType.PRACTICE_GUIDE, ResourceType.GRADED_QUIZ],
+        "ai_app_dev",
     )
 
     assert allocated[ResourceType.LECTURE] == ["concept"]
     assert allocated[ResourceType.PRACTICE_GUIDE] == ["operation"]
-    assert primary_owner_by_knowledge(
-        ["concept", "operation"], allocated
-    ) == {
+    assert primary_owner_by_knowledge(["concept", "operation"], allocated) == {
         "concept": ResourceType.LECTURE,
         "operation": ResourceType.PRACTICE_GUIDE,
     }

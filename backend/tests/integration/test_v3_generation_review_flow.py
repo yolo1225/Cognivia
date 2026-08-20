@@ -35,6 +35,7 @@ from app.agents.contracts import (
 from app.agents.state import AgentGraphState
 from app.agents.generation_agent import ContentGenerationAgent
 from app.agents.profile_analysis_agent import ProfileAnalysisAgent
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.agents.retrieval_agent import KnowledgeRetrievalAgent
 from app.agents.review_agent import ReviewValidationAgent
 from app.agents.orchestrator_agent import OrchestratorAgent
@@ -165,7 +166,7 @@ def test_v3_profile_retrieval_generation_review_flow(case_id: str) -> None:
             state, knowledge_assessments=original_input.knowledge_assessments
         )
         assert profile_input == original_input
-    profile_output = ProfileAnalysisAgent().execute(profile_input)
+    profile_output = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2).execute(profile_input)
     assert profile_output.needs_generation
     state.update(analyze_profile_output_to_patch(profile_output))
 
@@ -239,7 +240,7 @@ def test_v3_profile_retrieval_generation_review_flow(case_id: str) -> None:
 def test_v3_full_chain_requires_revision_when_high_scores_lack_field_evidence() -> None:
     original_input = _analysis_input("dev-initial-01")
     state = _initial_state(original_input)
-    profile_output = ProfileAnalysisAgent().execute(
+    profile_output = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2).execute(
         build_analyze_profile_input(
             state, knowledge_assessments=original_input.knowledge_assessments
         )

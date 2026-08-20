@@ -73,10 +73,10 @@ export interface DiagnosticAnswerResult {
   scoring_uncertain: boolean
 }
 
-export function createDiagnosticSession(learnerId = 'learner_001') {
+export function createDiagnosticSession(domainCode: string, learnerId = 'learner_001') {
   return postData<DiagnosticSession>('/diagnostics/sessions', {
     learner_id: learnerId,
-    domain_code: 'ai_app_dev',
+    domain_code: domainCode,
     question_count: 10,
   })
 }
@@ -84,11 +84,12 @@ export function createDiagnosticSession(learnerId = 'learner_001') {
 export function submitDiagnosticSession(
   sessionId: string,
   answers: Array<{ question_id: string; answer: string | number }>,
+  domainCode: string,
   learnerId = 'learner_001',
 ) {
   return postData<DiagnosticResult>(`/diagnostics/sessions/${sessionId}/submit`, {
     learner_id: learnerId,
-    domain_code: 'ai_app_dev',
+    domain_code: domainCode,
     answers,
   })
 }

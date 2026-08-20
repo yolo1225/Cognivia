@@ -29,6 +29,7 @@ from app.models import (
     LearningPath,
 )
 from app.services.learner_service import get_or_create_demo_learner
+from app.services.domain_runtime_service import DomainRuntime, require_ready_domain
 from app.services.diagnostic_scoring_service import score_short_answer_batch
 from app.services.llm_service import ModelGatewayError
 from app.services.profile_service import (
@@ -59,29 +60,21 @@ def _question_payload(question: DiagnosticQuestion) -> dict[str, Any]:
     }
 
 
-_DIRECTION_KEYWORDS = {
-    "llm_application": {"llm", "model", "api", "workflow", "overview"},
-    "prompt_engineering": {"prompt", "context", "structured", "json"},
-    "rag_knowledge_base": {"rag", "retrieval", "embedding", "vector", "knowledge"},
-    "agent_orchestration": {"agent", "tool", "orchestration", "workflow", "planning"},
-}
-_PRACTICE_KEYWORDS = {"rag", "agent", "工程", "后端", "前端", "系统", "向量", "模型调用", "实操", "应用"}
+def _is_practice_knowledge(knowledge: KnowledgeItem) -> bool:
+    return "operation" in (knowledge.evidence_capabilities_json or [])
 
 
-def _is_practice_question(question: DiagnosticQuestion, knowledge: KnowledgeItem) -> bool:
-    text = " ".join(
-        [knowledge.category, knowledge.name, question.stem, *[str(tag) for tag in (knowledge.tags_json or [])]]
-    ).lower()
-    return any(keyword.lower() in text for keyword in _PRACTICE_KEYWORDS)
-
-
-def _direction_score(knowledge: KnowledgeItem, direction_tags: list[str]) -> int:
-    text = " ".join([knowledge.category, knowledge.name, *[str(tag) for tag in (knowledge.tags_json or [])]]).lower()
+def _direction_score(
+    knowledge: KnowledgeItem,
+    direction_tags: list[str],
+    runtime: DomainRuntime | None,
+) -> int:
+    if runtime is None:
+        return 0
+    configured = {item.value: set(item.match_tags) for item in runtime.learning_directions}
+    knowledge_tags = {str(tag).strip().lower() for tag in (knowledge.tags_json or [])}
     return sum(
-        1
-        for direction in direction_tags
-        for keyword in _DIRECTION_KEYWORDS.get(direction, set())
-        if keyword in text
+        len(knowledge_tags & configured.get(direction, set())) for direction in direction_tags
     )
 
 
@@ -121,6 +114,7 @@ def _sample_diagnostic_questions(
     knowledge_rows: dict[int, KnowledgeItem],
     direction_tags: list[str],
     question_count: int,
+    runtime: DomainRuntime | None = None,
 ) -> list[DiagnosticQuestion]:
     if int(question_count) != 10:
         raise ValueError("initial_diagnostic_requires_ten_questions")
@@ -135,8 +129,8 @@ def _sample_diagnostic_questions(
         knowledge = knowledge_rows.get(question.knowledge_item_id)
         if knowledge is None or question.question_type not in {"single_choice", "short_answer"}:
             continue
-        buckets[(question.question_type, _is_practice_question(question, knowledge))].append(
-            (question, knowledge, _direction_score(knowledge, direction_tags))
+        buckets[(question.question_type, _is_practice_knowledge(knowledge))].append(
+            (question, knowledge, _direction_score(knowledge, direction_tags, runtime))
         )
 
     targets = {
@@ -152,12 +146,15 @@ def _sample_diagnostic_questions(
     return selected
 
 
-def _initial_context_snapshot(learner, *, confirmed_at: str | None = None) -> dict[str, Any]:
+def _initial_context_snapshot(
+    learner, *, domain_code: str | None = None, confirmed_at: str | None = None
+) -> dict[str, Any]:
+    domain_code = domain_code or learner.target_domain
     direction_tags = list(learner.direction_tags_json or [])
     if not learner.education_level or not learner.major or not direction_tags:
         raise ValueError("initial_context_required")
-    if learner.target_domain != "ai_app_dev":
-        raise ValueError("initial_context_domain_unsupported")
+    if learner.target_domain != domain_code:
+        raise ValueError("learner_domain_mismatch")
     return {
         "education_level": learner.education_level,
         "major": learner.major,
@@ -196,17 +193,19 @@ def _assert_unsubmitted_session(db: Session, session_id: str) -> None:
     if submitted:
         raise ValueError("diagnostic_session_already_submitted")
 
+
 def create_diagnostic_session(
     db: Session,
     *,
     learner_id: str = "learner_001",
-    domain_code: str = "ai_app_dev",
+    domain_code: str,
     question_count: int = 10,
 ) -> dict[str, Any]:
     learner = get_or_create_demo_learner(db, learner_id)
-    if domain_code != "ai_app_dev":
-        raise ValueError("initial_context_domain_unsupported")
-    context_snapshot = _initial_context_snapshot(learner)
+    context_snapshot = _initial_context_snapshot(learner, domain_code=domain_code)
+    runtime = require_ready_domain(db, domain_code)
+    if not runtime.diagnostic_ready:
+        raise ValueError(f"DOMAIN_DIAGNOSTIC_NOT_READY:{','.join(runtime.reasons)}")
     profile = default_profile_for_learner(db, learner)
     if is_initial_profile_ready(profile):
         raise ValueError("initial_profile_already_ready")
@@ -221,15 +220,24 @@ def create_diagnostic_session(
         item.id: item
         for item in db.scalars(
             select(KnowledgeItem).where(
-                KnowledgeItem.id.in_({question.knowledge_item_id for question in available_questions})
+                KnowledgeItem.id.in_(
+                    {question.knowledge_item_id for question in available_questions}
+                ),
+                KnowledgeItem.domain_code == domain_code,
             )
         )
     }
     questions = _sample_diagnostic_questions(
-        available_questions, knowledge_rows, context_snapshot["direction_tags"], question_count
+        available_questions,
+        knowledge_rows,
+        context_snapshot["direction_tags"],
+        question_count,
+        runtime,
     )
     practice_count = sum(
-        1 for question in questions if _is_practice_question(question, knowledge_rows[question.knowledge_item_id])
+        1
+        for question in questions
+        if _is_practice_knowledge(knowledge_rows[question.knowledge_item_id])
     )
     session_id = public_id("diag")
     selection_summary = {
@@ -273,16 +281,22 @@ def submit_diagnostic_session(
     *,
     session_id: str,
     learner_id: str = "learner_001",
-    domain_code: str = "ai_app_dev",
+    domain_code: str,
     answers: list[dict[str, Any]],
 ) -> dict[str, Any]:
     learner = get_or_create_demo_learner(db, learner_id)
+    runtime = require_ready_domain(db, domain_code)
+    if not runtime.diagnostic_ready or runtime.profile_config is None:
+        raise ValueError(f"DOMAIN_DIAGNOSTIC_NOT_READY:{','.join(runtime.reasons)}")
     session_message = _diagnostic_session_message(db, session_id)
     if session_message is None:
         raise ValueError("diagnostic_session_not_found")
     _assert_unsubmitted_session(db, session_id)
     session_payload = session_message.payload_summary_json or {}
-    if session_payload.get("learner_id") != learner.public_id or session_payload.get("domain_code") != domain_code:
+    if (
+        session_payload.get("learner_id") != learner.public_id
+        or session_payload.get("domain_code") != domain_code
+    ):
         raise ValueError("diagnostic_session_access_denied")
     context_snapshot = session_payload.get("context_snapshot")
     selected_question_ids = session_payload.get("question_ids")
@@ -346,7 +360,8 @@ def submit_diagnostic_session(
             item.id: item
             for item in db.scalars(
                 select(KnowledgeItem).where(
-                    KnowledgeItem.id.in_({question.knowledge_item_id for question in questions})
+                    KnowledgeItem.id.in_({question.knowledge_item_id for question in questions}),
+                    KnowledgeItem.domain_code == domain_code,
                 )
             )
         }
@@ -385,7 +400,9 @@ def submit_diagnostic_session(
                     answer_text=answer_text,
                     score=0,
                     is_correct=False,
-                    scoring_status="pending" if question.question_type == "short_answer" else "scored",
+                    scoring_status="pending"
+                    if question.question_type == "short_answer"
+                    else "scored",
                     scoring_method=(
                         "ai_rubric" if question.question_type == "short_answer" else "deterministic"
                     ),
@@ -398,7 +415,9 @@ def submit_diagnostic_session(
             records[question.id] = record
 
             if question.question_type == "single_choice":
-                score, is_correct = score_single_choice_answer(question, answer) if attempted else (0.0, False)
+                score, is_correct = (
+                    score_single_choice_answer(question, answer) if attempted else (0.0, False)
+                )
                 record.score = score
                 record.is_correct = is_correct
                 record.scoring_status = "scored"
@@ -461,7 +480,9 @@ def submit_diagnostic_session(
             attempted = answer is not None and str(answer).strip() != ""
             record = records[question.id]
             score, is_correct = float(record.score), bool(record.is_correct)
-            evidence_id = f"diag_{sha256(f'{session_id}:{question.public_id}'.encode()).hexdigest()[:32]}"
+            evidence_id = (
+                f"diag_{sha256(f'{session_id}:{question.public_id}'.encode()).hexdigest()[:32]}"
+            )
             assessment_id = f"assess_{sha256(evidence_id.encode()).hexdigest()[:32]}"
             evidence_refs.append(
                 EvidenceRef(
@@ -530,7 +551,7 @@ def submit_diagnostic_session(
             resource_types=["lecture", "practice_guide", "graded_quiz"],
             learning_goal="根据诊断结果形成学习画像和个性化学习路径",
         )
-        analysis = ProfileAnalysisAgent().execute(
+        analysis = ProfileAnalysisAgent(runtime.profile_config).execute(
             AnalyzeProfileInput(
                 task_id=session_id,
                 context=context,

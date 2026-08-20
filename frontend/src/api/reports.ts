@@ -6,6 +6,7 @@ export interface LearningReport {
   profile_ready?: boolean
   profile_source?: string | null
   learner_id: string
+  domain_code: string
   profile_id?: string | null
   profile_type?: string
   education_level?: string

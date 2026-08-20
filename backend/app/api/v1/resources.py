@@ -6,7 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased
 
 from app.core.db import get_db
-from app.core.security import Principal, get_current_user, principal_learner, require_resource, require_task
+from app.core.security import (
+    Principal,
+    get_current_user,
+    principal_learner,
+    require_resource,
+    require_task,
+)
 from app.models import (
     GenerationTask,
     Learner,
@@ -60,7 +66,7 @@ def list_resources(
             package_task = current_package(
                 db,
                 learner_id=selected_learner.id,
-                domain_code=domain_code or "ai_app_dev",
+                domain_code=domain_code or selected_learner.target_domain,
             )
     creation_task = aliased(GenerationTask)
     if package_task is not None:
@@ -93,13 +99,17 @@ def list_resources(
         statement = statement.where(creation_task.domain_code == domain_code)
     rows = list(db.execute(statement))
     resource_ids = [resource.id for resource, _ in rows]
-    reports = list(
-        db.scalars(
-            select(ReviewReport)
-            .where(ReviewReport.resource_id.in_(resource_ids))
-            .order_by(ReviewReport.id.desc())
+    reports = (
+        list(
+            db.scalars(
+                select(ReviewReport)
+                .where(ReviewReport.resource_id.in_(resource_ids))
+                .order_by(ReviewReport.id.desc())
+            )
         )
-    ) if resource_ids else []
+        if resource_ids
+        else []
+    )
     report_by_resource = {}
     for report in reports:
         report_by_resource.setdefault(report.resource_id, report)
@@ -144,9 +154,7 @@ def submit_resource_feedback(
     principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
     payload = payload or {}
-    allowed_types = {
-        "too_hard", "too_easy", "confusing", "incorrect", "has_error", "helpful"
-    }
+    allowed_types = {"too_hard", "too_easy", "confusing", "incorrect", "has_error", "helpful"}
     feedback_type = str(payload.get("feedback_type", "confusing"))
     if feedback_type not in allowed_types:
         raise HTTPException(status_code=422, detail="unsupported quick feedback type")
@@ -156,9 +164,7 @@ def submit_resource_feedback(
         task_owner = db.get(GenerationTask, resource.generation_task_id)
         learner = db.get(Learner, task_owner.learner_id)
     else:
-        learner = get_or_create_demo_learner(
-            db, principal_learner(principal, requested_learner)
-        )
+        learner = get_or_create_demo_learner(db, principal_learner(principal, requested_learner))
     if resource is None:
         raise HTTPException(status_code=404, detail=f"Resource not found: {resource_id}")
     if feedback_type in {"incorrect", "has_error"}:
@@ -193,7 +199,11 @@ def submit_resource_feedback(
 
 
 @router.get("/{resource_id}/versions", response_model=ApiResponse)
-def list_resource_versions(resource_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+def list_resource_versions(
+    resource_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
     resource = require_resource(db, principal, resource_id)
     if resource is None:
         raise HTTPException(status_code=404, detail=f"Resource not found: {resource_id}")

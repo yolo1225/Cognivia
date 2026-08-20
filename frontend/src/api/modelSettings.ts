@@ -48,8 +48,9 @@ export interface ModelTestResult {
   code?: string
 }
 
-export const getModelSettings = () => getData<ModelSettingsResponse>('/admin/model-settings')
-export const updateModelSettings = (body: ModelSettingsBody) =>
-  putData<ModelSettingsResponse>('/admin/model-settings', body)
+export const getModelSettings = (domainCode: string) =>
+  getData<ModelSettingsResponse>(`/admin/model-settings?domain_code=${encodeURIComponent(domainCode)}`)
+export const updateModelSettings = (domainCode: string, body: ModelSettingsBody) =>
+  putData<ModelSettingsResponse>(`/admin/model-settings?domain_code=${encodeURIComponent(domainCode)}`, body)
 export const testModelSettings = (body: ModelSettingsBody) =>
   postData<ModelTestResult>('/admin/model-settings/test', body)

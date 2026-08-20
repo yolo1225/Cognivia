@@ -107,9 +107,7 @@ def _has_strong_assessment(request: AnalyzeProfileInput) -> bool:
     )
 
 
-def _affected_scope_errors(
-    request: AnalyzeProfileInput, output: AnalyzeProfileOutput
-) -> list[str]:
+def _affected_scope_errors(request: AnalyzeProfileInput, output: AnalyzeProfileOutput) -> list[str]:
     """Check only scope facts provable from the frozen input and configuration."""
     scope = output.affected_scope
     catalog = AI_APP_DEV_PROFILE_V2.knowledge_catalog
@@ -147,8 +145,7 @@ def _case_categories(
     ):
         categories.add("evidence_policy")
     if any(
-        actual[field] != expected[field]
-        for field in ("profile_type", "weak_knowledge_ids")
+        actual[field] != expected[field] for field in ("profile_type", "weak_knowledge_ids")
     ) or output.profile.profile_version != (
         request.current_profile.profile_version + int(output.profile_update_required)
     ):
@@ -197,7 +194,7 @@ def _report_passes(report: dict[str, Any]) -> bool:
 
 def evaluate_profile_v3(analyzer: Analyzer | None = None) -> dict[str, Any]:
     validate_acceptance_manifest()
-    analyzer = analyzer or analyze_profile
+    analyzer = analyzer or (lambda request: analyze_profile(request, config=AI_APP_DEV_PROFILE_V2))
     cases = rendered_case_records()
     failures = {"development": [], "acceptance": []}
     attribution = {category: [] for category in FAILURE_CATEGORIES}
@@ -279,12 +276,8 @@ def evaluate_profile_v3(analyzer: Analyzer | None = None) -> dict[str, Any]:
             "weak_knowledge_identification_accuracy": _metric(
                 len(cases), weak_knowledge_passed_ids, all_case_ids
             ),
-            "retrieval_strategy_accuracy": _metric(
-                len(cases), strategy_passed_ids, all_case_ids
-            ),
-            "target_difficulty_accuracy": _metric(
-                len(cases), difficulty_passed_ids, all_case_ids
-            ),
+            "retrieval_strategy_accuracy": _metric(len(cases), strategy_passed_ids, all_case_ids),
+            "target_difficulty_accuracy": _metric(len(cases), difficulty_passed_ids, all_case_ids),
             "priority_prerequisite_completeness": _metric(
                 len(cases), priority_passed_ids, all_case_ids
             ),

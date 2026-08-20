@@ -110,7 +110,7 @@ export interface KnowledgeRelation {
   relation_type: string
 }
 
-export function listKnowledgeItems(domainCode = 'ai_app_dev', limit = 100) {
+export function listKnowledgeItems(domainCode: string, limit = 100) {
   const params = new URLSearchParams({
     domain_code: domainCode,
     limit: String(limit),
@@ -118,11 +118,11 @@ export function listKnowledgeItems(domainCode = 'ai_app_dev', limit = 100) {
   return getData<KnowledgeItemsResponse>(`/knowledge/items?${params.toString()}`)
 }
 
-export function listKnowledgeRelations(domainCode = 'ai_app_dev') {
+export function listKnowledgeRelations(domainCode: string) {
   return getData<KnowledgeRelation[]>(`/knowledge/relations?domain_code=${encodeURIComponent(domainCode)}`)
 }
 
-export function searchKnowledge(query: string, domainCode = 'ai_app_dev', nResults = 5) {
+export function searchKnowledge(query: string, domainCode: string, nResults = 5) {
   const params = new URLSearchParams({
     query,
     domain_code: domainCode,
@@ -139,10 +139,10 @@ export function updateKnowledgeItem(knowledgeId: string, payload: KnowledgeItemU
   return patchData<KnowledgeItemCreateResponse>(`/knowledge/items/${knowledgeId}`, payload)
 }
 
-export function rebuildKnowledgeIndex(domainCode = 'ai_app_dev') {
+export function rebuildKnowledgeIndex(domainCode: string) {
   return postData<RebuildIndexStartResult>(`/knowledge/rebuild-index?domain_code=${encodeURIComponent(domainCode)}`)
 }
 
-export function getRebuildIndexStatus() {
-  return getData<RebuildIndexStatus>('/knowledge/rebuild-index/status')
+export function getRebuildIndexStatus(domainCode: string) {
+  return getData<RebuildIndexStatus>(`/knowledge/rebuild-index/status?domain_code=${encodeURIComponent(domainCode)}`)
 }

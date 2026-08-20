@@ -28,7 +28,13 @@ from app.services.feedback_service import (
     require_v6_feedback_source,
 )
 from app.services.learning_package_service import package_member_rows
-from app.services.profile_service import is_initial_profile_ready, latest_profile_for_learner, profile_source, public_id
+from app.services.domain_runtime_service import DomainRuntimeError, require_ready_domain
+from app.services.profile_service import (
+    is_initial_profile_ready,
+    latest_profile_for_learner,
+    profile_source,
+    public_id,
+)
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.workers.generation_worker import run_generation_task
 
@@ -144,6 +150,7 @@ def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
         "task_id": task.public_id,
         "thread_id": task.public_id,
         "status": task.status,
+        "domain_code": task.domain_code,
         "progress": task.progress,
         "trigger_type": task.trigger_type,
         "event_type": task.event_type,
@@ -194,29 +201,34 @@ def create_generation_task(
     requested_types = list(payload.get("resource_types") or RESOURCE_TYPES)
     if not requested_types or any(item not in RESOURCE_TYPES for item in requested_types):
         raise HTTPException(status_code=422, detail="unsupported resource type")
-    domain_code = str(payload.get("domain_code", "ai_app_dev"))
+    domain_code = str(payload.get("domain_code") or "").strip()
+    if not domain_code:
+        raise HTTPException(status_code=422, detail="domain_code is required")
     try:
-        require_candidate_rag(domain_code)
-    except CandidateRagNotReady as exc:
-        raise HTTPException(status_code=503, detail=f"{RAG_NOT_READY_CODE}:{exc}") from exc
+        domain_runtime = require_ready_domain(db, domain_code)
+    except DomainRuntimeError as exc:
+        raise HTTPException(status_code=409, detail=f"DOMAIN_RUNTIME_NOT_READY:{exc}") from exc
+    if not domain_runtime.generation_ready:
+        raise HTTPException(
+            status_code=503,
+            detail=f"DOMAIN_GENERATION_NOT_READY:{','.join(domain_runtime.reasons)}",
+        )
 
-    learner = _get_or_create_learner(
-        db, principal_learner(principal, payload.get("learner_id"))
-    )
+    learner = _get_or_create_learner(db, principal_learner(principal, payload.get("learner_id")))
     profile_id = payload.get("profile_id")
     if profile_id:
-        profile = db.scalar(
-            select(LearnerProfile).where(LearnerProfile.public_id == profile_id)
-        )
+        profile = db.scalar(select(LearnerProfile).where(LearnerProfile.public_id == profile_id))
         if profile is None:
             raise HTTPException(status_code=404, detail="Learner profile not found")
         if profile.learner_id != learner.id:
             raise HTTPException(status_code=404, detail="Learner profile not found")
         learner = db.get(Learner, profile.learner_id) or learner
     else:
-        profile = latest_profile_for_learner(db, learner)
+        profile = latest_profile_for_learner(db, learner, domain_code)
     if not is_initial_profile_ready(profile):
         raise HTTPException(status_code=409, detail="PROFILE_NOT_READY")
+    if profile.domain_code != domain_code or learner.target_domain != domain_code:
+        raise HTTPException(status_code=409, detail="DOMAIN_CONTEXT_MISMATCH")
     task = GenerationTask(
         public_id=public_id("task"),
         learner_id=learner.id,
@@ -265,14 +277,20 @@ def confirm_feedback_generation(
     if learner is None:
         raise HTTPException(status_code=404, detail="LEARNER_NOT_FOUND")
     principal_learner(principal, learner.public_id)
-    existing = db.scalar(select(GenerationTask).where(GenerationTask.source_feedback_id == feedback.id).order_by(GenerationTask.id.desc()))
+    existing = db.scalar(
+        select(GenerationTask)
+        .where(GenerationTask.source_feedback_id == feedback.id)
+        .order_by(GenerationTask.id.desc())
+    )
     if existing is not None:
         return ok(_task_detail_summary(db, existing))
-    profile = latest_profile_for_learner(db, learner)
     resource = db.get(LearningResource, feedback.resource_id)
-    if not is_initial_profile_ready(profile):
-        raise HTTPException(status_code=409, detail="PROFILE_NOT_READY")
-    if resource is None or feedback.recommended_action not in {"review", "challenge", "explain", "regenerate"}:
+    if resource is None or feedback.recommended_action not in {
+        "review",
+        "challenge",
+        "explain",
+        "regenerate",
+    }:
         raise HTTPException(status_code=409, detail="GENERATION_NOT_RECOMMENDED")
     try:
         source_task = require_v6_feedback_source(
@@ -282,6 +300,9 @@ def confirm_feedback_generation(
         )
     except FeedbackSourceCompatibilityError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    profile = latest_profile_for_learner(db, learner, source_task.domain_code)
+    if not is_initial_profile_ready(profile):
+        raise HTTPException(status_code=409, detail="PROFILE_NOT_READY")
     try:
         require_candidate_rag(source_task.domain_code)
     except CandidateRagNotReady as exc:
@@ -343,7 +364,9 @@ def list_generation_tasks(
 
 
 @router.get("/{task_id}", response_model=ApiResponse)
-def get_generation_task(task_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+def get_generation_task(
+    task_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)
+) -> ApiResponse:
     task = require_task(db, principal, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Generation task not found")
@@ -370,9 +393,7 @@ def retry_generation_task(
         require_candidate_rag(task.domain_code)
     except CandidateRagNotReady as exc:
         raise HTTPException(status_code=503, detail=f"{RAG_NOT_READY_CODE}:{exc}") from exc
-    checkpoint = db.scalar(
-        select(GraphCheckpoint).where(GraphCheckpoint.task_id == task.public_id)
-    )
+    checkpoint = db.scalar(select(GraphCheckpoint).where(GraphCheckpoint.task_id == task.public_id))
     latest_failure = db.scalar(
         select(AgentRun)
         .where(AgentRun.generation_task_id == task.id)
@@ -380,8 +401,7 @@ def retry_generation_task(
         .order_by(AgentRun.id.desc())
     )
     recoverable = bool(
-        latest_failure
-        and (latest_failure.output_summary_json or {}).get("recoverable")
+        latest_failure and (latest_failure.output_summary_json or {}).get("recoverable")
     )
     if (
         checkpoint is None
@@ -405,15 +425,15 @@ def _safe(value: Any) -> Any:
 
 
 @router.get("/{task_id}/agent-runs", response_model=ApiResponse)
-def get_agent_runs(task_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+def get_agent_runs(
+    task_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)
+) -> ApiResponse:
     task = require_task(db, principal, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Generation task not found")
     runs = list(
         db.scalars(
-            select(AgentRun)
-            .where(AgentRun.generation_task_id == task.id)
-            .order_by(AgentRun.id)
+            select(AgentRun).where(AgentRun.generation_task_id == task.id).order_by(AgentRun.id)
         )
     )
     return ok(
@@ -457,9 +477,7 @@ def _agent_payload(task: GenerationTask, run: AgentRun) -> dict[str, Any]:
     }
 
 
-def _serialize_agent_status_event(
-    task: GenerationTask, run: AgentRun, step: str
-) -> dict[str, Any]:
+def _serialize_agent_status_event(task: GenerationTask, run: AgentRun, step: str) -> dict[str, Any]:
     """Backward-compatible serializer for existing API/unit consumers."""
 
     payload = _agent_payload(task, run)
@@ -479,7 +497,9 @@ def _serialize_agent_status_event(
     return payload
 
 
-def _semantic_events(task: GenerationTask, payload: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+def _semantic_events(
+    task: GenerationTask, payload: dict[str, Any]
+) -> list[tuple[str, dict[str, Any]]]:
     if payload["status"] != "completed":
         return []
     step, output = payload["step"], payload["payload"]
@@ -491,11 +511,14 @@ def _semantic_events(task: GenerationTask, payload: dict[str, Any]) -> list[tupl
         events.append(("feedback_classified", base))
     elif step == "analyze_profile":
         events.append(("profile_update_decided", base))
-        events.append(("profile_updated" if output.get("profile_update_required") else "profile_unchanged", base))
-        if output.get("profile_update_required"):
-            events.extend(
-                [("path_refresh_started", base), ("path_refresh_completed", base)]
+        events.append(
+            (
+                "profile_updated" if output.get("profile_update_required") else "profile_unchanged",
+                base,
             )
+        )
+        if output.get("profile_update_required"):
+            events.extend([("path_refresh_started", base), ("path_refresh_completed", base)])
     elif step == "review_resource" and any(
         isinstance(item, dict) and item.get("required") is True
         for item in (output.get("arbitration") or [])
@@ -561,7 +584,9 @@ async def _task_events(task_id: str) -> AsyncIterator[str]:
 
 
 @router.get("/{task_id}/events")
-async def stream_generation_events(task_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> StreamingResponse:
+async def stream_generation_events(
+    task_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)
+) -> StreamingResponse:
     require_task(db, principal, task_id)
     return StreamingResponse(
         _task_events(task_id),

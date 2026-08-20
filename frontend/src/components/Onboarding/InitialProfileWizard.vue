@@ -14,7 +14,7 @@
     </header>
 
     <form v-if="step === 'context'" class="wizard-body context-form" @submit.prevent="startDiagnostic">
-      <div class="identity"><span>学习者</span><strong>{{ authStore.userId || learnerId }}</strong><span class="tag">人工智能应用开发实训</span></div>
+      <div class="identity"><span>学习者</span><strong>{{ authStore.userId || learnerId }}</strong><span class="tag">{{ domainStore.currentDomainName || domainCode }}</span></div>
       <div class="form-grid">
         <label>学历层次
           <select v-model="form.education_level" required>
@@ -76,26 +76,27 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { createDiagnosticSession, submitDiagnosticSession, type DiagnosticResult, type DiagnosticSession } from '@/api/diagnostics'
 import { getLearnerProfile, updateInitialContext, type InitialContextPayload } from '@/api/learners'
 import { useAuthStore } from '@/stores/authStore'
+import { useDomainStore } from '@/stores/domainStore'
 import RadarChart from '@/components/Charts/RadarChart.vue'
 
 const props = defineProps<{ learnerId: string }>()
 defineEmits<{ complete: [] }>()
 const authStore = useAuthStore()
+const domainStore = useDomainStore()
 const step = ref<'context' | 'diagnostic' | 'result'>('context')
 const saving = ref(false)
 const submitting = ref(false)
 const error = ref('')
 const session = ref<DiagnosticSession | null>(null)
 const result = ref<DiagnosticResult | null>(null)
+const domainCode = ref('')
 const currentIndex = ref(0)
 const answers = ref<Record<number, string | number>>({})
 const form = reactive<InitialContextPayload>({ education_level: '', major: '', experience_years: 0, learning_style: 'mixed', direction_tags: [] })
-const directions = [
-  { value: 'llm_application', label: '大模型应用开发', description: '模型调用、接口与应用流程' },
-  { value: 'prompt_engineering', label: 'Prompt 工程', description: '指令、上下文与结构化输出' },
-  { value: 'rag_knowledge_base', label: 'RAG 知识库构建', description: '检索、向量和知识管理' },
-  { value: 'agent_orchestration', label: 'Agent 编排', description: '工具调用、多智能体与工作流' },
-]
+const directions = computed(() => {
+  const domain = domainStore.domains.find(item => item.domain_code === domainCode.value)
+  return (domain?.config?.learning_directions as Array<{ value: string; label: string; description: string }> | undefined) || []
+})
 const currentQuestion = computed(() => session.value?.questions[currentIndex.value] || null)
 const answeredCount = computed(() => session.value?.questions.filter((_, index) => hasAnswer(index)).length || 0)
 const radarValues = computed(() => ['theory', 'practice', 'problem_solving', 'breadth', 'learning_speed'].map((key) => Number(result.value?.ability_profile?.[key] || 0)))
@@ -105,11 +106,15 @@ function hasAnswer(index: number) { return String(answers.value[index] ?? '').tr
 function profileLabel(type: string) { return ({ beginner: '基础起步型画像', intermediate: '进阶提升型画像', advanced: '综合应用型画像', practice_oriented: '实操导向型画像' } as Record<string, string>)[type] || '个性化学习画像' }
 
 async function startDiagnostic() {
+  if (!domainStore.readiness?.diagnostic_ready) {
+    error.value = `当前领域尚未满足诊断条件：${domainStore.readiness?.runtime_reasons?.join('、') || '领域配置不可用'}`
+    return
+  }
   error.value = ''
   saving.value = true
   try {
     await updateInitialContext(props.learnerId, form)
-    session.value = await createDiagnosticSession(props.learnerId)
+    session.value = await createDiagnosticSession(domainCode.value, props.learnerId)
     answers.value = {}
     currentIndex.value = 0
     step.value = 'diagnostic'
@@ -123,7 +128,7 @@ async function submitDiagnostic() {
   error.value = ''
   submitting.value = true
   try {
-    result.value = await submitDiagnosticSession(session.value.session_id, session.value.questions.map((question, index) => ({ question_id: question.question_id, answer: answers.value[index] })), props.learnerId)
+    result.value = await submitDiagnosticSession(session.value.session_id, session.value.questions.map((question, index) => ({ question_id: question.question_id, answer: answers.value[index] })), domainCode.value, props.learnerId)
     step.value = 'result'
   } catch (caught: any) {
     error.value = caught.response?.data?.error?.message || '诊断提交失败，请稍后重试。'
@@ -133,6 +138,8 @@ async function submitDiagnostic() {
 onMounted(async () => {
   try {
     const detail = await getLearnerProfile(props.learnerId)
+    domainCode.value = detail.domain_code
+    await domainStore.initialize(detail.domain_code)
     form.education_level = detail.education_level || ''
     form.major = detail.major || ''
     form.experience_years = detail.experience_years || 0

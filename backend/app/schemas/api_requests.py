@@ -10,7 +10,7 @@ class StrictRequest(BaseModel):
 class GenerationTaskCreateRequest(StrictRequest):
     learner_id: str = Field(default="learner_001", min_length=3, max_length=64)
     profile_id: str | None = Field(default=None, max_length=64)
-    domain_code: str = Field(default="ai_app_dev", min_length=1, max_length=64)
+    domain_code: str = Field(min_length=1, max_length=64)
     trigger_type: Literal["initial_generation", "resource_feedback"] = "initial_generation"
     execution_mode: Literal["auto", "assisted"] = "auto"
     learning_goal: str = Field(default="个性化学习资源生成", min_length=1, max_length=512)
@@ -21,7 +21,7 @@ class GenerationTaskCreateRequest(StrictRequest):
 
 class DiagnosticSessionCreateRequest(StrictRequest):
     learner_id: str = Field(default="learner_001", min_length=3, max_length=64)
-    domain_code: str = Field(default="ai_app_dev", min_length=1, max_length=64)
+    domain_code: str = Field(min_length=1, max_length=64)
     question_count: int = Field(default=10, ge=1, le=60)
 
 
@@ -32,14 +32,14 @@ class DiagnosticAnswerRequest(StrictRequest):
 
 class DiagnosticSessionSubmitRequest(StrictRequest):
     learner_id: str = Field(default="learner_001", min_length=3, max_length=64)
-    domain_code: str = Field(default="ai_app_dev", min_length=1, max_length=64)
+    domain_code: str = Field(min_length=1, max_length=64)
     answers: list[DiagnosticAnswerRequest] = Field(min_length=1, max_length=60)
 
 
 class LearnerCreateRequest(StrictRequest):
     learner_id: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
     background: str = Field(default="", max_length=255)
-    target_domain: str = Field(default="ai_app_dev", min_length=1, max_length=64)
+    target_domain: str = Field(min_length=1, max_length=64)
     experience_years: int = Field(default=0, ge=0, le=50)
     learning_style: Literal["theory", "practice", "mixed"] = "mixed"
 
@@ -73,7 +73,7 @@ class TutoringMessageRequest(StrictRequest):
 
 
 class KnowledgeItemCreateRequest(StrictRequest):
-    domain_code: str = Field(default="ai_app_dev", min_length=1, max_length=64)
+    domain_code: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     category: str = Field(default="未分类", min_length=1, max_length=64)
     difficulty: int = Field(default=2, ge=1, le=5)

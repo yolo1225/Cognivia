@@ -362,6 +362,7 @@ import {
   type ModelTestResult,
 } from "@/api/modelSettings";
 import { useToast } from "@/composables/useToast";
+import { useDomainStore } from "@/stores/domainStore";
 import {
   connectionTestHint,
   embeddingModelChanged,
@@ -375,6 +376,7 @@ import {
 } from "./modelSettingsState";
 
 const { showToast } = useToast();
+const domainStore = useDomainStore();
 const loading = ref(false),
   loaded = ref(false),
   saving = ref(false),
@@ -475,7 +477,13 @@ async function load() {
   loading.value = true;
   errorMessage.value = "";
   try {
-    applyLoadedSettings(await getModelSettings());
+    if (!domainStore.domains.length) await domainStore.loadAvailable();
+    if (!domainStore.currentDomainCode) {
+      const selected = domainStore.domains.find((item) => item.status === "ready") || domainStore.domains[0];
+      domainStore.setWorkspaceDomain(selected?.domain_code || "");
+    }
+    if (!domainStore.currentDomainCode) throw new Error("DOMAIN_REQUIRED");
+    applyLoadedSettings(await getModelSettings(domainStore.currentDomainCode));
     loaded.value = true;
   } catch {
     errorMessage.value = "无法读取模型配置，请确认后端服务与数据库可用。";
@@ -521,6 +529,7 @@ async function performSave() {
   errorMessage.value = "";
   try {
     const data = await updateModelSettings(
+      domainStore.currentDomainCode,
       modelSettingsPayload(form, clearApiKey.value),
     );
     applyLoadedSettings(data);

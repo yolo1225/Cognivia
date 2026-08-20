@@ -25,6 +25,7 @@ from app.agents.contracts import (
     TaskRequest,
 )
 from app.services.evaluation_case_service import evaluation_profile_override
+from app.services.domain_runtime_service import load_domain_runtime
 from app.agents.graphs import build_learning_graph
 from app.agents.observability import collect_model_calls
 from app.agents.nodes import GRAPH_STATE, AgentRuntime, build_nodes
@@ -129,9 +130,7 @@ def _feedback_assessments(
         return [], []
     evidence: list[EvidenceRef] = []
     assessments: list[KnowledgeAssessment] = []
-    for record in db.scalars(
-        select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)
-    ):
+    for record in db.scalars(select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)):
         summary = record.answer_summary_json or {}
         if (
             summary.get("tutoring_session_id") != feedback.tutoring_session_id
@@ -163,9 +162,7 @@ def _feedback_assessments(
         )
         assessments.append(
             KnowledgeAssessment(
-                assessment_id=str(
-                    summary.get("assessment_id") or f"assessment_{record.id}"
-                ),
+                assessment_id=str(summary.get("assessment_id") or f"assessment_{record.id}"),
                 evidence_id=evidence_id,
                 knowledge_id=knowledge.public_id,
                 score=record.score,
@@ -204,7 +201,9 @@ def _initial_state(
         source_task = db.get(GenerationTask, task.source_task_id)
         if source_task is None:
             raise ValueError("source_package_not_found")
-        if (source_task.package_quality_json or {}).get("quality_rule_version") != "quality-v6-20260818":
+        if (source_task.package_quality_json or {}).get(
+            "quality_rule_version"
+        ) != "quality-v6-20260818":
             raise ValueError("v6_full_regeneration_required")
         stored_targets = (source_task.package_coverage_json or {}).get(
             "resource_knowledge_targets"
@@ -291,7 +290,8 @@ def _initial_state(
 
 
 def _learning_path_snapshot(
-    path: LearningPath | None, profile,
+    path: LearningPath | None,
+    profile,
 ) -> tuple[LearningPathSnapshot | None, LearningPathNodeSnapshot | None]:
     if path is None:
         return None, None
@@ -597,11 +597,7 @@ def _persist_profile_update(
             dict.fromkeys(
                 [
                     *analysis.affected_scope.knowledge_ids,
-                    *[
-                        item.knowledge_id
-                        for item in analysis.evidence_refs
-                        if item.knowledge_id
-                    ],
+                    *[item.knowledge_id for item in analysis.evidence_refs if item.knowledge_id],
                 ]
             )
         )
@@ -617,9 +613,7 @@ def _persist_profile_update(
         feedback.decision_reason = analysis.decision_reason
         feedback.decision_confidence = analysis.confidence
         feedback.affected_knowledge_ids_json = affected_knowledge_ids
-        feedback.affected_path_node_ids_json = list(
-            analysis.affected_scope.path_node_ids
-        )
+        feedback.affected_path_node_ids_json = list(analysis.affected_scope.path_node_ids)
         feedback.affected_resource_ids_json = [
             resource.public_id
             for resource in learner_resources
@@ -726,8 +720,7 @@ def _observable_node(
                 },
                 receiver=(
                     "knowledge_retrieval_agent"
-                    if step == "analyze_profile"
-                    and patch["analyze_profile"].needs_generation
+                    if step == "analyze_profile" and patch["analyze_profile"].needs_generation
                     else "orchestrator_agent"
                 ),
                 message_type="result",
@@ -942,17 +935,20 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
         task.decision = "pending"
         db.commit()
         review_batch_cache = _load_review_batch_cache(db, task)
-        runtime = AgentRuntime.production(review_batch_cache=review_batch_cache)
-        _, runtime.knowledge_assessments = _feedback_assessments(
-            db, task, learner, feedback
+        domain_runtime = load_domain_runtime(db, task.domain_code)
+        if not domain_runtime.generation_ready or domain_runtime.profile_config is None:
+            raise ValueError(f"DOMAIN_GENERATION_NOT_READY:{','.join(domain_runtime.reasons)}")
+        runtime = AgentRuntime.production(
+            profile_config=domain_runtime.profile_config,
+            domain_display_name=domain_runtime.display_name,
+            review_batch_cache=review_batch_cache,
         )
+        _, runtime.knowledge_assessments = _feedback_assessments(db, task, learner, feedback)
         checkpointer = MySQLLangGraphCheckpointer(SessionLocal)
         try:
             graph = _build_graph(db, task, profile, checkpointer, runtime)
             graph_config = {"configurable": {"thread_id": task.public_id}}
-            graph_input: GRAPH_STATE | None = _initial_state(
-                db, task, learner, profile, feedback
-            )
+            graph_input: GRAPH_STATE | None = _initial_state(db, task, learner, profile, feedback)
             if resume_failed and checkpointer.get_tuple(graph_config) is not None:
                 # A failed LangGraph node leaves the last successful checkpoint
                 # intact. Invoking with None resumes that node and preserves the

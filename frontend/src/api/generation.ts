@@ -44,6 +44,7 @@ export interface GenerationTaskDetail {
   profile_source?: string | null
   profile_changed_dimensions?: string[]
   status: string
+  domain_code?: string
   progress?: number
   trigger_type?: string
   execution_mode?: string
@@ -99,13 +100,14 @@ export interface AgentRun {
 }
 
 export function createGenerationTask(
+  domainCode: string,
   profileId?: string,
   learnerId?: string,
   learningGoal = '个性化学习资源生成',
 ) {
   const body: Record<string, unknown> = {
     profile_id: profileId,
-    domain_code: 'ai_app_dev',
+    domain_code: domainCode,
     trigger_type: 'initial_generation',
     execution_mode: 'auto',
     learning_goal: learningGoal,

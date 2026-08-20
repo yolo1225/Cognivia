@@ -17,13 +17,19 @@ router = APIRouter()
 
 
 @router.post("/sessions", response_model=ApiResponse)
-def create_session(payload: dict[str, Any] | None = None, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+def create_session(
+    payload: dict[str, Any] | None = None,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
     payload = payload or {}
+    if not str(payload.get("domain_code") or "").strip():
+        raise HTTPException(status_code=422, detail="domain_code is required")
     try:
         result = create_diagnostic_session(
             db,
             learner_id=self_service_learner(principal, payload.get("learner_id")),
-            domain_code=payload.get("domain_code", "ai_app_dev"),
+            domain_code=str(payload.get("domain_code") or ""),
             question_count=payload.get("question_count", 10),
         )
     except ValueError as exc:
@@ -38,12 +44,14 @@ def submit_session(
     db: Session = Depends(get_db),
     principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
+    if not str(payload.get("domain_code") or "").strip():
+        raise HTTPException(status_code=422, detail="domain_code is required")
     try:
         result = submit_diagnostic_session(
             db,
             session_id=session_id,
             learner_id=self_service_learner(principal, payload.get("learner_id")),
-            domain_code=payload.get("domain_code", "ai_app_dev"),
+            domain_code=str(payload.get("domain_code") or ""),
             answers=payload.get("answers", []),
         )
     except DiagnosticScoringPending:

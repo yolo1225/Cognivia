@@ -45,7 +45,7 @@ def allocate_resource_knowledge_targets(
     required_ids: list[str],
     chunks: list[RetrievedChunk],
     resource_types: list[ResourceType],
-    domain_code: str = "ai_app_dev",
+    domain_code: str,
 ) -> dict[ResourceType, list[str]]:
     """Allocate task targets by resource responsibility, deterministically."""
     targets = list(dict.fromkeys(required_ids))[:10]
@@ -58,8 +58,7 @@ def allocate_resource_knowledge_targets(
         operational = [
             knowledge_id
             for knowledge_id in targets
-            if EvidenceCapability.OPERATION
-            in capabilities_by_id.get(knowledge_id, set())
+            if EvidenceCapability.OPERATION in capabilities_by_id.get(knowledge_id, set())
         ]
         if operational != targets:
             raise EvidenceGapError("evidence_gap")
@@ -70,9 +69,7 @@ def allocate_resource_knowledge_targets(
         return result
 
     for knowledge_id in targets:
-        operational = EvidenceCapability.OPERATION in capabilities_by_id.get(
-            knowledge_id, set()
-        )
+        operational = EvidenceCapability.OPERATION in capabilities_by_id.get(knowledge_id, set())
         if operational and ResourceType.PRACTICE_GUIDE in result:
             owner = ResourceType.PRACTICE_GUIDE
         elif ResourceType.LECTURE in result:

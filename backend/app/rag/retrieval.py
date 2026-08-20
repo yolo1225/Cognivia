@@ -221,6 +221,8 @@ class CandidateRetriever:
             raise RetrievalError(f"candidate manifest is invalid: {exc}") from exc
         if manifest is None:
             raise RetrievalError("candidate manifest is missing")
+        if manifest.domain_code != domain_code:
+            raise RetrievalError("candidate manifest domain mismatch")
         try:
             collection = self.client.get_collection(name=manifest.active_collection)
         except Exception as exc:
@@ -527,8 +529,7 @@ class CandidateRetriever:
                 self._warn(warnings, "candidate_chunk_missing_content")
                 continue
             if metadata.get("domain_code") != domain_code:
-                self._warn(warnings, f"candidate_cross_domain:{record.chunk_id}")
-                continue
+                raise RetrievalError(f"candidate cross-domain chunk rejected: {record.chunk_id}")
             if metadata.get("embedding_model") != manifest.embedding_model:
                 self._warn(warnings, f"candidate_model_mismatch:{record.chunk_id}")
                 continue

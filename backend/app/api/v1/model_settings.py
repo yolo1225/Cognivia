@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -10,12 +10,10 @@ from app.services.llm_service import gateway
 
 router = APIRouter()
 
-INDEX_DOMAIN = "ai_app_dev"
 
-
-def _index_rebuild_hint() -> dict:
+def _index_rebuild_hint(domain_code: str) -> dict:
     """Whether the active candidate vector index needs a rebuild."""
-    status = candidate_rag_status(INDEX_DOMAIN)
+    status = candidate_rag_status(domain_code)
     return {
         "ready": bool(status.get("ready")),
         "reason": status.get("reason"),
@@ -33,25 +31,29 @@ class ModelSettingsBody(BaseModel):
 
 
 @router.get("", response_model=ApiResponse)
-def get_settings() -> ApiResponse:
+def get_settings(domain_code: str = Query(..., min_length=1, max_length=64)) -> ApiResponse:
     service.reload_from_db()
     return ok(
         {
             "settings": service.effective_config(),
             "status": gateway.configuration_status(),
-            "index": _index_rebuild_hint(),
+            "index": _index_rebuild_hint(domain_code),
         }
     )
 
 
 @router.put("", response_model=ApiResponse)
-def update_settings(body: ModelSettingsBody, db: Session = Depends(get_db)) -> ApiResponse:
+def update_settings(
+    body: ModelSettingsBody,
+    domain_code: str = Query(..., min_length=1, max_length=64),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
     service.save_config(db, **body.model_dump())
     return ok(
         {
             "settings": service.effective_config(),
             "status": gateway.configuration_status(),
-            "index": _index_rebuild_hint(),
+            "index": _index_rebuild_hint(domain_code),
         }
     )
 

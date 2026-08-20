@@ -491,19 +491,19 @@
   },
   {
     "question_id": "dq_056",
-    "knowledge_id": "langgraph_stategraph",
+    "knowledge_id": "python_api_basics",
     "question_type": "short_answer",
-    "difficulty": 3,
-    "stem": "用一句话解释 StateGraph 为什么适合多智能体流程。",
-    "answer_key": {"rubric": ["状态传递", "节点编排", "条件边", "可追踪"]}
+    "difficulty": 2,
+    "stem": "调用一个 Python API 后，至少应检查哪些结果来确认请求成功且响应可用？",
+    "answer_key": {"rubric": ["状态码", "响应结构", "必需字段", "异常处理"]}
   },
   {
     "question_id": "dq_057",
-    "knowledge_id": "structured_output_validation",
+    "knowledge_id": "prompt_context_design",
     "question_type": "short_answer",
     "difficulty": 3,
-    "stem": "结构化输出校验可以发现哪些常见问题？",
-    "answer_key": {"rubric": ["缺字段", "类型错误", "非法取值", "格式不符合 schema"]}
+    "stem": "为一次模型调用组装上下文时，应按什么步骤控制信息范围并验证输出？",
+    "answer_key": {"rubric": ["明确任务", "选择必要上下文", "限制无关信息", "验证输出"]}
   },
   {
     "question_id": "dq_058",

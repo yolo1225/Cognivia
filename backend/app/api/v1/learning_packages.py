@@ -26,7 +26,7 @@ router = APIRouter()
 @router.get("/current", response_model=ApiResponse)
 def get_current_learning_package(
     learner_id: str | None = Query(None),
-    domain_code: str = Query("ai_app_dev"),
+    domain_code: str = Query(...),
     db: Session = Depends(get_db),
     principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
@@ -73,7 +73,9 @@ def refresh_affected_resources(
     source_task = require_task(db, principal, task_id)
     if not source_task.is_current_package:
         raise HTTPException(status_code=409, detail="PACKAGE_IS_NOT_CURRENT")
-    if (source_task.package_quality_json or {}).get("quality_rule_version") != "quality-v6-20260818":
+    if (source_task.package_quality_json or {}).get(
+        "quality_rule_version"
+    ) != "quality-v6-20260818":
         raise HTTPException(
             status_code=409,
             detail="V6_FULL_REGENERATION_REQUIRED",

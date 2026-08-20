@@ -32,7 +32,7 @@ export interface LearningPackage {
   created_at?: string | null
 }
 
-export function getCurrentLearningPackage(learnerId?: string, domainCode = 'ai_app_dev') {
+export function getCurrentLearningPackage(domainCode: string, learnerId?: string) {
   const params = new URLSearchParams({ domain_code: domainCode })
   if (learnerId) params.set('learner_id', learnerId)
   return getData<LearningPackage | null>(`/learning-packages/current?${params.toString()}`)

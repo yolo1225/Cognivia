@@ -20,6 +20,20 @@
         <button class="btn" :disabled="loading" @click="loadDomain">
           {{ loading ? "正在刷新" : "刷新数据" }}
         </button>
+        <button class="btn" @click="openDomainEditor()">新建领域</button>
+        <button v-if="selectedDomain" class="btn" @click="openDomainEditor(selectedDomain)">编辑领域</button>
+        <button
+          v-if="selectedDomain?.status !== 'ready'"
+          class="btn primary"
+          :disabled="lifecycleLoading"
+          @click="publishSelectedDomain"
+        >发布领域</button>
+        <button
+          v-else
+          class="btn"
+          :disabled="lifecycleLoading"
+          @click="disableSelectedDomain"
+        >停用领域</button>
       </template>
     </PageHeader>
 
@@ -37,7 +51,7 @@
             ><small>{{ selectedCode }} · 管理员工作区</small>
           </div>
         </div>
-        <span class="domain-state"><i />当前领域已启用</span>
+        <span class="domain-state"><i />{{ domainStatusLabel(selectedDomain?.status) }}</span>
       </div>
 
       <nav class="domain-tabs" aria-label="领域管理区域">
@@ -536,6 +550,28 @@
     </template>
 
     <AppDrawer
+      v-model="domainDrawerOpen"
+      :title="editingDomain ? '编辑领域' : '新建领域'"
+      subtitle="配置基本信息和学习方向；就绪门槛由系统统一管理"
+    >
+      <form id="domain-form" class="drawer-form" @submit.prevent="saveDomain">
+        <label>领域代码<input v-model.trim="domainForm.domain_code" class="field" required maxlength="64" pattern="[a-z][a-z0-9_]*" :disabled="Boolean(editingDomain)" /></label>
+        <label>领域名称<input v-model.trim="domainForm.name" class="field" required maxlength="128" /></label>
+        <label>领域说明<textarea v-model.trim="domainForm.description" rows="3" maxlength="500" /></label>
+        <div class="section-head"><div><strong>学习方向</strong><p>至少 1 项，最多 6 项。</p></div><button class="btn" type="button" :disabled="domainForm.learning_directions.length >= 6" @click="addDirection">添加方向</button></div>
+        <div v-for="(direction, index) in domainForm.learning_directions" :key="index" class="rule-block">
+          <label>代码<input v-model.trim="direction.value" class="field" required pattern="[A-Za-z0-9_-]+" /></label>
+          <label>名称<input v-model.trim="direction.label" class="field" required /></label>
+          <label>说明<input v-model.trim="direction.description" class="field" /></label>
+          <label>匹配标签<input v-model="direction.tags" class="field" placeholder="逗号分隔" /></label>
+          <button v-if="domainForm.learning_directions.length > 1" class="btn text" type="button" @click="removeDirection(index)">删除方向</button>
+        </div>
+        <p v-if="domainFormError" class="form-error" role="alert">{{ domainFormError }}</p>
+      </form>
+      <template #footer><div class="drawer-footer"><button class="btn" :disabled="lifecycleLoading" @click="domainDrawerOpen = false">取消</button><button class="btn primary" type="submit" form="domain-form" :disabled="lifecycleLoading">{{ lifecycleLoading ? '正在保存...' : '保存领域' }}</button></div></template>
+    </AppDrawer>
+
+    <AppDrawer
       v-model="knowledgeDrawerOpen"
       :title="editingKnowledge ? '编辑知识点' : '新增知识点'"
       :subtitle="
@@ -752,9 +788,13 @@ import PageHeader from "@/components/Shared/PageHeader.vue";
 import ReadinessList from "@/components/Shared/ReadinessList.vue";
 import KnowledgeGraph from "@/components/KnowledgeGraph/KnowledgeGraph.vue";
 import {
+  createDomain,
+  disableDomain,
+  getDomainReadiness,
   getDomainStats,
   listDomains,
-  validateDomain,
+  publishDomain,
+  updateDomain,
   type DomainStats,
   type DomainSummary,
   type DomainValidationResult,
@@ -834,6 +874,18 @@ const loading = ref(false),
   rebuilding = ref(false),
   validationResult = ref<DomainValidationResult | null>(null),
   rebuildStatus = ref<RebuildIndexStatus | null>(null);
+const domainDrawerOpen = ref(false),
+  editingDomain = ref<DomainSummary | null>(null),
+  lifecycleLoading = ref(false),
+  domainFormError = ref("");
+const domainForm = reactive({
+  domain_code: "",
+  name: "",
+  description: "",
+  learning_directions: [
+    { value: "general", label: "综合学习", description: "", tags: "general" },
+  ],
+});
 const knowledgeFilters = reactive<KnowledgeFilters>({
   keyword: "",
   category: "all",
@@ -1086,6 +1138,96 @@ function readinessDescription(item: {
     : `${item.actual} 份来源文档处理失败`;
 }
 
+function domainStatusLabel(status?: string) {
+  return ({ draft: "草稿", preparing: "准备中", ready: "已发布", disabled: "已停用" } as Record<string, string>)[status || ""] || "未知状态";
+}
+
+function addDirection() {
+  if (domainForm.learning_directions.length < 6)
+    domainForm.learning_directions.push({ value: "", label: "", description: "", tags: "" });
+}
+
+function removeDirection(index: number) {
+  if (domainForm.learning_directions.length > 1)
+    domainForm.learning_directions.splice(index, 1);
+}
+
+function openDomainEditor(domain?: DomainSummary) {
+  editingDomain.value = domain || null;
+  domainForm.domain_code = domain?.domain_code || "";
+  domainForm.name = domain?.name || "";
+  domainForm.description = domain?.description || "";
+  domainForm.learning_directions = (domain?.learning_directions?.length
+    ? domain.learning_directions
+    : [{ value: "general", label: "综合学习", description: "", match_tags: ["general"] }]
+  ).map((item) => ({
+    value: item.value,
+    label: item.label,
+    description: item.description || "",
+    tags: (item.match_tags || []).join(","),
+  }));
+  domainFormError.value = "";
+  domainDrawerOpen.value = true;
+}
+
+async function saveDomain() {
+  lifecycleLoading.value = true;
+  domainFormError.value = "";
+  const payload = {
+    name: domainForm.name,
+    description: domainForm.description,
+    learning_directions: domainForm.learning_directions.map((item) => ({
+      value: item.value,
+      label: item.label,
+      description: item.description,
+      match_tags: item.tags.split(/[，,]/).map((tag) => tag.trim()).filter(Boolean),
+    })),
+  };
+  try {
+    const saved = editingDomain.value
+      ? await updateDomain(editingDomain.value.domain_code, payload)
+      : await createDomain({ ...payload, domain_code: domainForm.domain_code });
+    selectedCode.value = saved.domain_code;
+    domainDrawerOpen.value = false;
+    await loadAll();
+    showToast(editingDomain.value ? "领域配置已保存" : "领域已创建", "success");
+  } catch (error: any) {
+    domainFormError.value = error?.response?.data?.detail || "领域保存失败，请检查代码和学习方向。";
+  } finally {
+    lifecycleLoading.value = false;
+  }
+}
+
+async function publishSelectedDomain() {
+  if (!selectedCode.value) return;
+  lifecycleLoading.value = true;
+  try {
+    await publishDomain(selectedCode.value);
+    await loadAll();
+    showToast("领域已发布，学习者现在可以选择该领域", "success");
+  } catch (error: any) {
+    const detail = error?.response?.data?.detail;
+    validationResult.value = detail?.readiness || validationResult.value;
+    showToast(detail?.code || "领域尚未通过全部就绪检查", "error");
+  } finally {
+    lifecycleLoading.value = false;
+  }
+}
+
+async function disableSelectedDomain() {
+  if (!selectedCode.value) return;
+  lifecycleLoading.value = true;
+  try {
+    await disableDomain(selectedCode.value);
+    await loadAll();
+    showToast("领域已停用；历史任务和资源仍可查看", "success");
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "领域停用失败", "error");
+  } finally {
+    lifecycleLoading.value = false;
+  }
+}
+
 async function loadAll() {
   loading.value = true;
   errorMessage.value = "";
@@ -1122,16 +1264,15 @@ async function loadDomain() {
   loading.value = true;
   graphLoading.value = true;
   errorMessage.value = "";
-  domainStore.currentDomainCode = selectedCode.value;
-  if (selectedDomain.value)
-    domainStore.currentDomainName = selectedDomain.value.name;
+  domainStore.domains = domains.value;
+  domainStore.setWorkspaceDomain(selectedCode.value);
   try {
     const [s, d, r, i, validation] = await Promise.all([
       getDomainStats(selectedCode.value),
       listKnowledgeDocuments(selectedCode.value),
       listKnowledgeRelations(selectedCode.value),
       listKnowledgeItems(selectedCode.value, 500),
-      validateDomain(selectedCode.value),
+      getDomainReadiness(selectedCode.value),
     ]);
     if (version !== loadVersion) return;
     stats.value = s;
@@ -1370,7 +1511,7 @@ function finishRebuildPolling() {
 async function pollRebuild() {
   const domain = selectedCode.value;
   try {
-    const status = await getRebuildIndexStatus();
+    const status = await getRebuildIndexStatus(selectedCode.value);
     if (domain !== selectedCode.value) return;
     rebuildStatus.value = status;
     if (status.running) {
@@ -1424,7 +1565,7 @@ async function rebuild() {
 }
 async function syncRebuildStatus() {
   try {
-    const status = await getRebuildIndexStatus();
+    const status = await getRebuildIndexStatus(selectedCode.value);
     if (status.domain_code && status.domain_code !== selectedCode.value) return;
     rebuildStatus.value = status;
     if (status.running) {
@@ -1438,7 +1579,7 @@ async function syncRebuildStatus() {
 async function validate() {
   validating.value = true;
   try {
-    validationResult.value = await validateDomain(selectedCode.value);
+    validationResult.value = await getDomainReadiness(selectedCode.value);
   } catch {
     showToast("领域校验失败，请检查向量数据库状态");
   } finally {

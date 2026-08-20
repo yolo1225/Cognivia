@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -165,7 +166,7 @@ def build_index(
     import_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
 ) -> ApiResponse:
     document = _document(db, import_id)
-    previous_job = candidate_index_job.latest_job(db)
+    previous_job = candidate_index_job.latest_job(db, document.domain_code)
     failed_retry = bool(
         document.status == "indexing"
         and previous_job
@@ -191,7 +192,7 @@ def build_index(
 @router.post("/{import_id}/smoke-test", response_model=ApiResponse)
 def smoke_test(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
     document = _document(db, import_id)
-    job = candidate_index_job.latest_job(db)
+    job = candidate_index_job.latest_job(db, document.domain_code)
     passed = bool(
         job
         and job.domain_code == document.domain_code
@@ -204,13 +205,24 @@ def smoke_test(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
         retrieval = smoke_import_index(db, document)
     except KnowledgeImportPublishError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    rag = candidate_rag_status(document.domain_code)
+    result = dict(job.result_json or {})
+    result["smoke_test"] = {
+        "passed": True,
+        "index_version": rag.get("index_version"),
+        "active_collection": rag.get("active_collection"),
+        "import_id": document.public_id,
+        "checked_at": datetime.now(UTC).isoformat(),
+        "checks": retrieval.get("checks", {}),
+    }
+    job.result_json = result
     document.status = "smoke_passed"
     document.error_summary = None
     db.commit()
     return ok(
         {
             **retrieval,
-            "rag": candidate_rag_status(document.domain_code),
+            "rag": rag,
         }
     )
 
@@ -220,7 +232,7 @@ def publish_import(import_id: str, db: Session = Depends(get_db)) -> ApiResponse
     document = _document(db, import_id)
     if document.status != "smoke_passed":
         raise HTTPException(status_code=409, detail="检索冒烟尚未通过，不能发布")
-    job = candidate_index_job.latest_job(db)
+    job = candidate_index_job.latest_job(db, document.domain_code)
     if (
         not job
         or job.domain_code != document.domain_code

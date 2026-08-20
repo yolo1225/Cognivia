@@ -11,6 +11,7 @@ from app.models import KnowledgeItem, KnowledgeRelation
 from app.rag.readiness import candidate_rag_status
 from app.schemas.common import ApiResponse, ok
 from app.services import candidate_index_job
+from app.services.domain_api_service import default_ability_weights, mark_domain_preparing
 from app.services.knowledge_update_service import (
     mark_affected_content,
     related_knowledge_ids,
@@ -22,7 +23,7 @@ router = APIRouter()
 
 @router.get("/relations", response_model=ApiResponse)
 def list_knowledge_relations(
-    domain_code: str = Query("ai_app_dev"),
+    domain_code: str = Query(...),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
@@ -54,7 +55,7 @@ def list_knowledge_relations(
 
 
 class KnowledgeItemCreate(BaseModel):
-    domain_code: str = Field(default="ai_app_dev", min_length=1, max_length=64)
+    domain_code: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     category: str = Field(default="未分类", min_length=1, max_length=64)
     difficulty: int = Field(default=2, ge=1, le=5)
@@ -101,7 +102,7 @@ def serialize_knowledge_item(item: KnowledgeItem) -> dict[str, Any]:
 
 @router.get("/items", response_model=ApiResponse)
 def list_knowledge_items(
-    domain_code: str = Query(default="ai_app_dev"),
+    domain_code: str = Query(...),
     category: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -160,6 +161,7 @@ def create_knowledge_item(
         source_title=payload.source_title.strip(),
         source_url=payload.source_url,
         license_note=payload.license_note.strip(),
+        ability_weights_json=default_ability_weights(),
         needs_reembedding=True,
         status="published",
     )
@@ -182,6 +184,7 @@ def create_knowledge_item(
         affected_knowledge_ids=affected_ids,
         reason="manual_import",
     )
+    mark_domain_preparing(db, item.domain_code)
 
     db.commit()
     db.refresh(item)
@@ -255,6 +258,7 @@ def update_knowledge_item(
         affected_knowledge_ids=affected_ids,
         reason="knowledge_item_updated",
     )
+    mark_domain_preparing(db, item.domain_code)
     db.commit()
     db.refresh(item)
     return ok(
@@ -272,7 +276,7 @@ def update_knowledge_item(
 @router.get("/search", response_model=ApiResponse)
 def search_knowledge(
     query: str = Query(min_length=1),
-    domain_code: str = Query(default="ai_app_dev"),
+    domain_code: str = Query(...),
     n_results: int = Query(default=5, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
@@ -312,7 +316,7 @@ def search_knowledge(
 @router.post("/rebuild-index", response_model=ApiResponse)
 def rebuild_vector_index(
     background_tasks: BackgroundTasks,
-    domain_code: str = Query(default="ai_app_dev"),
+    domain_code: str = Query(...),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
     job = candidate_index_job.try_start(db, domain_code)
@@ -323,5 +327,7 @@ def rebuild_vector_index(
 
 
 @router.get("/rebuild-index/status", response_model=ApiResponse)
-def rebuild_index_status(db: Session = Depends(get_db)) -> ApiResponse:
-    return ok(candidate_index_job.status(db))
+def rebuild_index_status(
+    domain_code: str = Query(...), db: Session = Depends(get_db)
+) -> ApiResponse:
+    return ok(candidate_index_job.status(db, domain_code))

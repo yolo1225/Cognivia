@@ -6,11 +6,16 @@ import pytest
 
 import app.scripts.evaluate_profile_v3 as evaluation
 from app.agents.contracts import ProfileType
-from app.services.profile_analysis_service import analyze_profile
+from app.services.profile_analysis_service import analyze_profile as _analyze_profile
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.services.profile_v3_fixture_service import (
     ProfileFixtureError,
     rendered_case_records,
 )
+
+
+def analyze_profile(node_input):
+    return _analyze_profile(node_input, config=AI_APP_DEV_PROFILE_V2)
 
 
 def _report_with_mutation(mutator):
@@ -104,6 +109,7 @@ def test_main_exits_nonzero_when_the_fixture_gate_fails(monkeypatch, capsys) -> 
         evaluation.main()
 
     assert "acceptance_fixture_hash_mismatch" in capsys.readouterr().out
+
 
 def test_current_frozen_baseline_meets_all_quality_thresholds() -> None:
     report = evaluation.evaluate_profile_v3()

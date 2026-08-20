@@ -39,6 +39,7 @@ from app.agents.state import AgentGraphState
 from app.agents.generation_agent import ContentGenerationAgent
 from app.agents.orchestrator_agent import OrchestratorAgent
 from app.agents.profile_analysis_agent import ProfileAnalysisAgent
+from app.agents.profile_analysis_config import MASTERY_BASELINES, ProfileAnalysisConfig
 from app.agents.retrieval_agent import KnowledgeRetrievalAgent
 from app.agents.review_agent import (
     ReviewBatchCache,
@@ -51,6 +52,26 @@ from app.agents.tutoring_agent import TutoringAgent
 
 NodeFunc = Callable[[AgentGraphState], AgentGraphState]
 GRAPH_STATE = AgentGraphState
+
+
+def _structural_profile_config() -> ProfileAnalysisConfig:
+    """Graph-inspection runtime; production workers always inject a domain config."""
+    return ProfileAnalysisConfig(
+        version="structural_runtime",
+        seed_sha256="none",
+        prior_mastery=0.5,
+        prior_weight=1.0,
+        mastery_thresholds=(0.4, 0.6, 0.8),
+        minimum_effective_change=5,
+        max_ability_change_per_update=10,
+        max_weakness_level_change_per_update=1,
+        default_n_results=8,
+        multi_priority_remedial_n_results=10,
+        maximum_n_results=12,
+        ability_weights={},
+        knowledge_catalog={},
+        mastery_baselines=MASTERY_BASELINES,
+    )
 
 
 @dataclass
@@ -67,12 +88,15 @@ class AgentRuntime:
 
     @classmethod
     def production(
-        cls, review_batch_cache: ReviewBatchCache | None = None
+        cls,
+        profile_config: ProfileAnalysisConfig | None = None,
+        domain_display_name: str | None = None,
+        review_batch_cache: ReviewBatchCache | None = None,
     ) -> "AgentRuntime":
         cache = review_batch_cache or ReviewBatchCache()
         return cls(
-            profile_agent=ProfileAnalysisAgent(),
-            tutoring_agent=TutoringAgent(),
+            profile_agent=ProfileAnalysisAgent(profile_config or _structural_profile_config()),
+            tutoring_agent=TutoringAgent(domain_display_name=domain_display_name),
             retrieval_agent_factory=KnowledgeRetrievalAgent.production,
             # Rendering is a composition concern.  The V3 generator only
             # receives this deterministic callable and never imports adapters.
@@ -125,14 +149,10 @@ def _partial_generation_input(
 ) -> GenerateResourceInput:
     requirements = _partial_requirements(node_input.requirements, resource_types)
     target_ids = set(requirements.required_knowledge_ids)
-    chunks = [
-        chunk for chunk in node_input.retrieved_chunks if chunk.knowledge_id in target_ids
-    ]
+    chunks = [chunk for chunk in node_input.retrieved_chunks if chunk.knowledge_id in target_ids]
     source_ids = [chunk.source.source_ref_id for chunk in chunks]
     requirements = requirements.model_copy(update={"source_whitelist": source_ids})
-    return node_input.model_copy(
-        update={"retrieved_chunks": chunks, "requirements": requirements}
-    )
+    return node_input.model_copy(update={"retrieved_chunks": chunks, "requirements": requirements})
 
 
 def _partial_review_input(
@@ -141,13 +161,9 @@ def _partial_review_input(
 ) -> ReviewResourceInput:
     requirements = _partial_requirements(node_input.requirements, resource_types)
     resources = [
-        resource
-        for resource in node_input.resources
-        if resource.resource_type in resource_types
+        resource for resource in node_input.resources if resource.resource_type in resource_types
     ]
-    cited = {
-        source.source_ref_id for resource in resources for source in resource.source_refs
-    }
+    cited = {source.source_ref_id for resource in resources for source in resource.source_refs}
     target_ids = set(requirements.required_knowledge_ids)
     evidence = [
         chunk
@@ -208,7 +224,9 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
         return state.get("revision_plan")
 
     def prepare_task(state: AgentGraphState) -> AgentGraphState:
-        return prepare_task_output_to_patch(runtime.orchestrator.execute(build_prepare_task_input(state)))
+        return prepare_task_output_to_patch(
+            runtime.orchestrator.execute(build_prepare_task_input(state))
+        )
 
     def interpret_feedback(state: AgentGraphState) -> AgentGraphState:
         return interpret_feedback_output_to_patch(
@@ -241,9 +259,7 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
                 for source in resource.source_refs
             }
             chunks = [
-                chunk
-                for chunk in previous.chunks
-                if chunk.source.source_ref_id in cited_source_ids
+                chunk for chunk in previous.chunks if chunk.source.source_ref_id in cited_source_ids
             ]
             known = {chunk.source.source_ref_id for chunk in chunks}
             chunks.extend(
@@ -251,9 +267,7 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
             )
             known = {chunk.source.source_ref_id for chunk in chunks}
             chunks.extend(
-                chunk
-                for chunk in previous.chunks
-                if chunk.source.source_ref_id not in known
+                chunk for chunk in previous.chunks if chunk.source.source_ref_id not in known
             )
             chunks = chunks[:12]
             covered = list(
@@ -361,9 +375,7 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
             node_input = node_input.model_copy(
                 update={"revision_count": revision_plan.revision_count}
             )
-        return finalize_task_output_to_patch(
-            runtime.orchestrator.execute(node_input)
-        )
+        return finalize_task_output_to_patch(runtime.orchestrator.execute(node_input))
 
     return {
         "prepare_task": prepare_task,

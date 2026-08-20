@@ -15,6 +15,7 @@ from app.models import (
 from app.rag.candidate_manifest import CandidateManifestStore
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.rag.vector_store import VectorStore
+from app.services.domain_api_service import default_ability_weights, mark_domain_preparing
 
 
 class KnowledgeImportPublishError(ValueError):
@@ -101,7 +102,7 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
             license_note=document.license_note,
             needs_reembedding=True,
             source_document_id=document.id,
-            ability_weights_json=payload.get("ability_weights") or {},
+            ability_weights_json=payload.get("ability_weights") or default_ability_weights(),
             source_locator_json=candidate.source_locator_json or {},
             status="published",
         )
@@ -150,6 +151,7 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
         candidate.status = "published"
     document.status = "index_pending"
     document.knowledge_item_count = len(knowledge_map)
+    mark_domain_preparing(db, document.domain_code)
     db.commit()
     return {
         "knowledge_items": len(knowledge_map),

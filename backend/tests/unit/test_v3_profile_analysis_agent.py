@@ -12,6 +12,7 @@ from app.agents.profile_analysis_agent import (
     SYSTEM_PROMPT,
     ProfileAnalysisAgent,
 )
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.services.profile_analysis_service import ProfileAnalysisError, analyze_profile
 from app.services.profile_v3_fixture_service import rendered_cases
 
@@ -24,26 +25,30 @@ def _input_for_case(case_id: str) -> AnalyzeProfileInput:
 
 
 def test_v3_agent_matches_pure_algorithm_for_all_frozen_cases() -> None:
-    agent = ProfileAnalysisAgent()
+    agent = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2)
 
     for case_id, payload, _ in rendered_cases():
         request = AnalyzeProfileInput.model_validate(payload)
         output = agent.execute(request)
 
         assert isinstance(output, AnalyzeProfileOutput)
-        assert output.model_dump(mode="json") == analyze_profile(request).model_dump(mode="json"), case_id
+    assert output.model_dump(mode="json") == analyze_profile(
+        request, config=AI_APP_DEV_PROFILE_V2
+    ).model_dump(mode="json"), case_id
 
 
 def test_v3_agent_exposes_the_required_identity_and_prompt() -> None:
-    agent = ProfileAnalysisAgent()
+    agent = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2)
 
     assert agent.name == PROFILE_ANALYSIS_AGENT_NAME
     assert agent.system_prompt == SYSTEM_PROMPT
     assert "LLM" in agent.system_prompt
 
 
-def test_v3_agent_rejects_raw_dict_without_logging_payload(caplog: pytest.LogCaptureFixture) -> None:
-    agent = ProfileAnalysisAgent()
+def test_v3_agent_rejects_raw_dict_without_logging_payload(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    agent = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2)
     caplog.set_level(logging.WARNING)
 
     with pytest.raises(ProfileAnalysisError, match="invalid_analyze_profile_input_type"):
@@ -60,7 +65,9 @@ def test_v3_agent_preserves_controlled_evidence_conflict_error() -> None:
     payload["feedback_evidence"] = [duplicate]
 
     with pytest.raises(ProfileAnalysisError, match="evidence_id_conflict"):
-        ProfileAnalysisAgent().execute(AnalyzeProfileInput.model_validate(payload))
+        ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2).execute(
+            AnalyzeProfileInput.model_validate(payload)
+        )
 
 
 def test_v3_agent_rejects_unknown_knowledge_with_a_controlled_error() -> None:
@@ -70,13 +77,15 @@ def test_v3_agent_rejects_unknown_knowledge_with_a_controlled_error() -> None:
     payload["knowledge_assessments"][0]["knowledge_id"] = unknown_id
 
     with pytest.raises(ProfileAnalysisError, match="unknown_knowledge_id"):
-        ProfileAnalysisAgent().execute(AnalyzeProfileInput.model_validate(payload))
+        ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2).execute(
+            AnalyzeProfileInput.model_validate(payload)
+        )
 
 
 def test_v3_agent_keeps_no_change_and_review_semantics() -> None:
     no_change = _input_for_case("accept-feedback-01")
     review = _input_for_case("accept-review-01")
-    agent = ProfileAnalysisAgent()
+    agent = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2)
 
     no_change_output = agent.execute(no_change)
     review_output = agent.execute(review)
@@ -97,7 +106,7 @@ def test_v3_agent_logs_only_safe_summary_fields(caplog: pytest.LogCaptureFixture
     logger = logging.getLogger("tests.profile_analysis_agent")
     caplog.set_level(logging.INFO, logger=logger.name)
 
-    ProfileAnalysisAgent(logger=logger).execute(request)
+    ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2, logger=logger).execute(request)
 
     assert "profile_analysis_completed" in caplog.text
     assert request.task_id in caplog.text

@@ -75,7 +75,9 @@ def _bounded(value: float, low: int = 20, high: int = 95) -> int:
     return max(low, min(high, round(value)))
 
 
-def _category_value(category_scores: dict[str, list[float]], keywords: tuple[str, ...], fallback: float) -> float:
+def _category_value(
+    category_scores: dict[str, list[float]], keywords: tuple[str, ...], fallback: float
+) -> float:
     values: list[float] = []
     for category, scores in category_scores.items():
         if any(keyword.lower() in category.lower() for keyword in keywords):
@@ -99,8 +101,12 @@ def build_ability_profile(
         if scores
     }
 
-    theory = _category_value(category_scores, ("理论", "基础", "prompt", "embedding"), score_percent)
-    practice = _category_value(category_scores, ("实操", "实践", "应用", "rag", "agent"), score_percent - 4)
+    theory = _category_value(
+        category_scores, ("理论", "基础", "prompt", "embedding"), score_percent
+    )
+    practice = _category_value(
+        category_scores, ("实操", "实践", "应用", "rag", "agent"), score_percent - 4
+    )
     problem_solving = _bounded((score_percent * 0.7) + (average_difficulty * 8))
     breadth = _bounded((sum(category_mastery.values()) / max(1, len(category_mastery))) - 6)
     learning_speed = _bounded(score_percent + 4)
@@ -304,19 +310,18 @@ def apply_feedback_profile_update(
         for item in (resource.sources_json if resource else [])
         if isinstance(item, dict) and item.get("knowledge_id")
     ]
-    knowledge_rows = list(
-        db.scalars(select(KnowledgeItem).where(KnowledgeItem.public_id.in_(source_ids)))
-    ) if source_ids else []
+    knowledge_rows = (
+        list(db.scalars(select(KnowledgeItem).where(KnowledgeItem.public_id.in_(source_ids))))
+        if source_ids
+        else []
+    )
     knowledge_ids = {item.id for item in knowledge_rows}
     related_ids: set[int] = set()
     if knowledge_ids:
         relations = list(
             db.scalars(
-                select(KnowledgeRelation)
-                .where(
-                    KnowledgeRelation.relation_type.in_(
-                        {"prerequisite", "dependent", "related"}
-                    ),
+                select(KnowledgeRelation).where(
+                    KnowledgeRelation.relation_type.in_({"prerequisite", "dependent", "related"}),
                     or_(
                         KnowledgeRelation.source_item_id.in_(knowledge_ids),
                         KnowledgeRelation.target_item_id.in_(knowledge_ids),
@@ -329,10 +334,14 @@ def apply_feedback_profile_update(
                 related_ids.add(relation.target_item_id)
             elif relation.target_item_id in knowledge_ids:
                 related_ids.add(relation.source_item_id)
-    related_public_ids = {
-        item.public_id
-        for item in db.scalars(select(KnowledgeItem).where(KnowledgeItem.id.in_(related_ids)))
-    } if related_ids else set()
+    related_public_ids = (
+        {
+            item.public_id
+            for item in db.scalars(select(KnowledgeItem).where(KnowledgeItem.id.in_(related_ids)))
+        }
+        if related_ids
+        else set()
+    )
     affected_knowledge_ids = list(dict.fromkeys([*source_ids, *sorted(related_public_ids)]))
     categories = {item.category for item in knowledge_rows if item.category}
     negative = feedback_intent in {"too_hard", "confusing"}
@@ -375,7 +384,9 @@ def apply_feedback_profile_update(
             item["weakness_level"] = min(5, int(item.get("weakness_level") or 1) + 1)
             item["weakness_type"] = "feedback_confirmed"
         elif key in weak_by_id:
-            weak_by_id[key]["weakness_level"] = max(0, int(weak_by_id[key].get("weakness_level") or 1) - 1)
+            weak_by_id[key]["weakness_level"] = max(
+                0, int(weak_by_id[key].get("weakness_level") or 1) - 1
+            )
             if weak_by_id[key]["weakness_level"] == 0:
                 del weak_by_id[key]
 
@@ -392,7 +403,10 @@ def apply_feedback_profile_update(
             for item in (candidate.sources_json or [])
             if isinstance(item, dict) and item.get("knowledge_id")
         }
-        if candidate_ids.intersection(affected_knowledge_ids) and candidate.public_id not in affected_resource_ids:
+        if (
+            candidate_ids.intersection(affected_knowledge_ids)
+            and candidate.public_id not in affected_resource_ids
+        ):
             affected_resource_ids.append(candidate.public_id)
 
     changed_dimensions = ["ability_scores", "category_mastery", "weak_knowledge"]
@@ -407,10 +421,16 @@ def apply_feedback_profile_update(
     }
 
 
-def latest_profile_for_learner(db: Session, learner: Learner) -> LearnerProfile | None:
+def latest_profile_for_learner(
+    db: Session, learner: Learner, domain_code: str | None = None
+) -> LearnerProfile | None:
+    selected_domain = str(domain_code or learner.target_domain).strip()
     return db.scalar(
         select(LearnerProfile)
-        .where(LearnerProfile.learner_id == learner.id)
+        .where(
+            LearnerProfile.learner_id == learner.id,
+            LearnerProfile.domain_code == selected_domain,
+        )
         .order_by(LearnerProfile.id.desc())
     )
 
@@ -469,18 +489,40 @@ def profile_ability_level(ability_profile: dict[str, Any] | None) -> int:
     return max(1, min(5, round(average / 20)))
 
 
-def diagnostic_summary_for_learner(db: Session, learner: Learner) -> dict[str, Any]:
-    total_count = db.scalar(
-        select(func.count(AnswerRecord.id)).where(AnswerRecord.learner_id == learner.id)
-    ) or 0
-    correct_count = db.scalar(
-        select(func.count(AnswerRecord.id))
-        .where(AnswerRecord.learner_id == learner.id)
-        .where(AnswerRecord.is_correct.is_(True))
-    ) or 0
+def diagnostic_summary_for_learner(
+    db: Session, learner: Learner, domain_code: str | None = None
+) -> dict[str, Any]:
+    selected_domain = str(domain_code or learner.target_domain).strip()
+    total_count = (
+        db.scalar(
+            select(func.count(AnswerRecord.id))
+            .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+            .where(
+                AnswerRecord.learner_id == learner.id,
+                DiagnosticQuestion.domain_code == selected_domain,
+            )
+        )
+        or 0
+    )
+    correct_count = (
+        db.scalar(
+            select(func.count(AnswerRecord.id))
+            .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+            .where(
+                AnswerRecord.learner_id == learner.id,
+                DiagnosticQuestion.domain_code == selected_domain,
+                AnswerRecord.is_correct.is_(True),
+            )
+        )
+        or 0
+    )
     latest_answer = db.scalar(
         select(AnswerRecord)
-        .where(AnswerRecord.learner_id == learner.id)
+        .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+        .where(
+            AnswerRecord.learner_id == learner.id,
+            DiagnosticQuestion.domain_code == selected_domain,
+        )
         .order_by(AnswerRecord.id.desc())
     )
     return {
@@ -488,8 +530,7 @@ def diagnostic_summary_for_learner(db: Session, learner: Learner) -> dict[str, A
         "correct_count": correct_count,
         "accuracy": round(correct_count / total_count * 100, 1) if total_count else 0,
         "latest_session_id": (
-            latest_answer.session_id
-            or (latest_answer.answer_summary_json or {}).get("session_id")
+            latest_answer.session_id or (latest_answer.answer_summary_json or {}).get("session_id")
         )
         if latest_answer
         else None,
@@ -522,7 +563,9 @@ def serialize_profile_detail(
             "weak_knowledge": [],
             "context_snapshot": {},
             "learning_path": None,
-            "diagnostic_summary": diagnostic_summary_for_learner(db, learner),
+            "diagnostic_summary": diagnostic_summary_for_learner(
+                db, learner, learner.target_domain
+            ),
         }
 
     ability_profile = profile.ability_profile_json or {}
@@ -552,5 +595,5 @@ def serialize_profile_detail(
         "weak_knowledge": clean_display_payload(profile.weak_knowledge_json or []),
         "context_snapshot": clean_display_payload(profile.context_snapshot_json or {}),
         "learning_path": clean_display_payload(learning_path),
-        "diagnostic_summary": diagnostic_summary_for_learner(db, learner),
+        "diagnostic_summary": diagnostic_summary_for_learner(db, learner, profile.domain_code),
     }

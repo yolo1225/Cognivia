@@ -3,10 +3,21 @@
     <PageHeader
       :title="profileReady ? '学习中心' : '开始建立学习画像'"
       :description="profileReady ? '查看当前学习状态，继续完成下一步学习任务。' : '填写学习背景并完成首次能力诊断后，系统才能生成个性化学习内容。'"
-    />
+    >
+      <template #actions>
+        <label v-if="currentLearnerId && domainStore.domains.length" class="domain-picker">
+          <span>学习领域</span>
+          <select v-model="selectedDomainCode" class="field" :disabled="switchingDomain" @change="switchLearningDomain">
+            <option value="" disabled>请选择领域</option>
+            <option v-for="domain in domainStore.domains" :key="domain.domain_code" :value="domain.domain_code">{{ domain.name }}</option>
+          </select>
+        </label>
+      </template>
+    </PageHeader>
 
     <section v-if="loading" class="learning-stage loading-stage" aria-busy="true"><div class="loading-line wide"></div><div class="loading-line"></div><div class="loading-line short"></div></section>
     <section v-else-if="loadError" class="learning-stage stage-error" role="alert"><div class="stage-copy"><span class="stage-label">加载失败</span><h2>暂时无法读取学习状态</h2><p>{{ loadError }}</p><button class="btn primary" type="button" @click="loadDashboard">重新加载</button></div></section>
+    <section v-else-if="currentLearnerId && !domainStore.currentDomainCode" class="learning-stage stage-error"><div class="stage-copy"><span class="stage-label">选择学习领域</span><h2>先选择本次学习使用的领域</h2><p>系统只展示已完成知识、题库和检索就绪检查的领域。选择后再建立该领域的独立学习画像。</p></div></section>
     <InitialProfileWizard v-else-if="!profileReady && currentLearnerId" :learner-id="currentLearnerId" @complete="completeOnboarding" />
     <section v-else-if="!currentLearnerId" class="learning-stage stage-error"><div class="stage-copy"><span class="stage-label">学习者未关联</span><h2>当前账号未关联学习者档案</h2><p>请重新登录或联系管理员完成账号配置。</p></div></section>
 
@@ -42,13 +53,17 @@ import { getLearnerProfile, type LearnerProfileDetail } from '@/api/learners'
 import { listResources, type ResourceSummary } from '@/api/resources'
 import { useAuthStore } from '@/stores/authStore'
 import { useProfileGateStore } from '@/stores/profileGateStore'
+import { useDomainStore } from '@/stores/domainStore'
 import { getDashboardState } from './dashboardState'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const profileGate = useProfileGateStore()
+const domainStore = useDomainStore()
 const loading = ref(true)
 const retrying = ref(false)
+const switchingDomain = ref(false)
+const selectedDomainCode = ref('')
 const loadError = ref('')
 const profile = ref<LearnerProfileDetail | null>(null)
 const activeTask = ref<GenerationTaskDetail | null>(null)
@@ -66,9 +81,12 @@ async function loadDashboard() {
   loadError.value = ''
   try {
     profile.value = learnerId ? await getLearnerProfile(learnerId) : null
+    await domainStore.initialize(profile.value?.domain_code || '')
+    selectedDomainCode.value = domainStore.currentDomainCode
     await profileGate.refresh(learnerId)
     if (!profileReady.value || !learnerId) { activeTask.value = null; recentTasks.value = []; resources.value = []; return }
-    const [active, publishedResources, tasks] = await Promise.all([getActiveGenerationTask(learnerId), listResources({ learnerId, domainCode: 'ai_app_dev' }), listGenerationTasks({ learnerId, limit: 10 })])
+    const domainCode = domainStore.currentDomainCode
+    const [active, publishedResources, tasks] = await Promise.all([getActiveGenerationTask(learnerId), listResources({ learnerId, domainCode }), listGenerationTasks({ learnerId, domainCode, limit: 10 })])
     activeTask.value = active
     resources.value = publishedResources
     recentTasks.value = tasks
@@ -76,6 +94,17 @@ async function loadDashboard() {
 }
 
 async function completeOnboarding() { await loadDashboard() }
+async function switchLearningDomain() {
+  if (!currentLearnerId.value || !selectedDomainCode.value) return
+  switchingDomain.value = true
+  try {
+    await domainStore.selectForLearner(currentLearnerId.value, selectedDomainCode.value)
+    await loadDashboard()
+  } catch {
+    selectedDomainCode.value = domainStore.currentDomainCode
+    loadError.value = '领域切换失败，请确认该领域仍处于已发布状态。'
+  } finally { switchingDomain.value = false }
+}
 function openReport() { router.push({ path: '/report', query: { learner_id: currentLearnerId.value } }) }
 function openResources(taskId?: string | null) { router.push({ path: '/resources', query: { learner_id: currentLearnerId.value, ...(taskId ? { task_id: taskId } : {}) } }) }
 async function retryTask(taskId: string) { retrying.value = true; try { const task = await retryGenerationTask(taskId); activeTask.value = task; openResources(task.task_id) } catch { loadError.value = '重新生成失败，请稍后再试。' } finally { retrying.value = false } }
@@ -87,4 +116,6 @@ onMounted(loadDashboard)
 
 <style scoped>
 .dashboard { display: grid; gap: 18px; max-width: 1080px; }.learning-stage { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 230px; min-height: 360px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-panel); background: #fff; }.stage-copy { display: grid; align-content: center; justify-items: start; gap: 14px; padding: 48px 54px; }.stage-label { color: var(--blue); font-size: 12px; font-weight: 750; }.stage-copy h2 { max-width: 620px; margin: 0; color: var(--ink); font-size: 30px; line-height: 1.3; text-wrap: balance; }.stage-copy > p { max-width: 560px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.75; text-wrap: pretty; }.stage-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 8px; }.stage-actions .btn { min-width: 112px; }.stage-primary { min-height: 42px; padding-inline: 18px; }.assessment-facts,.resource-meta { display: flex; flex-wrap: wrap; gap: 8px; }.assessment-facts span,.resource-meta span { border: 1px solid var(--line); border-radius: 6px; background: var(--soft); padding: 5px 8px; color: #405067; font-size: 12px; }.stage-visual { display: grid; place-content: center; gap: 12px; border-left: 1px solid var(--line); background: #f4f7fb; color: #405067; font-size: 12px; font-weight: 700; text-align: center; }.visual-mark { width: 48px; height: 48px; margin: auto; border: 10px solid #dce7ff; border-top-color: var(--blue); border-radius: 50%; }.state-assessment .stage-visual { background: #eef3ff; color: #27457f; }.state-resource .stage-visual { background: #eef8f3; color: #176346; }.state-failed .stage-visual { background: #fff7ed; color: #8b4c0b; }.task-progress { display: grid; grid-template-columns: minmax(180px, 340px) auto; align-items: center; gap: 10px; width: 100%; margin-top: 2px; }.task-progress > span { display: block; height: 7px; overflow: hidden; border-radius: 5px; background: #dce4ee; }.task-progress i { display: block; height: 100%; border-radius: inherit; background: var(--blue); }.task-progress strong { color: #405067; font-size: 12px; }.stage-error { display: block; min-height: 280px; border-color: #edc9c9; background: #fffafa; }.stage-error .stage-label { color: var(--red); }.loading-stage { display: grid; align-content: center; gap: 14px; padding: 48px 54px; }.loading-line { width: min(420px, 76%); height: 14px; border-radius: 5px; background: #e9eef5; }.loading-line.wide { width: min(520px, 92%); height: 32px; }.loading-line.short { width: 132px; height: 40px; margin-top: 10px; background: #dce7ff; }@media (max-width: 760px) { .learning-stage { grid-template-columns: 1fr; min-height: 0; }.stage-copy { padding: 34px 26px; }.stage-copy h2 { font-size: 25px; }.stage-visual { min-height: 96px; border-top: 1px solid var(--line); border-left: 0; }.visual-mark { width: 32px; height: 32px; border-width: 7px; }.task-progress { grid-template-columns: minmax(0, 1fr) auto; } }@media (max-width: 480px) { .dashboard { gap: 16px; }.stage-copy { padding: 28px 20px; }.stage-actions { display: grid; width: 100%; }.stage-actions .btn { width: 100%; min-height: 44px; } }
+.domain-picker { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.domain-picker select { min-width: 180px; }
 </style>

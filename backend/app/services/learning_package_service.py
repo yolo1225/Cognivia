@@ -70,9 +70,7 @@ def package_member_rows(
     )
 
 
-def current_package(
-    db: Session, *, learner_id: int, domain_code: str = "ai_app_dev"
-) -> GenerationTask | None:
+def current_package(db: Session, *, learner_id: int, domain_code: str) -> GenerationTask | None:
     task = db.scalar(
         select(GenerationTask)
         .where(

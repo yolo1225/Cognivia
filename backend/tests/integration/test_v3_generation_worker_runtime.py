@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from types import SimpleNamespace
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -17,6 +18,7 @@ from app.agents.contract_adapters import (
 from app.agents.contract_examples import initial_generation_flow_example
 from app.agents.contracts import FinalizeTaskOutput, TaskDecision
 from app.agents.generation_agent import GenerationError
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.models import (
     AgentMessageRecord,
     AgentRun,
@@ -47,9 +49,7 @@ def test_worker_maps_final_decisions_to_stable_terminal_failure_codes() -> None:
         revision_count=2,
         decision_reason="自动定向修订已达到上限。",
     )
-    rejected = exhausted.model_copy(
-        update={"decision": TaskDecision.REJECTED, "revision_count": 0}
-    )
+    rejected = exhausted.model_copy(update={"decision": TaskDecision.REJECTED, "revision_count": 0})
 
     assert generation_worker._finalization_failure_code(exhausted) == "revision_exhausted"
     assert generation_worker._finalization_failure_code(rejected) == "resource_rejected"
@@ -59,9 +59,7 @@ def test_worker_maps_final_decisions_to_stable_terminal_failure_codes() -> None:
 def _node_overrides():
     flow = initial_generation_flow_example()
     return {
-        "prepare_task": lambda _state: prepare_task_output_to_patch(
-            flow["prepare_task"]["output"]
-        ),
+        "prepare_task": lambda _state: prepare_task_output_to_patch(flow["prepare_task"]["output"]),
         "interpret_feedback": lambda _state: {},
         "analyze_profile": lambda _state: analyze_profile_output_to_patch(
             flow["analyze_profile"]["output"]
@@ -121,6 +119,16 @@ def test_v3_worker_persists_checkpoint_runs_messages_resources_and_review(
         db.commit()
 
     monkeypatch.setattr(generation_worker, "SessionLocal", sessions)
+    monkeypatch.setattr(
+        generation_worker,
+        "load_domain_runtime",
+        lambda *_: SimpleNamespace(
+            generation_ready=True,
+            profile_config=AI_APP_DEV_PROFILE_V2,
+            display_name="人工智能应用开发实训",
+            reasons=(),
+        ),
+    )
     monkeypatch.setattr(generation_worker, "build_nodes", lambda _runtime: _node_overrides())
     monkeypatch.setattr(
         generation_worker.AgentRuntime,
@@ -134,13 +142,19 @@ def test_v3_worker_persists_checkpoint_runs_messages_resources_and_review(
     assert result["decision"] == "completed"
     with sessions() as db:
         task = db.scalar(select(GenerationTask).where(GenerationTask.public_id == "task_v3_worker"))
-        checkpoint = db.scalar(select(GraphCheckpoint).where(GraphCheckpoint.task_id == task.public_id))
+        checkpoint = db.scalar(
+            select(GraphCheckpoint).where(GraphCheckpoint.task_id == task.public_id)
+        )
         runs = list(db.scalars(select(AgentRun).where(AgentRun.generation_task_id == task.id)))
         messages = list(
-            db.scalars(select(AgentMessageRecord).where(AgentMessageRecord.task_id == task.public_id))
+            db.scalars(
+                select(AgentMessageRecord).where(AgentMessageRecord.task_id == task.public_id)
+            )
         )
         resources = list(
-            db.scalars(select(LearningResource).where(LearningResource.generation_task_id == task.id))
+            db.scalars(
+                select(LearningResource).where(LearningResource.generation_task_id == task.id)
+            )
         )
         reports = list(db.scalars(select(ReviewReport).where(ReviewReport.task_id == task.id)))
 
@@ -156,23 +170,29 @@ def test_v3_worker_persists_checkpoint_runs_messages_resources_and_review(
     repeated = generation_worker.run_generation_task("task_v3_worker")
     assert repeated["status"] == "completed"
     with sessions() as db:
-        task = db.scalar(
-            select(GenerationTask).where(GenerationTask.public_id == "task_v3_worker")
+        task = db.scalar(select(GenerationTask).where(GenerationTask.public_id == "task_v3_worker"))
+        assert (
+            len(
+                list(
+                    db.scalars(
+                        select(LearningResource).where(
+                            LearningResource.generation_task_id == task.id
+                        )
+                    )
+                )
+            )
+            == 3
         )
-        assert len(list(db.scalars(
-            select(LearningResource).where(LearningResource.generation_task_id == task.id)
-        ))) == 3
-        assert len(list(db.scalars(
-            select(ReviewReport).where(ReviewReport.task_id == task.id)
-        ))) == 3
-        assert len(list(db.scalars(
-            select(AgentRun).where(AgentRun.generation_task_id == task.id)
-        ))) == 6
+        assert (
+            len(list(db.scalars(select(ReviewReport).where(ReviewReport.task_id == task.id)))) == 3
+        )
+        assert (
+            len(list(db.scalars(select(AgentRun).where(AgentRun.generation_task_id == task.id))))
+            == 6
+        )
 
 
-def test_failed_review_resumes_from_checkpoint_without_regeneration(
-    monkeypatch, tmp_path
-) -> None:
+def test_failed_review_resumes_from_checkpoint_without_regeneration(monkeypatch, tmp_path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'v3-worker-resume.db'}")
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
@@ -221,6 +241,16 @@ def test_failed_review_resumes_from_checkpoint_without_regeneration(
     nodes["generate_resource"] = generate
     nodes["review_resource"] = review
     monkeypatch.setattr(generation_worker, "SessionLocal", sessions)
+    monkeypatch.setattr(
+        generation_worker,
+        "load_domain_runtime",
+        lambda *_: SimpleNamespace(
+            generation_ready=True,
+            profile_config=AI_APP_DEV_PROFILE_V2,
+            display_name="人工智能应用开发实训",
+            reasons=(),
+        ),
+    )
     monkeypatch.setattr(generation_worker, "build_nodes", lambda _runtime: nodes)
     monkeypatch.setattr(
         generation_worker.AgentRuntime,
@@ -233,14 +263,10 @@ def test_failed_review_resumes_from_checkpoint_without_regeneration(
     assert resumed["status"] == "completed", resumed
     assert calls == {"generate": 1, "review": 2}
     with sessions() as db:
-        task = db.scalar(
-            select(GenerationTask).where(GenerationTask.public_id == "task_v3_resume")
-        )
+        task = db.scalar(select(GenerationTask).where(GenerationTask.public_id == "task_v3_resume"))
         runs = list(
             db.scalars(
-                select(AgentRun)
-                .where(AgentRun.generation_task_id == task.id)
-                .order_by(AgentRun.id)
+                select(AgentRun).where(AgentRun.generation_task_id == task.id).order_by(AgentRun.id)
             )
         )
         assert [run.agent_name for run in runs].count("content_generation_agent") == 1
@@ -371,9 +397,7 @@ def test_generation_validation_failure_persists_sanitized_field_paths(tmp_path) 
         with pytest.raises(GenerationError, match="generated_structure_validation_failed"):
             wrapped({})
 
-        run = db.scalar(
-            select(AgentRun).where(AgentRun.generation_task_id == task.id)
-        )
+        run = db.scalar(select(AgentRun).where(AgentRun.generation_task_id == task.id))
         message = db.scalar(
             select(AgentMessageRecord)
             .where(AgentMessageRecord.task_id == task.public_id)
@@ -381,16 +405,12 @@ def test_generation_validation_failure_persists_sanitized_field_paths(tmp_path) 
         )
 
     expected = ["structured_content.questions.5.options", "x" * 200]
-    assert run.output_summary_json["failure_code"] == (
-        "generated_structure_validation_failed"
-    )
+    assert run.output_summary_json["failure_code"] == ("generated_structure_validation_failed")
     assert run.output_summary_json["field_paths"] == expected
     assert message.payload_summary_json["field_paths"] == expected
 
 
-def test_interrupted_task_is_claimed_for_one_startup_recovery(
-    monkeypatch, tmp_path
-) -> None:
+def test_interrupted_task_is_claimed_for_one_startup_recovery(monkeypatch, tmp_path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'startup-recovery.db'}")
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False)
@@ -438,23 +458,15 @@ def test_interrupted_task_is_claimed_for_one_startup_recovery(
 
     monkeypatch.setattr(generation_worker, "SessionLocal", sessions)
 
-    assert generation_worker.recover_interrupted_generation_tasks() == [
-        "task_startup_recovery"
-    ]
+    assert generation_worker.recover_interrupted_generation_tasks() == ["task_startup_recovery"]
     with sessions() as db:
         task = db.scalar(
-            select(GenerationTask).where(
-                GenerationTask.public_id == "task_startup_recovery"
-            )
+            select(GenerationTask).where(GenerationTask.public_id == "task_startup_recovery")
         )
         checkpoint = db.scalar(
-            select(GraphCheckpoint).where(
-                GraphCheckpoint.task_id == "task_startup_recovery"
-            )
+            select(GraphCheckpoint).where(GraphCheckpoint.task_id == "task_startup_recovery")
         )
-        run = db.scalar(
-            select(AgentRun).where(AgentRun.generation_task_id == task.id)
-        )
+        run = db.scalar(select(AgentRun).where(AgentRun.generation_task_id == task.id))
         assert task.status == "retry_pending"
         assert checkpoint.state_json["auto_recovery_count"] == 1
         assert run.status == "failed"
@@ -464,9 +476,7 @@ def test_interrupted_task_is_claimed_for_one_startup_recovery(
     assert generation_worker.recover_interrupted_generation_tasks() == []
     with sessions() as db:
         task = db.scalar(
-            select(GenerationTask).where(
-                GenerationTask.public_id == "task_startup_recovery"
-            )
+            select(GenerationTask).where(GenerationTask.public_id == "task_startup_recovery")
         )
         assert task.status == "failed"
         assert task.failure_reason == "checkpoint_recovery_exhausted"

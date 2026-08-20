@@ -62,7 +62,9 @@ def _serialize_resource(resource: LearningResource, task: GenerationTask | None)
     return {
         "resource_id": resource.public_id,
         "resource_type": resource.resource_type,
-        "resource_type_label": RESOURCE_TYPE_LABELS.get(resource.resource_type, resource.resource_type),
+        "resource_type_label": RESOURCE_TYPE_LABELS.get(
+            resource.resource_type, resource.resource_type
+        ),
         "title": resource.title,
         "difficulty": resource.difficulty,
         "review_status": resource.review_status,
@@ -145,7 +147,9 @@ def get_learning_report(
     if learner is None:
         raise HTTPException(status_code=404, detail=f"Learner not found: {learner_id}")
 
-    profile = latest_profile_for_learner(db, learner)
+    profile = latest_profile_for_learner(
+        db, learner, task.domain_code if task_id and task is not None else learner.target_domain
+    )
     path = latest_path_for_profile(db, profile) if profile is not None else None
     original_path_payload = dict(path.path_json or {}) if path is not None else None
     detail = serialize_profile_detail(db, learner, profile, path=path)
@@ -179,10 +183,7 @@ def get_learning_report(
         )
     )
     resources = [resource for resource, _task in resource_rows]
-    recent_resources = [
-        _serialize_resource(resource, task)
-        for resource, task in resource_rows[:6]
-    ]
+    recent_resources = [_serialize_resource(resource, task) for resource, task in resource_rows[:6]]
 
     review_reports = list(
         db.scalars(
@@ -222,6 +223,7 @@ def get_learning_report(
     return ok(
         {
             "learner_id": learner.public_id,
+            "domain_code": profile.domain_code if profile else learner.target_domain,
             "profile_id": detail.get("profile_id"),
             "profile_type": detail.get("profile_type"),
             "profile_source": profile_source(profile) if profile else None,
@@ -269,7 +271,9 @@ def get_learning_report(
             },
             "feedback_summary": {
                 "total": feedback_count,
-                "latest_action": recent_feedback[0]["triggered_action"] if recent_feedback else None,
+                "latest_action": recent_feedback[0]["triggered_action"]
+                if recent_feedback
+                else None,
                 "learning_path_needs_refresh": path_needs_refresh,
                 "path_refresh_performed": path_refresh_performed,
                 "recent": recent_feedback,

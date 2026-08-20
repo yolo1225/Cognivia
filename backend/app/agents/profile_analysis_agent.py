@@ -7,7 +7,7 @@ import logging
 from pydantic import ValidationError
 
 from app.agents.contracts import AnalyzeProfileInput, AnalyzeProfileOutput
-from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2, ProfileAnalysisConfig
+from app.agents.profile_analysis_config import ProfileAnalysisConfig
 from app.services.profile_analysis_service import ProfileAnalysisError, analyze_profile
 
 
@@ -26,7 +26,7 @@ class ProfileAnalysisAgent:
 
     def __init__(
         self,
-        config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V2,
+        config: ProfileAnalysisConfig,
         logger: logging.Logger | None = None,
     ) -> None:
         self._config = config
@@ -35,11 +35,15 @@ class ProfileAnalysisAgent:
     def execute(self, request: AnalyzeProfileInput) -> AnalyzeProfileOutput:
         """Validate one V3 request, run the pure algorithm, and emit safe observability."""
         if not isinstance(request, AnalyzeProfileInput):
-            self._logger.warning("profile_analysis_rejected error_code=invalid_analyze_profile_input_type")
+            self._logger.warning(
+                "profile_analysis_rejected error_code=invalid_analyze_profile_input_type"
+            )
             raise ProfileAnalysisError("invalid_analyze_profile_input_type")
 
         try:
-            validated_request = AnalyzeProfileInput.model_validate(request.model_dump(mode="python"))
+            validated_request = AnalyzeProfileInput.model_validate(
+                request.model_dump(mode="python")
+            )
         except ValidationError as exc:
             self._log_failure(request, "invalid_analyze_profile_input")
             raise ProfileAnalysisError("invalid_analyze_profile_input") from exc

@@ -11,14 +11,14 @@
     <div v-if="!session && !result" class="panel" style="text-align:center;padding:60px">
       <div class="upload-icon" style="margin:auto">◎</div>
       <strong style="display:block;margin-top:14px">尚未开始诊断训练</strong>
-      <p class="sub">系统将从 {{ domainCode }} 领域题库中抽取 10 道题，覆盖理论理解与实操场景。</p>
+      <p class="sub">系统将从 {{ domainStore.currentDomainName || domainCode }} 领域题库中抽取 10 道题，覆盖理论理解与实操场景。</p>
       <button class="btn primary" style="margin-top:16px" @click="startSession" :disabled="creatingSession">{{ creatingSession ? '创建中...' : '开始诊断训练' }}</button>
     </div>
 
     <!-- Test View -->
     <div v-if="session && !result" class="diag">
       <aside class="panel">
-        <h2>{{ session.domain_code }} 诊断</h2>
+        <h2>{{ domainStore.currentDomainName || session.domain_code }} 诊断</h2>
         <p class="sub">{{ session.question_count }} 题 · 会话 {{ session.session_id?.slice(0,8) }}</p>
         <div class="qnav">
           <button v-for="(q,i) in session.questions" :key="q.question_id" class="q"
@@ -84,18 +84,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { createDiagnosticSession, submitDiagnosticSession, type DiagnosticSession, type DiagnosticResult } from '@/api/diagnostics'
 import { createGenerationTask } from '@/api/generation'
 import { useLearnerStore } from '@/stores/learnerStore'
+import { useDomainStore } from '@/stores/domainStore'
+import { getLearnerProfile } from '@/api/learners'
 
 const router = useRouter()
 const route = useRoute()
 const learnerStore = useLearnerStore()
+const domainStore = useDomainStore()
 const { showToast } = useToast()
-const domainCode = 'ai_app_dev'
+const domainCode = computed(() => domainStore.currentDomainCode)
 
 const creatingSession = ref(false)
 const submitting = ref(false)
@@ -119,9 +122,13 @@ const shortAnswerResults = computed(() => result.value?.answer_results?.filter(i
 
 async function startSession() {
   if (!learnerId.value) { showToast('当前账号未关联学习者'); return }
+  if (!domainStore.readiness?.diagnostic_ready) {
+    showToast(`当前领域尚未满足诊断条件：${domainStore.readiness?.runtime_reasons?.join('、') || '领域配置不可用'}`, 'error')
+    return
+  }
   creatingSession.value = true
   try {
-    session.value = await createDiagnosticSession(learnerId.value)
+    session.value = await createDiagnosticSession(domainCode.value, learnerId.value)
     result.value = null
     answers.value = {}
     scoringPending.value = false
@@ -138,7 +145,7 @@ async function submitAll() {
       question_id: session.value!.questions[Number(idx)].question_id,
       answer,
     }))
-    result.value = await submitDiagnosticSession(session.value.session_id, list, learnerId.value)
+    result.value = await submitDiagnosticSession(session.value.session_id, list, domainCode.value, learnerId.value)
     scoringPending.value = false
     showToast(`诊断完成，答对 ${result.value.correct_count}/${result.value.question_count} 题`)
   } catch (error: any) {
@@ -152,13 +159,29 @@ async function submitAll() {
 
 async function generateResources() {
   if (!result.value || !learnerId.value) return
+  if (!domainStore.readiness?.generation_ready) {
+    showToast(`当前领域尚未满足生成条件：${domainStore.readiness?.runtime_reasons?.join('、') || 'Candidate RAG 未就绪'}`, 'error')
+    return
+  }
   generating.value = true
   try {
-    const task = await createGenerationTask(result.value.profile_id, learnerId.value)
+    const task = await createGenerationTask(domainCode.value, result.value.profile_id, learnerId.value)
     router.push({ path: '/resources', query: { task_id: task.task_id, learner_id: learnerId.value } })
   } catch { showToast('创建生成任务失败') }
   finally { generating.value = false }
 }
+onMounted(async () => {
+  if (!learnerId.value) return
+  const profile = await getLearnerProfile(learnerId.value)
+  await domainStore.initialize(profile.domain_code)
+})
+watch(() => domainStore.selectionVersion, () => {
+  session.value = null
+  result.value = null
+  answers.value = {}
+  currentIdx.value = 0
+  scoringPending.value = false
+})
 </script>
 
 <style scoped>

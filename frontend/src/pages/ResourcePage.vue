@@ -182,6 +182,8 @@ import { listResources, exportResource, submitFeedback, type ResourceSummary } f
 import { resourceQualityStatusLabel } from '@/utils/resourceQualityStatus'
 import { dismissKnowledgeImpact, getCurrentLearningPackage, getLearningPackage, refreshAffectedResources, type LearningPackage } from '@/api/learningPackages'
 import { getActiveGenerationTask, getGenerationTask, retryGenerationTask, type GenerationTaskDetail } from '@/api/generation'
+import { getLearnerProfile } from '@/api/learners'
+import { useDomainStore } from '@/stores/domainStore'
 import QualityMetrics from '@/components/ResourceViewer/QualityMetrics.vue'
 import AppDialog from '@/components/Shared/AppDialog.vue'
 import AppDrawer from '@/components/Shared/AppDrawer.vue'
@@ -197,6 +199,7 @@ import { useAuthStore } from '@/stores/authStore'
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+const domainStore = useDomainStore()
 const { showToast } = useToast()
 const loading = ref(false)
 const resources = ref<ResourceSummary[]>([])
@@ -402,9 +405,9 @@ async function loadResources() {
   try {
     if (taskId.value) {
       const [latestPackage, requestedPackage, taskResources] = await Promise.all([
-        getCurrentLearningPackage(currentLearnerId.value || undefined),
+        getCurrentLearningPackage(taskDetail.value?.domain_code || domainStore.currentDomainCode, currentLearnerId.value || undefined),
         getLearningPackage(taskId.value),
-        listResources({ taskId: taskId.value, learnerId: currentLearnerId.value || undefined, domainCode: 'ai_app_dev' }),
+        listResources({ taskId: taskId.value, learnerId: currentLearnerId.value || undefined, domainCode: taskDetail.value?.domain_code }),
       ])
       currentPackage.value = requestedPackage
       const isRefreshingLatestPackage = Boolean(
@@ -417,7 +420,7 @@ async function loadResources() {
         ? latestPackage?.resources || []
         : requestedPackage.resources.length ? requestedPackage.resources : taskResources
     } else {
-      currentPackage.value = await getCurrentLearningPackage(currentLearnerId.value || undefined)
+      currentPackage.value = await getCurrentLearningPackage(taskDetail.value?.domain_code || domainStore.currentDomainCode, currentLearnerId.value || undefined)
       resources.value = currentPackage.value?.resources || []
     }
   } catch {
@@ -467,6 +470,10 @@ async function initializePage() {
   clearTaskTimer()
   taskDetail.value = null
   selectedIdx.value = 0
+  if (currentLearnerId.value && !domainStore.currentDomainCode) {
+    const profile = await getLearnerProfile(currentLearnerId.value)
+    await domainStore.initialize(profile.domain_code)
+  }
   if (taskId.value) {
     try {
       taskDetail.value = await getGenerationTask(taskId.value)

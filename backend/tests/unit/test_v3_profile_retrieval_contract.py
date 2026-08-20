@@ -7,6 +7,7 @@ from app.agents.contracts import (
     RetrieveKnowledgeInput,
 )
 from app.agents.profile_analysis_agent import ProfileAnalysisAgent
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.services.profile_v3_fixture_service import rendered_cases
 
 
@@ -40,7 +41,7 @@ def _to_retrieval_input(
 
 
 def test_profile_output_is_directly_consumable_by_v3_retrieval_contract() -> None:
-    agent = ProfileAnalysisAgent()
+    agent = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2)
 
     for case_id, payload, _ in rendered_cases():
         request = AnalyzeProfileInput.model_validate(payload)
@@ -61,7 +62,7 @@ def test_profile_output_is_directly_consumable_by_v3_retrieval_contract() -> Non
 
 
 def test_no_generation_profile_output_does_not_create_retrieval_input() -> None:
-    agent = ProfileAnalysisAgent()
+    agent = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2)
     no_generation_task_ids: set[str] = set()
     constructed_task_ids: set[str] = set()
 
@@ -88,7 +89,7 @@ def test_review_uses_source_verification_purpose() -> None:
         for _, payload, _ in rendered_cases()
         if payload.get("recommended_action") == RecommendedAction.REVIEW.value
     )
-    output = ProfileAnalysisAgent().execute(review_request)
+    output = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2).execute(review_request)
     retrieval_input = _to_retrieval_input(
         review_request,
         profile=output.profile,

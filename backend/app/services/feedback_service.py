@@ -92,6 +92,14 @@ def create_feedback_task(
         learner=learner,
         resource=resource,
     )
+    resource_task = db.get(GenerationTask, resource.generation_task_id)
+    if (
+        resource_task is None
+        or resource_task.domain_code != source_task.domain_code
+        or profile.domain_code != source_task.domain_code
+        or learner.target_domain != source_task.domain_code
+    ):
+        raise ValueError("feedback_domain_mismatch")
     inherited_goal = source_task.learning_goal.strip()
     feedback_goal = f"根据资源 {resource.public_id} 的反馈执行辅导或复核"
     learning_goal = f"{inherited_goal}\n{feedback_goal}" if inherited_goal else feedback_goal
@@ -133,7 +141,9 @@ def record_quick_feedback(
         resource_id=resource.id,
         learner_id=learner.id,
         rating=rating,
-        feedback_type="text_selection" if feedback_type in {"incorrect", "has_error"} else "quick_tag",
+        feedback_type="text_selection"
+        if feedback_type in {"incorrect", "has_error"}
+        else "quick_tag",
         feedback_summary_json={"tag": feedback_type, "comment_summary": comment[:120]},
         triggered_action=action,
         comment=comment[:2000],

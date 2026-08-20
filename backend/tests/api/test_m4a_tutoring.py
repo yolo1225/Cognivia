@@ -15,6 +15,7 @@ from app.agents.contract_adapters import (
 from app.agents.contracts import FeedbackIntent, InterpretFeedbackOutput, RecommendedAction
 from app.agents.contracts import QUALITY_RULE_VERSION
 from app.agents.profile_analysis_agent import ProfileAnalysisAgent
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.agents.orchestrator_agent import OrchestratorAgent
 from app.core.db import get_db
 from app.main import app
@@ -23,6 +24,7 @@ from app.models import (
     AnswerRecord,
     Base,
     DiagnosticQuestion,
+    Domain,
     Feedback,
     GenerationTask,
     KnowledgeItem,
@@ -58,6 +60,7 @@ def _override(factory: sessionmaker[Session]):
 
 
 def _seed(db: Session) -> None:
+    db.add(Domain(domain_code="ai_app_dev", name="人工智能应用开发实训", config_json={}))
     learner = Learner(
         public_id="learner_001",
         background="test",
@@ -111,9 +114,7 @@ def _seed(db: Session) -> None:
         resource_types_json=["lecture"],
         package_quality_json={"quality_rule_version": QUALITY_RULE_VERSION},
         package_coverage_json={
-            "resource_knowledge_targets": {
-                "lecture": ["rag_pipeline_overview"]
-            }
+            "resource_knowledge_targets": {"lecture": ["rag_pipeline_overview"]}
         },
         is_current_package=True,
     )
@@ -216,14 +217,10 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             feedback_task = db.query(GenerationTask).filter_by(event_type="resource_feedback").one()
             feedback = db.get(Feedback, feedback_task.source_feedback_id)
             learner = db.query(Learner).filter_by(public_id="learner_001").one()
-            evidence, assessments = _feedback_assessments(
-                db, feedback_task, learner, feedback
-            )
+            evidence, assessments = _feedback_assessments(db, feedback_task, learner, feedback)
             assert len(evidence) == len(assessments) == 2
             original_profile = db.get(LearnerProfile, feedback_task.profile_id)
-            state = _initial_state(
-                db, feedback_task, learner, original_profile, feedback
-            )
+            state = _initial_state(db, feedback_task, learner, original_profile, feedback)
             state.update(
                 prepare_task_output_to_patch(
                     OrchestratorAgent().execute(build_prepare_task_input(state))
@@ -242,16 +239,12 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
                     )
                 )
             )
-            analysis = ProfileAnalysisAgent().execute(
-                build_analyze_profile_input(
-                    state, knowledge_assessments=assessments
-                )
+            analysis = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2).execute(
+                build_analyze_profile_input(state, knowledge_assessments=assessments)
             )
             assert analysis.profile_update_required is True
             state.update(analyze_profile_output_to_patch(analysis))
-            next_profile = _persist_profile_update(
-                db, feedback_task, original_profile, state
-            )
+            next_profile = _persist_profile_update(db, feedback_task, original_profile, state)
             db.flush()
             assert next_profile.id != original_profile.id
             assert next_profile.profile_version == original_profile.profile_version + 1
@@ -263,9 +256,7 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
                 for record in db.query(AnswerRecord).order_by(AnswerRecord.id)
             ]
             assert consumed == [next_profile.id, next_profile.id]
-            evidence, assessments = _feedback_assessments(
-                db, feedback_task, learner, feedback
-            )
+            evidence, assessments = _feedback_assessments(db, feedback_task, learner, feedback)
             assert len(evidence) == len(assessments) == 0
         assert calls == 2
     finally:

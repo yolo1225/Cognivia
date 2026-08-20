@@ -11,6 +11,7 @@ from app.models import (
     AnswerRecord,
     Base,
     DiagnosticQuestion,
+    Domain,
     KnowledgeItem,
     KnowledgeRelation,
     Learner,
@@ -33,6 +34,7 @@ def build_test_session() -> sessionmaker[Session]:
 def seed_diagnostic_fixture(
     db: Session,
 ) -> tuple[Learner, DiagnosticQuestion, DiagnosticQuestion]:
+    db.add(Domain(domain_code="ai_app_dev", name="AI", status="ready", config_json={}))
     learner = Learner(
         public_id="learner_001",
         background="computer science student",
@@ -52,10 +54,18 @@ def seed_diagnostic_fixture(
         category="theory_foundation",
         difficulty=2,
         tags_json=["embedding"],
+        evidence_capabilities_json=["concept"],
         content_md="Embedding represents semantic meaning with vectors.",
         source_title="team knowledge base",
         license_note="team-authored",
         needs_reembedding=False,
+        ability_weights_json={
+            "theory": 0.45,
+            "practice": 0.25,
+            "problem_solving": 0.2,
+            "knowledge_breadth": 0.1,
+            "learning_speed": 0.0,
+        },
     )
     rag = KnowledgeItem(
         public_id="rag_chunking",
@@ -64,10 +74,18 @@ def seed_diagnostic_fixture(
         category="rag_practice",
         difficulty=3,
         tags_json=["rag"],
+        evidence_capabilities_json=["concept", "operation"],
         content_md="Chunking balances semantic completeness and retrieval granularity.",
         source_title="team knowledge base",
         license_note="team-authored",
         needs_reembedding=False,
+        ability_weights_json={
+            "theory": 0.2,
+            "practice": 0.45,
+            "problem_solving": 0.25,
+            "knowledge_breadth": 0.1,
+            "learning_speed": 0.0,
+        },
     )
     db.add_all([embedding, rag])
     db.flush()
@@ -172,10 +190,7 @@ def _submit(
         question_count=10,
     )
     answers = []
-    questions = {
-        question.public_id: question
-        for question in db.query(DiagnosticQuestion).all()
-    }
+    questions = {question.public_id: question for question in db.query(DiagnosticQuestion).all()}
     for selected in created["questions"]:
         question = questions[selected["question_id"]]
         if question.public_id == choice.public_id:
@@ -220,9 +235,7 @@ def test_create_diagnostic_session_rejects_non_standard_question_count(monkeypat
             sampled_pool.extend(question.public_id for question in population)
             return population[-k:]
 
-        monkeypatch.setattr(
-            "app.services.diagnostic_service.random.sample", select_last_questions
-        )
+        monkeypatch.setattr("app.services.diagnostic_service.random.sample", select_last_questions)
         monkeypatch.setattr("app.services.diagnostic_service.random.shuffle", lambda _: None)
         with pytest.raises(ValueError, match="initial_diagnostic_requires_ten_questions"):
             create_diagnostic_session(
@@ -277,6 +290,7 @@ def test_create_diagnostic_session_stratifies_ten_questions_as_eight_and_two() -
     assert question_types.count("single_choice") == 6
     assert question_types.count("short_answer") == 4
 
+
 def test_create_diagnostic_session_returns_standard_ten_questions() -> None:
     testing_session = build_test_session()
     with testing_session() as db:
@@ -292,6 +306,7 @@ def test_create_diagnostic_session_returns_standard_ten_questions() -> None:
     assert {choice.public_id, short.public_id}.issubset(
         {question["question_id"] for question in result["questions"]}
     )
+
 
 def test_diagnostic_entrypoint_persists_v3_profile_path_and_safe_observability() -> None:
     testing_session = build_test_session()
