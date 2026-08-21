@@ -131,7 +131,9 @@
       </label>
       <template #footer>
         <button class="btn" @click="exportDialog?.close()">取消</button>
-        <button class="btn primary" @click="doExport">导出资源</button>
+        <button class="btn primary" :disabled="exportSubmitting" @click="doExport">
+          {{ exportSubmitting ? '正在下载…' : '导出并下载' }}
+        </button>
       </template>
     </AppDialog>
 
@@ -178,7 +180,7 @@
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
-import { listResources, exportResource, submitFeedback, type ResourceSummary } from '@/api/resources'
+import { downloadResourceExport, listResources, exportResource, submitFeedback, type ResourceSummary } from '@/api/resources'
 import { resourceQualityStatusLabel } from '@/utils/resourceQualityStatus'
 import { dismissKnowledgeImpact, getCurrentLearningPackage, getLearningPackage, refreshAffectedResources, type LearningPackage } from '@/api/learningPackages'
 import { getActiveGenerationTask, getGenerationTask, retryGenerationTask, type GenerationTaskDetail } from '@/api/generation'
@@ -207,6 +209,7 @@ const selectedIdx = ref(0)
 const headings = ref<HeadingItem[]>([])
 const exportFormat = ref('markdown')
 const exportDialog = ref<InstanceType<typeof AppDialog> | null>(null)
+const exportSubmitting = ref(false)
 const errorMessage = ref('')
 const feedbackSubmitting = ref(false)
 const retrying = ref(false)
@@ -522,12 +525,18 @@ async function sendFeedback(type: string) {
 }
 
 async function doExport() {
-  if (!selected.value) return
+  if (!selected.value || exportSubmitting.value) return
+  exportSubmitting.value = true
   try {
     const r = await exportResource(selected.value.resource_id, exportFormat.value as 'markdown' | 'pdf')
+    await downloadResourceExport(r.download_url, r.file_name)
     exportDialog.value?.close()
-    showToast(`已导出：${r.file_name}`)
-  } catch { showToast('导出失败') }
+    showToast(`已开始下载：${r.file_name}`)
+  } catch {
+    showToast('导出下载失败，请稍后重试。')
+  } finally {
+    exportSubmitting.value = false
+  }
 }
 
 watch(

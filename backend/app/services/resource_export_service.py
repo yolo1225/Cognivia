@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -61,8 +60,9 @@ def export_resource(
         raise ValueError("audience must be learner or teacher")
     EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
     suffix = ".md" if export_format == "markdown" else ".pdf"
-    export_id = f"exp_{uuid4().hex}"
-    path = EXPORT_ROOT / f"{_safe_stem(resource.public_id)}_{export_id}{suffix}"
+    file_stem = _safe_stem(resource.title) or _safe_stem(resource.public_id)
+    export_id = f"export_{resource.public_id}_v{resource.version}_{export_format}_{audience}"
+    path = EXPORT_ROOT / f"{file_stem}{suffix}"
     content = _export_content(resource, audience)
     if export_format == "markdown":
         path.write_text(
