@@ -1,0 +1,426 @@
+{
+  "status": "failed",
+  "run_id": "stability-20260819T042337Z",
+  "quality_rule_version": "quality-v6-20260818",
+  "run_count": 5,
+  "full_generation_count": 2,
+  "partial_regeneration_count": 2,
+  "model_configuration": {
+    "generation_model": "qwen-plus",
+    "primary_review_model": "qwen-max",
+    "secondary_review_model": "qwen-plus",
+    "fixture_enabled": false
+  },
+  "knowledge_base_versions": [
+    "ai_app_dev-kb-2026.08-v4"
+  ],
+  "full_suite_case_sha256": "sha256:c028abd14fb55fee666f2ee5bbe27a997c9f2636d92b0eacfbbf19c6f549048d",
+  "rag_configuration": {
+    "source_data_version": "sha256:a02334aa3f59325c21cfa48ecb58cf36b3e4056f5fffea01f890943c8508e5ba",
+    "index_version": "sha256:3a6b2f4289f340e54fa6fc300c47d0e709bda33e6bb4c924fb4b7e4a5dcb613e",
+    "embedding_model": "qwen3.7-text-embedding",
+    "embedding_dimensions": 1024
+  },
+  "started_at": "2026-08-19T04:23:37.063793+00:00",
+  "results": [
+    {
+      "index": 1,
+      "kind": "full_generation",
+      "task_id": "task_cb44a281be38",
+      "source_task_id": null,
+      "package_quality": {
+        "passed": true,
+        "revision_count": 0,
+        "hallucination_rate": 0.0,
+        "quality_rule_version": "quality-v6-20260818",
+        "evaluated_claim_count": 32,
+        "difficulty_match_score": 100.0,
+        "unresolved_claim_count": 0,
+        "verifiable_claim_count": 32,
+        "core_knowledge_coverage": 100.0,
+        "contradicted_claim_count": 0,
+        "hallucinated_claim_count": 0,
+        "target_core_knowledge_count": 2,
+        "covered_core_knowledge_count": 2,
+        "evidence_insufficient_claim_count": 0
+      },
+      "package_coverage": {
+        "passed": true,
+        "primary_owner": {
+          "python_api_basics": "practice_guide",
+          "ai_app_dev_overview": "practice_guide"
+        },
+        "coverage_score": 100.0,
+        "quality_rule_version": "quality-v6-20260818",
+        "covered_knowledge_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "missing_knowledge_ids": [],
+        "required_knowledge_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "resource_knowledge_targets": {
+          "lecture": [
+            "ai_app_dev_overview"
+          ],
+          "graded_quiz": [
+            "ai_app_dev_overview",
+            "python_api_basics"
+          ],
+          "practice_guide": [
+            "ai_app_dev_overview",
+            "python_api_basics"
+          ]
+        }
+      },
+      "primary_owner": {
+        "python_api_basics": "practice_guide",
+        "ai_app_dev_overview": "practice_guide"
+      },
+      "resources": [
+        {
+          "resource_id": "res_task_cb44a281be38_lecture_v1",
+          "resource_type": "lecture",
+          "membership_type": "generated",
+          "review_status": "passed"
+        },
+        {
+          "resource_id": "res_task_cb44a281be38_practice_guide_v1",
+          "resource_type": "practice_guide",
+          "membership_type": "generated",
+          "review_status": "passed"
+        },
+        {
+          "resource_id": "res_task_cb44a281be38_graded_quiz_v1",
+          "resource_type": "graded_quiz",
+          "membership_type": "generated",
+          "review_status": "passed"
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "kind": "partial_regeneration",
+      "task_id": "task_3886f85746b6",
+      "source_task_id": "task_cb44a281be38",
+      "package_quality": {
+        "passed": true,
+        "revision_count": 1,
+        "hallucination_rate": 0.0,
+        "quality_rule_version": "quality-v6-20260818",
+        "evaluated_claim_count": 34,
+        "difficulty_match_score": 100.0,
+        "unresolved_claim_count": 0,
+        "verifiable_claim_count": 34,
+        "core_knowledge_coverage": 100.0,
+        "contradicted_claim_count": 0,
+        "hallucinated_claim_count": 0,
+        "target_core_knowledge_count": 2,
+        "covered_core_knowledge_count": 2,
+        "evidence_insufficient_claim_count": 0
+      },
+      "package_coverage": {
+        "passed": true,
+        "primary_owner": {
+          "python_api_basics": "practice_guide",
+          "ai_app_dev_overview": "practice_guide"
+        },
+        "coverage_score": 100.0,
+        "quality_rule_version": "quality-v6-20260818",
+        "covered_knowledge_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "missing_knowledge_ids": [],
+        "required_knowledge_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "resource_knowledge_targets": {
+          "lecture": [
+            "ai_app_dev_overview"
+          ],
+          "graded_quiz": [
+            "ai_app_dev_overview",
+            "python_api_basics"
+          ],
+          "practice_guide": [
+            "ai_app_dev_overview",
+            "python_api_basics"
+          ]
+        }
+      },
+      "primary_owner": {
+        "python_api_basics": "practice_guide",
+        "ai_app_dev_overview": "practice_guide"
+      },
+      "resources": [
+        {
+          "resource_id": "res_task_cb44a281be38_lecture_v1",
+          "resource_type": "lecture",
+          "membership_type": "inherited",
+          "review_status": "passed"
+        },
+        {
+          "resource_id": "res_task_3886f85746b6_practice_guide_v2",
+          "resource_type": "practice_guide",
+          "membership_type": "generated",
+          "review_status": "passed"
+        },
+        {
+          "resource_id": "res_task_cb44a281be38_graded_quiz_v1",
+          "resource_type": "graded_quiz",
+          "membership_type": "inherited",
+          "review_status": "passed"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "kind": "full_generation",
+      "task_id": "task_cb041cab67b0",
+      "source_task_id": null,
+      "package_quality": {
+        "passed": true,
+        "revision_count": 1,
+        "hallucination_rate": 0.0,
+        "quality_rule_version": "quality-v6-20260818",
+        "evaluated_claim_count": 24,
+        "difficulty_match_score": 100.0,
+        "unresolved_claim_count": 0,
+        "verifiable_claim_count": 24,
+        "core_knowledge_coverage": 100.0,
+        "contradicted_claim_count": 0,
+        "hallucinated_claim_count": 0,
+        "target_core_knowledge_count": 2,
+        "covered_core_knowledge_count": 2,
+        "evidence_insufficient_claim_count": 0
+      },
+      "package_coverage": {
+        "passed": true,
+        "primary_owner": {
+          "python_api_basics": "practice_guide",
+          "ai_app_dev_overview": "practice_guide"
+        },
+        "coverage_score": 100.0,
+        "quality_rule_version": "quality-v6-20260818",
+        "covered_knowledge_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "missing_knowledge_ids": [],
+        "required_knowledge_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "resource_knowledge_targets": {
+          "lecture": [
+            "ai_app_dev_overview"
+          ],
+          "graded_quiz": [
+            "ai_app_dev_overview",
+            "python_api_basics"
+          ],
+          "practice_guide": [
+            "ai_app_dev_overview",
+            "python_api_basics"
+          ]
+        }
+      },
+      "primary_owner": {
+        "python_api_basics": "practice_guide",
+        "ai_app_dev_overview": "practice_guide"
+      },
+      "resources": [
+        {
+          "resource_id": "res_task_cb041cab67b0_lecture_v1",
+          "resource_type": "lecture",
+          "membership_type": "generated",
+          "review_status": "passed"
+        },
+        {
+          "resource_id": "res_task_cb041cab67b0_practice_guide_v1",
+          "resource_type": "practice_guide",
+          "membership_type": "generated",
+          "review_status": "passed"
+        },
+        {
+          "resource_id": "res_task_cb041cab67b0_graded_quiz_v1",
+          "resource_type": "graded_quiz",
+          "membership_type": "generated",
+          "review_status": "passed"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "kind": "partial_regeneration",
+      "task_id": "task_0804ad25a6a4",
+      "source_task_id": "task_cb041cab67b0",
+      "package_quality": {
+        "passed": true,
+        "revision_count": 1,
+        "hallucination_rate": 0.0,
+        "quality_rule_version": "quality-v6-20260818",
+        "evaluated_claim_count": 24,
+        "difficulty_match_score": 100.0,
+        "unresolved_claim_count": 0,
+        "verifiable_claim_count": 24,
+        "core_knowledge_coverage": 100.0,
+        "contradicted_claim_count": 0,
+        "hallucinated_claim_count": 0,
+        "target_core_knowledge_count": 2,
+        "covered_core_knowledge_count": 2,
+        "evidence_insufficient_claim_count": 0
+      },
+      "package_coverage": {
+        "passed": true,
+        "primary_owner": {
+          "python_api_basics": "practice_guide",
+          "ai_app_dev_overview": "practice_guide"
+        },
+        "coverage_score": 100.0,
+        "quality_rule_version": "quality-v6-20260818",
+        "covered_knowledge_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "missing_knowledge_ids": [],
+        "required_knowledge_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "resource_knowledge_targets": {
+          "lecture": [
+            "ai_app_dev_overview"
+          ],
+          "graded_quiz": [
+            "ai_app_dev_overview",
+            "python_api_basics"
+          ],
+          "practice_guide": [
+            "ai_app_dev_overview",
+            "python_api_basics"
+          ]
+        }
+      },
+      "primary_owner": {
+        "python_api_basics": "practice_guide",
+        "ai_app_dev_overview": "practice_guide"
+      },
+      "resources": [
+        {
+          "resource_id": "res_task_cb041cab67b0_lecture_v1",
+          "resource_type": "lecture",
+          "membership_type": "inherited",
+          "review_status": "passed"
+        },
+        {
+          "resource_id": "res_task_0804ad25a6a4_practice_guide_v2",
+          "resource_type": "practice_guide",
+          "membership_type": "generated",
+          "review_status": "passed"
+        },
+        {
+          "resource_id": "res_task_cb041cab67b0_graded_quiz_v1",
+          "resource_type": "graded_quiz",
+          "membership_type": "inherited",
+          "review_status": "passed"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "kind": "full_generation",
+      "task_id": "task_affcfa33ed3e",
+      "source_task_id": null,
+      "package_quality": {
+        "passed": false,
+        "revision_count": 2,
+        "hallucination_rate": 2.7,
+        "quality_rule_version": "quality-v6-20260818",
+        "evaluated_claim_count": 37,
+        "difficulty_match_score": 100.0,
+        "unresolved_claim_count": 1,
+        "verifiable_claim_count": 37,
+        "core_knowledge_coverage": 100.0,
+        "contradicted_claim_count": 0,
+        "hallucinated_claim_count": 1,
+        "target_core_knowledge_count": 2,
+        "covered_core_knowledge_count": 2,
+        "evidence_insufficient_claim_count": 0
+      },
+      "package_coverage": {
+        "passed": false,
+        "primary_owner": {
+          "python_api_basics": "practice_guide",
+          "ai_app_dev_overview": "practice_guide"
+        },
+        "coverage_score": 100.0,
+        "quality_rule_version": "quality-v6-20260818",
+        "covered_knowledge_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "missing_knowledge_ids": [],
+        "required_knowledge_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "resource_knowledge_targets": {
+          "lecture": [
+            "ai_app_dev_overview"
+          ],
+          "graded_quiz": [
+            "ai_app_dev_overview",
+            "python_api_basics"
+          ],
+          "practice_guide": [
+            "ai_app_dev_overview",
+            "python_api_basics"
+          ]
+        }
+      },
+      "primary_owner": {
+        "python_api_basics": "practice_guide",
+        "ai_app_dev_overview": "practice_guide"
+      },
+      "resources": [
+        {
+          "resource_id": "res_task_affcfa33ed3e_lecture_v1",
+          "resource_type": "lecture",
+          "membership_type": null,
+          "review_status": "failed"
+        },
+        {
+          "resource_id": "res_task_affcfa33ed3e_practice_guide_v1",
+          "resource_type": "practice_guide",
+          "membership_type": null,
+          "review_status": "failed"
+        },
+        {
+          "resource_id": "res_task_affcfa33ed3e_graded_quiz_v1",
+          "resource_type": "graded_quiz",
+          "membership_type": null,
+          "review_status": "failed"
+        }
+      ],
+      "failure_code": "revision_exhausted",
+      "failed_step": null,
+      "field_paths": [],
+      "failure_category": "external_service_failure",
+      "classification_basis": "案例和知识证据充分，但真实模型在两轮局部修订后仍未通过审核。",
+      "classification_confidence": "medium",
+      "case_evidence_diagnosis": {
+        "valid": true,
+        "missing_knowledge_ids": [],
+        "missing_capability_ids": []
+      },
+      "error": "full_generation failed: status=failed decision=failed reason=revision_exhausted"
+    }
+  ],
+  "updated_at": "2026-08-19T04:31:56.991712+00:00",
+  "finished_at": "2026-08-19T04:36:15.070554+00:00"
+}

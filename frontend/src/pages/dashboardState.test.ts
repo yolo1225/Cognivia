@@ -1,0 +1,61 @@
+import { describe, expect, it } from 'vitest'
+import type { GenerationTaskDetail } from '@/api/generation'
+import type { ResourceSummary } from '@/api/resources'
+import { getDashboardState } from './dashboardState'
+
+const task = (overrides: Partial<GenerationTaskDetail> = {}): GenerationTaskDetail => ({
+  task_id: 'task_001',
+  status: 'running',
+  revision_count: 0,
+  decision: 'in_progress',
+  resources: [],
+  ...overrides,
+})
+
+const resource = (overrides: Partial<ResourceSummary> = {}): ResourceSummary => ({
+  resource_id: 'resource_001',
+  resource_type: 'lecture',
+  title: 'RAG 基础讲义',
+  difficulty: 2,
+  review_status: 'passed',
+  sources: [],
+  ...overrides,
+})
+
+describe('dashboard state', () => {
+  it('shows the assessment entry when no learning service state exists', () => {
+    expect(getDashboardState(null, [], [])).toEqual({ kind: 'assessment' })
+  })
+
+  it('prioritizes an active generation task', () => {
+    const state = getDashboardState(task(), [resource()], [])
+
+    expect(state.kind).toBe('preparing')
+    expect(state.kind === 'preparing' && state.feedbackTriggered).toBe(false)
+  })
+
+  it('labels feedback-triggered work as an adjustment', () => {
+    const state = getDashboardState(task({ trigger_type: 'resource_feedback' }), [], [])
+
+    expect(state.kind === 'preparing' && state.feedbackTriggered).toBe(true)
+  })
+
+  it('shows a published resource instead of an unreviewed resource', () => {
+    const state = getDashboardState(null, [resource({ review_status: 'pending' }), resource()], [])
+
+    expect(state.kind).toBe('resource')
+    expect(state.kind === 'resource' && state.resource.resource_id).toBe('resource_001')
+  })
+
+  it('does not let a completed task hide an available resource', () => {
+    const state = getDashboardState(task({ status: 'completed' }), [resource()], [])
+
+    expect(state.kind).toBe('resource')
+  })
+
+  it('shows the latest failed task when no resource is available', () => {
+    const state = getDashboardState(null, [], [task({ status: 'failed', failure_reason: '审核未通过' })])
+
+    expect(state.kind).toBe('failed')
+  })
+})

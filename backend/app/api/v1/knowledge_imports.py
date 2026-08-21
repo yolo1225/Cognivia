@@ -1,0 +1,312 @@
+from __future__ import annotations
+
+import json
+from collections import Counter
+from datetime import UTC, datetime
+from typing import Any
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.db import SessionLocal, get_db
+from app.models import KnowledgeDocument, KnowledgeImportCandidate
+from app.rag.candidate_index import CandidateIndexBuilder
+from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
+from app.rag.vector_store import VectorStore
+from app.schemas.common import ApiResponse, ok
+from app.services import candidate_index_job
+from app.services.knowledge_import_publish_service import (
+    KnowledgeImportPublishError,
+    activate_import_candidate,
+    approve_candidates,
+    ensure_import_source_locators,
+    publish_approved,
+    smoke_domain_index,
+    smoke_import_index,
+)
+from app.services.knowledge_import_validation_service import validate_import
+
+router = APIRouter()
+
+
+def _run_import_index(job_id: int, domain_code: str, document_id: int) -> None:
+    candidate_index_job.run_import_build(job_id, domain_code, document_id)
+    with SessionLocal() as db:
+        job = db.get(candidate_index_job.IndexBuildJob, job_id)
+        document = db.get(KnowledgeDocument, document_id)
+        if document is None or job is None:
+            return
+        if job.status == candidate_index_job.STATUS_FAILED:
+            document.status = "index_pending"
+            document.error_summary = job.message
+        else:
+            document.error_summary = None
+        db.commit()
+
+
+class CandidatePatch(BaseModel):
+    payload: dict[str, Any] | None = None
+    status: str | None = Field(default=None, pattern="^(pending|rejected|needs_edit)$")
+
+
+class ApproveRequest(BaseModel):
+    candidate_ids: list[str] | None = None
+
+
+def _document(db: Session, import_id: str) -> KnowledgeDocument:
+    document = db.scalar(
+        select(KnowledgeDocument).where(
+            KnowledgeDocument.public_id == import_id, KnowledgeDocument.status != "deleted"
+        )
+    )
+    if document is None:
+        raise HTTPException(status_code=404, detail="Knowledge import not found")
+    return document
+
+
+def _serialize(candidate: KnowledgeImportCandidate) -> dict[str, Any]:
+    return {
+        "candidate_id": candidate.public_id,
+        "candidate_type": candidate.candidate_type,
+        "payload": candidate.payload_json or {},
+        "source_locator": candidate.source_locator_json or {},
+        "confidence": candidate.confidence,
+        "status": candidate.status,
+        "validation_errors": candidate.validation_errors_json or [],
+    }
+
+
+@router.get("/{import_id}", response_model=ApiResponse)
+def get_import(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
+    document = _document(db, import_id)
+    candidates = list(
+        db.scalars(
+            select(KnowledgeImportCandidate).where(
+                KnowledgeImportCandidate.document_id == document.id
+            )
+        )
+    )
+    return ok(
+        {
+            "import_id": document.public_id,
+            "domain_code": document.domain_code,
+            "status": document.status,
+            "error_summary": document.error_summary,
+            "candidate_counts": dict(Counter(item.candidate_type for item in candidates)),
+            "review_counts": dict(Counter(item.status for item in candidates)),
+        }
+    )
+
+
+@router.get("/{import_id}/candidates", response_model=ApiResponse)
+def list_candidates(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
+    document = _document(db, import_id)
+    candidates = list(
+        db.scalars(
+            select(KnowledgeImportCandidate)
+            .where(KnowledgeImportCandidate.document_id == document.id)
+            .order_by(KnowledgeImportCandidate.id)
+        )
+    )
+    return ok({"import_id": import_id, "candidates": [_serialize(item) for item in candidates]})
+
+
+@router.patch("/{import_id}/candidates/{candidate_id}", response_model=ApiResponse)
+def patch_candidate(
+    import_id: str, candidate_id: str, payload: CandidatePatch, db: Session = Depends(get_db)
+) -> ApiResponse:
+    document = _document(db, import_id)
+    candidate = db.scalar(
+        select(KnowledgeImportCandidate).where(
+            KnowledgeImportCandidate.document_id == document.id,
+            KnowledgeImportCandidate.public_id == candidate_id,
+        )
+    )
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Knowledge import candidate not found")
+    if candidate.status in {"approved", "published"}:
+        raise HTTPException(status_code=409, detail="已批准或发布的候选不可修改")
+    if payload.payload is not None:
+        candidate.payload_json = payload.payload
+    if payload.status is not None:
+        candidate.status = payload.status
+    candidate.validation_errors_json = []
+    db.commit()
+    db.refresh(candidate)
+    return ok(_serialize(candidate))
+
+
+@router.post("/{import_id}/validate", response_model=ApiResponse)
+def validate_candidates(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
+    document = _document(db, import_id)
+    if document.status in {"index_pending", "indexing", "ready"}:
+        raise HTTPException(status_code=409, detail="当前导入阶段不允许重新校验")
+    return ok(validate_import(db, document.id))
+
+
+@router.post("/{import_id}/approve", response_model=ApiResponse)
+def approve_import(
+    import_id: str, payload: ApproveRequest, db: Session = Depends(get_db)
+) -> ApiResponse:
+    document = _document(db, import_id)
+    if document.status != "review_pending":
+        raise HTTPException(status_code=409, detail="只有待复核导入可以批准")
+    result = validate_import(db, document.id)
+    if result["invalid"]:
+        raise HTTPException(status_code=422, detail="存在未通过校验的候选")
+    try:
+        approved = approve_candidates(db, document, payload.candidate_ids)
+        published = publish_approved(db, document)
+    except KnowledgeImportPublishError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ok({"approved": approved, **published, "next_action": "build-index"})
+
+
+@router.post("/{import_id}/build-index", response_model=ApiResponse)
+def build_index(
+    import_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
+) -> ApiResponse:
+    document = _document(db, import_id)
+    previous_job = candidate_index_job.latest_job(
+        db,
+        document.domain_code,
+        source_document_id=document.id,
+    )
+    failed_retry = bool(
+        document.status == "indexing"
+        and previous_job
+        and previous_job.domain_code == document.domain_code
+        and previous_job.status
+        in {
+            candidate_index_job.STATUS_FAILED,
+            candidate_index_job.STATUS_INTERRUPTED,
+        }
+    )
+    if document.status != "index_pending" and not failed_retry:
+        raise HTTPException(status_code=409, detail="导入尚未批准或已进入其他阶段")
+    ensure_import_source_locators(db, document)
+    job = candidate_index_job.try_start(
+        db,
+        document.domain_code,
+        source_document_id=document.id,
+    )
+    if job is None:
+        raise HTTPException(status_code=409, detail="候选索引正在重建")
+    document.status = "indexing"
+    db.commit()
+    background_tasks.add_task(_run_import_index, job.id, document.domain_code, document.id)
+    return ok({"job_id": job.id, "status": "running", "domain_code": document.domain_code})
+
+
+@router.post("/{import_id}/smoke-test", response_model=ApiResponse)
+def smoke_test(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
+    document = _document(db, import_id)
+    job = candidate_index_job.latest_job(
+        db,
+        document.domain_code,
+        source_document_id=document.id,
+    )
+    result = dict(job.result_json or {}) if job else {}
+    manifest_payload = result.get("candidate_manifest")
+    passed = bool(
+        job
+        and job.domain_code == document.domain_code
+        and job.source_document_id == document.id
+        and job.status == candidate_index_job.STATUS_SUCCESS
+        and isinstance(manifest_payload, dict)
+    )
+    if not passed:
+        raise HTTPException(status_code=409, detail="Candidate 索引尚未通过构建与就绪检查")
+    try:
+        retrieval = smoke_import_index(
+            db,
+            document,
+            manifest_payload=manifest_payload,
+        )
+        isolation = smoke_domain_index(
+            db,
+            document.domain_code,
+            manifest_payload=manifest_payload,
+            staged_document_id=document.id,
+        )
+    except Exception as exc:
+        builder = CandidateIndexBuilder(
+            db=db,
+            chroma_client=VectorStore().client,
+            embedding_provider=OpenAICompatibleEmbeddingProvider(),
+        )
+        try:
+            builder.discard_candidate(manifest_payload)
+        except Exception:
+            pass
+        job.status = candidate_index_job.STATUS_FAILED
+        job.finished_at = datetime.now(UTC)
+        job.message = str(exc)
+        document.status = "index_pending"
+        message = str(exc) if isinstance(exc, KnowledgeImportPublishError) else "候选索引冒烟失败"
+        document.error_summary = message
+        db.commit()
+        raise HTTPException(status_code=409, detail=message) from exc
+    result["smoke_test"] = {
+        "passed": True,
+        "index_version": manifest_payload.get("index_version"),
+        "active_collection": manifest_payload.get("active_collection"),
+        "import_id": document.public_id,
+        "checked_at": datetime.now(UTC).isoformat(),
+        "checks": {
+            "import": retrieval.get("checks", {}),
+            "domain": isolation.get("checks", {}),
+        },
+    }
+    job.result_json = result
+    document.status = "smoke_passed"
+    document.error_summary = None
+    db.commit()
+    return ok(
+        {
+            **retrieval,
+            "candidate_manifest": manifest_payload,
+        }
+    )
+
+
+@router.post("/{import_id}/publish", response_model=ApiResponse)
+def publish_import(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
+    document = _document(db, import_id)
+    if document.status != "smoke_passed":
+        raise HTTPException(status_code=409, detail="检索冒烟尚未通过，不能发布")
+    job = candidate_index_job.latest_job(
+        db,
+        document.domain_code,
+        source_document_id=document.id,
+    )
+    if (
+        not job
+        or job.domain_code != document.domain_code
+        or job.source_document_id != document.id
+        or job.status != candidate_index_job.STATUS_SUCCESS
+    ):
+        raise HTTPException(status_code=409, detail="索引构建或冒烟未通过，不能发布")
+    try:
+        published = activate_import_candidate(db, document, job)
+    except KnowledgeImportPublishError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ok(published)
+
+
+@router.get("/{import_id}/events")
+def import_events(import_id: str, db: Session = Depends(get_db)) -> StreamingResponse:
+    document = _document(db, import_id)
+    payload = {
+        "event_type": "import_status",
+        "import_id": import_id,
+        "status": document.status,
+        "error_summary": document.error_summary,
+    }
+    return StreamingResponse(
+        iter([f"event: import_status\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"]),
+        media_type="text/event-stream",
+    )

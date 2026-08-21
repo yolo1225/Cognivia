@@ -1,0 +1,607 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Any
+from uuid import uuid4
+
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session
+
+from app.models import (
+    AnswerRecord,
+    DiagnosticQuestion,
+    KnowledgeItem,
+    KnowledgeRelation,
+    Learner,
+    LearnerProfile,
+    LearningPath,
+    LearningResource,
+    GenerationTask,
+)
+
+RADAR_KEYS = ["theory", "practice", "problem_solving", "breadth", "learning_speed"]
+RESOURCE_TYPES = ["lecture", "practice_guide", "graded_quiz"]
+MOJIBAKE_MARKERS = ("Ã", "Â", "å", "æ", "ç", "è", "é", "ð", "\x80", "\x81")
+_PATH_UNSET = object()
+
+
+def public_id(prefix: str) -> str:
+    return f"{prefix}_{uuid4().hex[:12]}"
+
+
+def clean_display_text(value: str) -> str:
+    if not value or not any(marker in value for marker in MOJIBAKE_MARKERS):
+        return value
+    try:
+        repaired = value.encode("latin1").decode("utf-8")
+    except UnicodeError:
+        return value
+    return repaired if repaired else value
+
+
+def clean_display_payload(value: Any) -> Any:
+    if isinstance(value, str):
+        return clean_display_text(value)
+    if isinstance(value, list):
+        return [clean_display_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            clean_display_text(key) if isinstance(key, str) else key: clean_display_payload(item)
+            for key, item in value.items()
+        }
+    return value
+
+
+def classify_profile_level(score: float) -> str:
+    if score < 60:
+        return "beginner"
+    if score < 85:
+        return "intermediate"
+    return "advanced"
+
+
+def score_single_choice_answer(question: DiagnosticQuestion, answer: Any) -> tuple[float, bool]:
+    answer_key = question.answer_key_json or {}
+    expected = answer_key.get("correct_option")
+    try:
+        selected = int(answer)
+    except (TypeError, ValueError):
+        selected = -1
+    is_correct = selected == expected
+    return (1.0 if is_correct else 0.0), is_correct
+
+
+def _bounded(value: float, low: int = 20, high: int = 95) -> int:
+    return max(low, min(high, round(value)))
+
+
+def _category_value(
+    category_scores: dict[str, list[float]], keywords: tuple[str, ...], fallback: float
+) -> float:
+    values: list[float] = []
+    for category, scores in category_scores.items():
+        if any(keyword.lower() in category.lower() for keyword in keywords):
+            values.extend(scores)
+    if not values:
+        return fallback
+    return sum(values) / len(values) * 100
+
+
+def build_ability_profile(
+    score_percent: float,
+    category_scores: dict[str, list[float]],
+    *,
+    average_difficulty: float,
+    profile_type: str | None = None,
+) -> dict[str, Any]:
+    base_type = profile_type or classify_profile_level(score_percent)
+    category_mastery = {
+        category: round(sum(scores) / len(scores) * 100, 1)
+        for category, scores in sorted(category_scores.items())
+        if scores
+    }
+
+    theory = _category_value(
+        category_scores, ("理论", "基础", "prompt", "embedding"), score_percent
+    )
+    practice = _category_value(
+        category_scores, ("实操", "实践", "应用", "rag", "agent"), score_percent - 4
+    )
+    problem_solving = _bounded((score_percent * 0.7) + (average_difficulty * 8))
+    breadth = _bounded((sum(category_mastery.values()) / max(1, len(category_mastery))) - 6)
+    learning_speed = _bounded(score_percent + 4)
+
+    ability = {
+        "profile_type": base_type,
+        "theory": _bounded(theory),
+        "practice": _bounded(practice),
+        "problem_solving": problem_solving,
+        "breadth": breadth,
+        "learning_speed": learning_speed,
+        "category_mastery": category_mastery,
+    }
+    if ability["practice"] >= ability["theory"] + 10 and score_percent >= 60:
+        ability["profile_type"] = "practice_oriented"
+    return ability
+
+
+def _weakness_type(avg_score: float) -> str:
+    if avg_score < 0.2:
+        return "not_mastered"
+    if avg_score < 0.6:
+        return "partial_confusion"
+    return "needs_consolidation"
+
+
+def _relation_public_ids(
+    db: Session,
+    knowledge_item_ids: list[int],
+    relation_type: str,
+) -> dict[int, list[str]]:
+    if not knowledge_item_ids:
+        return {}
+    rows = db.execute(
+        select(KnowledgeRelation.source_item_id, KnowledgeItem.public_id)
+        .join(KnowledgeItem, KnowledgeItem.id == KnowledgeRelation.target_item_id)
+        .where(KnowledgeRelation.source_item_id.in_(knowledge_item_ids))
+        .where(KnowledgeRelation.relation_type == relation_type)
+    ).all()
+    grouped: dict[int, list[str]] = defaultdict(list)
+    for source_item_id, target_public_id in rows:
+        grouped[source_item_id].append(target_public_id)
+    return dict(grouped)
+
+
+def build_weak_knowledge(
+    db: Session,
+    weak_evidence: dict[int, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not weak_evidence:
+        return []
+    item_ids = list(weak_evidence.keys())
+    items = {
+        item.id: item
+        for item in db.scalars(select(KnowledgeItem).where(KnowledgeItem.id.in_(item_ids)))
+    }
+    prerequisites = _relation_public_ids(db, item_ids, "prerequisite")
+
+    weak_items: list[dict[str, Any]] = []
+    for item_id, evidence in weak_evidence.items():
+        item = items.get(item_id)
+        if item is None:
+            continue
+        attempts = max(1, evidence["attempts"])
+        avg_score = evidence["score_total"] / attempts
+        wrong_count = evidence["wrong_count"]
+        difficulty = evidence["difficulty_total"] / attempts
+        weakness_level = min(5, max(1, round((1 - avg_score) * 3 + wrong_count + difficulty / 2)))
+        weak_items.append(
+            {
+                "knowledge_id": item.public_id,
+                "name": clean_display_text(item.name),
+                "category": clean_display_text(item.category),
+                "weakness_level": weakness_level,
+                "weakness_type": _weakness_type(avg_score),
+                "suggested_action": "补救讲解" if weakness_level >= 4 else "巩固练习",
+                "evidence": {
+                    "wrong_count": wrong_count,
+                    "attempts": attempts,
+                    "avg_score": round(avg_score, 2),
+                },
+                "prerequisites": prerequisites.get(item_id, []),
+            }
+        )
+
+    weak_items.sort(key=lambda item: (-item["weakness_level"], item["name"]))
+    return weak_items
+
+
+def build_learning_path_payload(
+    *,
+    profile_type: str,
+    score_percent: float,
+    weak_knowledge: list[dict[str, Any]],
+) -> dict[str, Any]:
+    from app.services.learning_path_service import normalize_path_payload
+
+    return normalize_path_payload(
+        build_learning_path_raw_payload(
+            profile_type=profile_type,
+            score_percent=score_percent,
+            weak_knowledge=weak_knowledge,
+        )
+    )
+
+
+def build_learning_path_raw_payload(
+    *,
+    profile_type: str,
+    score_percent: float,
+    weak_knowledge: list[dict[str, Any]],
+) -> dict[str, Any]:
+    prerequisite_ids: list[str] = []
+    for item in weak_knowledge:
+        for prerequisite in item.get("prerequisites", []):
+            if prerequisite not in prerequisite_ids:
+                prerequisite_ids.append(prerequisite)
+
+    priority_ids = [item["knowledge_id"] for item in weak_knowledge[:5]]
+    stages = []
+    if prerequisite_ids:
+        stages.append(
+            {
+                "name": "补齐前置知识",
+                "description": "先补足薄弱知识点依赖的基础概念。",
+                "knowledge_ids": prerequisite_ids[:5],
+            }
+        )
+    stages.append(
+        {
+            "name": "攻克薄弱知识点",
+            "description": "围绕诊断错题和低分题对应知识点集中练习。",
+            "knowledge_ids": priority_ids,
+        }
+    )
+    stages.append(
+        {
+            "name": "生成个性化资源",
+            "description": "生成讲义、实操指南和分阶测试题。",
+            "resource_types": RESOURCE_TYPES,
+        }
+    )
+    stages.append(
+        {
+            "name": "反馈后更新画像",
+            "description": "根据太难、太简单、有错误等反馈调整学习路径。",
+            "trigger": "resource_feedback",
+        }
+    )
+    return {
+        "profile_type": profile_type,
+        "score": score_percent,
+        "stages": stages,
+    }
+
+
+def build_learning_path_from_snapshot(
+    ability_profile: dict[str, Any],
+    weak_knowledge: list[dict[str, Any]],
+) -> dict[str, Any]:
+    scores = [
+        float(ability_profile[key])
+        for key in RADAR_KEYS
+        if isinstance(ability_profile.get(key), (int, float))
+    ]
+    score_percent = round(sum(scores) / len(scores), 1) if scores else 0.0
+    return build_learning_path_payload(
+        profile_type=str(ability_profile.get("profile_type") or "beginner"),
+        score_percent=score_percent,
+        weak_knowledge=weak_knowledge,
+    )
+
+
+def profile_source(profile: LearnerProfile) -> str:
+    explicit = getattr(profile, "profile_source", None)
+    if explicit:
+        return explicit
+    if profile.trigger_feedback_id:
+        return "validated_feedback"
+    if profile.decision_reason == "diagnostic_result":
+        return "diagnostic_result"
+    if profile.previous_profile_id:
+        return "profile_revision"
+    return "default_profile"
+
+
+def apply_feedback_profile_update(
+    db: Session,
+    *,
+    profile: LearnerProfile,
+    resource: LearningResource | None,
+    feedback_intent: str | None,
+    evidence: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a bounded, evidence-backed profile snapshot for feedback tasks."""
+    ability = dict(profile.ability_profile_json or {})
+    category_mastery = dict(ability.get("category_mastery") or {})
+    weak_items = [dict(item) for item in (profile.weak_knowledge_json or [])]
+    source_ids = [
+        str(item.get("knowledge_id"))
+        for item in (resource.sources_json if resource else [])
+        if isinstance(item, dict) and item.get("knowledge_id")
+    ]
+    knowledge_rows = (
+        list(db.scalars(select(KnowledgeItem).where(KnowledgeItem.public_id.in_(source_ids))))
+        if source_ids
+        else []
+    )
+    knowledge_ids = {item.id for item in knowledge_rows}
+    related_ids: set[int] = set()
+    if knowledge_ids:
+        relations = list(
+            db.scalars(
+                select(KnowledgeRelation).where(
+                    KnowledgeRelation.relation_type.in_({"prerequisite", "dependent", "related"}),
+                    or_(
+                        KnowledgeRelation.source_item_id.in_(knowledge_ids),
+                        KnowledgeRelation.target_item_id.in_(knowledge_ids),
+                    ),
+                )
+            )
+        )
+        for relation in relations:
+            if relation.source_item_id in knowledge_ids:
+                related_ids.add(relation.target_item_id)
+            elif relation.target_item_id in knowledge_ids:
+                related_ids.add(relation.source_item_id)
+    related_public_ids = (
+        {
+            item.public_id
+            for item in db.scalars(select(KnowledgeItem).where(KnowledgeItem.id.in_(related_ids)))
+        }
+        if related_ids
+        else set()
+    )
+    affected_knowledge_ids = list(dict.fromkeys([*source_ids, *sorted(related_public_ids)]))
+    categories = {item.category for item in knowledge_rows if item.category}
+    negative = feedback_intent in {"too_hard", "confusing"}
+    positive = feedback_intent == "too_easy"
+    if not (negative or positive):
+        return {
+            "ability_profile": ability,
+            "weak_knowledge": weak_items,
+            "changed_dimensions": [],
+            "affected_knowledge_ids": [],
+        }
+
+    delta = -6 if negative else 6
+    for category in categories:
+        current = float(category_mastery.get(category, ability.get("practice", 50)))
+        category_mastery[category] = max(0, min(100, round(current + delta, 1)))
+    ability["category_mastery"] = category_mastery
+    for key in ("practice", "problem_solving"):
+        ability[key] = max(20, min(95, int(ability.get(key, 50)) + (delta // 2)))
+    radar_average = sum(int(ability.get(key, 50)) for key in RADAR_KEYS) / len(RADAR_KEYS)
+    ability["profile_type"] = classify_profile_level(radar_average)
+
+    weak_by_id = {str(item.get("knowledge_id")): item for item in weak_items}
+    for knowledge in knowledge_rows:
+        key = knowledge.public_id
+        if negative:
+            item = weak_by_id.setdefault(
+                key,
+                {
+                    "knowledge_id": key,
+                    "name": knowledge.name,
+                    "category": knowledge.category,
+                    "weakness_level": 1,
+                    "weakness_type": "feedback_confirmed",
+                    "suggested_action": "remedial_explanation",
+                    "evidence": {},
+                    "prerequisites": [],
+                },
+            )
+            item["weakness_level"] = min(5, int(item.get("weakness_level") or 1) + 1)
+            item["weakness_type"] = "feedback_confirmed"
+        elif key in weak_by_id:
+            weak_by_id[key]["weakness_level"] = max(
+                0, int(weak_by_id[key].get("weakness_level") or 1) - 1
+            )
+            if weak_by_id[key]["weakness_level"] == 0:
+                del weak_by_id[key]
+
+    affected_resource_ids = [resource.public_id] if resource else []
+    learner_resources = db.execute(
+        select(LearningResource)
+        .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
+        .where(GenerationTask.learner_id == profile.learner_id)
+        .where(LearningResource.is_current.is_(True))
+    ).scalars()
+    for candidate in learner_resources:
+        candidate_ids = {
+            str(item.get("knowledge_id"))
+            for item in (candidate.sources_json or [])
+            if isinstance(item, dict) and item.get("knowledge_id")
+        }
+        if (
+            candidate_ids.intersection(affected_knowledge_ids)
+            and candidate.public_id not in affected_resource_ids
+        ):
+            affected_resource_ids.append(candidate.public_id)
+
+    changed_dimensions = ["ability_scores", "category_mastery", "weak_knowledge"]
+    return {
+        "ability_profile": ability,
+        "weak_knowledge": list(weak_by_id.values())[:8],
+        "changed_dimensions": changed_dimensions,
+        "affected_knowledge_ids": affected_knowledge_ids,
+        "affected_path_node_ids": [f"path:{item}" for item in affected_knowledge_ids],
+        "affected_resource_ids": affected_resource_ids,
+        "evidence": evidence,
+    }
+
+
+def latest_profile_for_learner(
+    db: Session, learner: Learner, domain_code: str | None = None
+) -> LearnerProfile | None:
+    selected_domain = str(domain_code or learner.target_domain).strip()
+    statement = (
+        select(LearnerProfile)
+        .where(
+            LearnerProfile.learner_id == learner.id,
+            LearnerProfile.domain_code == selected_domain,
+        )
+    )
+    if not learner.is_evaluation:
+        # Compatibility guard for databases that predate isolated evaluation
+        # learners. Legacy evaluation fixtures must never become the active
+        # profile of a normal learner, even if they have the greatest row id.
+        statement = statement.where(
+            LearnerProfile.profile_source != "evaluation_fixture",
+            LearnerProfile.public_id.not_like("evaluation_%"),
+        )
+    return db.scalar(statement.order_by(LearnerProfile.id.desc()))
+
+
+def is_initial_profile_ready(profile: LearnerProfile | None) -> bool:
+    context = profile.context_snapshot_json if profile else {}
+    return bool(
+        profile
+        and profile.diagnosis_completed
+        and context.get("education_level")
+        and context.get("major")
+        and context.get("direction_tags")
+        and context.get("confirmed_at")
+    )
+
+
+def latest_path_for_profile(db: Session, profile: LearnerProfile) -> LearningPath | None:
+    return db.scalar(
+        select(LearningPath)
+        .where(LearningPath.profile_id == profile.id)
+        .order_by(LearningPath.id.desc())
+    )
+
+
+def default_profile_for_learner(db: Session, learner: Learner) -> LearnerProfile:
+    profile = latest_profile_for_learner(db, learner)
+    if profile is not None:
+        return profile
+    profile = LearnerProfile(
+        public_id=public_id("profile"),
+        learner_id=learner.id,
+        domain_code=learner.target_domain,
+        ability_profile_json=build_ability_profile(
+            55,
+            defaultdict(list),
+            average_difficulty=2,
+            profile_type="beginner",
+        ),
+        weak_knowledge_json=[],
+        profile_source="default_seed",
+        diagnosis_completed=False,
+    )
+    db.add(profile)
+    db.flush()
+    return profile
+
+
+def radar_values(ability_profile: dict[str, Any] | None) -> list[int]:
+    ability_profile = ability_profile or {}
+    return [int(ability_profile.get(key, 0) or 0) for key in RADAR_KEYS]
+
+
+def profile_ability_level(ability_profile: dict[str, Any] | None) -> int:
+    values = radar_values(ability_profile)
+    average = sum(values) / max(1, len(values))
+    return max(1, min(5, round(average / 20)))
+
+
+def diagnostic_summary_for_learner(
+    db: Session, learner: Learner, domain_code: str | None = None
+) -> dict[str, Any]:
+    selected_domain = str(domain_code or learner.target_domain).strip()
+    total_count = (
+        db.scalar(
+            select(func.count(AnswerRecord.id))
+            .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+            .where(
+                AnswerRecord.learner_id == learner.id,
+                DiagnosticQuestion.domain_code == selected_domain,
+            )
+        )
+        or 0
+    )
+    correct_count = (
+        db.scalar(
+            select(func.count(AnswerRecord.id))
+            .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+            .where(
+                AnswerRecord.learner_id == learner.id,
+                DiagnosticQuestion.domain_code == selected_domain,
+                AnswerRecord.is_correct.is_(True),
+            )
+        )
+        or 0
+    )
+    latest_answer = db.scalar(
+        select(AnswerRecord)
+        .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+        .where(
+            AnswerRecord.learner_id == learner.id,
+            DiagnosticQuestion.domain_code == selected_domain,
+        )
+        .order_by(AnswerRecord.id.desc())
+    )
+    return {
+        "answer_count": total_count,
+        "correct_count": correct_count,
+        "accuracy": round(correct_count / total_count * 100, 1) if total_count else 0,
+        "latest_session_id": (
+            latest_answer.session_id or (latest_answer.answer_summary_json or {}).get("session_id")
+        )
+        if latest_answer
+        else None,
+    }
+
+
+def serialize_profile_detail(
+    db: Session,
+    learner: Learner,
+    profile: LearnerProfile | None = None,
+    path: LearningPath | None | object = _PATH_UNSET,
+) -> dict[str, Any]:
+    profile = profile or latest_profile_for_learner(db, learner)
+    if profile is None:
+        return {
+            "learner_id": learner.public_id,
+            "domain_code": learner.target_domain,
+            "background": clean_display_text(learner.background),
+            "education_level": learner.education_level,
+            "major": learner.major,
+            "direction_tags": learner.direction_tags_json or [],
+            "learning_style": learner.learning_style,
+            "experience_years": learner.experience_years,
+            "profile_status": "not_started",
+            "profile_id": None,
+            "profile_type": "not_started",
+            "ability_profile": {},
+            "radar": [0, 0, 0, 0, 0],
+            "category_mastery": {},
+            "weak_knowledge": [],
+            "context_snapshot": {},
+            "learning_path": None,
+            "diagnostic_summary": diagnostic_summary_for_learner(
+                db, learner, learner.target_domain
+            ),
+        }
+
+    ability_profile = profile.ability_profile_json or {}
+    if path is _PATH_UNSET:
+        path = latest_path_for_profile(db, profile)
+    if path:
+        from app.services.learning_path_service import serialize_learning_path
+
+        learning_path = serialize_learning_path(path)
+    else:
+        learning_path = None
+    return {
+        "learner_id": learner.public_id,
+        "domain_code": profile.domain_code,
+        "background": clean_display_text(learner.background),
+        "education_level": learner.education_level,
+        "major": learner.major,
+        "direction_tags": learner.direction_tags_json or [],
+        "learning_style": learner.learning_style,
+        "experience_years": learner.experience_years,
+        "profile_status": "ready" if is_initial_profile_ready(profile) else "not_started",
+        "profile_id": profile.public_id,
+        "profile_type": ability_profile.get("profile_type", "beginner"),
+        "ability_profile": clean_display_payload(ability_profile),
+        "radar": radar_values(ability_profile),
+        "category_mastery": clean_display_payload(ability_profile.get("category_mastery", {})),
+        "weak_knowledge": clean_display_payload(profile.weak_knowledge_json or []),
+        "context_snapshot": clean_display_payload(profile.context_snapshot_json or {}),
+        "learning_path": clean_display_payload(learning_path),
+        "diagnostic_summary": diagnostic_summary_for_learner(db, learner, profile.domain_code),
+    }

@@ -1,0 +1,128 @@
+# 当前迭代计划
+
+## V6质量稳定性迭代（2026-08-18）
+
+- Agent Contract V6 将证据不足与幻觉分离，但两者均阻止问题资源发布。
+- 包级覆盖率按唯一知识目标统计；单资源只审核分配目标。
+- 实操指南只分配具备 `operation` 证据能力的知识点。
+- 局部刷新继承原包目标；V5包必须完整重新生成后才能局部刷新。
+- 自动修订改为类型化字段补丁，并增加一次检查点自动恢复。
+- 正式验收依次运行6、15、50案例真实评测及5次完整生成+5次局部生成稳定性测试。
+- 反馈任务只有在画像发生有效变化时才触发画像驱动的局部资源生成；画像未变化时以
+  `completed/no_change` 正常结束，保留原画像、路径和资源，仅返回即时追问、解释或提示。
+  明确的资源事实错误仍可进入原资源复核与局部修订，但不视为画像驱动的新资源生成。
+
+## 已完成
+
+- 审核智能体声明职责重构（2026-08-21）：生产链只保留
+  `review-v5-claim-policy` 声明策略；按结构化字段语义排除教学动作和组织文本，操作、命令、
+  固定结果、版本与排错按显式证据能力校验后进入 `qwen-max / qwen-plus` 双审。两轮修订后仅允许
+  一次低/常风险、非冲突且非唯一覆盖声明的确定性删除，不产生第三次生成调用；最终质量按剩余
+  声明重新计算并继续执行幻觉率、难度和核心覆盖门槛。旧声明错误码和旧审核快照不再兼容。
+- 旧生成运行数据清理工具（2026-08-21）：新增幂等受控脚本
+  `python -m app.scripts.clear_generation_runtime --services-stopped`，只清理生成任务、资源、审核、
+  Agent 运行、checkpoint 及资源关联反馈/导学，并校验用户、诊断、画像、路径、领域、知识和
+  Candidate manifest 均未变化；清理后学习者只需重新生成资源，无需重新诊断。
+- 新审核策略真实稳定性验收（2026-08-21）：`ai_app_dev` 使用真实 `qwen-plus` 生成和
+  `qwen-max / qwen-plus` 双审完成 5 次三资源完整包及 5 次局部刷新，10/10 通过；每轮幻觉率
+  0%、难度 100%、核心覆盖 100%、未解决和证据不足均为 0。报告为
+  `reports/stability/stability-20260821T054511Z.json`。当前数据库审核记录全部使用
+  `review-v5-claim-policy / quality-v7-20260821`，隔离评测 runner 已恢复关闭。
+- M1 真实知识导入修复（2026-08-21）：Candidate 索引已收口为构建、候选冒烟、激活三阶段；
+  staged 数据对学习者隔离，失败不会替换活动 manifest。Docker 空卷迁移、失败补偿、真实 embedding
+  冒烟与成功发布均已通过。
+- M4A 真实导学闭环修复（2026-08-21）：流式与非流式入口统一为单次结构化 Tutoring Agent 调用，
+  真实 Qwen 流式验收确认每轮仅一次模型调用，回复、反馈、任务和运行记录一致。
+- M4B 真实诊断评分与路径推进修复（2026-08-21）：首次诊断使用持久化异步幂等会话，简答题逐题
+  部分重试；路径按 prerequisite 图解锁并继承完成证据。真实 Qwen 首次诊断、并发幂等、重启恢复、
+  Docker 空卷和路径状态机验收均已通过。
+- M4C 运行治理代码收口（2026-08-20）：生产 Worker 不再从 `learning_goal` 解析评测
+  marker；评测案例通过管理员受控、默认关闭的隔离 runner 物化专用 learner/profile，且不进入
+  正常学习者列表。六个 Agent 的生产 Prompt 统一由 Markdown Registry 加载，Agent Run 保存
+  V6 合同版本、Prompt 版本和 SHA-256；结构化交接 receiver 与真实图拓扑一致，审核仲裁 SSE
+  携带 task/resource/review report 关联 ID。前端已移除学习报告和学习历程中的 Agent 协作过程，
+  只保留最终任务、资源、画像和路径业务结果。
+- M3 管理员领域生命周期与选择闭环（代码与自动化验收）：领域支持
+  `draft / preparing / ready / disabled`，管理员可创建、编辑、查看 readiness、发布和停用；
+  学习者只看到 `ready` 领域并通过持久化接口切换目标领域。诊断和新生成统一执行 ready
+  门禁，历史画像、任务、资源和报告按自身 `domain_code` 保留并读取。
+- M3 readiness 覆盖知识/题目/学习方向数量、五维能力权重、来源、跨领域关系、前置环、
+  Candidate manifest/数据版本/embedding 模型以及与当前索引版本匹配的检索冒烟。发布失败返回
+  `409 DOMAIN_READINESS_FAILED` 和结构化检查结果；普通领域编辑接口不暴露或降低服务端门槛。
+- M2 领域运行时通用化：诊断、画像、生成、资源导学和前端请求按对象所属
+  `domain_code` 运行；画像策略从 Domain、知识条目和关系动态装配，主领域生产链不再
+  使用静态画像配置或固定领域回退；最小第二领域夹具验证诊断题与知识目录隔离。
+- V5 自动化学习包闭环：诊断、画像与路径、Candidate RAG、三类资源生成、双模型审核、最多两轮字段级修订和原子发布。
+- 三项发布门槛：幻觉率 `< 5%`、画像-资源难度适配度 `>= 85%`、核心知识点覆盖率 `>= 90%`。
+- Candidate index 是唯一 RAG 索引。索引缺失、数据版本不一致、模型不一致或集合元数据不一致时，生成任务不会创建。
+- 未配置真实模型或索引时，Docker 服务、诊断和知识管理仍可用；健康接口返回 `rag.ready=false`，资源生成返回 `CANDIDATE_RAG_NOT_READY`。
+- 人工复核、mock embedding、旧 hash 检索、V1/V2 运行链和相关报告已移除。
+- 知识更新与自动质量校验状态已解耦：只标记当前学习包中受影响的资源，用户可暂不更新或创建局部刷新事件；局部刷新沿用原包画像，重新生成受影响资源并继承未受影响资源，成功后原子切换为新的当前学习包。
+
+## 当前演示路线
+
+```text
+学习背景与方向采集 -> 首次诊断测评 -> 学习画像与路线 -> 资源生成 -> 自动审核/修订 -> 资源质量指标
+-> 学习反馈 -> 导学与画像更新 -> 学习报告 -> 知识管理
+```
+
+首次学习者在学习中心完成“三步建档”：学习背景与方向、10 题首次诊断、初始画像与路线。只有画像谱系已经完成首次诊断且保存了背景快照时，才解锁资源、报告、任务记录和学习包生成；默认种子画像不视为完成，反馈更新后的新版本沿用该快照。
+
+资源页仅展示任务与资源的三项质量指标，不展示 Agent 节点图或人工复核入口。后端仍保留结构化 Agent Run 记录用于可追溯性和离线评测。
+
+知识条目或关联知识更新后，历史学习包保持不变。当前学习包若受到影响，资源页继续展示完整三类资源并提示知识已更新；向量索引就绪后由用户决定是否局部刷新。每次刷新作为新的学习历程事件，学习历程明确区分本次生成资源与继承资源。
+
+## 运维与验收
+
+1. 配置 DashScope/OpenAI-compatible 模型与 embedding 环境变量。
+2. 运行 `build_chroma_candidate_index --live` 显式构建索引。
+3. 检查 `/api/v1/health/dependencies` 的 `rag.ready`。
+4. 运行 Docker 内 Ruff、`compileall`、测试与 50 案例 candidate RAG 评测。
+
+真实 50 案例评测会产生 embedding 调用费用，必须显式使用 `--live`。
+
+## M2/M3 收口证据（2026-08-20）
+
+- 2026-08-21 修复方案最终验收：脱敏闭环报告见 `reports/demo/remediation-live-latest.json`；6/15/50
+  真实评测全部通过，正式运行 `live-formal-20260821T002859Z` 为 50/50 可判定、幻觉率 0%、
+  难度匹配 100%、核心覆盖 100%，报告见 `reports/evaluation/latest-live.{json,md,xlsx}`。
+  稳定性运行 `stability-20260821T015847Z` 的 5 次完整生成与 5 次局部重生成全部通过，报告见
+  `reports/stability/latest.json`。
+
+- M2/M3 实现提交：`542bb0a`（基于 M1 收口提交 `40b6725`）；运行产物不纳入源码提交。
+- 迁移：现有 MySQL 已升级到 `20260820_0022 (head)`。专用临时空库从零升级到 head 后，
+  主领域种子初始化得到 50 个知识点、60 道诊断题，领域状态为 `ready`；临时库已删除。
+- 历史数据修复：`0021` 回填空权重，`0022` 将旧 `breadth` 等非五维权重规范化；主领域
+  readiness 实测通过，当前为 53 个已发布知识点、63 道可用题、83 条关系，阻断项为空。
+- 后端：Docker 内 Ruff 静态检查通过，`compileall app tests` 通过，完整测试
+  `456 passed, 3 skipped`。冻结的 V6 合同、State、适配器及合同测试未修改。
+- 前端：Vitest `47 passed`，TypeScript 检查和 Vite 生产构建通过。
+- M4C 最终回归：后端 `463 passed, 3 skipped`，Ruff、compileall、前端 `47 passed`、TypeScript
+  与 Vite 生产构建通过；MySQL 已升级到 `20260820_0023 (head)`，重启后依赖健康检查为 `ok`，
+  `evaluation_runner_enabled=false`、`evaluation_overrides_enabled=false`、
+  `ready_for_live_demo=true`。用户授权后的真实模型 `demo_acceptance.py --suite full`
+  已全部通过，脱敏报告见 `reports/demo/latest.json`。首次生成基线任务为
+  `task_7fda0a4b5ecf`；两次服务端评分失败后画像更新任务为 `task_7fd8f28bfdfd`，
+  生成画像 `profile_346862637acf` 第 3 版，两条 AnswerRecord 只消费一次；资源错误复核任务
+  `task_39547e516245` 完成且画像不变。
+- M4B 真实路径推进验收见 `reports/demo/path-progression-latest.json`：失败证据
+  `answer_record:59` 不能完成节点，补救后服务端再次验证 `answer_record:60` 通过，
+  `knowledge:automated_testing` 完成并解锁 `knowledge:knowledge_base_ingestion`，
+  重复完成保持幂等。正式验证题现在优先匹配路径 `current_node_id`。
+- 运行态：MySQL、ChromaDB、Redis、Backend、Frontend 均健康；主领域 Candidate RAG
+  `ready=true`，索引 112 chunks；`evaluation_overrides_enabled=false`，双审核模型独立，
+  `ready_for_live_demo=true`。
+
+- M3 真实闭环验收已于 2026-08-20 通过，证据见 `reports/m3-live-acceptance.json`：管理员创建
+  `m3_live_acceptance`，真实 Markdown 导入并批准 10 个知识点、10 道诊断题和 9 条前置关系；
+  Candidate 索引使用 `qwen3.7-text-embedding`（1024 维）完成真实向量冒烟，readiness 无阻断并发布。
+- 学习者完成 10 题诊断（6 道选择题、4 道简答题，理论/实操各 5 道），生成画像
+  `profile_3649c629bcd1` 与路径 `path_0c5122ca5a2d`。任务 `task_ecfe44716ea7` 使用
+  `qwen-plus` 生成，并由独立的 `qwen-max` / `qwen-plus` 双通道审核；经 1 次局部修订后，
+  `lecture / practice_guide / graded_quiz` 三类资源全部通过，全部知识来源属于该测试领域。
+- 验收末尾将测试领域停用；新任务被 ready 门禁阻止，已完成任务仍为 `completed`，3 个历史资源
+  保持可读。运行中发现并修复了导入五维权重/单选答案、诊断模型响应兼容、实训修订证据回填和
+  非问号简答题指令误判；未降低双审核、来源、质量阈值或 readiness 门槛。
+- 最终运行态复核：迁移 `20260820_0022 (head)`；后端、前端、MySQL、ChromaDB、Redis 均健康；
+  `evaluation_overrides_enabled=false`，双审核模型保持独立。Stage 0/50 案例真实评测仅在需要刷新
+  竞赛性能基线时另行运行，不作为已通过的 M3 管理闭环验收替代项。

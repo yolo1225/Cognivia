@@ -1,0 +1,53 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+node_modules/
+dist/
+coverage/
+
+# Legacy local Chroma files are not part of the Docker service runtime.
+data/chroma/*
+!data/chroma/.gitkeep
+
+storage/exports/*
+!storage/exports/.gitkeep
+storage/candidate-index/
+
+# Rolling local evaluation output; frozen RAG/admission evidence remains tracked.
+reports/evaluation/latest*
+reports/evaluation/runs/
+
+# Full stage0 machine evidence is local; the redacted frozen manifest lives in docs/baselines/.
+reports/stage0/
+
+# Local preflight bundles may contain database exports and service snapshots.
+reports/preflight/
+
+
+*.log
+*.err
+*.pid
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
+# Local verification artifacts
+backend/tmp_p0_migration.db
+backend/uv.lock
+/tmp/
+
+# Local competition source documents
+/XH-202630*.pdf
+/docs/设计方案-*.docx
+
+# Local prototype materials
+/docs/prototype/

@@ -1,0 +1,9 @@
+{
+  "schema_version": "rag-evaluation-manifest-1.0",
+  "domain_code": "ai_app_dev",
+  "source_data_version": "sha256:a02334aa3f59325c21cfa48ecb58cf36b3e4056f5fffea01f890943c8508e5ba",
+  "development_case_count": 30,
+  "acceptance_case_count": 20,
+  "acceptance_cases_sha256": "sha256:25ce6ac9c25158a88cb7eb92d0068bec769331714bfd53a87d39c9900157d589",
+  "acceptance_policy": "frozen; tune retrieval rules only with development_cases.json"
+}
