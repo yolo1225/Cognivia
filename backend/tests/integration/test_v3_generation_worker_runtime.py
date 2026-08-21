@@ -16,7 +16,7 @@ from app.agents.contract_adapters import (
     review_resource_output_to_patch,
 )
 from app.agents.contract_examples import initial_generation_flow_example
-from app.agents.contracts import FinalizeTaskOutput, TaskDecision
+from app.agents.contracts import AbilityScores, FinalizeTaskOutput, TaskDecision
 from app.agents.generation_agent import GenerationError
 from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.models import (
@@ -27,6 +27,7 @@ from app.models import (
     GraphCheckpoint,
     Learner,
     LearnerProfile,
+    LearningPath,
     LearningResource,
     ReviewReport,
 )
@@ -40,6 +41,41 @@ class _Runtime:
 
     def close(self) -> None:
         pass
+
+
+@pytest.mark.parametrize(("ability_score", "expected_difficulty"), [(45, 2), (60, 3), (80, 4)])
+def test_learning_path_snapshot_maps_average_ability_to_five_level_difficulty(
+    ability_score: int,
+    expected_difficulty: int,
+) -> None:
+    path = LearningPath(
+        public_id=f"path_difficulty_{ability_score}",
+        learner_id=1,
+        path_json={
+            "stages": [
+                {
+                    "name": "当前知识点",
+                    "description": "完成当前知识点",
+                    "knowledge_ids": ["knowledge_target"],
+                }
+            ],
+            "current_node_id": "knowledge:knowledge_target",
+        },
+    )
+    profile = SimpleNamespace(
+        ability_scores=AbilityScores(
+            theory=ability_score,
+            practice=ability_score,
+            problem_solving=ability_score,
+            knowledge_breadth=ability_score,
+            learning_speed=ability_score,
+        )
+    )
+
+    _snapshot, current = generation_worker._learning_path_snapshot(path, profile)
+
+    assert current is not None
+    assert current.target_difficulty == expected_difficulty
 
 
 def test_worker_maps_final_decisions_to_stable_terminal_failure_codes() -> None:
@@ -148,7 +184,9 @@ def test_v3_worker_persists_checkpoint_runs_messages_resources_and_review(
         runs = list(db.scalars(select(AgentRun).where(AgentRun.generation_task_id == task.id)))
         messages = list(
             db.scalars(
-                select(AgentMessageRecord).where(AgentMessageRecord.task_id == task.public_id)
+                select(AgentMessageRecord)
+                .where(AgentMessageRecord.task_id == task.public_id)
+                .order_by(AgentMessageRecord.id)
             )
         )
         resources = list(
@@ -162,9 +200,24 @@ def test_v3_worker_persists_checkpoint_runs_messages_resources_and_review(
     assert checkpoint is not None and checkpoint.state_json["native_checkpoint"] is True
     assert len(runs) == 6 and all(run.status == "completed" for run in runs)
     assert len(messages) >= len(runs)
+    assert all(
+        run.contract_version == "agent-contract-v6" and len(run.prompt_hash) == 64
+        for run in runs
+    )
+    result_receivers = [
+        message.receiver for message in messages if message.message_type == "result"
+    ]
+    assert result_receivers == [
+        "profile_analysis_agent",
+        "knowledge_retrieval_agent",
+        "content_generation_agent",
+        "review_validation_agent",
+        "orchestrator_agent",
+        "orchestrator_agent",
+    ]
     assert len(resources) == 3 and all(item.review_status == "passed" for item in resources)
     assert len(reports) == 3 and all(
-        item.review_rule_version == "quality-v6-20260818" for item in reports
+        item.review_rule_version == "review-v5-claim-policy" for item in reports
     )
 
     repeated = generation_worker.run_generation_task("task_v3_worker")

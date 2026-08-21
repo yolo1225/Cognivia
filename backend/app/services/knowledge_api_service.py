@@ -11,6 +11,7 @@ from app.rag.candidate_index_access import CandidateIndexAccess, CandidateIndexU
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.repositories.knowledge_repo import KnowledgeRepository
 from app.schemas.api_requests import KnowledgeItemCreateRequest, KnowledgeItemUpdateRequest
+from app.agents.domain_evidence_policy import get_domain_evidence_policy
 from app.services.knowledge_update_service import (
     mark_affected_content,
     related_knowledge_ids,
@@ -46,10 +47,17 @@ class KnowledgeApiService:
     def create(self, payload: KnowledgeItemCreateRequest) -> dict[str, Any]:
         if self.repository.find_by_name(payload.domain_code, payload.name.strip()) is not None:
             raise conflict("KNOWLEDGE_ITEM_ALREADY_EXISTS", f"知识点已存在：{payload.name}")
+        capabilities = sorted(
+            item.value
+            for item in get_domain_evidence_policy(payload.domain_code).classify_content(
+                payload.content
+            )
+        )
         item = self.repository.add(KnowledgeItem(
             public_id=f"ki_{uuid4().hex[:12]}", domain_code=payload.domain_code,
             name=payload.name.strip(), category=payload.category.strip(), difficulty=payload.difficulty,
             tags_json=[tag.strip() for tag in payload.tags if tag.strip()], content_md=payload.content.strip(),
+            evidence_capabilities_json=capabilities,
             source_title=payload.source_title.strip(), source_url=payload.source_url,
             license_note=payload.license_note.strip(), needs_reembedding=True,
         ))
@@ -75,6 +83,13 @@ class KnowledgeApiService:
                 setattr(item, target, value.strip() if isinstance(value, str) else value)
         if "tags" in values:
             item.tags_json = [tag.strip() for tag in values["tags"] if tag.strip()]
+        if "content" in values:
+            item.evidence_capabilities_json = sorted(
+                capability.value
+                for capability in get_domain_evidence_policy(item.domain_code).classify_content(
+                    item.content_md
+                )
+            )
         try:
             if payload.prerequisites is not None:
                 replace_item_relations(self.db, item=item, relation_type="prerequisite", source_public_ids=payload.prerequisites)

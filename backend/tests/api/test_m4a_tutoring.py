@@ -30,9 +30,9 @@ from app.models import (
     KnowledgeItem,
     Learner,
     LearnerProfile,
+    LearningPath,
     LearningResource,
 )
-from app.services.resource_tutoring_service import TutoringAnswer
 from app.api.v1.generation_tasks import _semantic_events
 from app.workers.generation_worker import (
     _feedback_assessments,
@@ -90,6 +90,31 @@ def _seed(db: Session) -> None:
     )
     db.add(knowledge)
     db.flush()
+    distractor = KnowledgeItem(
+        public_id="distractor_knowledge",
+        domain_code="ai_app_dev",
+        name="干扰知识点",
+        category="rag_practice",
+        difficulty=1,
+        tags_json=[],
+        content_md="干扰内容。",
+        source_title="M4A test source",
+        needs_reembedding=False,
+    )
+    db.add(distractor)
+    db.flush()
+    db.add(
+        DiagnosticQuestion(
+            public_id="m4a_distractor_q",
+            domain_code="ai_app_dev",
+            knowledge_item_id=distractor.id,
+            question_type="single_choice",
+            stem="低难度干扰题",
+            options_json=["正确", "错误"],
+            answer_key_json={"correct_option": 0},
+            difficulty=1,
+        )
+    )
     for index in range(2):
         db.add(
             DiagnosticQuestion(
@@ -121,6 +146,25 @@ def _seed(db: Session) -> None:
     db.add(task)
     db.flush()
     db.add(
+        LearningPath(
+            public_id="path_m4a",
+            learner_id=learner.id,
+            profile_id=profile.id,
+            domain_code="ai_app_dev",
+            status="active",
+            path_json={
+                "current_node_id": "knowledge:rag_pipeline_overview",
+                "node_states": {
+                    "knowledge:rag_pipeline_overview": {
+                        "path_node_id": "knowledge:rag_pipeline_overview",
+                        "knowledge_id": "rag_pipeline_overview",
+                        "status": "current",
+                    }
+                },
+            },
+        )
+    )
+    db.add(
         LearningResource(
             public_id="resource_m4a",
             generation_task_id=task.id,
@@ -128,7 +172,10 @@ def _seed(db: Session) -> None:
             title="M4A resource",
             content_md="正文",
             difficulty=3,
-            sources_json=[{"knowledge_id": knowledge.public_id}],
+            sources_json=[
+                {"knowledge_id": knowledge.public_id},
+                {"knowledge_id": distractor.public_id},
+            ],
             review_status="passed",
             series_id="resource_m4a",
             is_current=True,
@@ -142,10 +189,12 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
     with factory() as db:
         _seed(db)
     calls = 0
+    evidence_counts: list[int] = []
 
     def execute(_self, request):
         nonlocal calls
         calls += 1
+        evidence_counts.append(len(request.feedback.supporting_evidence))
         return InterpretFeedbackOutput(
             task_id=request.task_id,
             feedback_intent=FeedbackIntent.TOO_EASY,
@@ -157,12 +206,6 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
         )
 
     monkeypatch.setattr("app.services.tutoring_service.TutoringAgent.execute", execute)
-    monkeypatch.setattr(
-        "app.services.tutoring_service.answer_resource_question",
-        lambda *_args, **_kwargs: TutoringAnswer(
-            answer="请完成验证。", sources=[], scope_status="resource", assessment=None
-        ),
-    )
     monkeypatch.setattr("app.api.v1.tutoring.run_generation_task", lambda _task_id: None)
     app.dependency_overrides[get_db] = _override(factory)
     client = TestClient(app)
@@ -172,7 +215,18 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
         ).json()["data"]["session_id"]
         first = client.post(
             f"/api/v1/tutoring/sessions/{session_id}/messages",
-            json={"content": "太简单了"},
+            json={
+                "content": "太简单了",
+                "evidence": [
+                    {
+                        "evidence_id": "sync_support",
+                        "type": "validated_behavior",
+                        "summary": "同步入口证据透传验证",
+                        "confidence": 0.5,
+                        "confirmed": False,
+                    }
+                ],
+            },
         ).json()["data"]
         assert first["profile_update_required"] is False
         assert first["task_id"] is None
@@ -193,12 +247,26 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
 
         stream = client.post(
             f"/api/v1/tutoring/sessions/{session_id}/messages/stream",
-            json={"content": "我可以再验证一次"},
+            json={
+                "content": "我可以再验证一次",
+                "evidence": [
+                    {
+                        "evidence_id": "stream_support",
+                        "type": "validated_behavior",
+                        "summary": "流式入口证据透传验证",
+                        "confidence": 0.5,
+                        "confirmed": False,
+                    }
+                ],
+            },
         )
         assert stream.status_code == 200
         assert "event: accepted" in stream.text
         assert "event: agent_status" in stream.text
+        assert stream.text.count("event: delta") == 1
         assert "event: completed" in stream.text
+        assert stream.text.index("event: accepted") < stream.text.index("event: delta")
+        assert stream.text.index("event: delta") < stream.text.index("event: completed")
         current = client.get(f"/api/v1/tutoring/sessions/{session_id}").json()["data"]
         second_assessment = next(
             message["assessment"]
@@ -212,7 +280,11 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
         assert second_answer["task_id"] is not None
         with factory() as db:
             assert db.query(AnswerRecord).count() == 2
-            assert db.query(AgentRun).filter_by(agent_name="tutoring_agent").count() == 2
+            tutoring_runs = db.query(AgentRun).filter_by(agent_name="tutoring_agent").all()
+            assert len(tutoring_runs) == 2
+            assert all(
+                run.input_summary_json["session_id"] == session_id for run in tutoring_runs
+            )
             assert db.query(Feedback).count() == 2
             feedback_task = db.query(GenerationTask).filter_by(event_type="resource_feedback").one()
             feedback = db.get(Feedback, feedback_task.source_feedback_id)
@@ -221,6 +293,9 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             assert len(evidence) == len(assessments) == 2
             original_profile = db.get(LearnerProfile, feedback_task.profile_id)
             state = _initial_state(db, feedback_task, learner, original_profile, feedback)
+            assert state["feedback_context"].conversation.previous_intents == [
+                FeedbackIntent.TOO_EASY
+            ]
             state.update(
                 prepare_task_output_to_patch(
                     OrchestratorAgent().execute(build_prepare_task_input(state))
@@ -259,6 +334,7 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             evidence, assessments = _feedback_assessments(db, feedback_task, learner, feedback)
             assert len(evidence) == len(assessments) == 0
         assert calls == 2
+        assert evidence_counts == [1, 1]
     finally:
         app.dependency_overrides.clear()
 
@@ -291,3 +367,44 @@ def test_m4a_arbitration_events_read_the_review_array() -> None:
             )
             == []
         )
+
+
+def test_path_refresh_event_requires_persisted_path_ids() -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+        task = db.query(GenerationTask).filter_by(public_id="task_m4a_source").one()
+        without_path = _semantic_events(
+            task,
+            {
+                "status": "completed",
+                "step": "analyze_profile",
+                "payload": {"profile_update_required": True},
+            },
+        )
+        with_path = _semantic_events(
+            task,
+            {
+                "status": "completed",
+                "step": "analyze_profile",
+                "payload": {
+                    "profile_update_required": True,
+                    "path_refresh": {
+                        "old_path_id": "path_old",
+                        "new_path_id": "path_new",
+                    },
+                },
+            },
+        )
+
+        assert [name for name, _payload in without_path] == [
+            "profile_update_decided",
+            "profile_updated",
+        ]
+        assert [name for name, _payload in with_path] == [
+            "profile_update_decided",
+            "profile_updated",
+            "path_refresh_completed",
+        ]
+        assert with_path[-1][1]["old_path_id"] == "path_old"
+        assert with_path[-1][1]["new_path_id"] == "path_new"

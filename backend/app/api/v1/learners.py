@@ -103,7 +103,11 @@ def list_learners(
     if principal.role != "admin" and principal.learner_id:
         learner = db.scalar(select(Learner).where(Learner.public_id == principal.learner_id))
         return ok([serialize_learner_summary(db, learner)] if learner else [])
-    learners = list(db.scalars(select(Learner).order_by(Learner.public_id)))
+    learners = list(
+        db.scalars(
+            select(Learner).where(Learner.is_evaluation.is_(False)).order_by(Learner.public_id)
+        )
+    )
     if not learners:
         learners = [get_or_create_demo_learner(db, "learner_001")]
         db.commit()

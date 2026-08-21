@@ -302,6 +302,36 @@ def test_unchanged_incremental_build_does_not_call_provider(tmp_path: Path) -> N
         assert second_provider.calls == []
 
 
+def test_candidate_build_does_not_activate_or_clear_markers(tmp_path: Path) -> None:
+    sessions = _session_factory()
+    client = FakeChromaClient()
+    store = CandidateManifestStore(root=tmp_path)
+    with sessions() as db:
+        item = _item("item-a", "候选构建内容。" * 30, needs_reembedding=True)
+        db.add(item)
+        db.commit()
+        builder = CandidateIndexBuilder(
+            db=db,
+            chroma_client=client,
+            embedding_provider=FakeProvider(),
+            manifest_store=store,
+        )
+
+        result = builder.build_candidate(reset=True)
+
+        assert result["status"] == "built"
+        assert store.load("ai_app_dev") is None
+        assert item.needs_reembedding is True
+        assert result["active_collection"] in client.collections
+
+        builder.activate_candidate(result["candidate_manifest"])
+        db.commit()
+        active = store.load("ai_app_dev")
+        assert active is not None
+        assert active.active_collection == result["active_collection"]
+        assert item.needs_reembedding is False
+
+
 def test_reset_rebuilds_when_manifest_points_to_missing_collection(tmp_path: Path) -> None:
     sessions = _session_factory()
     client = FakeChromaClient()

@@ -27,7 +27,14 @@ def list_knowledge_relations(
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
-    items = list(db.scalars(select(KnowledgeItem).where(KnowledgeItem.domain_code == domain_code)))
+    items = list(
+        db.scalars(
+            select(KnowledgeItem).where(
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.status == "published",
+            )
+        )
+    )
     item_by_id = {item.id: item for item in items}
     if not item_by_id:
         return ok([])
@@ -108,7 +115,10 @@ def list_knowledge_items(
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
-    filters = [KnowledgeItem.domain_code == domain_code]
+    filters = [
+        KnowledgeItem.domain_code == domain_code,
+        KnowledgeItem.status == "published",
+    ]
     if category:
         filters.append(KnowledgeItem.category == category)
 
@@ -282,7 +292,10 @@ def search_knowledge(
 ) -> ApiResponse:
     statement = (
         select(KnowledgeItem)
-        .where(KnowledgeItem.domain_code == domain_code)
+        .where(
+            KnowledgeItem.domain_code == domain_code,
+            KnowledgeItem.status == "published",
+        )
         .where(KnowledgeItem.name.contains(query) | KnowledgeItem.content_md.contains(query))
         .order_by(KnowledgeItem.public_id)
         .limit(n_results)

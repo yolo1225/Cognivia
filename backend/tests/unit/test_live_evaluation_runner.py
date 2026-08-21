@@ -110,8 +110,14 @@ def test_feedback_case_uses_target_baseline_then_evaluates_feedback_task(monkeyp
 
     def fake_api(base_url, method, path, payload=None, **kwargs):
         calls.append((method, path))
+        if path == "/evaluations/cases/V4-EVAL-041/prepare":
+            return {
+                "learner_id": "evaluation_v4_eval_041",
+                "profile_id": "evaluation_profile_v4_eval_041",
+            }
         if path == "/generation-tasks":
             assert payload["resource_types"] == ["practice_guide"]
+            assert payload["profile_id"] == "evaluation_profile_v4_eval_041"
             return {"task_id": "task_baseline"}
         if path == "/resources/res_practice/feedback":
             return {"recommended_action": "review", "task_id": "task_feedback"}
@@ -154,8 +160,14 @@ def test_challenge_case_uses_tutoring_branch(monkeypatch) -> None:
 
     def fake_api(base_url, method, path, payload=None, **kwargs):
         calls.append((method, path))
+        if path == "/evaluations/cases/V4-EVAL-041/prepare":
+            return {
+                "learner_id": "evaluation_v4_eval_041",
+                "profile_id": "evaluation_profile_v4_eval_041",
+            }
         if path == "/generation-tasks":
             assert payload["resource_types"] == ["practice_guide"]
+            assert payload["profile_id"] == "evaluation_profile_v4_eval_041"
             return {"task_id": "task_baseline"}
         if path == "/tutoring/sessions":
             return {"session_id": "session_eval"}
@@ -434,6 +446,17 @@ def test_stability_partial_package_requires_one_generated_and_two_inherited() ->
             source_task_id="task_source",
             source_resources=source,
         )
+
+
+def test_stability_prepares_isolated_ready_learner_before_generation() -> None:
+    source = Path(stability.__file__).read_text(encoding="utf-8")
+
+    prepare = source.index('f"/evaluations/cases/{stability_case[\'case_id\']}/prepare"')
+    generation = source.index('"/generation-tasks"')
+
+    assert prepare < generation
+    assert '"profile_id": profile_id' in source
+    assert source.count('"learner_id": learner_id') == 2
 
 
 def test_evidence_gap_with_valid_case_and_capability_is_program_defect(monkeypatch) -> None:

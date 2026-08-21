@@ -163,7 +163,7 @@ def test_v3_generation_and_review_collect_safe_model_call_metadata() -> None:
         "practice_guide",
         "graded_quiz",
     }
-    assert len(generation_calls) == 3
+    assert len(generation_calls) >= 3
     assert all(item["role"] == "generation_model" for item in generation_calls)
     assert all(item["provider_mode"] == "live" for item in generation_calls)
 

@@ -6,7 +6,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AnswerRecord, DiagnosticQuestion, KnowledgeItem, Learner, LearningPath
+from app.models import (
+    AnswerRecord,
+    DiagnosticQuestion,
+    KnowledgeItem,
+    KnowledgeRelation,
+    Learner,
+    LearningPath,
+)
 
 DEFAULT_COMPLETION_CONDITION = {"type": "scored_quiz_score", "threshold": 0.8}
 
@@ -31,6 +38,7 @@ def normalize_path_payload(
     payload: dict[str, Any] | None,
     *,
     previous_payload: dict[str, Any] | None = None,
+    prerequisites_by_knowledge: dict[str, set[str]] | None = None,
 ) -> dict[str, Any]:
     normalized = dict(payload or {})
     knowledge_ids = _ordered_knowledge_ids(normalized)
@@ -49,20 +57,14 @@ def normalize_path_payload(
     }
 
     states: dict[str, dict[str, Any]] = {}
-    completed_prefix = True
     for index, knowledge_id in enumerate(knowledge_ids):
         path_node_id = node_id_for(knowledge_id)
         inherited = prior_by_knowledge.get(knowledge_id, {})
         inherited_status = str(inherited.get("status") or "")
         if inherited_status == "completed":
             status = "completed"
-        elif completed_prefix:
-            status = "current"
-            completed_prefix = False
         else:
             status = "locked"
-        if status != "completed":
-            completed_prefix = False
         states[path_node_id] = {
             "path_node_id": path_node_id,
             "knowledge_id": knowledge_id,
@@ -80,6 +82,29 @@ def normalize_path_payload(
             ),
         }
 
+    completed_knowledge = {
+        state["knowledge_id"] for state in states.values() if state["status"] == "completed"
+    }
+    if prerequisites_by_knowledge is None:
+        first_incomplete = next(
+            (state for state in states.values() if state["status"] != "completed"),
+            None,
+        )
+        if first_incomplete is not None:
+            first_incomplete["status"] = "current"
+    else:
+        active_knowledge_ids = set(knowledge_ids)
+        for state in states.values():
+            if state["status"] == "completed":
+                continue
+            prerequisites = prerequisites_by_knowledge.get(state["knowledge_id"], set())
+            in_path_prerequisites = prerequisites & active_knowledge_ids
+            state["status"] = (
+                "current"
+                if in_path_prerequisites.issubset(completed_knowledge)
+                else "locked"
+            )
+
     active_knowledge = set(knowledge_ids)
     retired = dict(prior.get("retired_node_states") or {}) if isinstance(prior, dict) else {}
     for key, state in prior_states.items():
@@ -93,7 +118,48 @@ def normalize_path_payload(
     return normalized
 
 
+def normalize_path_for_domain(
+    db: Session,
+    *,
+    domain_code: str,
+    payload: dict[str, Any] | None,
+    previous_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    knowledge_ids = _ordered_knowledge_ids(payload or {})
+    if not knowledge_ids:
+        return normalize_path_payload(payload, previous_payload=previous_payload)
+    items = list(
+        db.scalars(
+            select(KnowledgeItem).where(
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.public_id.in_(knowledge_ids),
+            )
+        )
+    )
+    public_by_id = {item.id: item.public_id for item in items}
+    prerequisites: dict[str, set[str]] = {knowledge_id: set() for knowledge_id in knowledge_ids}
+    if public_by_id:
+        relations = db.scalars(
+            select(KnowledgeRelation).where(
+                KnowledgeRelation.relation_type == "prerequisite",
+                KnowledgeRelation.source_item_id.in_(public_by_id),
+                KnowledgeRelation.target_item_id.in_(public_by_id),
+            )
+        )
+        for relation in relations:
+            prerequisites[public_by_id[relation.target_item_id]].add(
+                public_by_id[relation.source_item_id]
+            )
+    return normalize_path_payload(
+        payload,
+        previous_payload=previous_payload,
+        prerequisites_by_knowledge=prerequisites,
+    )
+
+
 def normalize_learning_path(path: LearningPath) -> dict[str, Any]:
+    if isinstance((path.path_json or {}).get("node_states"), dict):
+        return path.path_json
     normalized = normalize_path_payload(path.path_json or {})
     if normalized != (path.path_json or {}):
         path.path_json = normalized
@@ -206,7 +272,13 @@ def verify_path_node(
     path, learner = _path_and_learner(db, path_id)
     if learner.public_id != learner_public_id:
         raise ValueError("learning_path_not_found")
-    payload = normalize_learning_path(path)
+    payload = normalize_path_for_domain(
+        db,
+        domain_code=path.domain_code,
+        payload=path.path_json or {},
+        previous_payload=path.path_json or {},
+    )
+    path.path_json = payload
     node = (payload.get("node_states") or {}).get(node_id)
     if not isinstance(node, dict):
         raise ValueError("learning_path_node_not_found")
@@ -231,7 +303,13 @@ def complete_path_node(
     path, learner = _path_and_learner(db, path_id)
     if learner.public_id != learner_public_id:
         raise ValueError("learning_path_not_found")
-    payload = normalize_learning_path(path)
+    payload = normalize_path_for_domain(
+        db,
+        domain_code=path.domain_code,
+        payload=path.path_json or {},
+        previous_payload=path.path_json or {},
+    )
+    path.path_json = payload
     states = payload.get("node_states") or {}
     node = states.get(node_id)
     if not isinstance(node, dict):
@@ -254,14 +332,17 @@ def complete_path_node(
     node["status"] = "completed"
     node["completed_at"] = datetime.now(UTC).isoformat()
     node["completion_evidence_ids"] = verification["evidence_ids"]
-    ordered = sorted(states.values(), key=lambda item: int(item.get("path_order") or 0))
-    next_node = next((item for item in ordered if item.get("status") == "locked"), None)
-    if next_node:
-        next_node["status"] = "current"
-        payload["current_node_id"] = next_node["path_node_id"]
-    else:
-        payload["current_node_id"] = None
+    payload = normalize_path_for_domain(
+        db,
+        domain_code=path.domain_code,
+        payload=payload,
+        previous_payload=payload,
+    )
+    states = payload.get("node_states") or {}
+    if not any(state.get("status") in {"current", "locked"} for state in states.values()):
         path.status = "completed"
+    else:
+        path.status = "active"
     path.path_json = payload
     db.commit()
     return {"path": serialize_learning_path(path), "completed_node_id": node_id}

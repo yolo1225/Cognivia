@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from app.agents.contracts import (
@@ -18,6 +18,7 @@ from app.agents.contracts import (
     TaskContext,
 )
 from app.agents.observability import collect_model_calls
+from app.agents.prompt_registry import PROMPT_VERSION, prompt_hash
 from app.agents.tutoring_agent import TutoringAgent
 from app.models import (
     AgentMessageRecord,
@@ -30,6 +31,7 @@ from app.models import (
     Learner,
     LearnerProfile,
     KnowledgeItem,
+    LearningPath,
     LearningResource,
     TutoringMessage,
     TutoringSession,
@@ -37,8 +39,9 @@ from app.models import (
 from app.services.feedback_service import create_feedback_task
 from app.services.profile_service import public_id
 from app.services.contract_mapping import profile_snapshot
+from app.core.compatibility import AGENT_CONTRACT_VERSION
 from app.services.resource_tutoring_service import (
-    answer_resource_question,
+    TutoringAnswer,
     build_resource_tutoring_context,
 )
 
@@ -76,6 +79,25 @@ class TutoringTurnResult:
         }
 
 
+def _current_path_knowledge_id(
+    db: Session, *, learner: Learner, domain_code: str
+) -> str | None:
+    path = db.scalar(
+        select(LearningPath)
+        .where(
+            LearningPath.learner_id == learner.id,
+            LearningPath.domain_code == domain_code,
+            LearningPath.status == "active",
+        )
+        .order_by(LearningPath.id.desc())
+    )
+    payload = path.path_json or {} if path is not None else {}
+    node_id = payload.get("current_node_id")
+    node = (payload.get("node_states") or {}).get(node_id, {}) if node_id else {}
+    knowledge_id = node.get("knowledge_id") if isinstance(node, dict) else None
+    return str(knowledge_id) if knowledge_id else None
+
+
 def _formal_assessment(
     db: Session,
     *,
@@ -94,12 +116,23 @@ def _formal_assessment(
     ]
     if not knowledge_ids:
         return None, "assessment_unavailable"
-    attempted_question_ids = select(AnswerRecord.question_id).where(
-        AnswerRecord.learner_id == learner.id
-    )
+    attempted_question_ids = [
+        record.question_id
+        for record in db.scalars(
+            select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)
+        )
+        if (record.answer_summary_json or {}).get("tutoring_session_id") == session.id
+    ]
     source_task = db.get(GenerationTask, resource.generation_task_id)
     if source_task is None:
         return None, "assessment_unavailable"
+    current_knowledge_id = _current_path_knowledge_id(
+        db, learner=learner, domain_code=source_task.domain_code
+    )
+    current_first = case(
+        (KnowledgeItem.public_id == current_knowledge_id, 0),
+        else_=1,
+    )
     question = db.scalar(
         select(DiagnosticQuestion)
         .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
@@ -109,8 +142,23 @@ def _formal_assessment(
             KnowledgeItem.public_id.in_(knowledge_ids),
             DiagnosticQuestion.id.not_in(attempted_question_ids),
         )
-        .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.id)
+        .order_by(current_first, DiagnosticQuestion.difficulty, DiagnosticQuestion.id)
     )
+    if question is None:
+        # A resource may cite a knowledge item with only one validation question.
+        # Keep the second controlled check inside the same domain and session,
+        # while allowing another domain question after source-linked questions
+        # have been exhausted.
+        question = db.scalar(
+            select(DiagnosticQuestion)
+            .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
+            .where(
+                DiagnosticQuestion.domain_code == source_task.domain_code,
+                DiagnosticQuestion.question_type == "single_choice",
+                DiagnosticQuestion.id.not_in(attempted_question_ids),
+            )
+            .order_by(current_first, DiagnosticQuestion.difficulty, DiagnosticQuestion.id)
+        )
     if question is None:
         return None, "assessment_unavailable"
     knowledge = db.get(KnowledgeItem, question.knowledge_item_id)
@@ -240,12 +288,6 @@ def create_streaming_messages(
     return learner_message, reply, resource
 
 
-def stream_context_for_message(
-    db: Session, *, session: TutoringSession, resource: LearningResource, content: str
-) -> tuple[dict, list[dict[str, str]], str, dict | None]:
-    return build_resource_tutoring_context(db, session=session, resource=resource, question=content)
-
-
 def update_streaming_reply(
     db: Session,
     *,
@@ -282,6 +324,8 @@ def add_learner_message(
     profile: LearnerProfile,
     content: str,
     evidence: list[dict] | None = None,
+    prepared_learner_message: TutoringMessage | None = None,
+    prepared_reply: TutoringMessage | None = None,
 ) -> tuple[TutoringMessage, TutoringMessage, Feedback, GenerationTask | None, dict]:
     if session.status != "active":
         raise ValueError("tutoring session is not active")
@@ -302,16 +346,27 @@ def add_learner_message(
     if domain is None or not domain.name.strip():
         raise ValueError("tutoring_domain_not_found")
 
-    learner_message = TutoringMessage(
-        public_id=public_id("msg"),
-        session_id=session.id,
-        sender="learner",
-        message_type="question",
-        content=content,
-    )
-    db.add(learner_message)
-    db.flush()
-    session.turn_count += 1
+    if prepared_learner_message is not None:
+        if (
+            prepared_learner_message.session_id != session.id
+            or prepared_learner_message.sender != "learner"
+            or prepared_reply is None
+            or prepared_reply.session_id != session.id
+            or prepared_reply.sender != "tutoring_agent"
+        ):
+            raise ValueError("invalid prepared tutoring messages")
+        learner_message = prepared_learner_message
+    else:
+        learner_message = TutoringMessage(
+            public_id=public_id("msg"),
+            session_id=session.id,
+            sender="learner",
+            message_type="question",
+            content=content,
+        )
+        db.add(learner_message)
+        db.flush()
+        session.turn_count += 1
     feedback = Feedback(
         resource_id=resource.id,
         learner_id=learner.id,
@@ -398,12 +453,15 @@ def add_learner_message(
         status="running",
         input_summary_json={
             "task_id": session.public_id,
+            "session_id": session.public_id,
             "resource_id": resource.public_id,
             "turn_count": session.turn_count,
             "evidence_count": len(safe_evidence),
         },
         output_summary_json={},
-        prompt_version="v3",
+        prompt_version=PROMPT_VERSION,
+        prompt_hash=prompt_hash("tutoring"),
+        contract_version=AGENT_CONTRACT_VERSION,
     )
     db.add(run)
     _agent_message(
@@ -414,8 +472,14 @@ def add_learner_message(
         message_type="command",
         payload={"node_name": "interpret_feedback", "turn_count": session.turn_count},
     )
+    resource_context, tutoring_sources, tutoring_scope, _ = build_resource_tutoring_context(
+        db, session=session, resource=resource, question=content
+    )
     with collect_model_calls() as collector:
-        output_model = TutoringAgent(domain_display_name=domain.name).execute(request)
+        output_model = TutoringAgent(
+            domain_display_name=domain.name,
+            resource_context=resource_context,
+        ).execute(request)
     model_calls = collector.snapshot()
     output = output_model.model_dump(mode="json")
     action = output_model.recommended_action.value
@@ -458,11 +522,12 @@ def add_learner_message(
             "needs_generation": output_model.needs_generation,
         },
     )
-    contextual_answer = answer_resource_question(
-        db, session=session, resource=resource, question=content
+    contextual_answer = TutoringAnswer(
+        answer=output_model.reply,
+        sources=tutoring_sources,
+        scope_status=tutoring_scope,
+        assessment=None,
     )
-    # Resource-scoped prose is deliberately separate from the V3 contract agent.
-    # The contract agent still owns the classification and downstream decision.
     output["reply"] = contextual_answer.answer
     output["sources"] = contextual_answer.sources
     output["scope_status"] = contextual_answer.scope_status
@@ -477,21 +542,23 @@ def add_learner_message(
     output["assessment"] = assessment
     output["assessment_unavailable"] = assessment_unavailable
     output["session_id"] = session.public_id
-    reply = TutoringMessage(
+    reply = prepared_reply or TutoringMessage(
         public_id=public_id("msg"),
         session_id=session.id,
         sender="tutoring_agent",
         message_type="hint" if session.turn_count == 1 else "explanation",
-        content=contextual_answer.answer,
-        metadata_json={
-            "sources": contextual_answer.sources,
-            "scope_status": contextual_answer.scope_status,
-            "assessment": assessment,
-            "assessment_unavailable": assessment_unavailable,
-            "stream_status": "completed",
-        },
-        feedback_id=feedback.id,
+        content="",
     )
+    reply.message_type = "hint" if session.turn_count == 1 else "explanation"
+    reply.content = contextual_answer.answer
+    reply.metadata_json = {
+        "sources": contextual_answer.sources,
+        "scope_status": contextual_answer.scope_status,
+        "assessment": assessment,
+        "assessment_unavailable": assessment_unavailable,
+        "stream_status": "completed",
+    }
+    reply.feedback_id = feedback.id
     db.add(reply)
     db.flush()
 
@@ -526,6 +593,8 @@ def execute_tutoring_turn(
     profile: LearnerProfile,
     content: str,
     evidence: list[dict] | None = None,
+    prepared_learner_message: TutoringMessage | None = None,
+    prepared_reply: TutoringMessage | None = None,
 ) -> TutoringTurnResult:
     learner_message, reply, feedback, task, output = add_learner_message(
         db,
@@ -533,6 +602,8 @@ def execute_tutoring_turn(
         profile=profile,
         content=content,
         evidence=evidence,
+        prepared_learner_message=prepared_learner_message,
+        prepared_reply=prepared_reply,
     )
     return TutoringTurnResult(learner_message, reply, feedback, task, output)
 

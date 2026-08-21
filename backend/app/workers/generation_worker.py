@@ -24,11 +24,11 @@ from app.agents.contracts import (
     ResourceSummary,
     TaskRequest,
 )
-from app.services.evaluation_case_service import evaluation_profile_override
 from app.services.domain_runtime_service import load_domain_runtime
 from app.agents.graphs import build_learning_graph
 from app.agents.observability import collect_model_calls
 from app.agents.nodes import GRAPH_STATE, AgentRuntime, build_nodes
+from app.agents.prompt_registry import PROMPT_VERSION, node_prompt_hash
 from app.agents.review_agent import ReviewBatchCache
 from app.core.compatibility import AGENT_CONTRACT_VERSION
 from app.core.db import SessionLocal
@@ -50,7 +50,11 @@ from app.models import (
     TutoringSession,
 )
 from app.services.generation_service import persist_generated_resources
-from app.services.learning_path_service import node_id_for, normalize_learning_path
+from app.services.learning_path_service import (
+    node_id_for,
+    normalize_learning_path,
+    normalize_path_for_domain,
+)
 from app.services.profile_service import build_learning_path_from_snapshot, public_id
 from app.services.contract_mapping import ability_profile_payload, profile_snapshot
 
@@ -230,22 +234,16 @@ def _initial_state(
         tutoring_session_id=session.public_id if session else None,
         tutoring_message_id=message.public_id if message else None,
     )
-    evaluation_profile = evaluation_profile_override(request.learning_goal)
-    active_profile = evaluation_profile or profile_snapshot(profile)
-    # An evaluation case owns its complete non-persistent profile snapshot.
-    # Mixing it with a persisted learner path would override the case's target
-    # difficulty and make the live metric depend on unrelated fixture history.
-    learning_path = None
-    if evaluation_profile is None:
-        learning_path = db.scalar(
-            select(LearningPath)
-            .where(
-                LearningPath.learner_id == learner.id,
-                LearningPath.domain_code == task.domain_code,
-                LearningPath.status == "active",
-            )
-            .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
+    active_profile = profile_snapshot(profile)
+    learning_path = db.scalar(
+        select(LearningPath)
+        .where(
+            LearningPath.learner_id == learner.id,
+            LearningPath.domain_code == task.domain_code,
+            LearningPath.status == "active",
         )
+        .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
+    )
     path_snapshot, current_path_node = _learning_path_snapshot(learning_path, active_profile)
     state: GRAPH_STATE = {
         "contract_version": AGENT_CONTRACT_VERSION,
@@ -260,6 +258,18 @@ def _initial_state(
     if feedback is not None and resource is not None:
         quick_tag = feedback.feedback_intent or feedback.feedback_type
         supporting_evidence, _ = _feedback_assessments(db, task, learner, feedback)
+        previous_intents = list(
+            db.scalars(
+                select(Feedback.feedback_intent)
+                .where(
+                    Feedback.tutoring_session_id == feedback.tutoring_session_id,
+                    Feedback.id != feedback.id,
+                    Feedback.feedback_intent.is_not(None),
+                )
+                .order_by(Feedback.id.desc())
+                .limit(20)
+            )
+        )
         state["feedback_context"] = FeedbackContext(
             resource=ResourceSummary(
                 resource_id=resource.public_id,
@@ -278,6 +288,9 @@ def _initial_state(
                 latest_message_summary=(
                     message.content if message else feedback.comment or "学习者提交资源反馈"
                 )[:500],
+                previous_intents=[
+                    item for item in previous_intents if item in {value.value for value in FeedbackIntent}
+                ],
             ),
             feedback_summary=(feedback.comment or feedback.feedback_type or "学习者反馈")[:500],
             quick_tag=quick_tag
@@ -289,6 +302,29 @@ def _initial_state(
     return state
 
 
+def _next_receiver(step: str, patch: GRAPH_STATE) -> str:
+    if step == "prepare_task":
+        next_node = patch["prepare_task"].next_node
+    elif step == "interpret_feedback":
+        next_node = "analyze_profile"
+    elif step == "analyze_profile":
+        next_node = (
+            "retrieve_knowledge" if patch["analyze_profile"].needs_generation else "finalize_task"
+        )
+    elif step == "retrieve_knowledge":
+        next_node = "generate_resource"
+    elif step == "generate_resource":
+        next_node = "review_resource"
+    elif step == "review_resource":
+        next_node = "finalize_task"
+    elif step == "finalize_task":
+        decision = patch["finalize_task"].decision.value
+        next_node = "retrieve_knowledge" if decision == "revision_required" else "orchestrator_agent"
+    else:
+        next_node = "orchestrator_agent"
+    return NODE_AGENT_NAMES.get(next_node, next_node)
+
+
 def _learning_path_snapshot(
     path: LearningPath | None,
     profile,
@@ -296,7 +332,9 @@ def _learning_path_snapshot(
     if path is None:
         return None, None
     payload = normalize_learning_path(path)
-    difficulty = max(1, min(5, round(sum(profile.ability_scores.model_dump().values()) / 60)))
+    ability_values = list(profile.ability_scores.model_dump().values())
+    average_ability = sum(ability_values) / len(ability_values)
+    difficulty = max(1, min(5, round(average_ability / 20)))
     nodes: list[LearningPathNodeSnapshot] = []
     seen_knowledge_ids: set[str] = set()
     for stage in payload.get("stages") or []:
@@ -623,8 +661,28 @@ def _persist_profile_update(
                 if isinstance(source, dict)
             )
         ]
-    for path in db.scalars(select(LearningPath).where(LearningPath.profile_id == original.id)):
+    previous_paths = list(
+        db.scalars(
+            select(LearningPath)
+            .where(LearningPath.profile_id == original.id)
+            .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
+        )
+    )
+    previous_path = previous_paths[0] if previous_paths else None
+    for path in previous_paths:
         path.needs_refresh = True
+        if path.status == "active":
+            path.status = "superseded"
+    path_payload = build_learning_path_from_snapshot(
+        next_profile.ability_profile_json,
+        next_profile.weak_knowledge_json,
+    )
+    path_payload = normalize_path_for_domain(
+        db,
+        domain_code=original.domain_code,
+        payload=path_payload,
+        previous_payload=previous_path.path_json if previous_path else None,
+    )
     db.add(
         LearningPath(
             public_id=public_id("path"),
@@ -632,9 +690,7 @@ def _persist_profile_update(
             profile_id=next_profile.id,
             domain_code=original.domain_code,
             status="active",
-            path_json=build_learning_path_from_snapshot(
-                next_profile.ability_profile_json, next_profile.weak_knowledge_json
-            ),
+            path_json=path_payload,
             needs_refresh=False,
         )
     )
@@ -660,9 +716,16 @@ def _observable_node(
             generation_task_id=task.id,
             agent_name=agent_name,
             status="running",
-            input_summary_json={"task_id": task.public_id, "step": step},
+            input_summary_json={
+                "task_id": task.public_id,
+                "thread_id": task.public_id,
+                "step": step,
+                "contract_version": AGENT_CONTRACT_VERSION,
+            },
             output_summary_json=initial_output,
-            prompt_version="v6",
+            prompt_version=PROMPT_VERSION,
+            prompt_hash=node_prompt_hash(step),
+            contract_version=AGENT_CONTRACT_VERSION,
         )
         db.add(run)
         _message(
@@ -685,12 +748,28 @@ def _observable_node(
             runtime.review_batch_cache.set_persist_callback(persist_review_cache)
         model_calls: list[dict[str, Any]] = []
         try:
+            path_refresh: dict[str, str | None] | None = None
             with collect_model_calls() as collector:
                 patch = node(state)
             model_calls = collector.snapshot()
             next_state = {**state, **patch}
             if step == "analyze_profile":
                 updated_profile = _persist_profile_update(db, task, profile, next_state)
+                if updated_profile.id != profile.id:
+                    new_path = db.scalar(
+                        select(LearningPath)
+                        .where(LearningPath.profile_id == updated_profile.id)
+                        .order_by(LearningPath.id.desc())
+                    )
+                    old_path = db.scalar(
+                        select(LearningPath)
+                        .where(LearningPath.profile_id == profile.id)
+                        .order_by(LearningPath.id.desc())
+                    )
+                    path_refresh = {
+                        "old_path_id": old_path.public_id if old_path else None,
+                        "new_path_id": new_path.public_id if new_path else None,
+                    }
                 if updated_profile.id == profile.id and task.source_feedback_id:
                     feedback = db.get(Feedback, task.source_feedback_id)
                     if feedback is not None:
@@ -701,6 +780,8 @@ def _observable_node(
                     db, task, db.get(LearnerProfile, task.profile_id) or profile, next_state
                 )
             output = _summary(step, patch)
+            if path_refresh is not None:
+                output["path_refresh"] = path_refresh
             if step == "review_resource":
                 output["review_batch_cache"] = runtime.review_batch_cache.snapshot()
             _apply_model_call_metrics(run, output, model_calls)
@@ -718,11 +799,7 @@ def _observable_node(
                     "output": output,
                     "contract_version": "agent-contract-v6",
                 },
-                receiver=(
-                    "knowledge_retrieval_agent"
-                    if step == "analyze_profile" and patch["analyze_profile"].needs_generation
-                    else "orchestrator_agent"
-                ),
+                receiver=_next_receiver(step, patch),
                 message_type="result",
             )
             db.commit()
@@ -757,6 +834,9 @@ def _observable_node(
             field_paths = getattr(exc, "field_paths", None)
             if isinstance(field_paths, list) and field_paths:
                 output["field_paths"] = [str(path)[:200] for path in field_paths[:20]]
+            violations = getattr(exc, "violations", None)
+            if isinstance(violations, list) and violations:
+                output["policy_violations"] = violations[:20]
             if step == "review_resource":
                 output["review_batch_cache"] = runtime.review_batch_cache.snapshot()
             _apply_model_call_metrics(run, output, model_calls)
@@ -940,8 +1020,18 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
             raise ValueError(f"DOMAIN_GENERATION_NOT_READY:{','.join(domain_runtime.reasons)}")
         runtime = AgentRuntime.production(
             profile_config=domain_runtime.profile_config,
+            domain_code=task.domain_code,
             domain_display_name=domain_runtime.display_name,
             review_batch_cache=review_batch_cache,
+            evidence_capabilities_by_knowledge={
+                item.public_id: list(item.evidence_capabilities_json or [])
+                for item in db.scalars(
+                    select(KnowledgeItem).where(
+                        KnowledgeItem.domain_code == task.domain_code,
+                        KnowledgeItem.status == "published",
+                    )
+                )
+            },
         )
         _, runtime.knowledge_assessments = _feedback_assessments(db, task, learner, feedback)
         checkpointer = MySQLLangGraphCheckpointer(SessionLocal)

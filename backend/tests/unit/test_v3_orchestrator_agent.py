@@ -15,7 +15,11 @@ from app.agents.contracts import (
     ReviewIssueCode,
     TaskDecision,
 )
-from app.agents.orchestrator_agent import OrchestratorAgent, OrchestratorError
+from app.agents.orchestrator_agent import (
+    DETERMINISTIC_CONVERGENCE_MARKER,
+    OrchestratorAgent,
+    OrchestratorError,
+)
 
 
 def _generation_finalize_input() -> FinalizeTaskInput:
@@ -163,6 +167,47 @@ def test_finalize_enforces_two_revision_limit(
         assert "补充核心知识及其来源。" in output.revision_plan.required_changes
     else:
         assert output.revision_plan is None
+
+
+def test_finalize_allows_one_deterministic_convergence_after_two_revisions() -> None:
+    request = _generation_finalize_input()
+    report = request.review_reports[0]
+    unresolved = report.model_copy(
+        update={
+            "decision": ReviewDecision.REVISION_REQUIRED,
+            "passed": False,
+            "issues": [],
+            "contradicted_claim_ids": [],
+            "undetermined_claim_ids": ["claim_low_risk"],
+            "unresolved_claim_ids": [],
+            "missing_knowledge_ids": [],
+            "quality_metrics": report.quality_metrics.model_copy(
+                update={
+                    "evidence_insufficient_claim_count": 1,
+                    "passed": False,
+                    "revision_count": 2,
+                }
+            ),
+        }
+    )
+    attempt = request.model_copy(
+        update={
+            "review_reports": [unresolved, *request.review_reports[1:]],
+            "revision_count": 2,
+        }
+    )
+
+    convergence = OrchestratorAgent().execute(attempt)
+    exhausted = OrchestratorAgent().execute(
+        attempt, deterministic_convergence_attempted=True
+    )
+
+    assert convergence.decision is TaskDecision.REVISION_REQUIRED
+    assert convergence.revision_count == 2
+    assert convergence.revision_plan is not None
+    assert DETERMINISTIC_CONVERGENCE_MARKER in convergence.revision_plan.required_changes
+    assert exhausted.decision is TaskDecision.FAILED
+    assert exhausted.revision_plan is None
 
 
 def test_finalize_revises_only_resource_causing_package_coverage_failure() -> None:

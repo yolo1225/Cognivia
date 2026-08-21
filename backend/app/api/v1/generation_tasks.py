@@ -11,8 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal, get_db
-from app.core.security import Principal, get_current_user, principal_learner, require_task
+from app.core.security import Principal, get_current_user, principal_learner, require_admin, require_task
 from app.models import (
+    AgentMessageRecord,
     AgentRun,
     Feedback,
     GenerationTask,
@@ -20,6 +21,7 @@ from app.models import (
     Learner,
     LearnerProfile,
     LearningResource,
+    ReviewReport,
 )
 from app.schemas.common import ApiResponse, ok
 from app.services.feedback_service import (
@@ -29,6 +31,7 @@ from app.services.feedback_service import (
 )
 from app.services.learning_package_service import package_member_rows
 from app.services.domain_runtime_service import DomainRuntimeError, require_ready_domain
+from app.services.evaluation_case_service import contains_evaluation_marker
 from app.services.profile_service import (
     is_initial_profile_ready,
     latest_profile_for_learner,
@@ -192,6 +195,9 @@ def create_generation_task(
     principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
     payload = payload or {}
+    learning_goal = str(payload.get("learning_goal") or "个性化学习资源生成")[:512]
+    if contains_evaluation_marker(learning_goal):
+        raise HTTPException(status_code=422, detail="EVALUATION_MARKER_RESERVED")
     trigger_type = str(payload.get("trigger_type", "initial_generation"))
     execution_mode = str(payload.get("execution_mode", "auto"))
     if trigger_type not in TRIGGER_TYPES:
@@ -240,7 +246,7 @@ def create_generation_task(
         decision="pending",
         trigger_type=trigger_type,
         execution_mode=execution_mode,
-        learning_goal=str(payload.get("learning_goal") or "个性化学习资源生成")[:512],
+        learning_goal=learning_goal,
         progress=0,
     )
     db.add(task)
@@ -447,6 +453,8 @@ def get_agent_runs(
                 "output_summary": _safe(run.output_summary_json or {}),
                 "model_name": run.model_name,
                 "prompt_version": run.prompt_version,
+                "prompt_hash": run.prompt_hash,
+                "contract_version": run.contract_version,
                 "tokens_input": run.tokens_input,
                 "tokens_output": run.tokens_output,
                 "duration_ms": run.duration_ms,
@@ -454,6 +462,88 @@ def get_agent_runs(
             }
             for run in runs
         ]
+    )
+
+
+@router.get("/{task_id}/internal-trace", response_model=ApiResponse, include_in_schema=False)
+def get_internal_trace(
+    task_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(require_admin),
+) -> ApiResponse:
+    task = require_task(db, principal, task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Generation task not found")
+    runs = list(
+        db.scalars(
+            select(AgentRun).where(AgentRun.generation_task_id == task.id).order_by(AgentRun.id)
+        )
+    )
+    messages = list(
+        db.scalars(
+            select(AgentMessageRecord)
+            .where(AgentMessageRecord.task_id == task.public_id)
+            .order_by(AgentMessageRecord.id)
+        )
+    )
+    resources = list(
+        db.scalars(
+            select(LearningResource).where(LearningResource.generation_task_id == task.id)
+        )
+    )
+    resource_ids = {item.id: item.public_id for item in resources}
+    reports = list(
+        db.scalars(
+            select(ReviewReport).where(ReviewReport.task_id == task.id).order_by(ReviewReport.id)
+        )
+    )
+    return ok(
+        {
+            "task_id": task.public_id,
+            "thread_id": task.public_id,
+            "decision": task.decision,
+            "revision_count": task.revision_count,
+            "runs": [
+                {
+                    "run_id": run.id,
+                    "agent_name": run.agent_name,
+                    "status": run.status,
+                    "step": (run.input_summary_json or {}).get("step"),
+                    "contract_version": run.contract_version,
+                    "prompt_version": run.prompt_version,
+                    "prompt_hash": run.prompt_hash,
+                    "model_name": run.model_name,
+                    "provider_mode": (run.output_summary_json or {}).get("provider_mode"),
+                    "duration_ms": run.duration_ms,
+                }
+                for run in runs
+            ],
+            "messages": [
+                {
+                    "message_id": message.id,
+                    "sender": message.sender,
+                    "receiver": message.receiver,
+                    "message_type": message.message_type,
+                    "payload_summary": _safe(message.payload_summary_json or {}),
+                    "timestamp": message.created_at.isoformat() if message.created_at else None,
+                }
+                for message in messages
+            ],
+            "reviews": [
+                {
+                    "review_report_id": report.id,
+                    "resource_id": resource_ids.get(report.resource_id),
+                    "passed": report.passed,
+                    "decision": report.decision,
+                    "primary": _safe(report.primary_review_json or {}),
+                    "secondary": _safe(report.secondary_review_json or {}),
+                    "arbitration": _safe(report.arbitration_json or {}),
+                    "review_rule_version": report.review_rule_version,
+                    "quality_rule_version": report.quality_rule_version,
+                }
+                for report in reports
+            ],
+        }
     )
 
 
@@ -491,7 +581,7 @@ def _serialize_agent_status_event(task: GenerationTask, run: AgentRun, step: str
         # Keep the legacy marker in this compatibility-only helper. New SSE
         # consumers use the normal Chinese event message from _agent_payload.
         payload["event_message"] = (
-            f"第 {generation_round} 轮（Ек {generation_round} Тж）："
+            f"第 {generation_round} 轮（修订轮次 {generation_round}）："
             f"{STEP_LABELS.get(step, step)}完成"
         )
     return payload
@@ -517,13 +607,77 @@ def _semantic_events(
                 base,
             )
         )
-        if output.get("profile_update_required"):
-            events.extend([("path_refresh_started", base), ("path_refresh_completed", base)])
+        path_refresh = output.get("path_refresh")
+        if (
+            output.get("profile_update_required")
+            and isinstance(path_refresh, dict)
+            and path_refresh.get("new_path_id")
+        ):
+            events.append(
+                (
+                    "path_refresh_completed",
+                    {
+                        **base,
+                        "old_path_id": path_refresh.get("old_path_id"),
+                        "new_path_id": path_refresh["new_path_id"],
+                    },
+                )
+            )
     elif step == "review_resource" and any(
         isinstance(item, dict) and item.get("required") is True
         for item in (output.get("arbitration") or [])
     ):
         events.extend([("review_disagreement", base), ("review_retrieval_started", base)])
+    return events
+
+
+def _review_trace_events(
+    db: Session, task: GenerationTask, payload: dict[str, Any]
+) -> list[tuple[str, dict[str, Any]]]:
+    if payload.get("step") != "review_resource" or payload.get("status") != "completed":
+        return []
+    resources = {
+        item.id: item.public_id
+        for item in db.scalars(
+            select(LearningResource).where(LearningResource.generation_task_id == task.id)
+        )
+    }
+    events: list[tuple[str, dict[str, Any]]] = []
+    reports = list(
+        db.scalars(
+            select(ReviewReport).where(ReviewReport.task_id == task.id).order_by(ReviewReport.id)
+        )
+    )
+    for report in reports:
+        arbitration = report.arbitration_json or {}
+        if arbitration.get("required") is not True:
+            continue
+        base = {
+            "task_id": task.public_id,
+            "resource_id": resources.get(report.resource_id),
+            "review_report_id": report.id,
+            "revision_count": task.revision_count,
+        }
+        events.extend(
+            [
+                ("review_disagreement", base),
+                ("arbitration_started", base),
+                ("review_retrieval_started", base),
+                (
+                    "review_retrieval_completed",
+                    {**base, "retrieval_performed": arbitration.get("retrieval_performed", False)},
+                ),
+                (
+                    "arbitration_completed",
+                    {
+                        **base,
+                        "disagreement_remains": arbitration.get(
+                            "disagreement_remains", False
+                        ),
+                    },
+                ),
+            ]
+        )
     return events
 
 
@@ -550,7 +704,17 @@ async def _task_events(task_id: str) -> AsyncIterator[str]:
                 payload = _agent_payload(task, run)
                 yield _json_event("agent_status", payload)
                 for name, semantic_payload in _semantic_events(task, payload):
+                    if payload.get("step") == "review_resource" and name in {
+                        "review_disagreement",
+                        "review_retrieval_started",
+                    }:
+                        continue
                     semantic_key = (name, run.id, run.status)
+                    if semantic_key not in emitted:
+                        emitted.add(semantic_key)
+                        yield _json_event(name, semantic_payload)
+                for name, semantic_payload in _review_trace_events(db, task, payload):
+                    semantic_key = (name, run.id, str(semantic_payload.get("review_report_id")))
                     if semantic_key not in emitted:
                         emitted.add(semantic_key)
                         yield _json_event(name, semantic_payload)

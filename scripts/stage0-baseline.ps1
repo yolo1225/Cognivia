@@ -99,6 +99,9 @@ function Assert-DemoHealth {
     if ($Health.evaluation_overrides_enabled) {
         throw "ENABLE_EVALUATION_OVERRIDES must be false for the normal demo baseline."
     }
+    if ($Health.evaluation_runner_enabled) {
+        throw "ENABLE_EVALUATION_RUNNER must be false for the normal demo baseline."
+    }
     if (-not $Health.review_models_distinct) {
         throw "Primary and secondary review models must be distinct."
     }
@@ -144,9 +147,10 @@ function Get-FormalEvaluationEvidence {
         $models.generation_model -ne $Health.generation_model.model_name -or
         $models.primary_review_model -ne $Health.primary_review_model.model_name -or
         $models.secondary_review_model -ne $Health.secondary_review_model.model_name -or
-        -not $models.evaluation_overrides_enabled
+        $models.evaluation_overrides_enabled -or
+        -not $models.evaluation_runner_enabled
     ) {
-        throw "Formal evaluation model configuration differs from the current runtime, or was not a versioned override run."
+        throw "Formal evaluation model configuration differs from the current runtime, or was not an isolated runner run."
     }
     return [ordered]@{
         report_path = "reports/evaluation/latest-live.json"
@@ -156,7 +160,8 @@ function Get-FormalEvaluationEvidence {
         accepted = $formal.competition_acceptance.accepted
         case_set_sha256 = $formal.full_suite_case_sha256
         evaluation_overrides_enabled = $models.evaluation_overrides_enabled
-        role = "versioned formal evaluation baseline only; not normal-demo override proof"
+        evaluation_runner_enabled = $models.evaluation_runner_enabled
+        role = "versioned isolated evaluation baseline; no learning-goal profile override"
         latency_ms = $formal.metrics.latency_ms
         agent_latency_ms = $formal.metrics.agent_latency_ms
     }
@@ -233,14 +238,14 @@ function Write-FrozenSummary {
         "- Status: $($Artifact.status)",
         "- Captured at: $($Artifact.captured_at)",
         "- Git commit: $($Artifact.git.commit)",
-        "- Normal demo: `ALLOW_FIXTURE_LLM=false`, `ENABLE_EVALUATION_OVERRIDES=false`.",
+        "- Normal demo: `ALLOW_FIXTURE_LLM=false`, `ENABLE_EVALUATION_OVERRIDES=false`, `ENABLE_EVALUATION_RUNNER=false`.",
         "- Candidate RAG: `$($Artifact.environment.rag.index_version)`, embedding `$($Artifact.environment.rag.embedding_model)`.",
         "- Fixed scenarios: `learner_001` initial three-resource generation, first too-hard no-change, and incorrect-content review.",
         "",
         "## Formal 50-case evaluation baseline",
         "",
         "- Run: `$($formal.run_id)`, $($formal.evaluated_case_count)/$($formal.case_count) accepted.",
-        "- Note: this report ran with `evaluation_overrides_enabled=$($formal.evaluation_overrides_enabled)` and is a versioned evaluation baseline only, not normal-demo override proof.",
+        "- Note: this report used the isolated evaluation runner; learning-goal profile overrides remained disabled.",
         "- End-to-end: P50 $($formal.latency_ms.p50) ms, P95 $($formal.latency_ms.p95) ms.",
         "- Agent P50: generate $($formal.agent_latency_ms.generate_resource.p50) ms; review $($formal.agent_latency_ms.review_resource.p50) ms; tutoring $($formal.agent_latency_ms.interpret_feedback.p50) ms.",
         "",
@@ -308,6 +313,7 @@ $artifact = [ordered]@{
         chroma_status = $health.chroma.status
         fixture_enabled = [bool]$health.fixture_enabled
         evaluation_overrides_enabled = [bool]$health.evaluation_overrides_enabled
+        evaluation_runner_enabled = [bool]$health.evaluation_runner_enabled
         generation_model = $health.generation_model.model_name
         primary_review_model = $health.primary_review_model.model_name
         secondary_review_model = $health.secondary_review_model.model_name

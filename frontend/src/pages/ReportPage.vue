@@ -1,6 +1,6 @@
 <template>
   <section class="page report-page">
-    <PageHeader title="学习报告" description="能力画像、多智能体闭环与推荐学习路径，一份报告看清「我是谁、系统怎么运转、下一步做什么」。">
+    <PageHeader title="学习报告" description="能力画像、学习资源与推荐路径，一份报告看清当前水平和下一步学习安排。">
       <template #actions>
         <span class="learner-tag">学习者 {{ learnerId || '-' }}</span>
         <button class="btn" :disabled="loading" @click="loadReport">{{ loading ? '刷新中...' : '刷新报告' }}</button>
@@ -38,7 +38,7 @@
         </div>
       </header>
 
-      <!-- 能力画像 + 学习闭环 -->
+      <!-- 能力画像 -->
       <div class="report-grid">
         <section class="card">
           <div class="card-head">
@@ -55,22 +55,6 @@
           </div>
         </section>
 
-        <section class="card">
-          <div class="card-head">
-            <div><h2>学习闭环</h2><p class="section-note">多智能体协同进度</p></div>
-            <span class="loop-progress">{{ doneSteps }}/{{ loopSteps.length }} 步完成</span>
-          </div>
-          <div class="loop-list">
-            <div v-for="(step, i) in loopSteps" :key="step.key" class="loop-step" :class="step.state">
-              <span class="loop-num">{{ i + 1 }}</span>
-              <div class="loop-body">
-                <strong>{{ step.label }}</strong>
-                <small>{{ step.note }}</small>
-              </div>
-              <span class="loop-badge">{{ step.stateLabel }}</span>
-            </div>
-          </div>
-        </section>
       </div>
 
       <!-- 薄弱知识点 -->
@@ -163,7 +147,7 @@ import { completePathNode, verifyPathNode, type LearningPathNode } from '@/api/l
 import { useToast } from '@/composables/useToast'
 import { resourceQualityStatusLabel, resourceQualityStatusTone } from '@/utils/resourceQualityStatus'
 import { createGenerationTask } from '@/api/generation'
-import { validateDomain } from '@/api/domains'
+import { getDomainReadiness } from '@/api/domains'
 import RadarChart from '@/components/Charts/RadarChart.vue'
 import AppIcon from '@/components/Shared/AppIcon.vue'
 import PageHeader from '@/components/Shared/PageHeader.vue'
@@ -251,30 +235,6 @@ async function completeCurrentNode(nodeId: string) {
   finally { pathActionLoading.value = false }
 }
 
-const LOOP_DEFS = [
-  { key: 'diagnosis', label: '诊断测评' },
-  { key: 'profile', label: '画像生成' },
-  { key: 'generation', label: '资源生成' },
-  { key: 'review', label: '质量审核' },
-  { key: 'feedback', label: '学习反馈' },
-  { key: 'path_update', label: '路径更新' },
-] as const
-const loopSteps = computed(() => LOOP_DEFS.map(def => {
-  const raw = String(report.value?.loop_status?.[def.key] ?? 'pending')
-  const state = ['completed', 'refreshed', 'current'].includes(raw) ? 'done' : raw === 'needs_refresh' ? 'stale' : 'pending'
-  const stateLabel = state === 'done' ? '已完成' : state === 'stale' ? '待刷新' : '待进行'
-  const note = {
-    diagnosis: '能力诊断与答题记录',
-    profile: '五项能力与画像类型',
-    generation: '讲义 / 实训 / 测验',
-    review: '事实、来源、难度、覆盖',
-    feedback: '补救解释与挑战任务',
-    path_update: '画像变化后重算路线',
-  }[def.key] || ''
-  return { ...def, state, stateLabel, note }
-}))
-const doneSteps = computed(() => loopSteps.value.filter(s => s.state === 'done').length)
-
 function profileTypeLabel(type?: string) {
   return ({ beginner: '基础起步型学习者', intermediate: '进阶提升型学习者', advanced: '综合应用型学习者', practice_oriented: '实操导向型学习者' } as Record<string, string>)[type || ''] || type || '画像待确认'
 }
@@ -311,15 +271,15 @@ async function handleNextAction(action: LearningReport['next_actions'][number]) 
   if (!report.value?.profile_id || !learnerId.value) return
   creatingGeneration.value = true
   try {
-    const readiness = await validateDomain(report.value.domain_code)
+    const readiness = await getDomainReadiness(report.value.domain_code)
     if (!readiness.generation_ready) {
-      errorMessage.value = `当前领域尚未满足生成条件：${readiness.runtime_reasons?.join('、') || 'Candidate RAG 未就绪'}`
+      showToast(`当前领域尚未满足生成条件：${readiness.runtime_reasons?.join('、') || 'Candidate RAG 未就绪'}`, 'error')
       return
     }
     const task = await createGenerationTask(report.value.domain_code, report.value.profile_id, learnerId.value)
     router.push({ path: '/resources', query: { learner_id: learnerId.value, task_id: task.task_id } })
   } catch {
-    errorMessage.value = '创建学习包失败，请确认画像状态和生成环境后重试。'
+    showToast('创建学习包失败，请确认画像状态和生成环境后重试。', 'error')
   } finally { creatingGeneration.value = false }
 }
 watch(() => [route.query.learner_id, route.query.task_id], () => {

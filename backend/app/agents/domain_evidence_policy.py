@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import StrEnum
+from threading import RLock
 
 from app.agents.contracts import RetrievedChunk
 
@@ -19,11 +20,56 @@ class EvidenceCapability(StrEnum):
     VERSION_BOUNDARY = "version_boundary"
 
 
+CAPABILITY_ALIASES = {
+    "concept": EvidenceCapability.CONCEPT,
+    "operation": EvidenceCapability.OPERATION,
+    "command": EvidenceCapability.COMMAND,
+    "code_example": EvidenceCapability.CODE_EXAMPLE,
+    "expected_result": EvidenceCapability.EXPECTED_RESULT,
+    "error_handling": EvidenceCapability.ERROR_HANDLING,
+    "version_boundary": EvidenceCapability.VERSION_BOUNDARY,
+}
+
+_DECLARED_CAPABILITIES_BY_DOMAIN: dict[str, dict[str, list[str]]] = {}
+_DECLARED_CAPABILITIES_LOCK = RLock()
+
+
+def register_domain_evidence_capabilities(
+    domain_code: str, declared_by_knowledge: dict[str, list[str]]
+) -> None:
+    """Publish the current domain capability sidecar for generation and review."""
+    normalized = {
+        str(knowledge_id): normalize_evidence_capabilities(values)
+        for knowledge_id, values in declared_by_knowledge.items()
+    }
+    with _DECLARED_CAPABILITIES_LOCK:
+        _DECLARED_CAPABILITIES_BY_DOMAIN[domain_code] = normalized
+
+
+def normalize_evidence_capabilities(values: object) -> list[str]:
+    """Return the canonical, domain-neutral capability vocabulary.
+
+    Unknown and retired values are discarded rather than granting evidence.
+    """
+    raw = values if isinstance(values, (list, tuple, set, frozenset)) else []
+    normalized = {
+        CAPABILITY_ALIASES[str(value).strip().lower()].value
+        for value in raw
+        if str(value).strip().lower() in CAPABILITY_ALIASES
+    }
+    normalized.add(EvidenceCapability.CONCEPT.value)
+    return sorted(normalized)
+
+
 @dataclass(frozen=True, slots=True)
 class DomainEvidencePolicy:
     domain_code: str
+    declared_by_knowledge: dict[str, frozenset[EvidenceCapability]] | None = None
 
     def classify(self, chunk: RetrievedChunk) -> frozenset[EvidenceCapability]:
+        declared = (self.declared_by_knowledge or {}).get(chunk.knowledge_id)
+        if declared:
+            return declared
         return self.classify_content(chunk.content)
 
     def classify_content(self, content: str) -> frozenset[EvidenceCapability]:
@@ -71,14 +117,28 @@ _GENERIC_PATTERNS = {
     EvidenceCapability.VERSION_BOUNDARY: re.compile(r"版本|适用范围|兼容性|能力边界"),
 }
 
-def get_domain_evidence_policy(domain_code: str) -> DomainEvidencePolicy:
-    return DomainEvidencePolicy(domain_code=domain_code)
+def get_domain_evidence_policy(
+    domain_code: str,
+    declared_by_knowledge: dict[str, list[str]] | None = None,
+) -> DomainEvidencePolicy:
+    if declared_by_knowledge is None:
+        with _DECLARED_CAPABILITIES_LOCK:
+            declared_by_knowledge = dict(
+                _DECLARED_CAPABILITIES_BY_DOMAIN.get(domain_code, {})
+            )
+    declared = {
+        knowledge_id: frozenset(EvidenceCapability(value) for value in normalize_evidence_capabilities(values))
+        for knowledge_id, values in (declared_by_knowledge or {}).items()
+    }
+    return DomainEvidencePolicy(domain_code=domain_code, declared_by_knowledge=declared)
 
 
 def evidence_capability_payload(
-    chunks: list[RetrievedChunk], domain_code: str
+    chunks: list[RetrievedChunk],
+    domain_code: str,
+    declared_by_knowledge: dict[str, list[str]] | None = None,
 ) -> list[dict[str, object]]:
-    policy = get_domain_evidence_policy(domain_code)
+    policy = get_domain_evidence_policy(domain_code, declared_by_knowledge)
     return [
         {
             "source_ref_id": chunk.source.source_ref_id,

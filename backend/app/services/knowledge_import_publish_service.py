@@ -7,19 +7,109 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     DiagnosticQuestion,
+    Domain,
+    IndexBuildJob,
     KnowledgeDocument,
     KnowledgeImportCandidate,
     KnowledgeItem,
     KnowledgeRelation,
 )
-from app.rag.candidate_manifest import CandidateManifestStore
+from app.agents.domain_evidence_policy import normalize_evidence_capabilities
+from app.rag.candidate_index import CandidateIndexBuilder
+from app.rag.candidate_manifest import (
+    CandidateIndexManifest,
+    CandidateManifestStore,
+)
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.rag.vector_store import VectorStore
-from app.services.domain_api_service import default_ability_weights, mark_domain_preparing
+from app.services.domain_api_service import default_ability_weights
 
 
 class KnowledgeImportPublishError(ValueError):
     pass
+
+
+def activate_import_candidate(
+    db: Session,
+    document: KnowledgeDocument,
+    job: IndexBuildJob,
+    *,
+    builder: CandidateIndexBuilder | None = None,
+) -> dict[str, object]:
+    """Publish staged rows and switch the candidate manifest as one coordinated unit."""
+    db.scalar(
+        select(Domain)
+        .where(Domain.domain_code == document.domain_code)
+        .with_for_update()
+    )
+    if job.source_document_id != document.id or job.status != "success":
+        raise KnowledgeImportPublishError("导入没有对应的成功候选构建任务")
+    result = dict(job.result_json or {})
+    manifest_payload = result.get("candidate_manifest")
+    smoke = dict(result.get("smoke_test") or {})
+    if not isinstance(manifest_payload, dict):
+        raise KnowledgeImportPublishError("候选构建缺少 manifest")
+    if not (
+        smoke.get("passed")
+        and smoke.get("index_version") == manifest_payload.get("index_version")
+        and smoke.get("active_collection") == manifest_payload.get("active_collection")
+    ):
+        raise KnowledgeImportPublishError("候选索引尚未通过当前版本的检索冒烟")
+
+    items = list(
+        db.scalars(
+            select(KnowledgeItem).where(
+                KnowledgeItem.source_document_id == document.id,
+                KnowledgeItem.status == "staged",
+            )
+        )
+    )
+    if not items:
+        raise KnowledgeImportPublishError("导入没有待发布知识")
+    for item in items:
+        item.status = "published"
+    for candidate in db.scalars(
+        select(KnowledgeImportCandidate).where(
+            KnowledgeImportCandidate.document_id == document.id,
+            KnowledgeImportCandidate.status == "approved",
+        )
+    ):
+        candidate.status = "published"
+    document.status = "ready"
+    document.error_summary = None
+    document.embedding_model = str(result.get("embedding_model") or "") or None
+    document.indexed_at = job.finished_at
+
+    active_builder = builder or CandidateIndexBuilder(
+        db=db,
+        chroma_client=VectorStore().client,
+        embedding_provider=OpenAICompatibleEmbeddingProvider(),
+    )
+    previous = None
+    manifest_switched = False
+    try:
+        previous = active_builder.activate_candidate(manifest_payload)
+        manifest_switched = True
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        if manifest_switched:
+            active_builder.restore_manifest(document.domain_code, previous)
+        if isinstance(exc, KnowledgeImportPublishError):
+            raise
+        raise KnowledgeImportPublishError(f"候选索引发布失败：{type(exc).__name__}") from exc
+
+    try:
+        deleted = active_builder.cleanup_after_activation(manifest_payload)
+    except Exception:
+        deleted = 0
+    return {
+        "import_id": document.public_id,
+        "status": "ready",
+        "index_version": manifest_payload["index_version"],
+        "active_collection": manifest_payload["active_collection"],
+        "old_collections_deleted": deleted,
+    }
 
 
 def approve_candidates(
@@ -95,7 +185,9 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
             category=str(payload.get("category") or "未分类")[:64],
             difficulty=int(payload["difficulty"]),
             tags_json=payload.get("tags") or [],
-            evidence_capabilities_json=payload.get("evidence_capabilities") or [],
+            evidence_capabilities_json=normalize_evidence_capabilities(
+                payload.get("evidence_capabilities")
+            ),
             content_md=payload["content"],
             source_title=document.source_title,
             source_url=None,
@@ -104,7 +196,7 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
             source_document_id=document.id,
             ability_weights_json=payload.get("ability_weights") or default_ability_weights(),
             source_locator_json=candidate.source_locator_json or {},
-            status="published",
+            status="staged",
         )
         db.add(item)
         db.flush()
@@ -163,10 +255,9 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
                 )
                 question_count += 1
     for candidate in candidates:
-        candidate.status = "published"
+        candidate.status = "approved"
     document.status = "index_pending"
     document.knowledge_item_count = len(knowledge_map)
-    mark_domain_preparing(db, document.domain_code)
     db.commit()
     return {
         "knowledge_items": len(knowledge_map),
@@ -210,6 +301,7 @@ def smoke_import_index(
     provider: OpenAICompatibleEmbeddingProvider | None = None,
     client: object | None = None,
     manifest_store: CandidateManifestStore | None = None,
+    manifest_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
     items = list(
         db.scalars(
@@ -222,9 +314,13 @@ def smoke_import_index(
         raise KnowledgeImportPublishError("导入没有可用于检索冒烟的知识点")
     store = manifest_store or CandidateManifestStore()
     vector_client = client or VectorStore().client
-    manifest = store.load(
-        document.domain_code,
-        collection_exists=lambda name: _collection_exists(vector_client, name),
+    manifest = (
+        CandidateIndexManifest.from_dict(manifest_payload)
+        if manifest_payload is not None
+        else store.load(
+            document.domain_code,
+            collection_exists=lambda name: _collection_exists(vector_client, name),
+        )
     )
     if manifest is None:
         raise KnowledgeImportPublishError("Candidate 活动 manifest 不存在")
@@ -246,6 +342,86 @@ def smoke_import_index(
         checks[query_type] = {"passed": passed, "matched_knowledge_ids": matched_ids}
     if not all(bool(check["passed"]) for check in checks.values()):
         raise KnowledgeImportPublishError("名称或释义检索未命中本次导入知识")
+    return {
+        "passed": True,
+        "active_collection": manifest.active_collection,
+        "target_knowledge_id": target.public_id,
+        "checks": checks,
+    }
+
+
+def smoke_domain_index(
+    db: Session,
+    domain_code: str,
+    *,
+    provider: OpenAICompatibleEmbeddingProvider | None = None,
+    client: object | None = None,
+    manifest_store: CandidateManifestStore | None = None,
+    manifest_payload: dict[str, object] | None = None,
+    staged_document_id: int | None = None,
+) -> dict[str, object]:
+    """Verify that the active index retrieves its own domain and nothing else."""
+    visibility_filter = KnowledgeItem.status == "published"
+    if staged_document_id is not None:
+        visibility_filter = visibility_filter | (
+            (KnowledgeItem.status == "staged")
+            & (KnowledgeItem.source_document_id == staged_document_id)
+        )
+    items = list(
+        db.scalars(
+            select(KnowledgeItem)
+            .where(
+                KnowledgeItem.domain_code == domain_code,
+                visibility_filter,
+            )
+            .order_by(KnowledgeItem.id)
+        )
+    )
+    if not items:
+        raise KnowledgeImportPublishError("当前领域没有可用于检索验证的已发布知识点")
+
+    store = manifest_store or CandidateManifestStore()
+    vector_client = client or VectorStore().client
+    manifest = (
+        CandidateIndexManifest.from_dict(manifest_payload)
+        if manifest_payload is not None
+        else store.load(
+            domain_code,
+            collection_exists=lambda name: _collection_exists(vector_client, name),
+        )
+    )
+    if manifest is None:
+        raise KnowledgeImportPublishError("Candidate 活动 manifest 不存在")
+
+    collection = vector_client.get_collection(name=manifest.active_collection)
+    target = items[0]
+    queries = {"name": target.name, "definition": target.content_md[:300]}
+    vectors = (provider or OpenAICompatibleEmbeddingProvider()).embed_texts(list(queries.values()))
+    domain_ids = {item.public_id for item in items}
+    checks: dict[str, dict[str, object]] = {}
+    for (query_type, _), vector in zip(queries.items(), vectors, strict=True):
+        result = collection.query(
+            query_embeddings=[vector],
+            n_results=min(5, manifest.indexed_chunk_count),
+            include=["metadatas", "distances"],
+        )
+        metadatas = (result.get("metadatas") or [[]])[0]
+        matched_ids = [str(metadata.get("knowledge_id", "")) for metadata in metadatas]
+        foreign_matches = [
+            knowledge_id
+            for knowledge_id, metadata in zip(matched_ids, metadatas, strict=True)
+            if metadata.get("domain_code") != domain_code or knowledge_id not in domain_ids
+        ]
+        target_hit = target.public_id in matched_ids
+        checks[query_type] = {
+            "passed": target_hit and not foreign_matches,
+            "target_hit": target_hit,
+            "matched_knowledge_ids": matched_ids,
+            "foreign_knowledge_ids": foreign_matches,
+        }
+
+    if not all(bool(check["passed"]) for check in checks.values()):
+        raise KnowledgeImportPublishError("名称或释义检索未命中目标知识，或存在跨领域结果")
     return {
         "passed": True,
         "active_collection": manifest.active_collection,

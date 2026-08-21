@@ -10,7 +10,14 @@ from app.rag.vector_store import VectorStore
 from app.services.model_config_service import reload_from_db
 
 
-def build_candidate_index(*, domain_code: str, reset: bool, live: bool) -> dict:
+def build_candidate_index(
+    *,
+    domain_code: str,
+    reset: bool,
+    live: bool,
+    activate: bool = True,
+    staged_document_id: int | None = None,
+) -> dict:
     if not live:
         raise RuntimeError("--live is required; candidate indexing never falls back to mock vectors")
     # This CLI runs in its own process, so it must load DB-persisted model
@@ -19,11 +26,18 @@ def build_candidate_index(*, domain_code: str, reset: bool, live: bool) -> dict:
     reload_from_db()
     provider = OpenAICompatibleEmbeddingProvider()
     with SessionLocal() as db:
-        return CandidateIndexBuilder(
+        builder = CandidateIndexBuilder(
             db=db,
             chroma_client=VectorStore().client,
             embedding_provider=provider,
-        ).build(domain_code=domain_code, reset=reset)
+        )
+        if activate:
+            return builder.build(domain_code=domain_code, reset=reset)
+        return builder.build_candidate(
+            domain_code=domain_code,
+            reset=reset,
+            staged_document_id=staged_document_id,
+        )
 
 
 def main() -> None:
@@ -36,11 +50,22 @@ def main() -> None:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
     try:
-        result = build_candidate_index(
-            domain_code=args.domain_code,
-            reset=args.reset,
-            live=args.live,
-        )
+        if not args.live:
+            raise RuntimeError("--live is required; candidate indexing never falls back to mock vectors")
+        from app.services import candidate_index_job
+
+        with SessionLocal() as db:
+            job = candidate_index_job.try_start(db, args.domain_code)
+            if job is None:
+                raise RuntimeError("another candidate index rebuild is already running")
+            job_id = job.id
+        candidate_index_job.run_rebuild(job_id, args.domain_code, reset=args.reset)
+        with SessionLocal() as db:
+            completed = db.get(candidate_index_job.IndexBuildJob, job_id)
+            if completed is None or completed.status != candidate_index_job.STATUS_SUCCESS:
+                message = completed.message if completed is not None else "job record is missing"
+                raise RuntimeError(message)
+            result = dict(completed.result_json or {})
     except Exception as exc:
         error = {"status": "failed", "error_type": type(exc).__name__, "message": str(exc)}
         if args.json:

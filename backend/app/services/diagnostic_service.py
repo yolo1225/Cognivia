@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+import json
+import logging
 import random
 import time
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.agents.contracts import (
@@ -19,16 +22,24 @@ from app.agents.contracts import (
     TaskContext,
 )
 from app.agents.profile_analysis_agent import ProfileAnalysisAgent
+from app.agents.prompt_registry import PROMPT_VERSION, prompt_hash
+from app.core.compatibility import AGENT_CONTRACT_VERSION
+from app.core.config import settings
+from app.core.db import SessionLocal
 from app.models import (
     AgentMessageRecord,
     AgentRun,
     AnswerRecord,
     DiagnosticQuestion,
+    DiagnosticSession,
+    Domain,
     KnowledgeItem,
+    Learner,
     LearnerProfile,
     LearningPath,
 )
 from app.services.learner_service import get_or_create_demo_learner
+from app.services.learning_path_service import normalize_path_for_domain
 from app.services.domain_runtime_service import DomainRuntime, require_ready_domain
 from app.services.diagnostic_scoring_service import score_short_answer_batch
 from app.services.llm_service import ModelGatewayError
@@ -43,10 +54,136 @@ from app.services.profile_service import (
 from app.services.contract_mapping import ability_profile_payload, profile_snapshot
 
 PROFILE_AGENT_NAME = "profile_analysis_agent"
+logger = logging.getLogger(__name__)
 
 
 class DiagnosticScoringPending(RuntimeError):
     pass
+
+
+SCORING_STATUSES = {"scoring", "pending_scoring"}
+
+
+def _answer_hash(question_ids: list[str], answers: list[dict[str, Any]]) -> str:
+    by_id = {
+        str(item.get("question_id") or ""): (
+            None if item.get("answer") is None else str(item.get("answer"))
+        )
+        for item in answers
+    }
+    payload = [
+        {"question_id": question_id, "answer": by_id.get(question_id)}
+        for question_id in question_ids
+    ]
+    canonical = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return f"sha256:{sha256(canonical).hexdigest()}"
+
+
+def _lease_seconds() -> int:
+    return max(300, round(float(settings.llm_timeout_seconds) * 4 + 30))
+
+
+def _lease_expired(session: DiagnosticSession) -> bool:
+    updated_at = session.updated_at
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+    return datetime.now(UTC) - updated_at > timedelta(seconds=_lease_seconds())
+
+
+def _session_payload(
+    session: DiagnosticSession, db: Session | None = None
+) -> dict[str, Any]:
+    has_pending = _has_pending_short_answers(db, session.public_id) if db is not None else False
+    payload = {
+        "session_id": session.public_id,
+        "status": session.status,
+        "domain_code": session.domain_code,
+        "progress": session.progress,
+        "scoring_attempts": session.scoring_attempts,
+        "error_code": session.error_code,
+        "retryable": (session.status in {"pending_scoring", "failed"} and has_pending)
+        or (session.status == "scoring" and _lease_expired(session)),
+        "result": session.result_json if session.status == "scored" else None,
+    }
+    if db is not None:
+        questions = list(
+            db.scalars(
+                select(DiagnosticQuestion)
+                .where(DiagnosticQuestion.public_id.in_(session.question_ids_json or []))
+                .order_by(DiagnosticQuestion.id)
+            )
+        )
+        order = {
+            question_id: index
+            for index, question_id in enumerate(session.question_ids_json or [])
+        }
+        questions.sort(key=lambda question: order.get(question.public_id, len(order)))
+        learner = db.get(Learner, session.learner_id)
+        payload.update(
+            {
+                "learner_id": learner.public_id if learner is not None else None,
+                "question_count": len(questions),
+                "questions": [_question_payload(question) for question in questions],
+                "selection_summary": session.selection_summary_json or {},
+            }
+        )
+    return payload
+
+
+def _has_pending_short_answers(db: Session, session_id: str) -> bool:
+    return (
+        db.scalar(
+            select(AnswerRecord.id)
+            .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+            .where(
+                AnswerRecord.session_id == session_id,
+                AnswerRecord.scoring_status.in_({"pending", "pending_scoring"}),
+                DiagnosticQuestion.question_type == "short_answer",
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def _load_session_for_learner(
+    db: Session, *, session_id: str, learner_id: str, lock: bool = False
+) -> DiagnosticSession:
+    statement = select(DiagnosticSession).where(DiagnosticSession.public_id == session_id)
+    if lock:
+        statement = statement.with_for_update()
+    session = db.scalar(statement)
+    learner = get_or_create_demo_learner(db, learner_id)
+    if session is None or session.learner_id != learner.id:
+        raise ValueError("diagnostic_session_not_found")
+    return session
+
+
+def get_diagnostic_session_status(
+    db: Session, *, session_id: str, learner_id: str
+) -> dict[str, Any]:
+    return _session_payload(
+        _load_session_for_learner(db, session_id=session_id, learner_id=learner_id), db
+    )
+
+
+def get_current_diagnostic_session(
+    db: Session, *, learner_id: str, domain_code: str
+) -> dict[str, Any] | None:
+    """Return the learner's latest diagnostic so onboarding can resume after navigation."""
+    learner = get_or_create_demo_learner(db, learner_id)
+    session = db.scalar(
+        select(DiagnosticSession)
+        .where(
+            DiagnosticSession.learner_id == learner.id,
+            DiagnosticSession.domain_code == domain_code,
+        )
+        .order_by(DiagnosticSession.updated_at.desc(), DiagnosticSession.id.desc())
+        .limit(1)
+    )
+    return _session_payload(session, db) if session is not None else None
 
 
 def _question_payload(question: DiagnosticQuestion) -> dict[str, Any]:
@@ -167,31 +304,135 @@ def _initial_context_snapshot(
     }
 
 
-def _diagnostic_session_message(db: Session, session_id: str) -> AgentMessageRecord | None:
-    rows = db.scalars(
-        select(AgentMessageRecord)
-        .where(AgentMessageRecord.session_id == session_id)
-        .order_by(AgentMessageRecord.id)
-    )
-    return next(
-        (
-            row
-            for row in rows
-            if (row.payload_summary_json or {}).get("event") == "diagnostic_session_created"
-        ),
-        None,
-    )
+def prepare_diagnostic_submission(
+    db: Session,
+    *,
+    session_id: str,
+    learner_id: str,
+    domain_code: str,
+    answers: list[dict[str, Any]],
+) -> tuple[dict[str, Any], bool]:
+    """Persist immutable answers and atomically claim an asynchronous scoring lease."""
 
+    session = _load_session_for_learner(
+        db, session_id=session_id, learner_id=learner_id, lock=True
+    )
+    if session.domain_code != domain_code:
+        raise ValueError("diagnostic_session_access_denied")
+    question_ids = [str(item) for item in (session.question_ids_json or [])]
+    answer_by_question_id: dict[str, Any] = {}
+    for item in answers:
+        question_id = str(item.get("question_id") or "")
+        if not question_id or question_id in answer_by_question_id:
+            raise ValueError("diagnostic_answers_invalid")
+        answer_by_question_id[question_id] = item.get("answer")
+    if set(answer_by_question_id) != set(question_ids) or len(answer_by_question_id) != 10:
+        raise ValueError("diagnostic_answers_do_not_match_session")
 
-def _assert_unsubmitted_session(db: Session, session_id: str) -> None:
-    submitted = any(
-        (row.payload_summary_json or {}).get("event") == "diagnostic_session_submitted"
-        for row in db.scalars(
-            select(AgentMessageRecord).where(AgentMessageRecord.session_id == session_id)
+    submitted_hash = _answer_hash(question_ids, answers)
+    if session.answer_hash and session.answer_hash != submitted_hash:
+        raise ValueError("diagnostic_answers_changed")
+    if session.status == "scored":
+        return _session_payload(session, db), False
+    if session.status == "scoring" and not _lease_expired(session):
+        return _session_payload(session, db), False
+
+    learner = get_or_create_demo_learner(db, learner_id)
+    questions = list(
+        db.scalars(
+            select(DiagnosticQuestion)
+            .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
+            .where(
+                DiagnosticQuestion.public_id.in_(question_ids),
+                DiagnosticQuestion.domain_code == domain_code,
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.status == "published",
+            )
         )
     )
-    if submitted:
-        raise ValueError("diagnostic_session_already_submitted")
+    if len(questions) != len(question_ids):
+        raise ValueError("diagnostic_session_has_no_valid_questions")
+    existing = {
+        record.question_id: record
+        for record in db.scalars(
+            select(AnswerRecord).where(
+                AnswerRecord.learner_id == learner.id,
+                AnswerRecord.session_id == session_id,
+            )
+        )
+    }
+    for question in questions:
+        answer = answer_by_question_id[question.public_id]
+        answer_text = "" if answer is None else str(answer)
+        record = existing.get(question.id)
+        if record is None:
+            db.add(
+                AnswerRecord(
+                    learner_id=learner.id,
+                    question_id=question.id,
+                    knowledge_item_id=question.knowledge_item_id,
+                    session_id=session_id,
+                    answer_text=answer_text,
+                    score=0,
+                    is_correct=False,
+                    scoring_status=(
+                        "pending" if question.question_type == "short_answer" else "scored"
+                    ),
+                    scoring_method=(
+                        "ai_rubric"
+                        if question.question_type == "short_answer"
+                        else "deterministic"
+                    ),
+                    confidence=None if question.question_type == "short_answer" else 1.0,
+                    answer_summary_json={},
+                )
+            )
+        elif record.answer_text != answer_text:
+            raise ValueError("diagnostic_answers_changed")
+
+    session.answer_hash = submitted_hash
+    session.status = "scoring"
+    session.progress = max(session.progress, 10)
+    session.error_code = None
+    session.scoring_attempts += 1
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        current = _load_session_for_learner(
+            db, session_id=session_id, learner_id=learner_id
+        )
+        if current.answer_hash == submitted_hash and current.status in SCORING_STATUSES | {
+            "scored"
+        }:
+            return _session_payload(current, db), False
+        raise
+    db.refresh(session)
+    return _session_payload(session, db), True
+
+
+def retry_diagnostic_session(
+    db: Session, *, session_id: str, learner_id: str
+) -> tuple[dict[str, Any], bool]:
+    session = _load_session_for_learner(
+        db, session_id=session_id, learner_id=learner_id, lock=True
+    )
+    if session.status == "scored":
+        return _session_payload(session, db), False
+    if session.answer_hash is None:
+        raise ValueError("diagnostic_answers_required")
+    if session.status == "scoring" and not _lease_expired(session):
+        return _session_payload(session, db), False
+    if session.status not in {"pending_scoring", "failed", "scoring"}:
+        raise ValueError("diagnostic_session_not_retryable")
+    if not _has_pending_short_answers(db, session_id):
+        raise ValueError("diagnostic_session_not_retryable")
+    session.status = "scoring"
+    session.error_code = None
+    session.scoring_attempts += 1
+    db.commit()
+    db.refresh(session)
+    return _session_payload(session, db), True
 
 
 def create_diagnostic_session(
@@ -212,7 +453,10 @@ def create_diagnostic_session(
     available_questions = list(
         db.scalars(
             select(DiagnosticQuestion)
+            .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
             .where(DiagnosticQuestion.domain_code == domain_code)
+            .where(KnowledgeItem.domain_code == domain_code)
+            .where(KnowledgeItem.status == "published")
             .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.public_id)
         )
     )
@@ -247,6 +491,18 @@ def create_diagnostic_session(
         "theory_count": len(questions) - practice_count,
         "practice_count": practice_count,
     }
+    db.add(
+        DiagnosticSession(
+            public_id=session_id,
+            learner_id=learner.id,
+            domain_code=domain_code,
+            status="created",
+            question_ids_json=[question.public_id for question in questions],
+            context_snapshot_json=context_snapshot,
+            selection_summary_json=selection_summary,
+            progress=0,
+        )
+    )
     db.add(
         AgentMessageRecord(
             session_id=session_id,
@@ -288,18 +544,28 @@ def submit_diagnostic_session(
     runtime = require_ready_domain(db, domain_code)
     if not runtime.diagnostic_ready or runtime.profile_config is None:
         raise ValueError(f"DOMAIN_DIAGNOSTIC_NOT_READY:{','.join(runtime.reasons)}")
-    session_message = _diagnostic_session_message(db, session_id)
-    if session_message is None:
-        raise ValueError("diagnostic_session_not_found")
-    _assert_unsubmitted_session(db, session_id)
-    session_payload = session_message.payload_summary_json or {}
-    if (
-        session_payload.get("learner_id") != learner.public_id
-        or session_payload.get("domain_code") != domain_code
-    ):
+    session = _load_session_for_learner(
+        db, session_id=session_id, learner_id=learner_id
+    )
+    if session.domain_code != domain_code:
         raise ValueError("diagnostic_session_access_denied")
-    context_snapshot = session_payload.get("context_snapshot")
-    selected_question_ids = session_payload.get("question_ids")
+    if session.answer_hash is None:
+        prepare_diagnostic_submission(
+            db,
+            session_id=session_id,
+            learner_id=learner_id,
+            domain_code=domain_code,
+            answers=answers,
+        )
+        session = _load_session_for_learner(
+            db, session_id=session_id, learner_id=learner_id
+        )
+    elif session.answer_hash != _answer_hash(list(session.question_ids_json or []), answers):
+        raise ValueError("diagnostic_answers_changed")
+    if session.status == "scored" and session.result_json:
+        return dict(session.result_json)
+    context_snapshot = session.context_snapshot_json
+    selected_question_ids = session.question_ids_json
     if not isinstance(context_snapshot, dict) or not isinstance(selected_question_ids, list):
         raise ValueError("diagnostic_session_invalid")
 
@@ -315,8 +581,13 @@ def submit_diagnostic_session(
     questions = list(
         db.scalars(
             select(DiagnosticQuestion)
-            .where(DiagnosticQuestion.public_id.in_(question_ids))
-            .where(DiagnosticQuestion.domain_code == domain_code)
+            .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
+            .where(
+                DiagnosticQuestion.public_id.in_(question_ids),
+                DiagnosticQuestion.domain_code == domain_code,
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.status == "published",
+            )
         )
     )
     if len(questions) != 10:
@@ -339,7 +610,9 @@ def submit_diagnostic_session(
         llm_calls=0,
         tokens_used=0,
         duration_ms=0,
-        prompt_version="v3",
+        prompt_version=PROMPT_VERSION,
+        prompt_hash=prompt_hash("profile"),
+        contract_version=AGENT_CONTRACT_VERSION,
     )
     db.add(run)
     _message(
@@ -410,8 +683,8 @@ def submit_diagnostic_session(
                 )
                 db.add(record)
                 db.flush()
-            elif record.answer_text != answer_text and record.scoring_status == "scored":
-                raise ValueError("diagnostic_answers_changed_during_retry")
+            elif record.answer_text != answer_text:
+                raise ValueError("diagnostic_answers_changed")
             records[question.id] = record
 
             if question.question_type == "single_choice":
@@ -427,51 +700,82 @@ def submit_diagnostic_session(
                 short_answer_items.append((question, answer_text))
 
         if short_answer_items:
+            domain = db.scalar(select(Domain).where(Domain.domain_code == domain_code))
             try:
-                scored_answers, scoring_metadata = score_short_answer_batch(short_answer_items)
+                scored_answers, scoring_metadata = score_short_answer_batch(
+                    short_answer_items,
+                    domain_display_name=domain.name if domain is not None else domain_code,
+                )
             except (ModelGatewayError, ValueError) as exc:
-                for question, _answer in short_answer_items:
-                    records[question.id].scoring_status = "pending_scoring"
-                run.status = "failed"
-                run.error_message = "DIAGNOSTIC_SCORING_PENDING"
-                run.output_summary_json = {
-                    "session_id": session_id,
-                    "error_code": "DIAGNOSTIC_SCORING_PENDING",
-                    "pending_question_count": len(short_answer_items),
-                }
-                run.duration_ms = round((time.perf_counter() - started_at) * 1000)
-                db.commit()
-                raise DiagnosticScoringPending("DIAGNOSTIC_SCORING_PENDING") from exc
-            run.llm_calls = 1
+                scoring_metadata = dict(getattr(exc, "metadata", {}) or {})
+                scoring_metadata.setdefault("llm_calls", int(scoring_metadata.get("attempt") or 0))
+                scoring_metadata["failed_question_ids"] = [
+                    question.public_id for question, _answer in short_answer_items
+                ]
+                scored_answers = {}
+            run.llm_calls = int(scoring_metadata.get("llm_calls") or 0)
             run.tokens_input = int(scoring_metadata.get("tokens_input") or 0)
             run.tokens_output = int(scoring_metadata.get("tokens_output") or 0)
             run.tokens_used = run.tokens_input + run.tokens_output
             run.model_name = str(scoring_metadata.get("model_name") or "") or None
+            failed_question_ids = set(scoring_metadata.get("failed_question_ids") or [])
             for question, _answer in short_answer_items:
-                result_item = scored_answers[question.public_id]
+                result_item = scored_answers.get(question.public_id)
                 record = records[question.id]
+                if result_item is None:
+                    record.scoring_status = "pending_scoring"
+                    record.confidence = None
+                    failed_question_ids.add(question.public_id)
+                    continue
                 record.score = float(result_item["total_score"])
                 record.is_correct = bool(result_item["is_correct"])
                 record.scoring_status = "scored"
                 record.scoring_method = "ai_rubric"
                 record.rubric_version = str(result_item["rubric_version"])
                 record.scoring_detail_json = {
-                    key: value
-                    for key, value in result_item.items()
-                    if key
-                    not in {
-                        "question_id",
-                        "total_score",
-                        "is_correct",
-                        "rubric_version",
-                        "confidence",
-                        "scoring_uncertain",
-                        "ai_comment",
-                    }
+                    **{
+                        key: value
+                        for key, value in result_item.items()
+                        if key
+                        not in {
+                            "question_id",
+                            "total_score",
+                            "is_correct",
+                            "rubric_version",
+                            "confidence",
+                            "scoring_uncertain",
+                            "ai_comment",
+                        }
+                    },
+                    "model_name": run.model_name,
                 }
                 record.confidence = float(result_item["confidence"])
                 record.scoring_uncertain = bool(result_item["scoring_uncertain"])
                 record.ai_comment = str(result_item["ai_comment"])
+
+            if failed_question_ids:
+                for question, _answer in short_answer_items:
+                    if question.public_id in failed_question_ids:
+                        records[question.id].scoring_status = "pending_scoring"
+                run.status = "failed"
+                run.error_message = "DIAGNOSTIC_SCORING_PENDING"
+                run.output_summary_json = {
+                    "session_id": session_id,
+                    "error_code": "DIAGNOSTIC_SCORING_PENDING",
+                    "pending_question_count": len(failed_question_ids),
+                    "failed_question_ids": sorted(failed_question_ids),
+                    "validation_fields": scoring_metadata.get("validation_fields", {}),
+                    "model_calls": scoring_metadata.get("calls", []),
+                }
+                run.duration_ms = round((time.perf_counter() - started_at) * 1000)
+                session.status = "pending_scoring"
+                session.error_code = "DIAGNOSTIC_SCORING_PENDING"
+                scored_count = sum(
+                    record.scoring_status == "scored" for record in records.values()
+                )
+                session.progress = max(session.progress, round(scored_count / len(records) * 90 + 10))
+                db.commit()
+                raise DiagnosticScoringPending("DIAGNOSTIC_SCORING_PENDING")
 
         answer_results: list[dict[str, Any]] = []
         for question in questions:
@@ -620,6 +924,11 @@ def submit_diagnostic_session(
             )
             db.add(path)
             db.flush()
+            path.path_json = normalize_path_for_domain(
+                db,
+                domain_code=domain_code,
+                payload=path.path_json or {},
+            )
 
         result = {
             "session_id": session_id,
@@ -676,20 +985,58 @@ def submit_diagnostic_session(
                 },
             )
         )
-        db.commit()
-        return {
+        final_result = {
             **result,
             "agent_run_id": run.id,
             "agent_name": PROFILE_AGENT_NAME,
         }
+        session.status = "scored"
+        session.progress = 100
+        session.error_code = None
+        session.profile_id = active_profile.id
+        session.learning_path_id = path.id
+        session.result_json = final_result
+        db.commit()
+        return final_result
     except DiagnosticScoringPending:
         raise
     except Exception as exc:
-        run.status = "failed"
         error_code = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-        run.error_message = error_code[:1000]
-        run.output_summary_json = {"session_id": session_id, "error_code": error_code}
-        run.duration_ms = round((time.perf_counter() - started_at) * 1000)
+        duration_ms = round((time.perf_counter() - started_at) * 1000)
+        llm_calls = int(getattr(run, "llm_calls", 0) or 0)
+        tokens_input = int(getattr(run, "tokens_input", 0) or 0)
+        tokens_output = int(getattr(run, "tokens_output", 0) or 0)
+        model_name = getattr(run, "model_name", None)
+        db.rollback()
+        failure_session = db.scalar(
+            select(DiagnosticSession).where(DiagnosticSession.public_id == session_id)
+        )
+        if failure_session is not None and failure_session.status != "pending_scoring":
+            failure_session.status = "failed"
+            failure_session.error_code = error_code[:128]
+        failure_run = AgentRun(
+            generation_task_id=None,
+            agent_name=PROFILE_AGENT_NAME,
+            status="failed",
+            input_summary_json={
+                "session_id": session_id,
+                "learner_id": learner.public_id,
+                "domain_code": domain_code,
+                "profile_mode": "analyze_diagnostic",
+            },
+            output_summary_json={"session_id": session_id, "error_code": error_code},
+            error_message=error_code[:1000],
+            llm_calls=llm_calls,
+            tokens_input=tokens_input,
+            tokens_output=tokens_output,
+            tokens_used=tokens_input + tokens_output,
+            model_name=model_name,
+            duration_ms=duration_ms,
+            prompt_version=PROMPT_VERSION,
+            prompt_hash=prompt_hash("profile"),
+            contract_version=AGENT_CONTRACT_VERSION,
+        )
+        db.add(failure_run)
         _message(
             db,
             session_id=session_id,
@@ -698,3 +1045,40 @@ def submit_diagnostic_session(
         )
         db.commit()
         raise
+
+
+def run_diagnostic_scoring_job(session_id: str) -> None:
+    """Background entrypoint that rebuilds the immutable submission from stored answers."""
+
+    try:
+        with SessionLocal() as db:
+            session = db.scalar(
+                select(DiagnosticSession).where(DiagnosticSession.public_id == session_id)
+            )
+            if session is None or session.status != "scoring":
+                return
+            learner = db.get(Learner, session.learner_id)
+            if learner is None:
+                raise ValueError("diagnostic_session_learner_not_found")
+            rows = list(
+                db.execute(
+                    select(DiagnosticQuestion, AnswerRecord)
+                    .join(AnswerRecord, AnswerRecord.question_id == DiagnosticQuestion.id)
+                    .where(AnswerRecord.session_id == session_id)
+                )
+            )
+            answers = [
+                {"question_id": question.public_id, "answer": record.answer_text}
+                for question, record in rows
+            ]
+            submit_diagnostic_session(
+                db,
+                session_id=session_id,
+                learner_id=learner.public_id,
+                domain_code=session.domain_code,
+                answers=answers,
+            )
+    except DiagnosticScoringPending:
+        return
+    except Exception:
+        logger.exception("diagnostic scoring job failed session_id=%s", session_id)

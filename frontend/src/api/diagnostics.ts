@@ -1,4 +1,4 @@
-import { postData } from './client'
+import { getData, postData } from './client'
 
 export interface DiagnosticQuestion {
   question_id: string
@@ -69,8 +69,19 @@ export interface DiagnosticAnswerResult {
   matched_points: string[]
   missing_points: string[]
   factual_errors: string[]
-  confidence: number
+  confidence: number | null
   scoring_uncertain: boolean
+}
+
+export interface DiagnosticSessionStatus extends DiagnosticSession {
+  status: 'created' | 'scoring' | 'pending_scoring' | 'scored' | 'failed'
+  progress: number
+  scoring_attempts: number
+  error_code: string | null
+  retryable: boolean
+  result: DiagnosticResult | null
+  status_url?: string
+  events_url?: string
 }
 
 export function createDiagnosticSession(domainCode: string, learnerId = 'learner_001') {
@@ -87,9 +98,51 @@ export function submitDiagnosticSession(
   domainCode: string,
   learnerId = 'learner_001',
 ) {
-  return postData<DiagnosticResult>(`/diagnostics/sessions/${sessionId}/submit`, {
+  return postData<DiagnosticSessionStatus>(`/diagnostics/sessions/${sessionId}/submit`, {
     learner_id: learnerId,
     domain_code: domainCode,
     answers,
   })
+}
+
+export function getDiagnosticSession(sessionId: string, learnerId: string) {
+  return getData<DiagnosticSessionStatus>(
+    `/diagnostics/sessions/${sessionId}?learner_id=${encodeURIComponent(learnerId)}`,
+  )
+}
+
+export function getCurrentDiagnosticSession(
+  learnerId: string,
+  domainCode: string,
+) {
+  return getData<DiagnosticSessionStatus | null>(
+    `/diagnostics/sessions/current?learner_id=${encodeURIComponent(learnerId)}&domain_code=${encodeURIComponent(domainCode)}`,
+  )
+}
+
+export function retryDiagnosticSession(sessionId: string, learnerId: string) {
+  return postData<DiagnosticSessionStatus>(`/diagnostics/sessions/${sessionId}/retry`, {
+    learner_id: learnerId,
+  })
+}
+
+export type DiagnosticStreamEvent = {
+  type: 'status' | 'completed' | 'pending' | 'failed'
+} & DiagnosticSessionStatus
+
+export function streamDiagnosticSession(
+  sessionId: string,
+  learnerId: string,
+  onEvent: (event: DiagnosticStreamEvent) => void,
+) {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
+  const url = `${baseUrl}/diagnostics/sessions/${sessionId}/events?learner_id=${encodeURIComponent(learnerId)}`
+  const source = new EventSource(url, { withCredentials: true })
+  for (const type of ['status', 'completed', 'pending', 'failed'] as const) {
+    source.addEventListener(type, raw => {
+      onEvent({ type, ...JSON.parse((raw as MessageEvent).data) } as DiagnosticStreamEvent)
+      if (type !== 'status') source.close()
+    })
+  }
+  return source
 }

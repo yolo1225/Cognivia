@@ -18,6 +18,7 @@ class Learner(TimestampMixin, Base):
     experience_years: Mapped[int] = mapped_column(default=0)
     learning_style: Mapped[str] = mapped_column(String(32), default="mixed")
     direction_tags_json: Mapped[list] = mapped_column(JSON, default=list)
+    is_evaluation: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
 
 
 class LearnerProfile(TimestampMixin, Base):

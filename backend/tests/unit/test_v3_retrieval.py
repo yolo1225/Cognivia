@@ -17,7 +17,29 @@ from app.rag.candidate_manifest import (
     CandidateManifestStore,
     compute_index_version,
 )
-from app.rag.retrieval import CandidateRetriever, RetrievalError
+from app.rag.retrieval import (
+    CandidateRecord,
+    CandidateRetriever,
+    RetrievalError,
+    _record_capabilities,
+)
+from app.agents.domain_evidence_policy import EvidenceCapability
+
+
+def test_indexed_capabilities_override_domain_text_heuristics() -> None:
+    record = CandidateRecord(
+        chunk_id="maritime::chunk::0",
+        document="操作步骤：执行命令并返回固定结果。",
+        metadata={
+            "knowledge_id": "maritime_rule",
+            "evidence_capabilities": "concept",
+        },
+        embedding=None,
+    )
+
+    assert _record_capabilities(record, "maritime") == frozenset(
+        {EvidenceCapability.CONCEPT}
+    )
 
 
 class FakeProvider:

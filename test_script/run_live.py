@@ -21,12 +21,6 @@ RUN_DIR = ROOT / "reports" / "evaluation" / "runs"
 STAGE_LIMITS = {"smoke": 6, "regression": 15, "formal": 50}
 PRIOR_STAGE = {"regression": "smoke", "formal": "regression"}
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
-PROFILE_LEARNERS = {
-    "beginner": "learner_001",
-    "intermediate": "learner_003",
-    "advanced": "learner_002",
-}
-EVALUATION_MARKER = "[[evaluation_case:{case_id}]]"
 RUN_ID_RE = re.compile(r"live-(?:smoke|regression|formal)-\d{8}T\d{6}Z")
 KNOWLEDGE_ITEMS_PATH = ROOT / "data" / "seed" / "knowledge_items.json"
 FAILURE_CATEGORIES = {
@@ -591,8 +585,7 @@ def _observed_result(
 
 def _case_goal(case: dict[str, Any]) -> str:
     return (
-        EVALUATION_MARKER.format(case_id=case["case_id"])
-        + f" V4 评测案例 {case['case_id']}，目标知识点："
+        f"V4 评测案例 {case['case_id']}，目标知识点："
         + "、".join(case.get("target_core_knowledge_ids", []))
     )
 
@@ -602,6 +595,7 @@ def _create_case_task(
     case: dict[str, Any],
     *,
     learner_id: str,
+    profile_id: str,
     timeout_seconds: int,
     full_package: bool,
 ) -> tuple[str, dict[str, Any]]:
@@ -612,6 +606,7 @@ def _create_case_task(
     )
     payload = {
         "learner_id": learner_id,
+        "profile_id": profile_id,
         "trigger_type": "initial_generation",
         "execution_mode": "auto",
         "domain_code": "ai_app_dev",
@@ -643,8 +638,11 @@ def _published_resource(task: dict[str, Any], resource_type: str) -> dict[str, A
 
 
 def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[str, Any]:
-    profile_type = str((case.get("profile_snapshot") or {}).get("profile_type") or "beginner")
-    learner_id = PROFILE_LEARNERS.get(profile_type, "learner_001")
+    prepared = _api_json(
+        base_url, "POST", f"/evaluations/cases/{case['case_id']}/prepare", {}
+    )
+    learner_id = str(prepared["learner_id"])
+    profile_id = str(prepared["profile_id"])
     scenario_type = str(case.get("scenario_type") or "initial_generation")
     started = time.perf_counter()
     baseline_task_id: str | None = None
@@ -653,6 +651,7 @@ def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[
             base_url,
             case,
             learner_id=learner_id,
+            profile_id=profile_id,
             timeout_seconds=timeout_seconds,
             full_package=False,
         )
@@ -661,6 +660,7 @@ def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[
             base_url,
             case,
             learner_id=learner_id,
+            profile_id=profile_id,
             timeout_seconds=timeout_seconds,
             # The case evaluates feedback on one resource. Requiring an unrelated
             # three-resource package here can make a valid conceptual lecture or
@@ -766,10 +766,10 @@ def main() -> None:
     health = _api_json(args.base_url, "GET", "/health/dependencies")
     if not health.get("ready_for_live_demo") or not (health.get("rag") or {}).get("ready"):
         raise SystemExit("backend is not ready for live demo; check model configuration and fixture mode")
-    if not health.get("evaluation_overrides_enabled"):
+    if not health.get("evaluation_runner_enabled"):
         raise SystemExit(
-            "backend evaluation overrides are disabled; set "
-            "ENABLE_EVALUATION_OVERRIDES=true for versioned live evaluation"
+            "backend evaluation runner is disabled; set "
+            "ENABLE_EVALUATION_RUNNER=true for versioned live evaluation"
         )
 
     cases, versions = evaluator.load_cases()
@@ -787,6 +787,7 @@ def main() -> None:
         "secondary_review_model": health.get("secondary_review_model", {}).get("model_name"),
         "fixture_enabled": health.get("fixture_enabled"),
         "evaluation_overrides_enabled": health.get("evaluation_overrides_enabled"),
+        "evaluation_runner_enabled": health.get("evaluation_runner_enabled"),
     }
     knowledge_base_versions = sorted(versions)
     rag_configuration = {

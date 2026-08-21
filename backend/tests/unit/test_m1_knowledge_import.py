@@ -17,6 +17,7 @@ from app.services.knowledge_import_publish_service import (
     KnowledgeImportPublishError,
     approve_candidates,
     publish_approved,
+    smoke_domain_index,
     smoke_import_index,
 )
 from app.services.knowledge_import_validation_service import validate_import
@@ -113,7 +114,7 @@ def test_approved_candidates_publish_multiple_items(tmp_path, monkeypatch) -> No
     assert result == {"knowledge_items": 2, "relations": 1, "questions": 2}
     items = list(db.scalars(select(KnowledgeItem)))
     assert len(items) == 2
-    assert all(item.status == "published" and item.source_locator_json for item in items)
+    assert all(item.status == "staged" and item.source_locator_json for item in items)
     questions = list(db.scalars(select(DiagnosticQuestion)))
     assert all(
         question.answer_key_json["source_locator"].startswith("knowledge:ki_")
@@ -237,3 +238,103 @@ def test_name_and_definition_smoke_must_hit_imported_knowledge(tmp_path, monkeyp
     assert result["passed"] is True
     assert result["checks"]["name"]["passed"] is True
     assert result["checks"]["definition"]["passed"] is True
+
+
+def test_domain_smoke_requires_target_hit_and_domain_isolation() -> None:
+    db = _session()
+    target = KnowledgeItem(
+        public_id="knowledge_target",
+        domain_code="test_domain",
+        name="目标知识",
+        category="test",
+        difficulty=1,
+        content_md="目标知识的释义",
+        source_title="test",
+        status="published",
+    )
+    db.add(target)
+    db.commit()
+
+    class Provider:
+        def embed_texts(self, texts):
+            return [[1.0, 0.0] for _ in texts]
+
+    class Collection:
+        def query(self, **_kwargs):
+            return {
+                "metadatas": [[{
+                    "knowledge_id": target.public_id,
+                    "domain_code": target.domain_code,
+                }]],
+                "distances": [[0.0]],
+            }
+
+    class Client:
+        def get_collection(self, **_kwargs):
+            return Collection()
+
+    class Store:
+        def load(self, *_args, **_kwargs):
+            return SimpleNamespace(active_collection="candidate", indexed_chunk_count=1)
+
+    result = smoke_domain_index(
+        db,
+        "test_domain",
+        provider=Provider(),
+        client=Client(),
+        manifest_store=Store(),
+    )
+
+    assert result["passed"] is True
+    assert result["checks"]["name"]["foreign_knowledge_ids"] == []
+
+
+def test_domain_smoke_rejects_cross_domain_result() -> None:
+    db = _session()
+    db.add(
+        KnowledgeItem(
+            public_id="knowledge_target",
+            domain_code="test_domain",
+            name="目标知识",
+            category="test",
+            difficulty=1,
+            content_md="目标知识的释义",
+            source_title="test",
+            status="published",
+        )
+    )
+    db.commit()
+
+    class Provider:
+        def embed_texts(self, texts):
+            return [[1.0, 0.0] for _ in texts]
+
+    class Collection:
+        def query(self, **_kwargs):
+            return {
+                "metadatas": [[
+                    {"knowledge_id": "knowledge_target", "domain_code": "test_domain"},
+                    {"knowledge_id": "foreign", "domain_code": "other_domain"},
+                ]],
+                "distances": [[0.0, 0.1]],
+            }
+
+    class Client:
+        def get_collection(self, **_kwargs):
+            return Collection()
+
+    class Store:
+        def load(self, *_args, **_kwargs):
+            return SimpleNamespace(active_collection="candidate", indexed_chunk_count=2)
+
+    try:
+        smoke_domain_index(
+            db,
+            "test_domain",
+            provider=Provider(),
+            client=Client(),
+            manifest_store=Store(),
+        )
+        raise AssertionError("cross-domain retrieval result must be rejected")
+    except KnowledgeImportPublishError as exc:
+        assert "跨领域" in str(exc)

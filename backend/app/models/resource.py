@@ -79,9 +79,11 @@ class ReviewReport(TimestampMixin, Base):
     decision: Mapped[str] = mapped_column(String(32), default="revision_required")
     evidence_refs_json: Mapped[list] = mapped_column(JSON, default=list)
     disagreement_summary_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    review_rule_version: Mapped[str] = mapped_column(String(32), default="review-v1")
+    review_rule_version: Mapped[str] = mapped_column(
+        String(32), default="review-v5-claim-policy"
+    )
     quality_rule_version: Mapped[str] = mapped_column(
-        String(32), default="quality-v6-20260818"
+        String(32), default="quality-v7-20260821"
     )
     issues_json: Mapped[list] = mapped_column(JSON, default=list)
     suggestions_json: Mapped[list] = mapped_column(JSON, default=list)
@@ -100,7 +102,9 @@ class ReviewReport(TimestampMixin, Base):
     core_knowledge_coverage: Mapped[float] = mapped_column(default=0)
     quality_passed: Mapped[bool] = mapped_column(default=False)
     revision_count: Mapped[int] = mapped_column(default=0)
-    model_role_version: Mapped[str] = mapped_column(String(32), default="review-v4")
+    model_role_version: Mapped[str] = mapped_column(
+        String(32), default="review-v5-claim-policy"
+    )
 
 
 class LearningPackageResource(TimestampMixin, Base):

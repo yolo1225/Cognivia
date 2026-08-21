@@ -36,7 +36,7 @@ def test_scores_provider_shape_is_normalized_to_results() -> None:
     }
 
 
-def test_missing_criteria_are_conservatively_derived_from_requested_rubric() -> None:
+def test_missing_criteria_are_not_fabricated() -> None:
     payload = {
         "scores": [
             {
@@ -61,9 +61,78 @@ def test_missing_criteria_are_conservatively_derived_from_requested_rubric() -> 
             ]
         },
     )
-    assert adapted["results"][0]["criteria"] == [
-        {"criterion_id": "criterion_1", "score": 0.8, "rationale": "总体正确。"}
+    assert "criteria" not in adapted["results"][0]
+
+
+def test_partial_batch_retries_only_invalid_questions(monkeypatch) -> None:
+    second = _question()
+    second.public_id = "question_short_2"
+    calls = []
+
+    def complete_json(**kwargs):
+        question_ids = [item["question_id"] for item in kwargs["payload"]["questions"]]
+        calls.append(question_ids)
+        results = []
+        for question_id in question_ids:
+            item = {
+                "question_id": question_id,
+                "criteria": [
+                    {"criterion_id": "criterion_1", "score": 0.4, "rationale": "有效依据"}
+                ],
+                "matched_points": ["语义表示"],
+                "missing_points": [],
+                "factual_errors": [],
+                "total_score": 0.8,
+                "ai_comment": "回答有效。",
+            }
+            if question_id != "question_short_2" or len(calls) > 1:
+                item["confidence"] = 0.9
+            results.append(item)
+        return {"results": results}, {"model_name": "test-model", "attempt": 1}
+
+    monkeypatch.setattr(service.gateway, "complete_json", complete_json)
+    monkeypatch.setattr(service.time, "sleep", lambda _seconds: None)
+    results, metadata = service.score_short_answer_batch(
+        [(_question(), "语义表示"), (second, "语义表示")]
+    )
+
+    assert calls == [
+        ["question_short_1", "question_short_2"],
+        ["question_short_2"],
     ]
+    assert set(results) == {"question_short_1", "question_short_2"}
+    assert metadata["llm_calls"] == 2
+
+
+def test_all_invalid_questions_remain_pending_after_four_calls(monkeypatch) -> None:
+    calls = []
+
+    def complete_json(**kwargs):
+        calls.append([item["question_id"] for item in kwargs["payload"]["questions"]])
+        return {
+            "results": [
+                {
+                    "question_id": "question_short_1",
+                    "criteria": [],
+                    "matched_points": [],
+                    "missing_points": [],
+                    "factual_errors": [],
+                    "total_score": 0.5,
+                }
+            ]
+        }, {"model_name": "test-model", "attempt": 1}
+
+    monkeypatch.setattr(service.gateway, "complete_json", complete_json)
+    monkeypatch.setattr(service.time, "sleep", lambda _seconds: None)
+    results, metadata = service.score_short_answer_batch([(_question(), "语义表示")])
+
+    assert results == {}
+    assert len(calls) == 4
+    assert metadata["failed_question_ids"] == ["question_short_1"]
+    assert set(metadata["validation_fields"]["question_short_1"]) >= {
+        "confidence",
+        "ai_comment",
+    }
 
 
 def test_semantic_synonym_gets_partial_credit_but_uncertain_result_cannot_pass(monkeypatch) -> None:

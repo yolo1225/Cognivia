@@ -45,6 +45,7 @@ export const useDomainStore = defineStore('domain', {
         throw new Error('LEARNER_DOMAIN_NOT_CONFIGURED')
       }
       this.setWorkspaceDomain(selected.domain_code)
+      await this.loadReadiness(selected.domain_code)
     },
     setWorkspaceDomain(domainCode: string) {
       const selected = this.domains.find(item => item.domain_code === domainCode)
@@ -66,6 +67,7 @@ export const useDomainStore = defineStore('domain', {
       if (!selected || selected.status !== 'ready') throw new Error('DOMAIN_NOT_READY')
       await updateTargetDomain(learnerId, domainCode)
       this.setWorkspaceDomain(domainCode)
+      await this.loadReadiness(domainCode)
       useTaskStore().clearTask()
     },
   },

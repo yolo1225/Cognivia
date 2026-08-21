@@ -9,7 +9,19 @@ from app.models import KnowledgeDocument, KnowledgeImportCandidate, KnowledgeIte
 from app.services.knowledge_parser_service import parse_document
 
 
-ALLOWED_EVIDENCE = {"definition", "example", "operation", "code", "troubleshooting"}
+ALLOWED_EVIDENCE = {
+    "concept",
+    "definition",
+    "example",
+    "operation",
+    "command",
+    "code",
+    "code_example",
+    "expected_result",
+    "troubleshooting",
+    "error_handling",
+    "version_boundary",
+}
 
 
 def validate_import(db: Session, document_id: int) -> dict[str, int]:

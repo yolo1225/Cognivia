@@ -13,14 +13,18 @@ from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal, get_db
 from app.models import KnowledgeDocument, KnowledgeImportCandidate
-from app.rag.readiness import candidate_rag_status
+from app.rag.candidate_index import CandidateIndexBuilder
+from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
+from app.rag.vector_store import VectorStore
 from app.schemas.common import ApiResponse, ok
 from app.services import candidate_index_job
 from app.services.knowledge_import_publish_service import (
     KnowledgeImportPublishError,
+    activate_import_candidate,
     approve_candidates,
     ensure_import_source_locators,
     publish_approved,
+    smoke_domain_index,
     smoke_import_index,
 )
 from app.services.knowledge_import_validation_service import validate_import
@@ -29,7 +33,7 @@ router = APIRouter()
 
 
 def _run_import_index(job_id: int, domain_code: str, document_id: int) -> None:
-    candidate_index_job.run_rebuild(job_id, domain_code)
+    candidate_index_job.run_import_build(job_id, domain_code, document_id)
     with SessionLocal() as db:
         job = db.get(candidate_index_job.IndexBuildJob, job_id)
         document = db.get(KnowledgeDocument, document_id)
@@ -166,7 +170,11 @@ def build_index(
     import_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
 ) -> ApiResponse:
     document = _document(db, import_id)
-    previous_job = candidate_index_job.latest_job(db, document.domain_code)
+    previous_job = candidate_index_job.latest_job(
+        db,
+        document.domain_code,
+        source_document_id=document.id,
+    )
     failed_retry = bool(
         document.status == "indexing"
         and previous_job
@@ -180,7 +188,11 @@ def build_index(
     if document.status != "index_pending" and not failed_retry:
         raise HTTPException(status_code=409, detail="导入尚未批准或已进入其他阶段")
     ensure_import_source_locators(db, document)
-    job = candidate_index_job.try_start(db, document.domain_code)
+    job = candidate_index_job.try_start(
+        db,
+        document.domain_code,
+        source_document_id=document.id,
+    )
     if job is None:
         raise HTTPException(status_code=409, detail="候选索引正在重建")
     document.status = "indexing"
@@ -192,28 +204,62 @@ def build_index(
 @router.post("/{import_id}/smoke-test", response_model=ApiResponse)
 def smoke_test(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
     document = _document(db, import_id)
-    job = candidate_index_job.latest_job(db, document.domain_code)
+    job = candidate_index_job.latest_job(
+        db,
+        document.domain_code,
+        source_document_id=document.id,
+    )
+    result = dict(job.result_json or {}) if job else {}
+    manifest_payload = result.get("candidate_manifest")
     passed = bool(
         job
         and job.domain_code == document.domain_code
+        and job.source_document_id == document.id
         and job.status == candidate_index_job.STATUS_SUCCESS
-        and candidate_rag_status(document.domain_code).get("ready")
+        and isinstance(manifest_payload, dict)
     )
     if not passed:
         raise HTTPException(status_code=409, detail="Candidate 索引尚未通过构建与就绪检查")
     try:
-        retrieval = smoke_import_index(db, document)
-    except KnowledgeImportPublishError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    rag = candidate_rag_status(document.domain_code)
-    result = dict(job.result_json or {})
+        retrieval = smoke_import_index(
+            db,
+            document,
+            manifest_payload=manifest_payload,
+        )
+        isolation = smoke_domain_index(
+            db,
+            document.domain_code,
+            manifest_payload=manifest_payload,
+            staged_document_id=document.id,
+        )
+    except Exception as exc:
+        builder = CandidateIndexBuilder(
+            db=db,
+            chroma_client=VectorStore().client,
+            embedding_provider=OpenAICompatibleEmbeddingProvider(),
+        )
+        try:
+            builder.discard_candidate(manifest_payload)
+        except Exception:
+            pass
+        job.status = candidate_index_job.STATUS_FAILED
+        job.finished_at = datetime.now(UTC)
+        job.message = str(exc)
+        document.status = "index_pending"
+        message = str(exc) if isinstance(exc, KnowledgeImportPublishError) else "候选索引冒烟失败"
+        document.error_summary = message
+        db.commit()
+        raise HTTPException(status_code=409, detail=message) from exc
     result["smoke_test"] = {
         "passed": True,
-        "index_version": rag.get("index_version"),
-        "active_collection": rag.get("active_collection"),
+        "index_version": manifest_payload.get("index_version"),
+        "active_collection": manifest_payload.get("active_collection"),
         "import_id": document.public_id,
         "checked_at": datetime.now(UTC).isoformat(),
-        "checks": retrieval.get("checks", {}),
+        "checks": {
+            "import": retrieval.get("checks", {}),
+            "domain": isolation.get("checks", {}),
+        },
     }
     job.result_json = result
     document.status = "smoke_passed"
@@ -222,7 +268,7 @@ def smoke_test(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
     return ok(
         {
             **retrieval,
-            "rag": rag,
+            "candidate_manifest": manifest_payload,
         }
     )
 
@@ -232,20 +278,23 @@ def publish_import(import_id: str, db: Session = Depends(get_db)) -> ApiResponse
     document = _document(db, import_id)
     if document.status != "smoke_passed":
         raise HTTPException(status_code=409, detail="检索冒烟尚未通过，不能发布")
-    job = candidate_index_job.latest_job(db, document.domain_code)
+    job = candidate_index_job.latest_job(
+        db,
+        document.domain_code,
+        source_document_id=document.id,
+    )
     if (
         not job
         or job.domain_code != document.domain_code
+        or job.source_document_id != document.id
         or job.status != candidate_index_job.STATUS_SUCCESS
-        or not candidate_rag_status(document.domain_code).get("ready")
     ):
         raise HTTPException(status_code=409, detail="索引构建或冒烟未通过，不能发布")
-    document.status = "ready"
-    document.error_summary = None
-    document.embedding_model = (job.result_json or {}).get("embedding_model")
-    document.indexed_at = job.finished_at
-    db.commit()
-    return ok({"import_id": import_id, "status": "ready"})
+    try:
+        published = activate_import_candidate(db, document, job)
+    except KnowledgeImportPublishError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ok(published)
 
 
 @router.get("/{import_id}/events")

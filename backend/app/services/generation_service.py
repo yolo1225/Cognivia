@@ -1,8 +1,9 @@
 from sqlalchemy import select, update
 
 from app.agents.contracts import ResourceType, ReviewReport as ContractReviewReport
+from app.agents.claim_policy import CLAIM_POLICY_VERSION, QUALITY_POLICY_VERSION
 from app.agents.knowledge_coverage_policy import primary_owner_by_knowledge
-from app.agents.nodes import GRAPH_STATE
+from app.agents.nodes import GRAPH_STATE, pop_convergence_audit
 from app.models import (
     GenerationTask,
     KnowledgeUpdateImpact,
@@ -338,6 +339,7 @@ def persist_generated_resources(
     finalization = state.get("finalize_task")
     if generation is None or review is None or finalization is None:
         return
+    convergence_audit = pop_convergence_audit(task.public_id)
     reports = {item.resource_type: item for item in review.reports}
     primary_owners = primary_owner_by_knowledge(
         review.package_required_knowledge_ids,
@@ -455,9 +457,33 @@ def persist_generated_resources(
                     "contradicted_claim_ids": report.contradicted_claim_ids,
                     "undetermined_claim_ids": report.undetermined_claim_ids,
                     "unresolved_claim_ids": report.unresolved_claim_ids,
+                    "removed_claim_ids": (
+                        convergence_audit or {}
+                    ).get("removed_claim_ids", []),
+                    "removed_field_paths": (
+                        convergence_audit or {}
+                    ).get("removed_field_paths", []),
+                    "category_counts": (
+                        convergence_audit or {}
+                    ).get("category_counts", {}),
+                    "coverage_before": (
+                        convergence_audit or {}
+                    ).get("coverage_before", {}).get(report.resource_type.value),
+                    "coverage_after": report.final_scores.core_knowledge_coverage,
+                    "remaining_unresolved_claim_ids": report.unresolved_claim_ids,
+                    "deterministic_convergence_result": (
+                        "not_attempted"
+                        if convergence_audit is None
+                        else (
+                            "passed"
+                            if not report.unresolved_claim_ids
+                            and not report.undetermined_claim_ids
+                            else "remaining_unresolved"
+                        )
+                    ),
                 },
-                review_rule_version="quality-v6-20260818",
-                quality_rule_version=report.quality_rule_version,
+                review_rule_version=CLAIM_POLICY_VERSION,
+                quality_rule_version=QUALITY_POLICY_VERSION,
                 issues_json=[item.model_dump(mode="json") for item in report.issues],
                 suggestions_json=[item.suggested_revision for item in report.issues],
                 target_knowledge_ids_json=report.target_knowledge_ids,
@@ -477,7 +503,7 @@ def persist_generated_resources(
                 core_knowledge_coverage=report.quality_metrics.core_knowledge_coverage,
                 quality_passed=report.quality_metrics.passed,
                 revision_count=report.quality_metrics.revision_count,
-                model_role_version="review-v6",
+                model_role_version=CLAIM_POLICY_VERSION,
         )
         for key, value in values.items():
             setattr(stored_report, key, value)

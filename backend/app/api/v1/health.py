@@ -5,6 +5,7 @@ from app.rag.vector_store import get_vector_store
 from app.schemas.common import ApiResponse, ok
 from app.services.domain_runtime_service import load_domain_runtime
 from app.services.llm_service import gateway
+from app.core.config import settings
 
 router = APIRouter()
 
@@ -44,6 +45,8 @@ def dependency_health_check(
             "chroma": chroma,
             "domain_runtime": domain_runtime,
             "rag": domain_runtime["rag"],
+            "evaluation_runner_enabled": settings.enable_evaluation_runner,
+            "evaluation_overrides_enabled": settings.enable_evaluation_overrides,
             **models,
         }
     )

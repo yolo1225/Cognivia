@@ -20,7 +20,11 @@ from app.agents.contracts import (
     ResourceType,
     SourceRef,
 )
-from app.agents.domain_evidence_policy import EvidenceCapability, get_domain_evidence_policy
+from app.agents.domain_evidence_policy import (
+    EvidenceCapability,
+    get_domain_evidence_policy,
+    normalize_evidence_capabilities,
+)
 from app.models import DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.rag.candidate_manifest import (
     CandidateIndexManifest,
@@ -93,6 +97,24 @@ class CandidateRecord:
     @property
     def knowledge_id(self) -> str:
         return str(self.metadata.get("knowledge_id", ""))
+
+
+def _record_capabilities(
+    record: CandidateRecord, domain_code: str
+) -> frozenset[EvidenceCapability]:
+    """Prefer indexed, reviewed capabilities; infer only for legacy records."""
+    raw = record.metadata.get("evidence_capabilities")
+    if isinstance(raw, str):
+        declared = [item.strip() for item in raw.split(",") if item.strip()]
+    elif isinstance(raw, list):
+        declared = raw
+    else:
+        declared = []
+    if declared:
+        return frozenset(
+            EvidenceCapability(value) for value in normalize_evidence_capabilities(declared)
+        )
+    return get_domain_evidence_policy(domain_code).classify_content(record.document)
 
 
 def _clean_text(value: Any) -> str:
@@ -628,7 +650,6 @@ class CandidateRetriever:
         ]
         route_scores = {route: 1.0 - index * 0.15 for index, route in enumerate(route_order)}
         practice_requested = ResourceType.PRACTICE_GUIDE in request.retrieval_plan.resource_types
-        evidence_policy = get_domain_evidence_policy(request.context.domain_code)
 
         def matched_by(record: CandidateRecord) -> RetrievalMatchType:
             return min(record.routes, key=lambda route: MATCH_PRECEDENCE[route])
@@ -679,7 +700,7 @@ class CandidateRetriever:
                 }
                 else 0
             )
-            capabilities = evidence_policy.classify_content(record.document)
+            capabilities = _record_capabilities(record, request.context.domain_code)
             weights = {
                 EvidenceCapability.OPERATION: 8,
                 EvidenceCapability.COMMAND: 4,
@@ -722,7 +743,7 @@ class CandidateRetriever:
             if (
                 practice_requested
                 and EvidenceCapability.OPERATION
-                not in evidence_policy.classify_content(chosen.document)
+                not in _record_capabilities(chosen, request.context.domain_code)
             ):
                 self._warn(warnings, f"practice_operation_evidence_missing:{knowledge_id}")
             if chosen.chunk_id not in selected_ids:

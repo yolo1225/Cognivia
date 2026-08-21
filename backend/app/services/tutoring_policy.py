@@ -36,7 +36,7 @@ class TutoringSemanticResult(BaseModel):
     difficulty_focus: str | None = Field(default=None, max_length=300)
     unresolved: bool = False
     mastery_evidence_present: bool = False
-    candidate_reply: str | None = Field(default=None, max_length=600)
+    candidate_reply: str | None = Field(default=None, max_length=2000)
     confidence: float = Field(ge=0, le=1)
 
 
@@ -82,6 +82,19 @@ def decide_tutoring_action(
             use_candidate_reply=True,
         )
 
+    if (
+        semantic.intent is None
+        and semantic.confidence >= SEMANTIC_CONFIDENCE_THRESHOLD
+        and str(semantic.candidate_reply or "").strip()
+    ):
+        return _decision(
+            FeedbackIntent.OTHER,
+            RecommendedAction.NO_CHANGE,
+            False,
+            "已依据当前资源回答学习问题；本轮没有形成可更新画像的结构化证据。",
+            "我会依据当前资源回答这个问题。",
+            use_candidate_reply=True,
+        )
     if semantic.confidence < SEMANTIC_CONFIDENCE_THRESHOLD or semantic.intent is None:
         return _safe_follow_up("反馈意图置信度不足，先追问而不创建下游任务。")
 

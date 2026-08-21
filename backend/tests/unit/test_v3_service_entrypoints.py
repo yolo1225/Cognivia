@@ -322,7 +322,9 @@ def test_diagnostic_entrypoint_persists_v3_profile_path_and_safe_observability()
     assert result["status"] == "scored"
     assert result["score"] == 100
     assert result["agent_run_id"] == run.id
-    assert run.prompt_version == "v3"
+    assert run.prompt_version == "v6"
+    assert run.contract_version == "agent-contract-v6"
+    assert len(run.prompt_hash) == 64
     assert run.status == "completed"
     assert run.input_summary_json["question_count"] == 10
     assert "answers" not in run.input_summary_json

@@ -51,15 +51,11 @@
           </div>
 
           <div v-if="expandedId === task.task_id" class="event-detail" @click.stop>
-            <div class="progress" aria-label="任务业务进度">
-              <div v-for="(step, index) in businessStages" :key="step.id" class="step" :class="stageClass(step.id, index)"><div class="step-dot">{{ stageIcon(step.id, index) }}</div>{{ step.label }}<span v-if="stageStatus(step.id) === 'failed'" class="stage-failed-label">（失败）</span></div>
-            </div>
-
-            <div v-if="failedRun && selected?.status === 'failed'" class="task-failure">
+            <div v-if="selected?.status === 'failed'" class="task-failure">
               <div class="task-failure-copy">
-                <strong>失败阶段：{{ stageLabel(failedRun) }}</strong>
-                <span>{{ failureLabel(failedRun) }}</span>
-                <small v-if="canRetry">将从 checkpoint 恢复，已完成的检索和资源生成不会重复执行。</small>
+                <strong>本次学习任务未完成</strong>
+                <span>{{ selected.failure_reason || '任务执行失败，请稍后重试。' }}</span>
+                <small v-if="canRetry">将从已保存状态恢复，不重复已完成的工作。</small>
                 <small v-if="retryError" class="retry-error">{{ retryError }}</small>
               </div>
               <button v-if="canRetry" class="btn small" :disabled="retrying" @click="retryFailedTask">{{ retrying ? '正在提交...' : '从失败阶段重试' }}</button>
@@ -86,7 +82,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getAgentRuns, getGenerationTask, listGenerationTasks, retryGenerationTask, type AgentRun, type GenerationTaskDetail } from '@/api/generation'
+import { getGenerationTask, listGenerationTasks, retryGenerationTask, type GenerationTaskDetail } from '@/api/generation'
 import { formatBeijingDateTime } from '@/utils/dateTime'
 import AppIcon from '@/components/Shared/AppIcon.vue'
 import PageHeader from '@/components/Shared/PageHeader.vue'
@@ -103,24 +99,13 @@ const errorMessage = ref('')
 const retryError = ref('')
 const retrying = ref(false)
 const statusFilter = ref('')
-const agentRuns = ref<AgentRun[]>([])
-const businessStages = [
-  { id: 'prepare_task', label: '准备任务' },
-  { id: 'analyze_profile', label: '分析画像' },
-  { id: 'retrieve_knowledge', label: '检索知识' },
-  { id: 'generate_resource', label: '生成资源' },
-  { id: 'review_resource', label: '审核验证' },
-  { id: 'finalize_task', label: '完成决策' },
-]
 const activeStatuses = ['pending', 'retry_pending', 'running', 'revision_required']
 let pollTimer: number | null = null
 
 const completedCount = computed(() => tasks.value.filter(t => t.status === 'completed').length)
 const feedbackCount = computed(() => tasks.value.filter(t => t.trigger_type === 'resource_feedback').length)
 const resourceCount = computed(() => tasks.value.reduce((sum, t) => sum + (t.resources?.length || 0), 0))
-const selectedStage = computed(() => Math.max(0, Math.min(Math.floor((selected.value?.progress || 0) / 100 * businessStages.length), businessStages.length - 1)))
-const failedRun = computed(() => [...agentRuns.value].reverse().find(run => run.status === 'failed'))
-const canRetry = computed(() => selected.value?.status === 'failed' && failedRun.value?.output_summary?.recoverable === true)
+const canRetry = computed(() => selected.value?.status === 'failed')
 
 const FEEDBACK_LABELS: Record<string, string> = { too_hard: '内容太难', too_easy: '内容太简单', confusing: '解释不清楚', incorrect: '内容可能有误', helpful: '对我有帮助' }
 const ACTION_LABELS: Record<string, string> = { remedial_explanation: '生成补救解释', challenge_task: '生成挑战任务', revision_required: '修订了资源', regenerate: '修订了资源', review: '复核了资源', challenge: '生成挑战任务', explain: '生成补救解释', profile_update: '更新了画像' }
@@ -161,20 +146,11 @@ async function loadTasks(options: { silent?: boolean } = {}) {
   finally { if (!options.silent) loading.value = false; syncSelectedFromList(); schedulePolling() }
 }
 async function toggleTask(task: GenerationTaskDetail) {
-  if (expandedId.value === task.task_id) { expandedId.value = ''; selected.value = null; agentRuns.value = []; return }
+  if (expandedId.value === task.task_id) { expandedId.value = ''; selected.value = null; return }
   expandedId.value = task.task_id
   selected.value = task
-  agentRuns.value = []
-  const [detail, runs] = await Promise.all([getGenerationTask(task.task_id), getAgentRuns(task.task_id)])
-  selected.value = detail
-  agentRuns.value = runs
+  selected.value = await getGenerationTask(task.task_id)
 }
-function stageStatus(stepId: string) { const runs = agentRuns.value.filter(run => String(run.input_summary?.step || run.output_summary?.step || '') === stepId); return runs.at(-1)?.status }
-function runStep(run: AgentRun) { return String(run.input_summary?.step || run.output_summary?.step || '') }
-function stageLabel(run: AgentRun) { return businessStages.find(stage => stage.id === runStep(run))?.label || run.agent_name }
-function failureLabel(run: AgentRun) { const code = String(run.output_summary?.failure_code || run.error || ''); return ({ review_output_truncated: '审核模型输出被截断', review_structured_output_invalid: '审核模型返回结构无效', review_claim_set_mismatch: '审核 claim 集不完整', review_model_call_failed: '审核模型调用超时或暂时不可用', review_execution_failed: '审核执行失败' } as Record<string, string>)[code] || '任务执行失败' }
-function stageClass(stepId: string, index: number) { const status = stageStatus(stepId); if (status) return { done: status === 'completed', current: status === 'running', failed: status === 'failed' }; return agentRuns.value.length ? {} : { done: index < selectedStage.value, current: index === selectedStage.value } }
-function stageIcon(stepId: string, index: number) { const status = stageStatus(stepId); if (status === 'completed') return '✓'; if (status === 'failed') return '!'; return index + 1 }
 function statusLabel(v: string) { return ({ pending: '待开始', retry_pending: '等待恢复', running: '处理中', completed: '已完成', failed: '失败', revision_required: '自动修订中', no_change: '无需变更', rejected: '已驳回' } as Record<string, string>)[v] || v }
 function statusClass(v: string) { return v === 'completed' ? 'ok' : 'wait' }
 function resourceTypeLabel(v: string) { return ({ lecture: '个性化讲义', practice_guide: '实操指南', graded_quiz: '分阶测试' } as Record<string, string>)[v] || v }

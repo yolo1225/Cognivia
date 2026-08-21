@@ -284,7 +284,7 @@ def test_v3_review_emits_dual_model_contract_report() -> None:
     assert report.primary_review.model_role == "primary_review_model"
     assert report.secondary_review.model_role == "secondary_review_model"
     assert report.decision in {ReviewDecision.PASSED, ReviewDecision.REVISION_REQUIRED}
-    assert report.arbitration.required
+    assert not report.arbitration.required
 
 
 def test_evidence_not_mentioned_is_undetermined_without_factual_penalty() -> None:
@@ -412,7 +412,7 @@ def test_atomic_claim_extraction_is_field_specific_and_excludes_wrong_options() 
     assert {item.field_path for item in quiz_claims} == {
         f"questions[{index}].{field_name}"
         for index in range(len(quiz_content.questions))
-        for field_name in ("prompt", "correct_answer", "explanation")
+        for field_name in ("correct_answer", "explanation")
     }
     for claim in quiz_claims:
         question_index = int(claim.field_path.split("[", 1)[1].split("]", 1)[0])
@@ -1361,7 +1361,7 @@ def test_realistic_regression_shapes_extract_20_38_12_claims() -> None:
     ]
     quiz = quiz.model_copy(update={"structured_content": quiz_content})
 
-    assert len(extract_atomic_claims(lecture, request)) == 20
+    assert len(extract_atomic_claims(lecture, request)) == 19
     assert len(extract_atomic_claims(practice_request.resources[0], practice_request)) == 38
     assert len(extract_atomic_claims(quiz, request)) == 12
 

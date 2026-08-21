@@ -195,7 +195,7 @@ def test_second_domain_can_complete_an_isolated_diagnostic_and_profile(monkeypat
     )
     monkeypatch.setattr(
         "app.services.diagnostic_service.score_short_answer_batch",
-        lambda items: (
+        lambda items, **_kwargs: (
             {
                 question.public_id: {
                     "question_id": question.public_id,

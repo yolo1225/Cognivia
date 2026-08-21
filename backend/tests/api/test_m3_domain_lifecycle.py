@@ -72,6 +72,7 @@ def test_domain_list_visibility_and_learner_cannot_manage_domains() -> None:
             client.patch("/api/v1/domains/draft_domain", json={"name": "修改"}).status_code == 403
         )
         assert client.get("/api/v1/domains/draft_domain/readiness").status_code == 403
+        assert client.get("/api/v1/domains/ready_domain/readiness").status_code == 200
         assert client.get("/api/v1/domains/draft_domain/validate").status_code == 403
         assert client.post("/api/v1/domains/draft_domain/publish").status_code == 403
         assert client.post("/api/v1/domains/ready_domain/disable").status_code == 403

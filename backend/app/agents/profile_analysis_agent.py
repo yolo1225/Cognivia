@@ -8,14 +8,12 @@ from pydantic import ValidationError
 
 from app.agents.contracts import AnalyzeProfileInput, AnalyzeProfileOutput
 from app.agents.profile_analysis_config import ProfileAnalysisConfig
+from app.agents.prompt_registry import get_prompt
 from app.services.profile_analysis_service import ProfileAnalysisError, analyze_profile
 
 
 PROFILE_ANALYSIS_AGENT_NAME = "profile_analysis_agent_v3"
-SYSTEM_PROMPT = (
-    "你是 V3 学情分析智能体。只基于正式结构化输入进行确定性画像分析，"
-    "不解析原始反馈文本、不调用 LLM、不访问数据库或检索系统。"
-)
+SYSTEM_PROMPT = get_prompt("profile")
 
 
 class ProfileAnalysisAgent:

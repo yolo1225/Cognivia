@@ -209,10 +209,14 @@ def validate_domain_config(
 def get_domain_readiness(
     domain_code: str,
     db: Session = Depends(get_db),
-    _principal: Principal = Depends(require_admin),
+    principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
     try:
-        return ok(DomainApiService(db).readiness(domain_code))
+        service = DomainApiService(db)
+        domain = service.require(domain_code)
+        if principal.role != "admin" and domain.status != "ready":
+            raise HTTPException(status_code=403, detail="当前领域尚未向学习者开放")
+        return ok(service.readiness(domain_code))
     except DomainServiceError as exc:
         raise _service_error(exc) from exc
 

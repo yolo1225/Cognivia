@@ -11,7 +11,6 @@ from app.models import (
     DiagnosticQuestion,
     Domain,
     IndexBuildJob,
-    KnowledgeDocument,
     KnowledgeItem,
     KnowledgeRelation,
 )
@@ -242,16 +241,7 @@ class DomainApiService:
             and smoke.get("index_version")
             and smoke.get("index_version") == rag.get("index_version")
         )
-        legacy_published_import = self.db.scalar(
-            select(KnowledgeDocument.id)
-            .where(
-                KnowledgeDocument.domain_code == domain_code,
-                KnowledgeDocument.status == "ready",
-                KnowledgeDocument.indexed_at.is_not(None),
-            )
-            .limit(1)
-        )
-        smoke_passed = smoke_matches or bool(legacy_published_import)
+        smoke_passed = smoke_matches
         check_data = [
             (
                 "published_knowledge",
@@ -279,7 +269,13 @@ class DomainApiService:
                 "前置关系环",
             ),
             ("candidate_rag_ready", int(bool(rag.get("ready"))), 1, "==", "Candidate RAG"),
-            ("retrieval_smoke_passed", int(smoke_passed), 1, "==", "跨领域检索冒烟"),
+            (
+                "retrieval_smoke_passed",
+                int(smoke_passed),
+                1,
+                "==",
+                "检索与领域隔离验证",
+            ),
         ]
         checks = []
         for key, actual, target, operator, label in check_data:

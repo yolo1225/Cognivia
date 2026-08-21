@@ -6,7 +6,6 @@ import logging
 import math
 import uuid
 from collections import defaultdict
-from dataclasses import replace
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any
@@ -118,7 +117,10 @@ def validate_knowledge_integrity(
     questions = list(
         db.scalars(
             select(DiagnosticQuestion)
-            .where(DiagnosticQuestion.domain_code == domain_code)
+            .where(
+                DiagnosticQuestion.domain_code == domain_code,
+                DiagnosticQuestion.knowledge_item_id.in_(item_db_ids),
+            )
             .order_by(DiagnosticQuestion.id)
         )
     )
@@ -400,14 +402,28 @@ class CandidateIndexBuilder:
                 deleted += 1
         return deleted
 
-    def build(self, *, domain_code: str = "ai_app_dev", reset: bool = False) -> dict[str, Any]:
+    def build_candidate(
+        self,
+        *,
+        domain_code: str = "ai_app_dev",
+        reset: bool = False,
+        staged_document_id: int | None = None,
+    ) -> dict[str, Any]:
+        """Build and validate an isolated collection without activating it."""
         started = perf_counter()
         sync_time = _as_utc(self._now())
+        visibility_filter = KnowledgeItem.status == "published"
+        if staged_document_id is not None:
+            visibility_filter = visibility_filter | (
+                (KnowledgeItem.status == "staged")
+                & (KnowledgeItem.source_document_id == staged_document_id)
+            )
         items = list(
             self.db.scalars(
                 select(KnowledgeItem)
                 .where(
-                    KnowledgeItem.domain_code == domain_code, KnowledgeItem.status == "published"
+                    KnowledgeItem.domain_code == domain_code,
+                    visibility_filter,
                 )
                 .order_by(KnowledgeItem.public_id)
             )
@@ -464,6 +480,7 @@ class CandidateIndexBuilder:
                     "reembedded_items": 0,
                     "orphan_items_removed": 0,
                     "old_collections_deleted": 0,
+                    "candidate_manifest": manifest.to_dict(),
                     "duration_ms": round((perf_counter() - started) * 1000),
                 }
 
@@ -494,7 +511,6 @@ class CandidateIndexBuilder:
         )
         collection_name = f"knowledge_{domain_code}_candidate_{self._build_id()}"
         collection = None
-        manifest_written = False
         try:
             collection = self._create_collection(
                 name=collection_name,
@@ -551,22 +567,8 @@ class CandidateIndexBuilder:
                 indexed_item_count=len(items),
                 indexed_chunk_count=collection.count(),
             )
-            # Clear re-embedding markers only after the new collection itself
-            # has passed validation. Flush first so its timestamp precedes the
-            # manifest watermark used by the next incremental build.
-            for knowledge_id in changed_ids:
-                item_by_id[knowledge_id].needs_reembedding = False
-            self.db.flush()
-            new_manifest = replace(
-                new_manifest,
-                last_successful_sync_at=_as_utc(self._now()).isoformat(),
-            )
-            self.manifests.write(new_manifest)
-            manifest_written = True
-            self.db.commit()
         except Exception:
-            self.db.rollback()
-            if collection is not None and not manifest_written:
+            if collection is not None:
                 try:
                     self.client.delete_collection(name=collection_name)
                 except Exception:
@@ -575,15 +577,6 @@ class CandidateIndexBuilder:
                         collection_name,
                     )
             raise
-
-        keep = {collection_name}
-        if manifest is not None:
-            keep.add(manifest.active_collection)
-        try:
-            old_deleted = self._cleanup_old_collections(domain_code=domain_code, keep=keep)
-        except Exception:
-            old_deleted = 0
-            logger.exception("Failed to clean older candidate collections domain=%s", domain_code)
         return {
             "status": "built",
             "mode": "full" if reset else "incremental",
@@ -599,6 +592,84 @@ class CandidateIndexBuilder:
             "reused_chunks": len(reused_records),
             "reembedded_items": len(changed_ids),
             "orphan_items_removed": len(orphan_ids),
-            "old_collections_deleted": old_deleted,
+            "old_collections_deleted": 0,
+            "candidate_manifest": new_manifest.to_dict(),
             "duration_ms": round((perf_counter() - started) * 1000),
         }
+
+    def activate_candidate(
+        self,
+        manifest_payload: dict[str, Any],
+        *,
+        clear_reembedding: bool = True,
+    ) -> CandidateIndexManifest | None:
+        """Atomically switch the manifest; the caller owns the DB transaction."""
+        candidate = CandidateIndexManifest.from_dict(manifest_payload)
+        if not self._collection_exists(candidate.active_collection):
+            raise CandidateIndexError("candidate collection does not exist")
+        recorded = self.manifests.load(candidate.domain_code)
+        previous = (
+            recorded
+            if recorded is not None and self._collection_exists(recorded.active_collection)
+            else None
+        )
+        if previous and previous.active_collection != candidate.previous_collection:
+            raise CandidateIndexError("active manifest changed while candidate was being built")
+        if clear_reembedding:
+            items = list(
+                self.db.scalars(
+                    select(KnowledgeItem).where(
+                        KnowledgeItem.domain_code == candidate.domain_code,
+                        KnowledgeItem.status == "published",
+                    )
+                )
+            )
+            for item in items:
+                item.needs_reembedding = False
+            self.db.flush()
+        self.manifests.write(candidate)
+        return previous
+
+    def restore_manifest(
+        self,
+        domain_code: str,
+        previous: CandidateIndexManifest | None,
+    ) -> None:
+        if previous is None:
+            self.manifests.remove(domain_code)
+        else:
+            self.manifests.write(previous)
+
+    def discard_candidate(self, manifest_payload: dict[str, Any]) -> None:
+        candidate = CandidateIndexManifest.from_dict(manifest_payload)
+        active = self._load_manifest(candidate.domain_code)
+        if active and active.active_collection == candidate.active_collection:
+            raise CandidateIndexError("cannot discard the active collection")
+        if self._collection_exists(candidate.active_collection):
+            self.client.delete_collection(name=candidate.active_collection)
+
+    def cleanup_after_activation(self, manifest_payload: dict[str, Any]) -> int:
+        candidate = CandidateIndexManifest.from_dict(manifest_payload)
+        keep = {candidate.active_collection}
+        if candidate.previous_collection:
+            keep.add(candidate.previous_collection)
+        return self._cleanup_old_collections(domain_code=candidate.domain_code, keep=keep)
+
+    def build(self, *, domain_code: str = "ai_app_dev", reset: bool = False) -> dict[str, Any]:
+        """Compatibility automatic build used by direct callers and older tests."""
+        result = self.build_candidate(domain_code=domain_code, reset=reset)
+        if result["status"] == "unchanged":
+            return result
+        previous = None
+        try:
+            previous = self.activate_candidate(result["candidate_manifest"])
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            self.restore_manifest(domain_code, previous)
+            self.discard_candidate(result["candidate_manifest"])
+            raise
+        result["old_collections_deleted"] = self.cleanup_after_activation(
+            result["candidate_manifest"]
+        )
+        return result

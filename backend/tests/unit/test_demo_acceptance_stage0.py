@@ -67,7 +67,22 @@ def _runs(*, include_secondary: bool = True) -> list[dict]:
 
 
 def test_stage0_task_evidence_requires_resources_sources_quality_and_dual_review(monkeypatch):
-    monkeypatch.setattr(demo_acceptance, "_api_json", lambda *_args: _resources())
+    def fake_api(_base_url, _method, path, *_args):
+        if path.endswith("/internal-trace"):
+            return {
+                "thread_id": "task-1",
+                "runs": [
+                    {
+                        "contract_version": "agent-contract-v6",
+                        "prompt_hash": "a" * 64,
+                    }
+                ],
+                "messages": [{"sender": "orchestrator_agent"}],
+                "reviews": [{"arbitration": {"required": True}}],
+            }
+        return _resources()
+
+    monkeypatch.setattr(demo_acceptance, "_api_json", fake_api)
 
     evidence = demo_acceptance._stage0_task_evidence(
         "http://example.test/api/v1",
@@ -105,3 +120,51 @@ def test_stage0_error_reporting_redacts_embedded_response_payloads():
 
     assert summary == "first subjective feedback must not change profile"
     assert "完整资源正文" not in summary
+
+
+def test_current_resource_uses_current_v6_successor_instead_of_stale_baseline(
+    monkeypatch,
+):
+    stale = {
+        "resource_id": "res-baseline-v1",
+        "resource_type": "lecture",
+        "review_status": "passed",
+        "package_quality": {"quality_rule_version": "quality-v6-20260818"},
+    }
+    current = {
+        "resource_id": "res-successor-v2",
+        "resource_type": "lecture",
+        "review_status": "passed",
+        "package_quality": {"quality_rule_version": "quality-v6-20260818"},
+    }
+    monkeypatch.setattr(
+        demo_acceptance,
+        "_api_json",
+        lambda *_args: [current, stale],
+    )
+
+    selected = demo_acceptance._current_resource(
+        "http://example.test/api/v1", "learner-1"
+    )
+
+    assert selected["resource_id"] == "res-successor-v2"
+
+
+def test_current_resource_rejects_legacy_current_package(monkeypatch):
+    monkeypatch.setattr(
+        demo_acceptance,
+        "_api_json",
+        lambda *_args: [
+            {
+                "resource_id": "res-legacy",
+                "resource_type": "lecture",
+                "review_status": "passed",
+                "package_quality": None,
+            }
+        ],
+    )
+
+    with pytest.raises(AssertionError, match="current passed V6"):
+        demo_acceptance._current_resource(
+            "http://example.test/api/v1", "learner-1"
+        )

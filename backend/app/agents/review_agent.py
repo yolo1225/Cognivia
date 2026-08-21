@@ -39,12 +39,17 @@ from app.agents.contracts import (
     RetrievedChunk,
     RetrievalPurpose,
 )
-from app.agents.domain_evidence_policy import (
-    EvidenceCapability,
-    get_domain_evidence_policy,
+from app.agents.domain_evidence_policy import get_domain_evidence_policy
+from app.agents.claim_policy import (
+    CLAIM_POLICY_VERSION,
+    ClaimCategory,
+    ReviewDisposition,
+    RiskLevel,
+    classify_claim,
 )
 from app.agents.knowledge_coverage_policy import primary_owner_by_knowledge
 from app.agents.observability import record_model_call
+from app.agents.prompt_registry import get_prompt
 from app.agents.prompt_budget import bounded_text, estimate_tokens
 from app.agents.retrieval_agent import KnowledgeRetrievalAgent
 from app.core.config import settings
@@ -59,7 +64,7 @@ from app.services.llm_service import (
 
 
 REVIEW_AGENT_NAME = "review_validation_agent_v3"
-REVIEW_RULE_VERSION = "quality-v6-20260818"
+REVIEW_RULE_VERSION = CLAIM_POLICY_VERSION
 
 
 def build_review_resource_output(
@@ -159,24 +164,9 @@ def build_review_resource_output(
         ),
         package_quality=package_quality,
     )
-SYSTEM_PROMPT = (
-    "你是审核校验智能体。你必须逐条审核输入 canonical_claims，原样返回每个 claim_id，"
-    "不得新增、遗漏、合并或改写事实。verdict 只能是 supported、contradicted、"
-    "evidence_insufficient：证据明确支持才是 supported，证据明确反驳才是 contradicted，"
-    "证据没有提到、被截断或不足时必须是 evidence_insufficient。事实与来源结论只能引用"
-    "输入 evidence 中的 source_ref_id。只返回 output_schema 要求的最小 JSON，不要重复"
-    "claim 文本、证据正文、理由、评分、问题列表或任何未要求字段。"
-    "即使某个结论符合通用常识或技术上看似合理，只要输入证据没有直接提及其关键行为、"
-    "版本、参数、输出或错误语义，就必须返回 evidence_insufficient，不得使用模型自身知识补全。"
-)
-PRIMARY_SYSTEM_PROMPT = SYSTEM_PROMPT + (
-    "你的职责是领域事实与来源审核：优先核验事实、代码、操作步骤、预期结果、题目答案"
-    "及其引用是否被证据直接支持。"
-)
-SECONDARY_SYSTEM_PROMPT = SYSTEM_PROMPT + (
-    "你的职责是对抗验证与教学适配审核：独立抽查关键事实和来源，并重点识别难度不匹配、"
-    "目标知识遗漏、题目歧义及三类资源间的不一致。不得沿用主审核结论。"
-)
+SYSTEM_PROMPT = get_prompt("review")
+PRIMARY_SYSTEM_PROMPT = f'{SYSTEM_PROMPT}\n\n{get_prompt("review.primary")}'
+SECONDARY_SYSTEM_PROMPT = f'{SYSTEM_PROMPT}\n\n{get_prompt("review.secondary")}'
 
 
 def _role_system_prompt(role: "ReviewRole") -> str:
@@ -194,103 +184,29 @@ _REVIEW_MODEL_SEMAPHORE = BoundedSemaphore(settings.review_model_concurrency)
 _SENTENCE_RE = re.compile(r"(?<=[。！？!?；;])\s*")
 _CLAUSE_RE = re.compile(r"(?<=[，,：:])\s*")
 _LOGGER = logging.getLogger(__name__)
-_PROVENANCE_META_RE = re.compile(
-    r"(?:所有|全部|以上|本(?:讲义|资源|内容)).{0,24}"
-    r"(?:均|都|严格)?(?:源自|来自|基于|依据).{0,24}"
-    r"(?:官方|所列|所提供|输入|引用|检索)"
-    r"(?:文档|资料|材料|来源|证据|内容|知识片段)|"
-    r"(?:未|没有)(?:引入|使用).{0,16}"
-    r"(?:外部常识|外部知识|工具能力|额外推断|自行推断)|"
-    r"(?:引用|来源).{0,12}(?:完整|齐全|全部覆盖|均可追溯)"
-)
-_ORGANIZATIONAL_ONLY_RE = re.compile(
-    r"^(?:本节|本章|下面|以下|接下来)(?:将|会|带你|帮助你|我们将).{0,80}"
-    r"(?:介绍|讲解|学习|了解|掌握|回顾|总结).{0,40}$"
-)
-_PEDAGOGICAL_ACTION_RE = re.compile(
-    r"^(?:(?:学习者|学员|你)(?:应|需|需要|可以|可)?|请)?(?:"
-    r"(?:(?:在|于).{1,40}(?:中|内|旁|上)(?:请)?)?"
-    r"(?:阅读|浏览|观察|记录|保存|提交|提供|整理|梳理|比较|对比|讨论|思考|分析|检查|核对|"
-    r"完成|尝试|练习|复述|列出|总结|标注|注明|选择|填写|形成|准备|回顾|识别|描述|说明|映射|"
-    r"能够?复述|能够?列出|能够?比较|能够?完成).{0,200}|"
-    r"(?:将|把)(?!会|在).{1,120}(?:映射|记录|整理|核对|标注|描述|说明|明确).{0,160}"
-    r")$"
-)
-_ENVIRONMENT_PRECONDITION_RE = re.compile(
-    r"^(?:如|若|如果|需要时|练习前|开始前|请)?(?:可|可以|能够|能)?"
-    r"(?:访问|查阅|打开|准备|使用).{0,120}(?:文档|资料|材料|环境|仓库|账号|凭证)"
-    r"(?:(?:用于|以便|以)\S{0,60}(?:核对|查阅|记录|练习|学习|确认)\S{0,40})?$"
-)
-_CONDITIONAL_OR_SAFETY_ACTION_RE = re.compile(
-    r"^(?:如|若|如果|需要时|练习前|开始前|请|建议)?(?:先|仅|务必)?"
-    r"(?:确认|确保|避免|不要|勿|不得暴露|保护|记录|核对|检查).{0,160}$"
-)
-_CONDITIONAL_PEDAGOGICAL_ACTION_RE = re.compile(
-    r"^(?:如|若|如果).{0,100}[，,](?:请)?"
-    r"(?:说明|解释|记录|标注|描述|选择|填写|整理|比较|核对|检查).{0,120}$"
-)
-_FACTUAL_ASSERTION_RE = re.compile(
-    r"(?:将会|将在|会自动|自动|固定|默认|必须|只能|不能|支持|不支持|兼容|不兼容|"
-    r"返回|导致|触发|包含|等于|意味着|保证|始终|无需|要求安装|需要安装|"
-    r"明确|规定|指出|列为|作为|属于|共同|核心|应为|应当|不应|需要|用于|决定|"
-    r"\b\d+(?:\.\d+)+(?:\+|以上|以下)?\b|\d+(?:\.\d+)?\s*(?:秒|毫秒|次|%|mb|gb)\b|"
-    r"\b(?:get|post|put|patch|delete)\b.{0,24}\b(?:2\d\d|4\d\d|5\d\d)\b)",
-    re.I,
-)
-_QUIZ_INDEPENDENT_PREMISE_RE = re.compile(
-    r"(?:将会|将在|会自动|自动|固定|默认|必须|只能|不能|支持|不支持|兼容|不兼容|"
-    r"返回|导致|触发|包含|等于|意味着|保证|始终|无需|要求安装|需要安装|"
-    r"规定|指出|列为|作为|属于|共同|核心|应为|应当|不应|"
-    r"\b\d+(?:\.\d+)+(?:\+|以上|以下)?\b|\d+(?:\.\d+)?\s*(?:秒|毫秒|次|%|mb|gb)\b|"
-    r"\b(?:get|post|put|patch|delete)\b.{0,24}\b(?:2\d\d|4\d\d|5\d\d)\b)",
-    re.I,
-)
-_QUIZ_CONTEXT_ONLY_RE = re.compile(
-    r"^(?:当|若|如果|假如|在|面向|针对|对于).{1,180}(?:时|情况下|场景中|过程中|期间)$"
-)
-_QUIZ_DIRECTIVE_RE = re.compile(
-    r"^请(?:用.{0,30})?(?:概括|说明|列举|回答|选择|判断|完成|写出|指出).{1,220}$"
-)
-_EMBEDDED_TECHNICAL_ASSERTION_RE = re.compile(
-    r"(?:将会|将在|会自动|固定|默认|必须|只能|不能|支持|不支持|兼容|不兼容|"
-    r"返回|导致|触发|等于|意味着|保证|始终|无需|要求安装|需要安装|"
-    r"应为|应当|不应|决定|"
-    r"(?:接口|api|响应|命令|模型|系统|工具|函数|服务).{0,40}(?:包含|属于|共同|核心)|"
-    r"\b\d+(?:\.\d+)+(?:\+|以上|以下)?\b|\d+(?:\.\d+)?\s*(?:秒|毫秒|次|%|mb|gb)\b|"
-    r"\b(?:get|post|put|patch|delete)\b.{0,24}\b(?:2\d\d|4\d\d|5\d\d)\b)",
-    re.I,
-)
-_SAFE_EXPECTED_ACTION_RE = re.compile(
-    r"^(?:记录|整理|比较|核对|形成|完成|提交|标注).{0,120}"
-    r"(?:记录|清单|笔记|差异|材料|描述|结果|练习|表格|核对|对照|确认).{0,40}$"
-)
-_ACCEPTANCE_DELIVERABLE_RE = re.compile(
-    r"^(?:(?:完成|提交|形成)(?:一份)?\s*)?"
-    r"(?:学习记录|练习记录|检查表|自查清单|清单|报告|表格|提交内容|错误响应分析)"
-    r".{0,120}(?:包含|记录|列出|标注|覆盖|附有).{0,120}$"
-)
-_PLACEHOLDER_TEXT = {"待补充", "暂无", "无", "todo", "tbd", "示例内容", "模板内容"}
-_SAFE_REVISION_INSTRUCTIONS = {
-    "阅读引用材料，整理其中明确描述的处理流程",
-    "阅读并梳理引用材料中明确描述的处理流程",
-}
-
-
 @dataclass(frozen=True, slots=True)
 class AtomicClaim:
     claim_id: str
     field_path: str
     claim: str
+    category: ClaimCategory
+    risk_level: RiskLevel
+    review_disposition: ReviewDisposition
     knowledge_ids: tuple[str, ...]
     source_ref_ids: tuple[str, ...]
+    evidence_capabilities: tuple[str, ...]
 
     def as_payload(self) -> dict[str, object]:
         return {
             "claim_id": self.claim_id,
             "field_path": self.field_path,
             "claim": self.claim,
+            "category": self.category.value,
+            "risk_level": self.risk_level.value,
+            "review_disposition": self.review_disposition.value,
             "knowledge_ids": list(self.knowledge_ids),
             "source_ref_ids": list(self.source_ref_ids),
+            "evidence_capabilities": list(self.evidence_capabilities),
         }
 
 
@@ -315,7 +231,7 @@ class _CompactModelReview(BaseModel):
 class ReviewBatchCache:
     """Payload-safe cache for completed model-channel review batches."""
 
-    SNAPSHOT_VERSION = 1
+    SNAPSHOT_VERSION = 2
 
     def __init__(self, seed: dict[str, Any] | None = None) -> None:
         self._lock = RLock()
@@ -674,88 +590,12 @@ def _project_claim_source_ids(
     return tuple(item[2] for item in positive if item[0] == best_overlap)[:3]
 
 
-def _claim_exclusion_category(field_group: str, text: str) -> str | None:
-    """Conservatively exclude only non-factual prose in selected container fields."""
-    normalized = _normalize_claim_text(text)
-    compact = re.sub(r"\s+", "", normalized).lower().strip("。！？!?;；")
-    sentence = normalized.strip("。！？!?;；")
-    if _PROVENANCE_META_RE.fullmatch(sentence):
-        return "provenance_meta"
-    if field_group == "summary":
-        if _ORGANIZATIONAL_ONLY_RE.fullmatch(sentence):
-            return "organizational"
-    if field_group in {"environment_requirement", "acceptance_criterion"}:
-        if compact in _PLACEHOLDER_TEXT:
-            return "placeholder"
-        if _ORGANIZATIONAL_ONLY_RE.fullmatch(sentence):
-            return "organizational"
-    if field_group == "acceptance_criterion":
-        if _ACCEPTANCE_DELIVERABLE_RE.fullmatch(sentence):
-            return "pedagogical_deliverable"
-    if field_group == "environment_requirement":
-        if _ENVIRONMENT_PRECONDITION_RE.fullmatch(sentence) and not _FACTUAL_ASSERTION_RE.search(
-            sentence
-        ):
-            return "environment_precondition"
-        if _CONDITIONAL_OR_SAFETY_ACTION_RE.fullmatch(
-            sentence
-        ) and not _FACTUAL_ASSERTION_RE.search(sentence):
-            return "safety_action"
-    if field_group in {
-        "instruction",
-        "environment_requirement",
-        "acceptance_criterion",
-    }:
-        if (
-            field_group == "instruction"
-            and _CONDITIONAL_PEDAGOGICAL_ACTION_RE.fullmatch(sentence)
-            and not _EMBEDDED_TECHNICAL_ASSERTION_RE.search(sentence)
-        ):
-            return "pedagogical_action"
-        if field_group == "instruction" and sentence in _SAFE_REVISION_INSTRUCTIONS:
-            return "pedagogical_action"
-        if _PEDAGOGICAL_ACTION_RE.fullmatch(
-            sentence
-        ) and not _EMBEDDED_TECHNICAL_ASSERTION_RE.search(sentence):
-            return "pedagogical_action"
-    if field_group == "expected_result":
-        if _SAFE_EXPECTED_ACTION_RE.fullmatch(sentence) and not _FACTUAL_ASSERTION_RE.search(
-            sentence
-        ):
-            return "pedagogical_action"
-    if field_group == "quiz_prompt":
-        # Imperative short-answer prompts ask the learner to supply the fact;
-        # the answer and explanation below are the auditable assertions.
-        if _QUIZ_DIRECTIVE_RE.fullmatch(sentence):
-            return "pedagogical_question"
-        if re.search(r"[？?]", normalized):
-            # The answer and explanation are reviewed separately, so the
-            # interrogative itself is not an additional factual claim.  Keep
-            # only a genuinely independent premise that precedes the question
-            # (for example: "the system retries three times by default, which
-            # option is correct?").  Keywords inside the unknown slot, such as
-            # "which items should not...", do not turn the question into an
-            # assertion.
-            clauses = [
-                item.strip()
-                for item in re.split(r"[,，;；:：]", sentence)
-                if item.strip()
-            ]
-            independent_premises = clauses[:-1]
-            if not any(
-                _QUIZ_INDEPENDENT_PREMISE_RE.search(item)
-                and not _QUIZ_CONTEXT_ONLY_RE.fullmatch(item)
-                for item in independent_premises
-            ):
-                return "pedagogical_question"
-    return None
-
-
 def extract_atomic_claims(
     resource: GeneratedResourceArtifact, request: ReviewResourceInput
 ) -> list[AtomicClaim]:
     """Create one stable claim set shared by both review channels."""
     evidence_by_source = {chunk.source.source_ref_id: chunk for chunk in request.evidence}
+    evidence_policy = get_domain_evidence_policy(request.context.domain_code)
     all_sources = tuple(source.source_ref_id for source in resource.source_refs)
     claims: list[AtomicClaim] = []
     excluded: dict[str, list[str]] = {}
@@ -780,10 +620,6 @@ def extract_atomic_claims(
         parts = _split_factual_text(text, preserve=preserve)
         for index, part in enumerate(parts):
             path = field_path if preserve and len(parts) == 1 else f"{field_path}[{index}]"
-            category = _claim_exclusion_category(filter_group or "factual", part)
-            if category:
-                excluded.setdefault(category, []).append(path)
-                continue
             projected_sources = _project_claim_source_ids(part, sources, evidence_by_source)
             projected_knowledge_ids = tuple(
                 _ordered_unique(
@@ -792,14 +628,36 @@ def extract_atomic_claims(
                     if source_id in evidence_by_source
                 )
             )
+            capabilities = tuple(
+                sorted(
+                    {
+                        capability.value
+                        for source_id in projected_sources
+                        if source_id in evidence_by_source
+                        for capability in evidence_policy.classify(evidence_by_source[source_id])
+                    }
+                )
+            )
+            policy_decision = classify_claim(
+                filter_group or "factual",
+                part,
+                evidence_capabilities=capabilities,
+            )
+            if policy_decision.review_disposition is not ReviewDisposition.DUAL_REVIEW:
+                excluded.setdefault(policy_decision.category.value, []).append(path)
+                continue
             claim_text = f"{prefix}{part}" if prefix else part
             claims.append(
                 AtomicClaim(
                     claim_id=_claim_id(resource.resource_type, path, claim_text),
                     field_path=path,
                     claim=claim_text,
+                    category=policy_decision.category,
+                    risk_level=policy_decision.risk_level,
+                    review_disposition=policy_decision.review_disposition,
                     knowledge_ids=projected_knowledge_ids or knowledge_ids,
                     source_ref_ids=projected_sources,
+                    evidence_capabilities=policy_decision.evidence_capabilities,
                 )
             )
 
@@ -842,6 +700,7 @@ def extract_atomic_claims(
                     step.source_ref_ids,
                     preserve=True,
                     prefix="以下代码或命令应能完成该步骤：\n",
+                    filter_group="code_or_command",
                 )
             add(
                 f"{base}.expected_result",
@@ -850,7 +709,12 @@ def extract_atomic_claims(
                 filter_group="expected_result",
             )
             if step.troubleshooting:
-                add(f"{base}.troubleshooting", step.troubleshooting, step.source_ref_ids)
+                add(
+                    f"{base}.troubleshooting",
+                    step.troubleshooting,
+                    step.source_ref_ids,
+                    filter_group="troubleshooting",
+                )
         for index, criterion in enumerate(content.acceptance_criteria):
             add(
                 f"acceptance_criteria[{index}]",
@@ -874,6 +738,7 @@ def extract_atomic_claims(
                 question.source_ref_ids,
                 preserve=True,
                 prefix=f"题目：{question.prompt}\n请判断该题正确答案是否准确：\n",
+                filter_group="quiz_answer",
             )
             add(
                 f"questions[{index}].explanation",
@@ -884,6 +749,7 @@ def extract_atomic_claims(
                     f"题目：{question.prompt}\n正确答案：{question.correct_answer}\n"
                     "请判断该题解析是否准确：\n"
                 ),
+                filter_group="quiz_explanation",
             )
     if not claims:
         raise ReviewError("review_claim_set_empty")
@@ -1749,12 +1615,7 @@ class ReviewValidationAgent:
                 if chunk.source.source_ref_id not in declared_ids
             }
         )
-        evaluated_count = (
-            len(supported_ids)
-            + len(contradicted_ids)
-            + len(undetermined_ids)
-            + len(final_disputed)
-        )
+        evaluated_count = len(statuses)
         evidence_insufficient_count = len(undetermined_ids)
         hallucinated_count = len(set(contradicted_ids) | set(final_disputed))
         difficulty_score = final_scores.difficulty_match
@@ -2470,29 +2331,6 @@ def _deterministic_coverage(
             ):
                 covered.add(knowledge_id)
 
-    # Practice instructions can be substantive teaching actions without being
-    # factual assertions (for example, "record the actual response fields").
-    # Count such a step only when it is linked to operational evidence for the
-    # target and has lexical overlap with that evidence. Technical assertions
-    # are intentionally excluded here and must still pass claim-level review.
-    if isinstance(resource.structured_content, PracticeGuideContent):
-        policy = get_domain_evidence_policy(request.context.domain_code)
-        for step in resource.structured_content.steps:
-            if _claim_exclusion_category("instruction", step.instruction) != "pedagogical_action":
-                continue
-            compact = re.sub(r"\s+", "", step.instruction)
-            if len(compact) < 8:
-                continue
-            for source_id in step.source_ref_ids:
-                chunk = evidence_by_source.get(source_id)
-                if (
-                    chunk is None
-                    or chunk.knowledge_id not in targets
-                    or EvidenceCapability.OPERATION not in policy.classify(chunk)
-                    or _source_overlap(step.instruction, [chunk]) <= 0
-                ):
-                    continue
-                covered.add(chunk.knowledge_id)
     return targets, covered
 
 

@@ -21,6 +21,8 @@ class AgentRun(TimestampMixin, Base):
     tokens_output: Mapped[int] = mapped_column(default=0)
     model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     prompt_version: Mapped[str] = mapped_column(String(32), default="v1")
+    prompt_hash: Mapped[str] = mapped_column(String(64), default="unknown")
+    contract_version: Mapped[str] = mapped_column(String(32), default="unknown")
     duration_ms: Mapped[int] = mapped_column(default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 

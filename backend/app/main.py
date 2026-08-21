@@ -52,6 +52,9 @@ def _recover_interrupted_generation() -> None:
 
 def create_app() -> FastAPI:
     settings.validate_auth_config()
+    from app.agents.prompt_registry import validate_production_prompts
+
+    validate_production_prompts()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):

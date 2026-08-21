@@ -96,6 +96,9 @@ export interface AgentRun {
   status: string
   input_summary: Record<string, unknown>
   output_summary: Record<string, unknown>
+  contract_version?: string
+  prompt_version?: string
+  prompt_hash?: string
   error?: string | null
 }
 

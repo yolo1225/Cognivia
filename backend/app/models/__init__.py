@@ -1,6 +1,6 @@
 from app.models.agent import AgentMessageRecord, AgentRun, GraphCheckpoint
 from app.models.base import Base
-from app.models.diagnostic import AnswerRecord, DiagnosticQuestion
+from app.models.diagnostic import AnswerRecord, DiagnosticQuestion, DiagnosticSession
 from app.models.domain import Domain
 from app.models.evaluation import EvaluationCase
 from app.models.feedback import Feedback
@@ -32,6 +32,7 @@ __all__ = [
     "DemoUser",
     "User",
     "DiagnosticQuestion",
+    "DiagnosticSession",
     "Domain",
     "EvaluationCase",
     "Feedback",

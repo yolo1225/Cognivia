@@ -198,6 +198,17 @@ def main() -> None:
         "embedding_dimensions": (health.get("rag") or {}).get("embedding_dimensions"),
     }
     cases, knowledge_versions = evaluator.load_cases()
+    stability_case = next(
+        case for case in cases if case.get("scenario_type") == "initial_generation"
+    )
+    prepared = _api_json(
+        args.base_url,
+        "POST",
+        f"/evaluations/cases/{stability_case['case_id']}/prepare",
+        {},
+    )
+    learner_id = str(prepared["learner_id"])
+    profile_id = str(prepared["profile_id"])
     full_suite_case_sha256 = _case_set_sha256(cases)
     results: list[dict[str, Any]] = []
     report = {
@@ -226,7 +237,8 @@ def main() -> None:
                 "POST",
                 "/generation-tasks",
                 {
-                    "learner_id": "learner_001",
+                    "learner_id": learner_id,
+                    "profile_id": profile_id,
                     "trigger_type": "initial_generation",
                     "execution_mode": "auto",
                     "domain_code": "ai_app_dev",
@@ -265,7 +277,7 @@ def main() -> None:
                 "POST",
                 f"/resources/{practice['resource_id']}/feedback",
                 {
-                    "learner_id": "learner_001",
+                    "learner_id": learner_id,
                     "feedback_type": "incorrect",
                     "selected_text": "稳定性复核：请重新检索并局部修订此资源。",
                 },

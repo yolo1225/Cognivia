@@ -34,14 +34,14 @@
         <h2 class="question">{{ currentQuestion.stem }}</h2>
         <div v-if="currentQuestion.question_type === 'single_choice'" class="options">
           <label v-for="(opt, i) in currentQuestion.options" :key="i" class="option">
-            <input type="radio" :name="'q'+currentIdx" :value="i" v-model="answers[currentIdx]" />{{ String.fromCharCode(65+i) }}. {{ opt }}
+            <input type="radio" :name="'q'+currentIdx" :value="i" v-model="answers[currentIdx]" :disabled="submitting || scoringPending" />{{ String.fromCharCode(65+i) }}. {{ opt }}
           </label>
         </div>
-        <textarea v-else v-model="answers[currentIdx]" aria-label="简答题答案" placeholder="请输入答案..." style="margin-top:14px;min-height:100px"></textarea>
+        <textarea v-else v-model="answers[currentIdx]" :disabled="submitting || scoringPending" aria-label="简答题答案" placeholder="请输入答案..." style="margin-top:14px;min-height:100px"></textarea>
         <div class="actions" style="margin-top:22px;justify-content:flex-end">
           <button class="btn" @click="currentIdx = Math.max(0, currentIdx-1)" :disabled="currentIdx===0">上一题</button>
           <button v-if="!isLastQuestion" class="btn primary" @click="currentIdx++">下一题</button>
-          <button v-else class="btn primary" @click="submitAll" :disabled="submitting || !allAnswered">{{ submitting ? '正在进行 AI 评分...' : scoringPending ? '重试 AI 评分' : allAnswered ? '提交诊断' : `还有 ${unansweredCount} 题未完成` }}</button>
+          <button v-else class="btn primary" @click="submitAll" :disabled="submitting || (!allAnswered && !scoringPending)">{{ submitting ? '正在进行 AI 评分...' : scoringPending ? '重试 AI 评分' : allAnswered ? '提交诊断' : `还有 ${unansweredCount} 题未完成` }}</button>
         </div>
       </article>
     </div>
@@ -84,10 +84,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
-import { createDiagnosticSession, submitDiagnosticSession, type DiagnosticSession, type DiagnosticResult } from '@/api/diagnostics'
+import {
+  createDiagnosticSession,
+  getDiagnosticSession,
+  retryDiagnosticSession,
+  streamDiagnosticSession,
+  submitDiagnosticSession,
+  type DiagnosticResult,
+  type DiagnosticSession,
+  type DiagnosticSessionStatus,
+} from '@/api/diagnostics'
 import { createGenerationTask } from '@/api/generation'
 import { useLearnerStore } from '@/stores/learnerStore'
 import { useDomainStore } from '@/stores/domainStore'
@@ -108,6 +117,7 @@ const session = ref<DiagnosticSession | null>(null)
 const result = ref<DiagnosticResult | null>(null)
 const scoringPending = ref(false)
 const answers = ref<Record<number, string>>({})
+let scoringEvents: EventSource | null = null
 
 const currentQuestion = computed(() => session.value?.questions[currentIdx.value] || null)
 const isLastQuestion = computed(() => Boolean(session.value) && currentIdx.value === session.value!.questions.length - 1)
@@ -120,6 +130,40 @@ const learnerId = computed(() => routeLearnerId || learnerStore.selectedLearnerI
 const accuracyPercent = computed(() => result.value ? Math.round((result.value.correct_count / Math.max(1, result.value.question_count)) * 100) : 0)
 const shortAnswerResults = computed(() => result.value?.answer_results?.filter(item => item.question_type === 'short_answer') || [])
 
+function applyDiagnosticStatus(status: DiagnosticSessionStatus) {
+  if (status.questions?.length) session.value = status
+  if (status.status === 'scored' && status.result) {
+    result.value = status.result
+    scoringPending.value = false
+    submitting.value = false
+    showToast(`诊断完成，答对 ${status.result.correct_count}/${status.result.question_count} 题`)
+  } else if (status.status === 'pending_scoring') {
+    scoringPending.value = true
+    submitting.value = false
+    showToast('部分简答题评分暂未完成，可安全重试未完成题。', 'error')
+  } else if (status.status === 'failed') {
+    scoringPending.value = status.retryable
+    submitting.value = false
+    showToast(`诊断处理失败：${status.error_code || '未知错误'}`, 'error')
+  } else if (status.status === 'scoring') submitting.value = true
+}
+
+function followScoring(sessionId: string) {
+  const currentLearnerId = learnerId.value
+  if (!currentLearnerId) return
+  scoringEvents?.close()
+  scoringEvents = streamDiagnosticSession(sessionId, currentLearnerId, event => {
+    applyDiagnosticStatus(event)
+    if (event.type !== 'status') scoringEvents = null
+  })
+  scoringEvents.onerror = async () => {
+    scoringEvents?.close()
+    scoringEvents = null
+    try { applyDiagnosticStatus(await getDiagnosticSession(sessionId, currentLearnerId)) }
+    catch { submitting.value = false; showToast('评分连接中断，请刷新页面恢复进度。', 'error') }
+  }
+}
+
 async function startSession() {
   if (!learnerId.value) { showToast('当前账号未关联学习者'); return }
   if (!domainStore.readiness?.diagnostic_ready) {
@@ -129,6 +173,7 @@ async function startSession() {
   creatingSession.value = true
   try {
     session.value = await createDiagnosticSession(domainCode.value, learnerId.value)
+    await router.replace({ query: { ...route.query, session_id: session.value.session_id } })
     result.value = null
     answers.value = {}
     scoringPending.value = false
@@ -141,20 +186,25 @@ async function submitAll() {
   if (!session.value || !learnerId.value) return
   submitting.value = true
   try {
-    const list = Object.entries(answers.value).map(([idx, answer]) => ({
-      question_id: session.value!.questions[Number(idx)].question_id,
-      answer,
-    }))
-    result.value = await submitDiagnosticSession(session.value.session_id, list, domainCode.value, learnerId.value)
+    const status = scoringPending.value
+      ? await retryDiagnosticSession(session.value.session_id, learnerId.value)
+      : await submitDiagnosticSession(
+        session.value.session_id,
+        Object.entries(answers.value).map(([idx, answer]) => ({
+          question_id: session.value!.questions[Number(idx)].question_id,
+          answer,
+        })),
+        domainCode.value,
+        learnerId.value,
+      )
     scoringPending.value = false
-    showToast(`诊断完成，答对 ${result.value.correct_count}/${result.value.question_count} 题`)
+    applyDiagnosticStatus(status)
+    if (status.status === 'scoring') followScoring(session.value.session_id)
   } catch (error: any) {
-    if (error?.response?.data?.error?.code === 'DIAGNOSTIC_SCORING_PENDING') {
-      scoringPending.value = true
-      showToast('AI 评分暂未完成，答案已保留，请重试。', 'error')
-    } else showToast('提交失败', 'error')
+    submitting.value = false
+    const code = error?.response?.data?.error?.code || error?.response?.data?.detail
+    showToast(code === 'DIAGNOSTIC_ANSWERS_CHANGED' ? '诊断已提交，不能修改本次答案。' : '提交失败', 'error')
   }
-  finally { submitting.value = false }
 }
 
 async function generateResources() {
@@ -170,18 +220,30 @@ async function generateResources() {
   } catch { showToast('创建生成任务失败') }
   finally { generating.value = false }
 }
+
 onMounted(async () => {
   if (!learnerId.value) return
   const profile = await getLearnerProfile(learnerId.value)
   await domainStore.initialize(profile.domain_code)
+  const sessionId = String(route.query.session_id || '').trim()
+  if (!sessionId) return
+  try {
+    const status = await getDiagnosticSession(sessionId, learnerId.value)
+    applyDiagnosticStatus(status)
+    if (status.status === 'scoring') followScoring(sessionId)
+  } catch { await router.replace({ query: { ...route.query, session_id: undefined } }) }
 })
+
 watch(() => domainStore.selectionVersion, () => {
+  scoringEvents?.close()
+  scoringEvents = null
   session.value = null
   result.value = null
   answers.value = {}
   currentIdx.value = 0
   scoringPending.value = false
 })
+onBeforeUnmount(() => scoringEvents?.close())
 </script>
 
 <style scoped>

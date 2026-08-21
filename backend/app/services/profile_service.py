@@ -425,14 +425,22 @@ def latest_profile_for_learner(
     db: Session, learner: Learner, domain_code: str | None = None
 ) -> LearnerProfile | None:
     selected_domain = str(domain_code or learner.target_domain).strip()
-    return db.scalar(
+    statement = (
         select(LearnerProfile)
         .where(
             LearnerProfile.learner_id == learner.id,
             LearnerProfile.domain_code == selected_domain,
         )
-        .order_by(LearnerProfile.id.desc())
     )
+    if not learner.is_evaluation:
+        # Compatibility guard for databases that predate isolated evaluation
+        # learners. Legacy evaluation fixtures must never become the active
+        # profile of a normal learner, even if they have the greatest row id.
+        statement = statement.where(
+            LearnerProfile.profile_source != "evaluation_fixture",
+            LearnerProfile.public_id.not_like("evaluation_%"),
+        )
+    return db.scalar(statement.order_by(LearnerProfile.id.desc()))
 
 
 def is_initial_profile_ready(profile: LearnerProfile | None) -> bool:

@@ -62,7 +62,8 @@ class Settings(BaseSettings):
     review_model_concurrency: int = 4
     allow_fixture_llm: bool = False
     enable_evaluation_overrides: bool = False
-    review_rule_version: str = "review-v1"
+    enable_evaluation_runner: bool = False
+    review_rule_version: str = "review-v5-claim-policy"
 
     log_level: str = "INFO"
     enable_full_debug_payloads: bool = False

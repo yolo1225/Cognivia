@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Iterator
 from typing import Any
 
 from sqlalchemy import select
@@ -204,4 +205,16 @@ def build_resource_tutoring_context(
         [_source_record(item) for item in sources],
         scope_status,
         _needs_assessment(question, session.turn_count),
+    )
+
+
+def stream_resource_answer(
+    db: Session, *, resource: LearningResource, payload: dict[str, Any]
+) -> Iterator[str]:
+    """Stream the same bounded, resource-scoped prose used by the sync path."""
+    system_prompt = _system_prompt(_resource_domain_display_name(db, resource))
+    return gateway.stream_text(
+        model=settings.primary_llm_model,
+        system_prompt=system_prompt,
+        payload=payload,
     )

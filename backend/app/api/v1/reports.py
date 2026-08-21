@@ -156,6 +156,7 @@ def get_learning_report(
     path_refresh_performed = False
     if path is not None and path.needs_refresh and profile is not None:
         refresh_learning_path(
+            db=db,
             path=path,
             profile=profile,
             profile_detail=detail,
