@@ -26,8 +26,12 @@ export interface GenerationTaskResult {
     title: string
     difficulty: number
     review_status: string
+    version?: number
+    is_current?: boolean
     sources: string[]
     knowledge_coverage?: Record<string, string[]>
+    membership_type?: 'generated' | 'inherited'
+    freshness_status?: 'current' | 'knowledge_changed'
   }>
 }
 
@@ -40,9 +44,15 @@ export interface GenerationTaskDetail {
   profile_source?: string | null
   profile_changed_dimensions?: string[]
   status: string
+  domain_code?: string
   progress?: number
   trigger_type?: string
   execution_mode?: string
+  resource_types?: string[]
+  event_type?: string
+  source_task_id?: string | null
+  is_current_package?: boolean
+  inherited_resource_count?: number
   revision_count: number
   decision: string
   package_quality?: ResourceQualityMetrics | null
@@ -54,6 +64,19 @@ export interface GenerationTaskDetail {
     coverage_score?: number
     passed?: boolean
   }
+  source_feedback?: {
+    feedback_type: string
+    triggered_action: string
+    recommended_action?: string | null
+    comment: string
+    rating?: number | null
+  } | null
+  source_resource?: {
+    resource_id: string
+    title: string
+    resource_type: string
+    version: number
+  } | null
   created_at?: string | null
   updated_at?: string | null
   resources: GenerationTaskResult['resources']
@@ -73,17 +96,21 @@ export interface AgentRun {
   status: string
   input_summary: Record<string, unknown>
   output_summary: Record<string, unknown>
+  contract_version?: string
+  prompt_version?: string
+  prompt_hash?: string
   error?: string | null
 }
 
 export function createGenerationTask(
+  domainCode: string,
   profileId?: string,
   learnerId?: string,
   learningGoal = '个性化学习资源生成',
 ) {
   const body: Record<string, unknown> = {
     profile_id: profileId,
-    domain_code: 'ai_app_dev',
+    domain_code: domainCode,
     trigger_type: 'initial_generation',
     execution_mode: 'auto',
     learning_goal: learningGoal,

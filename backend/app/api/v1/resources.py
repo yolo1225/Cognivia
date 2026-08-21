@@ -3,19 +3,37 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.core.db import get_db
-from app.core.security import Principal, get_current_user, principal_learner, require_resource, require_task
-from app.models import GenerationTask, Learner, LearningResource, ReviewReport
+from app.core.security import (
+    Principal,
+    get_current_user,
+    principal_learner,
+    require_resource,
+    require_task,
+)
+from app.models import (
+    GenerationTask,
+    Learner,
+    LearningPackageResource,
+    LearningResource,
+    ReviewReport,
+)
 from app.schemas.common import ApiResponse, ok
 from app.services.demo_flow_service import serialize_resource
-from app.services.feedback_service import record_quick_feedback, serialize_feedback_decision
+from app.services.feedback_service import (
+    FeedbackSourceCompatibilityError,
+    record_quick_feedback,
+    require_v6_feedback_source,
+    serialize_feedback_decision,
+)
 from app.services.learner_service import get_or_create_demo_learner
 from app.services.profile_service import default_profile_for_learner
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.services.resource_export_service import export_resource, resolve_export_path
 from app.workers.generation_worker import run_generation_task
+from app.services.learning_package_service import current_package, ensure_package_members
 
 router = APIRouter()
 
@@ -41,34 +59,57 @@ def list_resources(
         learner_id = task_learner.public_id
     elif principal.role != "admin":
         learner_id = principal.learner_id
-    statement = (
-        select(LearningResource, GenerationTask)
-        .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
-        .order_by(GenerationTask.created_at.desc(), LearningResource.id.asc())
-        .limit(100)
-    )
-    if not include_unpublished:
-        statement = statement.where(
-            LearningResource.is_current.is_(True),
-            LearningResource.review_status == "passed",
+    package_task = task if task_id else None
+    if package_task is None and learner_id:
+        selected_learner = db.scalar(select(Learner).where(Learner.public_id == learner_id))
+        if selected_learner is not None:
+            package_task = current_package(
+                db,
+                learner_id=selected_learner.id,
+                domain_code=domain_code or selected_learner.target_domain,
+            )
+    creation_task = aliased(GenerationTask)
+    if package_task is not None:
+        ensure_package_members(db, package_task)
+        statement = (
+            select(LearningResource, creation_task)
+            .join(
+                LearningPackageResource,
+                LearningPackageResource.resource_id == LearningResource.id,
+            )
+            .join(creation_task, creation_task.id == LearningResource.generation_task_id)
+            .where(LearningPackageResource.package_task_id == package_task.id)
+            .order_by(LearningPackageResource.sort_order, LearningPackageResource.id)
+            .limit(100)
         )
-    if task_id:
-        statement = statement.where(GenerationTask.public_id == task_id)
+    else:
+        statement = (
+            select(LearningResource, creation_task)
+            .join(creation_task, creation_task.id == LearningResource.generation_task_id)
+            .order_by(creation_task.created_at.desc(), LearningResource.id.asc())
+            .limit(100)
+        )
+    if not include_unpublished:
+        statement = statement.where(LearningResource.review_status == "passed")
     if learner_id:
-        statement = statement.join(Learner, Learner.id == GenerationTask.learner_id).where(
+        statement = statement.join(Learner, Learner.id == creation_task.learner_id).where(
             Learner.public_id == learner_id
         )
     if domain_code:
-        statement = statement.where(GenerationTask.domain_code == domain_code)
+        statement = statement.where(creation_task.domain_code == domain_code)
     rows = list(db.execute(statement))
     resource_ids = [resource.id for resource, _ in rows]
-    reports = list(
-        db.scalars(
-            select(ReviewReport)
-            .where(ReviewReport.resource_id.in_(resource_ids))
-            .order_by(ReviewReport.id.desc())
+    reports = (
+        list(
+            db.scalars(
+                select(ReviewReport)
+                .where(ReviewReport.resource_id.in_(resource_ids))
+                .order_by(ReviewReport.id.desc())
+            )
         )
-    ) if resource_ids else []
+        if resource_ids
+        else []
+    )
     report_by_resource = {}
     for report in reports:
         report_by_resource.setdefault(report.resource_id, report)
@@ -87,6 +128,11 @@ def _quality_metrics(report: ReviewReport | None) -> dict[str, Any] | None:
     if report is None:
         return None
     return {
+        "quality_rule_version": report.quality_rule_version,
+        "evaluated_claim_count": report.evaluated_claim_count,
+        "contradicted_claim_count": report.contradicted_claim_count,
+        "evidence_insufficient_claim_count": report.evidence_insufficient_claim_count,
+        "unresolved_claim_count": report.unresolved_claim_count,
         "verifiable_claim_count": report.verifiable_claim_count,
         "hallucinated_claim_count": report.hallucinated_claim_count,
         "hallucination_rate": report.hallucination_rate,
@@ -108,9 +154,7 @@ def submit_resource_feedback(
     principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
     payload = payload or {}
-    allowed_types = {
-        "too_hard", "too_easy", "confusing", "incorrect", "has_error", "helpful"
-    }
+    allowed_types = {"too_hard", "too_easy", "confusing", "incorrect", "has_error", "helpful"}
     feedback_type = str(payload.get("feedback_type", "confusing"))
     if feedback_type not in allowed_types:
         raise HTTPException(status_code=422, detail="unsupported quick feedback type")
@@ -120,15 +164,20 @@ def submit_resource_feedback(
         task_owner = db.get(GenerationTask, resource.generation_task_id)
         learner = db.get(Learner, task_owner.learner_id)
     else:
-        learner = get_or_create_demo_learner(
-            db, principal_learner(principal, requested_learner)
-        )
+        learner = get_or_create_demo_learner(db, principal_learner(principal, requested_learner))
     if resource is None:
         raise HTTPException(status_code=404, detail=f"Resource not found: {resource_id}")
     if feedback_type in {"incorrect", "has_error"}:
-        source_task = db.get(GenerationTask, resource.generation_task_id)
         try:
-            require_candidate_rag(source_task.domain_code if source_task else "ai_app_dev")
+            source_task = require_v6_feedback_source(
+                db,
+                learner=learner,
+                resource=resource,
+            )
+        except FeedbackSourceCompatibilityError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        try:
+            require_candidate_rag(source_task.domain_code)
         except CandidateRagNotReady as exc:
             raise HTTPException(status_code=503, detail=f"{RAG_NOT_READY_CODE}:{exc}") from exc
     profile = default_profile_for_learner(db, learner)
@@ -150,7 +199,11 @@ def submit_resource_feedback(
 
 
 @router.get("/{resource_id}/versions", response_model=ApiResponse)
-def list_resource_versions(resource_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+def list_resource_versions(
+    resource_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
     resource = require_resource(db, principal, resource_id)
     if resource is None:
         raise HTTPException(status_code=404, detail=f"Resource not found: {resource_id}")

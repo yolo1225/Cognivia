@@ -33,9 +33,7 @@ def _get_document(db: Session, document_id: str) -> KnowledgeDocument:
 
 
 @router.get("", response_model=ApiResponse)
-def list_documents(
-    domain_code: str = Query("ai_app_dev"), db: Session = Depends(get_db)
-) -> ApiResponse:
+def list_documents(domain_code: str = Query(...), db: Session = Depends(get_db)) -> ApiResponse:
     documents = list(
         db.scalars(
             select(KnowledgeDocument)
@@ -56,7 +54,9 @@ def list_documents(
                 "ready": statuses["ready"],
                 "processing": statuses["queued"] + statuses["parsing"] + statuses["indexing"],
                 "failed": statuses["failed"],
-                "chunks": sum(document.chunk_count for document in documents if document.status == "ready"),
+                "chunks": sum(
+                    document.chunk_count for document in documents if document.status == "ready"
+                ),
             },
         }
     )
@@ -66,7 +66,7 @@ def list_documents(
 async def upload_document(
     request: Request,
     background_tasks: BackgroundTasks,
-    domain_code: str = Query("ai_app_dev"),
+    domain_code: str = Query(...),
     source_title: str = Query(""),
     license_note: str = Query(""),
     uploaded_by: str = Query("demo_admin"),

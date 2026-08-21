@@ -115,6 +115,14 @@ class MySQLLangGraphCheckpointer(BaseCheckpointSaver):
                 )
                 db.add(row)
             else:
+                previous = dict(row.state_json or {})
+                # Startup recovery is allowed only once across process
+                # restarts. Preserve the counter when LangGraph replaces the
+                # native checkpoint payload after a resumed node succeeds.
+                if "auto_recovery_count" in previous:
+                    payload["auto_recovery_count"] = int(
+                        previous.get("auto_recovery_count") or 0
+                    )
                 row.checkpoint_id = checkpoint_id
                 row.state_json = payload
                 row.status = "saved"

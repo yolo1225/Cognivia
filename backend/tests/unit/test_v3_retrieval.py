@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,29 @@ from app.rag.candidate_manifest import (
     CandidateManifestStore,
     compute_index_version,
 )
-from app.rag.retrieval import CandidateRetriever, RetrievalError
+from app.rag.retrieval import (
+    CandidateRecord,
+    CandidateRetriever,
+    RetrievalError,
+    _record_capabilities,
+)
+from app.agents.domain_evidence_policy import EvidenceCapability
+
+
+def test_indexed_capabilities_override_domain_text_heuristics() -> None:
+    record = CandidateRecord(
+        chunk_id="maritime::chunk::0",
+        document="操作步骤：执行命令并返回固定结果。",
+        metadata={
+            "knowledge_id": "maritime_rule",
+            "evidence_capabilities": "concept",
+        },
+        embedding=None,
+    )
+
+    assert _record_capabilities(record, "maritime") == frozenset(
+        {EvidenceCapability.CONCEPT}
+    )
 
 
 class FakeProvider:
@@ -70,7 +93,12 @@ class FakeCollection:
             "documents": [[record["document"] for record in ranked]],
             "metadatas": [[record["metadata"] for record in ranked]],
             "embeddings": [[record["embedding"] for record in ranked]],
-            "distances": [[1 - sum(a * b for a, b in zip(query, record["embedding"], strict=True)) for record in ranked]],
+            "distances": [
+                [
+                    1 - sum(a * b for a, b in zip(query, record["embedding"], strict=True))
+                    for record in ranked
+                ]
+            ],
         }
 
 
@@ -120,13 +148,16 @@ def _record(knowledge_id: str, index: int, vector: list[float], *, source=True) 
             "source_url": "https://example.com" if source else "",
             "license_note": "Official documentation" if source else "",
             "chunk_index": index,
+            "heading_path": "[]",
             "embedding_model": "test-embedding",
             "embedding_dimensions": 3,
         },
     }
 
 
-def _manifest_store(tmp_path: Path, records: list[dict[str, Any]]) -> tuple[CandidateManifestStore, dict[str, Any]]:
+def _manifest_store(
+    tmp_path: Path, records: list[dict[str, Any]]
+) -> tuple[CandidateManifestStore, dict[str, Any]]:
     source_version = "sha256:" + "1" * 64
     metadata = {
         "domain_code": "ai_app_dev",
@@ -194,8 +225,23 @@ def _input(
                 "profile_id": "profile-v3",
                 "profile_version": 1,
                 "profile_type": "beginner",
-                "ability_scores": {"theory": 30, "practice": 30, "problem_solving": 30, "knowledge_breadth": 30, "learning_speed": 30},
-                "weak_knowledge": [{"knowledge_id": "weak-1", "name": "Weak name", "category": "Weak category", "weakness_level": 4, "mastery_type": "unmastered", "reason": "diagnosis"}],
+                "ability_scores": {
+                    "theory": 30,
+                    "practice": 30,
+                    "problem_solving": 30,
+                    "knowledge_breadth": 30,
+                    "learning_speed": 30,
+                },
+                "weak_knowledge": [
+                    {
+                        "knowledge_id": "weak-1",
+                        "name": "Weak name",
+                        "category": "Weak category",
+                        "weakness_level": 4,
+                        "mastery_type": "unmastered",
+                        "reason": "diagnosis",
+                    }
+                ],
             },
             "retrieval_plan": {
                 "strategy": "remedial",
@@ -219,6 +265,7 @@ def test_practice_retrieval_prefers_operational_chunk_for_same_knowledge(
     conceptual = _record("practice-target", 0, [1.0, 0.0, 0.0])
     operational = _record("practice-target", 1, [0.7, 0.0, 0.0])
     operational["document"] = "## 操作步骤\n1. 检查以下配置文件。"
+    operational["metadata"]["heading_path"] = json.dumps(["操作步骤"], ensure_ascii=False)
     records = [conceptual, operational]
     with sessions() as db:
         db.add(_item("practice-target"))
@@ -236,14 +283,75 @@ def test_practice_retrieval_prefers_operational_chunk_for_same_knowledge(
     assert not any("practice_operation_evidence_missing" in item for item in result.warnings)
 
 
-def _retriever(tmp_path: Path, db, records, *, mode="full", vector=None) -> tuple[CandidateRetriever, FakeProvider]:
+def test_practice_retrieval_prefers_operation_heading_over_error_keyword_overlap(
+    tmp_path: Path,
+) -> None:
+    sessions = _session()
+    operation = _record("practice-target", 4, [0.7, 0.0, 0.0])
+    operation["document"] = "1. 发起最小真实调用，并记录响应结构。"
+    operation["metadata"]["heading_path"] = json.dumps(["操作步骤"], ensure_ascii=False)
+    common_error = _record("practice-target", 6, [1.0, 0.0, 0.0])
+    common_error["document"] = "常见错误包括：调用请求时记录完整隐私数据。"
+    common_error["metadata"]["heading_path"] = json.dumps(["常见错误"], ensure_ascii=False)
+    records = [operation, common_error]
+    with sessions() as db:
+        db.add(_item("practice-target"))
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        result = retriever.execute(
+            _input(
+                priority=["practice-target"],
+                n_results=1,
+                resource_types=["practice_guide"],
+            )
+        )
+
+    assert result.chunks[0].chunk_id == "practice-target::chunk::4"
+
+
+def test_practice_retrieval_keeps_late_operational_explicit_chunk(tmp_path: Path) -> None:
+    sessions = _session()
+    records = [
+        _record("long-practice-target", index, [1.0 - index * 0.05, 0.0, 0.0]) for index in range(5)
+    ]
+    records[4]["document"] = "标题：调用输入 > 操作步骤\n\n" "1. 对照目标服务文档列出必需配置。"
+    records[4]["metadata"]["heading_path"] = json.dumps(
+        ["调用输入", "操作步骤"], ensure_ascii=False
+    )
+    with sessions() as db:
+        db.add(_item("long-practice-target"))
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        result = retriever.execute(
+            _input(
+                priority=["long-practice-target"],
+                n_results=1,
+                resource_types=["practice_guide"],
+            )
+        )
+
+    assert result.chunks[0].chunk_id == "long-practice-target::chunk::4"
+    assert not any("practice_operation_evidence_missing" in item for item in result.warnings)
+
+
+def _retriever(
+    tmp_path: Path, db, records, *, mode="full", vector=None
+) -> tuple[CandidateRetriever, FakeProvider]:
     store, metadata = _manifest_store(tmp_path, records)
     collection = FakeCollection("knowledge_ai_app_dev_candidate_test", records, metadata)
     provider = FakeProvider(vector)
-    return CandidateRetriever(db=db, chroma_client=FakeClient(collection), embedding_provider=provider, manifest_store=store, mode=mode), provider
+    return CandidateRetriever(
+        db=db,
+        chroma_client=FakeClient(collection),
+        embedding_provider=provider,
+        manifest_store=store,
+        mode=mode,
+    ), provider
 
 
-def test_v3_retrieval_combines_explicit_relation_and_semantic_with_real_cosine(tmp_path: Path) -> None:
+def test_v3_retrieval_combines_explicit_relation_and_semantic_with_real_cosine(
+    tmp_path: Path,
+) -> None:
     sessions = _session()
     records = [
         _record("priority", 0, [0.5, 0.5, 0.0]),
@@ -253,14 +361,29 @@ def test_v3_retrieval_combines_explicit_relation_and_semantic_with_real_cosine(t
         _record("semantic", 0, [0.9, 0.0, 0.0]),
     ]
     with sessions() as db:
-        priority, prerequisite, related, dependent, semantic = [_item(value) for value in ("priority", "prerequisite", "related", "dependent", "semantic")]
+        priority, prerequisite, related, dependent, semantic = [
+            _item(value)
+            for value in ("priority", "prerequisite", "related", "dependent", "semantic")
+        ]
         db.add_all([priority, prerequisite, related, dependent, semantic])
         db.flush()
-        db.add_all([
-            KnowledgeRelation(source_item_id=prerequisite.id, target_item_id=priority.id, relation_type="prerequisite"),
-            KnowledgeRelation(source_item_id=priority.id, target_item_id=dependent.id, relation_type="prerequisite"),
-            KnowledgeRelation(source_item_id=priority.id, target_item_id=related.id, relation_type="related"),
-        ])
+        db.add_all(
+            [
+                KnowledgeRelation(
+                    source_item_id=prerequisite.id,
+                    target_item_id=priority.id,
+                    relation_type="prerequisite",
+                ),
+                KnowledgeRelation(
+                    source_item_id=priority.id,
+                    target_item_id=dependent.id,
+                    relation_type="prerequisite",
+                ),
+                KnowledgeRelation(
+                    source_item_id=priority.id, target_item_id=related.id, relation_type="related"
+                ),
+            ]
+        )
         db.commit()
         retriever, provider = _retriever(tmp_path, db, records)
         result = retriever.execute(_input(priority=["priority"], prerequisite=["prerequisite"]))
@@ -287,7 +410,11 @@ def test_v3_retrieval_keeps_revision_query_and_reports_explicit_budget(tmp_path:
         result = retriever.execute(
             _input(
                 priority=["a", "b", "c"],
-                revision={"revision_count": 1, "query_terms": ["source dispute"], "required_changes": ["check source"]},
+                revision={
+                    "revision_count": 1,
+                    "query_terms": ["source dispute"],
+                    "required_changes": ["check source"],
+                },
                 purpose="source_verification",
                 n_results=2,
             )
@@ -299,7 +426,9 @@ def test_v3_retrieval_keeps_revision_query_and_reports_explicit_budget(tmp_path:
     assert "explicit_plan_exceeds_output_budget" in result.warnings
 
 
-def test_v3_retrieval_excludes_missing_source_and_validates_collection_metadata(tmp_path: Path) -> None:
+def test_v3_retrieval_excludes_missing_source_and_validates_collection_metadata(
+    tmp_path: Path,
+) -> None:
     sessions = _session()
     records = [_record("bad-source", 0, [1.0, 0.0, 0.0], source=False)]
     with sessions() as db:
@@ -315,7 +444,9 @@ def test_v3_retrieval_excludes_missing_source_and_validates_collection_metadata(
         metadata["distance_metric"] = "l2"
         bad = CandidateRetriever(
             db=db,
-            chroma_client=FakeClient(FakeCollection("knowledge_ai_app_dev_candidate_test", records, metadata)),
+            chroma_client=FakeClient(
+                FakeCollection("knowledge_ai_app_dev_candidate_test", records, metadata)
+            ),
             embedding_provider=FakeProvider(),
             manifest_store=store,
         )
@@ -334,4 +465,16 @@ def test_v3_retrieval_ablation_modes_do_not_change_contract_shape(tmp_path: Path
             result = retriever.execute(_input(priority=["priority"]))
             assert result.task_id == "task-v3-1"
             assert len(result.chunks) <= 12
-    assert result.model_dump()["contract_version"] == "agent-contract-v5"
+    assert result.model_dump()["contract_version"] == "agent-contract-v6"
+
+
+def test_v3_retrieval_rejects_cross_domain_chunk(tmp_path: Path) -> None:
+    sessions = _session()
+    records = [_record("priority", 0, [1.0, 0.0, 0.0])]
+    records[0]["metadata"]["domain_code"] = "other_domain"
+    with sessions() as db:
+        db.add(_item("priority"))
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        with pytest.raises(RetrievalError, match="cross-domain chunk rejected"):
+            retriever.execute(_input(priority=["priority"]))

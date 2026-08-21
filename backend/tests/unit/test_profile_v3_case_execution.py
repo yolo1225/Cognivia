@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from app.agents.contracts import AnalyzeProfileInput
 from app.scripts.evaluate_profile_v3 import evaluate_profile_v3
-from app.services.profile_analysis_service import analyze_profile
+from app.services.profile_analysis_service import analyze_profile as _analyze_profile
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.services.profile_v3_fixture_service import rendered_cases
+
+
+def analyze_profile(node_input):
+    return _analyze_profile(node_input, config=AI_APP_DEV_PROFILE_V2)
 
 
 def test_profile_v3_cases_match_frozen_algorithm_baseline() -> None:

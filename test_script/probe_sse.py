@@ -77,7 +77,7 @@ def main() -> None:
                 completed_steps.append(step)
             if step == "review_resource":
                 review_summary = dict(payload.get("payload") or {})
-        if name in {"task_completed", "task_failed", "manual_review_required"}:
+        if name in {"task_completed", "task_failed"}:
             terminal = {"event": name, **payload}
             break
 

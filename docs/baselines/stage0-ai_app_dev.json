@@ -1,0 +1,174 @@
+{
+  "schema_version": "stage0-baseline-v1",
+  "status": "passed",
+  "domain_code": "ai_app_dev",
+  "captured_at": "2026-08-19T09:17:44.3501677Z",
+  "git": {
+    "commit": "ef2f22616bad865df089f44676f4ffd4e7d42568",
+    "working_tree_clean": true
+  },
+  "fingerprints": {
+    ".env.example": "100c9fe75dd5ecb4fef1f772eaea9565f8352d3cd543d5d7488d08c0de660318",
+    "data/evaluation_cases/p0_cases.json": "b6a10b9f753c63d1f5352efef4b546446153a31796143b3c829a24eff5986f6a",
+    "backend/pyproject.toml": "57e83c9232e6e047de9274deaa049d34219f464e6cc985285581b5249b28cd82",
+    "data/seed/diagnostic_questions.json": "1b2fdd7b74d6d35486236257a8afdc8cd04cafdeead24dc3e83bff08ecfd9e2f",
+    "docker-compose.yml": "cd435a782370ac297bd63cba339bbaada583235ef8abb0a4b93ad0f84e4577f4",
+    "data/seed/ai_app_dev_domain.json": "ab8f4bdaac9b2e4157dabf3296301f16832e9afd8d89c5a9201c7b0f155709e4",
+    "data/seed/knowledge_items.json": "00cda887355e232718f5b638a18bf3023cb5d4bb769cc175ba554e16a4a5b0cb",
+    "test_script/demo_acceptance.py": "97bd1bb32d1f6d268c5b58891c6b0e4482f92dc2f02947dc86c664846603c48b",
+    "scripts/stage0-baseline.ps1": "89c4ec6aa7e89a8f9548c0f4310485f388fd1bd403828090147a21b6e3bfa194",
+    "AGENTS.md": "94d1b33f240f3cf649f904499abc2b09b0856b3bac9c3a5216ed1a793e66aae9"
+  },
+  "environment": {
+    "frontend_routes": {
+      "/report": 200,
+      "/metrics": 200,
+      "/resources": 200,
+      "/dashboard": 200,
+      "/domain-hub": 200,
+      "/": 200
+    },
+    "database_status": "ok",
+    "chroma_status": "ok",
+    "fixture_enabled": false,
+    "evaluation_overrides_enabled": false,
+    "generation_model": "qwen-plus",
+    "primary_review_model": "qwen-max",
+    "secondary_review_model": "qwen-plus",
+    "rag": {
+      "ready": true,
+      "source_data_version": "sha256:a02334aa3f59325c21cfa48ecb58cf36b3e4056f5fffea01f890943c8508e5ba",
+      "index_version": "sha256:3a6b2f4289f340e54fa6fc300c47d0e709bda33e6bb4c924fb4b7e4a5dcb613e",
+      "embedding_model": "qwen3.7-text-embedding",
+      "embedding_dimensions": 1024
+    }
+  },
+  "seed": {
+    "knowledge_item_count": 50,
+    "diagnostic_question_count": 60,
+    "missing_source_title_count": 0
+  },
+  "formal_evaluation": {
+    "report_path": "reports/evaluation/latest-live.json",
+    "run_id": "live-formal-20260819T014223Z",
+    "case_count": 50,
+    "evaluated_case_count": 50,
+    "accepted": true,
+    "case_set_sha256": "sha256:c028abd14fb55fee666f2ee5bbe27a997c9f2636d92b0eacfbbf19c6f549048d",
+    "evaluation_overrides_enabled": true,
+    "role": "versioned formal evaluation baseline only; not normal-demo override proof",
+    "latency_ms": {
+      "p50": 87587,
+      "p95": 206814
+    },
+    "agent_latency_ms": {
+      "analyze_profile": {
+        "p50": 21,
+        "p95": 35
+      },
+      "finalize_task": {
+        "p50": 60,
+        "p95": 167
+      },
+      "generate_resource": {
+        "p50": 58983,
+        "p95": 102066
+      },
+      "interpret_feedback": {
+        "p50": 23021,
+        "p95": 28484
+      },
+      "prepare_task": {
+        "p50": 24,
+        "p95": 42
+      },
+      "retrieve_knowledge": {
+        "p50": 471,
+        "p95": 1018
+      },
+      "review_resource": {
+        "p50": 21072,
+        "p95": 59336
+      }
+    }
+  },
+  "demo_acceptance": {
+    "status": "passed",
+    "suite": "stage0",
+    "provider_mode": "live",
+    "model_configuration": {
+      "generation_model": "qwen-plus",
+      "primary_review_model": "qwen-max",
+      "secondary_review_model": "qwen-plus"
+    },
+    "evaluated_at": "2026-08-19T17:17:44.292155+08:00",
+    "branches": [
+      {
+        "branch_id": "initial_generation",
+        "title": "首次生成三类资源",
+        "status": "passed",
+        "task_id": "task_0dc6d1fd9b8c",
+        "thread_id": "task_0dc6d1fd9b8c",
+        "resource_count": 3,
+        "resource_types": [
+          "graded_quiz",
+          "lecture",
+          "practice_guide"
+        ],
+        "review_model_roles": [
+          "primary_review_model",
+          "secondary_review_model"
+        ],
+        "review_call_count": 20,
+        "profile_update_required": [
+          false
+        ],
+        "arbitration_count": 2,
+        "revision_count": 1,
+        "duration_ms": 198144
+      },
+      {
+        "branch_id": "no_change",
+        "title": "证据不足，仅解释且画像不变",
+        "status": "passed",
+        "session_id": "tutor_0725379b034a",
+        "decision": "no_change",
+        "profile_update_required": false,
+        "feedback_task_count": 0,
+        "path_completed_node_count": 0
+      },
+      {
+        "branch_id": "incorrect_review",
+        "title": "错误反馈触发资源复核",
+        "status": "passed",
+        "task_id": "task_48f11f3a070a",
+        "thread_id": "task_48f11f3a070a",
+        "resource_count": 3,
+        "resource_types": [
+          "graded_quiz",
+          "lecture",
+          "practice_guide"
+        ],
+        "review_model_roles": [
+          "primary_review_model",
+          "secondary_review_model"
+        ],
+        "review_call_count": 2,
+        "profile_update_required": [
+          false
+        ],
+        "arbitration_count": 0,
+        "revision_count": 0,
+        "duration_ms": 54101,
+        "recommended_action": "review",
+        "feedback_task_count": 1,
+        "path_completed_node_count": 0
+      }
+    ]
+  },
+  "commands": [
+    ".\\\\scripts\\\\stage0-baseline.ps1 capture",
+    "python test_script/demo_acceptance.py --suite stage0",
+    ".\\\\scripts\\\\stage0-baseline.ps1 verify"
+  ]
+}

@@ -30,7 +30,12 @@ def api_error_response(
 
 async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     message = str(exc.detail) if exc.detail else "HTTP error"
-    code = message if message in {"PROFILE_NOT_READY", "INITIAL_CONTEXT_REQUIRED"} else f"http_{exc.status_code}"
+    preserved_codes = {
+        "INITIAL_CONTEXT_REQUIRED",
+        "PROFILE_NOT_READY",
+        "V6_FULL_REGENERATION_REQUIRED",
+    }
+    code = message if message in preserved_codes else f"http_{exc.status_code}"
     return api_error_response(
         status_code=exc.status_code,
         code=code,

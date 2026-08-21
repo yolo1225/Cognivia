@@ -18,7 +18,15 @@ from app.agents.contracts import (
     ResourceType,
     TaskContext,
 )
-from app.services.profile_analysis_service import ProfileAnalysisError, analyze_profile
+from app.services.profile_analysis_service import (
+    ProfileAnalysisError,
+    analyze_profile as _analyze_profile,
+)
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
+
+
+def analyze_profile(node_input):
+    return _analyze_profile(node_input, config=AI_APP_DEV_PROFILE_V2)
 
 
 def _initial_input() -> AnalyzeProfileInput:

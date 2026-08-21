@@ -4,6 +4,12 @@
   "domain_schema_version": "1.0",
   "resource_types": ["lecture", "practice_guide", "graded_quiz"],
   "ability_dimensions": ["theory", "practice", "problem_solving", "breadth", "learning_speed"],
+  "learning_directions": [
+    {"value": "llm_application", "label": "大模型应用开发", "description": "模型调用、接口与应用流程", "match_tags": ["llm", "model", "api", "workflow", "overview"]},
+    {"value": "prompt_engineering", "label": "Prompt 工程", "description": "指令、上下文与结构化输出", "match_tags": ["prompt", "context", "structured", "json"]},
+    {"value": "rag_knowledge_base", "label": "RAG 知识库构建", "description": "检索、向量和知识管理", "match_tags": ["rag", "retrieval", "embedding", "vector", "knowledge-base"]},
+    {"value": "agent_orchestration", "label": "Agent 编排", "description": "工具调用、多智能体与工作流", "match_tags": ["agent", "tool", "orchestration", "workflow", "planning"]}
+  ],
   "mvp_targets": {
     "knowledge_items": 50,
     "diagnostic_questions": 60,

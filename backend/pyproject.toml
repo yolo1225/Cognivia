@@ -36,8 +36,11 @@ dev = [
 line-length = 100
 target-version = "py312"
 
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [tool.ruff.lint.per-file-ignores]
-"tests/contracts/test_agent_contract_v3.py" = ["E402"]
+"tests/contracts/test_agent_contract_v6.py" = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

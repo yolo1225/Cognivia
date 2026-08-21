@@ -1,21 +1,93 @@
-from fastapi import APIRouter, Depends
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.errors import api_error_response
+from app.core.security import Principal, get_current_user, require_admin
 from app.models import (
     DiagnosticQuestion,
-    Domain,
     GenerationTask,
     KnowledgeItem,
     KnowledgeDocument,
     KnowledgeRelation,
     LearningResource,
 )
-from app.rag.vector_store import VectorStore
 from app.schemas.common import ApiResponse, ok
+from app.services.domain_api_service import DomainApiService, DomainServiceError
 
 router = APIRouter()
+
+
+class LearningDirectionBody(BaseModel):
+    value: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
+    label: str = Field(min_length=1, max_length=64)
+    description: str = Field(default="", max_length=255)
+    match_tags: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("value", "label", "description", mode="before")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return str(value).strip()
+
+    @field_validator("match_tags")
+    @classmethod
+    def normalize_tags(cls, value: list[str]) -> list[str]:
+        normalized = [str(item).strip().lower() for item in value if str(item).strip()]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("duplicate match_tags")
+        return normalized
+
+
+class DomainCreateBody(BaseModel):
+    domain_code: str = Field(min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    name: str = Field(min_length=1, max_length=128)
+    description: str = Field(default="", max_length=500)
+    learning_directions: list[LearningDirectionBody] = Field(min_length=1, max_length=6)
+
+    @field_validator("domain_code", "name", "description", mode="before")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        return str(value).strip()
+
+    @field_validator("learning_directions")
+    @classmethod
+    def unique_directions(cls, value: list[LearningDirectionBody]) -> list[LearningDirectionBody]:
+        keys = [item.value for item in value]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate learning direction")
+        return value
+
+
+class DomainPatchBody(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=500)
+    learning_directions: list[LearningDirectionBody] | None = Field(
+        default=None, min_length=1, max_length=6
+    )
+
+    @field_validator("name", "description", mode="before")
+    @classmethod
+    def strip_optional_text(cls, value: Any) -> Any:
+        return str(value).strip() if value is not None else None
+
+    @field_validator("learning_directions")
+    @classmethod
+    def unique_optional_directions(
+        cls, value: list[LearningDirectionBody] | None
+    ) -> list[LearningDirectionBody] | None:
+        if value is not None and len({item.value for item in value}) != len(value):
+            raise ValueError("duplicate learning direction")
+        return value
+
+
+def _service_error(exc: DomainServiceError) -> HTTPException:
+    code = str(exc)
+    status = 404 if code == "DOMAIN_NOT_FOUND" else 409
+    return HTTPException(status_code=status, detail=code)
 
 
 @router.get("/{domain_code}/stats", response_model=ApiResponse)
@@ -25,17 +97,17 @@ def get_domain_stats(
 ) -> ApiResponse:
     knowledge_count = (
         db.scalar(
-            select(func.count()).select_from(KnowledgeItem).where(
-                KnowledgeItem.domain_code == domain_code
-            )
+            select(func.count())
+            .select_from(KnowledgeItem)
+            .where(KnowledgeItem.domain_code == domain_code)
         )
         or 0
     )
     question_count = (
         db.scalar(
-            select(func.count()).select_from(DiagnosticQuestion).where(
-                DiagnosticQuestion.domain_code == domain_code
-            )
+            select(func.count())
+            .select_from(DiagnosticQuestion)
+            .where(DiagnosticQuestion.domain_code == domain_code)
         )
         or 0
     )
@@ -50,7 +122,9 @@ def get_domain_stats(
     )
     pending_embedding_count = (
         db.scalar(
-            select(func.count()).select_from(KnowledgeItem).where(
+            select(func.count())
+            .select_from(KnowledgeItem)
+            .where(
                 KnowledgeItem.domain_code == domain_code,
                 KnowledgeItem.needs_reembedding.is_(True),
             )
@@ -97,119 +171,118 @@ def get_domain_stats(
 
 
 @router.get("", response_model=ApiResponse)
-def list_domains(db: Session = Depends(get_db)) -> ApiResponse:
-    domains = list(db.scalars(select(Domain).order_by(Domain.domain_code)))
-    return ok(
-        [
-            {
-                "domain_code": domain.domain_code,
-                "name": domain.name,
-                "domain_schema_version": domain.schema_version,
-                "status": "active",
-                "config": domain.config_json,
-            }
-            for domain in domains
-        ]
-    )
+def list_domains(
+    db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)
+) -> ApiResponse:
+    return ok(DomainApiService(db).list(ready_only=principal.role != "admin"))
+
+
+@router.post("", response_model=ApiResponse)
+def create_domain(
+    payload: DomainCreateBody,
+    db: Session = Depends(get_db),
+    _principal: Principal = Depends(require_admin),
+) -> ApiResponse:
+    try:
+        return ok(
+            DomainApiService(db).create(
+                domain_code=payload.domain_code,
+                name=payload.name,
+                description=payload.description,
+                learning_directions=[item.model_dump() for item in payload.learning_directions],
+            )
+        )
+    except DomainServiceError as exc:
+        raise _service_error(exc) from exc
 
 
 @router.get("/{domain_code}/validate", response_model=ApiResponse)
 def validate_domain_config(
     domain_code: str,
     db: Session = Depends(get_db),
+    _principal: Principal = Depends(require_admin),
 ) -> ApiResponse:
-    knowledge_count = (
-        db.scalar(
-            select(func.count()).select_from(KnowledgeItem).where(KnowledgeItem.domain_code == domain_code)
-        )
-        or 0
-    )
-    question_count = (
-        db.scalar(
-            select(func.count())
-            .select_from(DiagnosticQuestion)
-            .where(DiagnosticQuestion.domain_code == domain_code)
-        )
-        or 0
-    )
-    documents = list(
-        db.scalars(
-            select(KnowledgeDocument).where(
-                KnowledgeDocument.domain_code == domain_code,
-                KnowledgeDocument.status != "deleted",
+    return ok(DomainApiService(db).validate(domain_code))
+
+
+@router.get("/{domain_code}/readiness", response_model=ApiResponse)
+def get_domain_readiness(
+    domain_code: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    try:
+        service = DomainApiService(db)
+        domain = service.require(domain_code)
+        if principal.role != "admin" and domain.status != "ready":
+            raise HTTPException(status_code=403, detail="当前领域尚未向学习者开放")
+        return ok(service.readiness(domain_code))
+    except DomainServiceError as exc:
+        raise _service_error(exc) from exc
+
+
+@router.post("/{domain_code}/publish", response_model=ApiResponse)
+def publish_domain(
+    domain_code: str,
+    db: Session = Depends(get_db),
+    _principal: Principal = Depends(require_admin),
+) -> ApiResponse:
+    service = DomainApiService(db)
+    try:
+        return ok(service.publish(domain_code))
+    except DomainServiceError as exc:
+        if str(exc) == "DOMAIN_READINESS_FAILED":
+            return api_error_response(
+                status_code=409,
+                code=str(exc),
+                message="领域尚未通过发布门禁",
+                details={"readiness": service.readiness(domain_code)},
             )
-        )
-    )
-    vector_store = VectorStore()
-    vector_count = vector_store.get_collection(domain_code).count()
+        raise _service_error(exc) from exc
 
-    targets = {
-        "knowledge_items": 50,
-        "diagnostic_questions": 60,
-        "vector_chunks": knowledge_count,
-    }
-    issues = []
-    if knowledge_count < targets["knowledge_items"]:
-        issues.append(
-            {
-                "level": "warning",
-                "message": "知识点数量未达到 M1 目标",
-                "actual": knowledge_count,
-                "target": targets["knowledge_items"],
-            }
-        )
-    if question_count < targets["diagnostic_questions"]:
-        issues.append(
-            {
-                "level": "warning",
-                "message": "诊断题数量未达到 M1 目标",
-                "actual": question_count,
-                "target": targets["diagnostic_questions"],
-            }
-        )
-    ready_document_count = sum(item.status == "ready" for item in documents)
-    failed_document_count = sum(item.status == "failed" for item in documents)
-    processing_document_count = sum(
-        item.status in {"queued", "parsing", "indexing"} for item in documents
-    )
-    if ready_document_count == 0:
-        issues.append(
-            {
-                "level": "warning",
-                "message": "当前领域没有已完成索引的知识库文件",
-                "actual": 0,
-                "target": 1,
-            }
-        )
-    if failed_document_count or processing_document_count:
-        issues.append(
-            {
-                "level": "warning",
-                "message": "知识库存在处理失败或尚未完成的文件",
-                "actual": failed_document_count + processing_document_count,
-                "target": 0,
-            }
-        )
-    if vector_count < targets["vector_chunks"]:
-        issues.append(
-            {
-                "level": "warning",
-                "message": "ChromaDB 向量数量少于知识切片数量",
-                "actual": vector_count,
-                "target": targets["vector_chunks"],
-            }
-        )
 
-    return ok(
-        {
-            "domain_code": domain_code,
-            "passed": not issues,
-            "counts": {
-                "knowledge_items": knowledge_count,
-                "diagnostic_questions": question_count,
-                "chroma_vectors": vector_count,
-            },
-            "targets": targets,
-            "issues": issues,
-        }
-    )
+@router.post("/{domain_code}/disable", response_model=ApiResponse)
+def disable_domain(
+    domain_code: str,
+    db: Session = Depends(get_db),
+    _principal: Principal = Depends(require_admin),
+) -> ApiResponse:
+    try:
+        return ok(DomainApiService(db).disable(domain_code))
+    except DomainServiceError as exc:
+        raise _service_error(exc) from exc
+
+
+@router.get("/{domain_code}", response_model=ApiResponse)
+def get_domain(
+    domain_code: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    service = DomainApiService(db)
+    try:
+        detail = service.detail(domain_code)
+    except DomainServiceError as exc:
+        raise _service_error(exc) from exc
+    if principal.role != "admin" and detail["status"] != "ready":
+        raise HTTPException(status_code=404, detail="DOMAIN_NOT_FOUND")
+    return ok(detail)
+
+
+@router.patch("/{domain_code}", response_model=ApiResponse)
+def patch_domain(
+    domain_code: str,
+    payload: DomainPatchBody,
+    db: Session = Depends(get_db),
+    _principal: Principal = Depends(require_admin),
+) -> ApiResponse:
+    values = payload.model_dump(exclude_unset=True)
+    if "learning_directions" in values:
+        values["learning_directions"] = [
+            item.model_dump() if isinstance(item, LearningDirectionBody) else item
+            for item in (payload.learning_directions or [])
+        ]
+    try:
+        return ok(DomainApiService(db).update(domain_code, **values))
+    except DomainServiceError as exc:
+        raise _service_error(exc) from exc

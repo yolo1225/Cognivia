@@ -1,6 +1,6 @@
 {
-  "schema_version": "v3",
-  "active_file": "v3/p0_cases.json",
+  "schema_version": "v4",
+  "active_file": "v4/p0_cases.json",
   "legacy_files": ["p0_cases.json"],
-  "note": "p0_cases.json 是旧 AIAPP-Kxxx ID 基线；真实 V3 验收仅使用 active_file。"
+  "note": "V4 将实操指南目标限制为具备 operation 证据能力的知识点，并固定覆盖40次首次生成、5次反馈修订和5次挑战任务。"
 }

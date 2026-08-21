@@ -109,7 +109,7 @@ def test_rag_dataset_is_isolated_from_existing_p0_loader_directory() -> None:
 
     assert len(p0_payload["cases"]) == 50
     assert len(loaded_p0_cases) == 50
-    assert manifest["active_file"] == "v3/p0_cases.json"
+    assert manifest["active_file"] == "v4/p0_cases.json"
     assert DEFAULT_DATA_DIR.parent != p0_path.parent
 
 

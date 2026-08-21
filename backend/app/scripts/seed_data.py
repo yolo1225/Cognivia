@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.profile_analysis_config import AI_APP_DEV_ABILITY_WEIGHTS, MASTERY_BASELINES
 from app.core.db import SessionLocal
 from app.models import (
     DiagnosticQuestion,
@@ -71,11 +72,37 @@ def seed_domain(db: Session) -> Domain:
         {
             "domain_code": payload["domain_code"],
             "name": payload["name"],
+            "status": "ready",
             "schema_version": payload.get("domain_schema_version", "1.0"),
             "config_json": {
                 "resource_types": payload.get("resource_types", []),
                 "ability_dimensions": payload.get("ability_dimensions", []),
+                "learning_directions": payload.get("learning_directions", []),
                 "mvp_targets": payload.get("mvp_targets", {}),
+                "readiness_policy": {
+                    "minimum_published_knowledge": 50,
+                    "minimum_diagnostic_questions": 60,
+                },
+                "profile_policy": {
+                    "version": "ai_app_dev_profile_v2",
+                    "ability_dimensions": [
+                        "theory",
+                        "practice",
+                        "problem_solving",
+                        "knowledge_breadth",
+                        "learning_speed",
+                    ],
+                    "mastery_thresholds": [0.4, 0.6, 0.8],
+                    "mastery_baselines": MASTERY_BASELINES,
+                    "prior_mastery": 0.5,
+                    "prior_weight": 1.0,
+                    "minimum_effective_change": 5,
+                    "max_ability_change_per_update": 10,
+                    "max_weakness_level_change_per_update": 1,
+                    "default_n_results": 8,
+                    "multi_priority_remedial_n_results": 10,
+                    "maximum_n_results": 12,
+                },
             },
         },
     )
@@ -116,11 +143,14 @@ def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
             "category": payload["category"],
             "difficulty": payload.get("difficulty", 1),
             "tags_json": payload.get("tags", []),
+            "evidence_capabilities_json": payload.get("evidence_capabilities", ["concept"]),
             "content_md": payload["content"],
             "source_title": payload.get("source_title", "自建 AI 应用开发实训知识库"),
             "source_url": payload.get("source_url"),
             "license_note": payload.get("license_note", "team-authored"),
             "source_document_id": seed_document.id,
+            "ability_weights_json": AI_APP_DEV_ABILITY_WEIGHTS[public_id],
+            "status": "published",
         }
         item = db.scalar(select(KnowledgeItem).where(KnowledgeItem.public_id == public_id))
         if item is None:
@@ -182,9 +212,7 @@ def seed_diagnostic_questions(
             "explanation",
             f"正确答案为“{correct_text}”，对应知识点“{item.name}”的核心要求。",
         )
-        answer_key.setdefault(
-            "source_locator", f"knowledge:{item.public_id}#chunk=0"
-        )
+        answer_key.setdefault("source_locator", f"knowledge:{item.public_id}#chunk=0")
         question = upsert_by_field(
             db,
             DiagnosticQuestion,
@@ -220,7 +248,8 @@ def run_seed() -> dict[str, int]:
         db.commit()
 
         return {
-            "domains": db.scalar(select(Domain).where(Domain.domain_code == "ai_app_dev")) is not None,
+            "domains": db.scalar(select(Domain).where(Domain.domain_code == "ai_app_dev"))
+            is not None,
             "knowledge_items": len(knowledge_items),
             "diagnostic_questions": len(questions),
             "learners": 0,

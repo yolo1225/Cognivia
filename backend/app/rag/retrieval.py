@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import math
 import hashlib
+import json
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Iterable
@@ -19,7 +20,11 @@ from app.agents.contracts import (
     ResourceType,
     SourceRef,
 )
-from app.agents.domain_evidence_policy import EvidenceCapability, get_domain_evidence_policy
+from app.agents.domain_evidence_policy import (
+    EvidenceCapability,
+    get_domain_evidence_policy,
+    normalize_evidence_capabilities,
+)
 from app.models import DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.rag.candidate_manifest import (
     CandidateIndexManifest,
@@ -30,7 +35,11 @@ from app.rag.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 
 
 ALGORITHM_VERSION = "v3-candidate-retrieval-1.0"
-MAX_EXPLICIT_CHUNKS = 3
+# Explicit targets are already bounded by the contract. Keep enough chunks to
+# include later heading sections such as "操作步骤" and "验收标准" before
+# capability-aware ranking; truncating to the first three made valid practice
+# evidence disappear for longer knowledge items.
+MAX_EXPLICIT_CHUNKS = 12
 MAX_RELATION_CANDIDATES = 24
 MAX_RELATIONS_PER_SEED = 2
 MATCH_PRECEDENCE = {
@@ -88,6 +97,24 @@ class CandidateRecord:
     @property
     def knowledge_id(self) -> str:
         return str(self.metadata.get("knowledge_id", ""))
+
+
+def _record_capabilities(
+    record: CandidateRecord, domain_code: str
+) -> frozenset[EvidenceCapability]:
+    """Prefer indexed, reviewed capabilities; infer only for legacy records."""
+    raw = record.metadata.get("evidence_capabilities")
+    if isinstance(raw, str):
+        declared = [item.strip() for item in raw.split(",") if item.strip()]
+    elif isinstance(raw, list):
+        declared = raw
+    else:
+        declared = []
+    if declared:
+        return frozenset(
+            EvidenceCapability(value) for value in normalize_evidence_capabilities(declared)
+        )
+    return get_domain_evidence_policy(domain_code).classify_content(record.document)
 
 
 def _clean_text(value: Any) -> str:
@@ -216,6 +243,8 @@ class CandidateRetriever:
             raise RetrievalError(f"candidate manifest is invalid: {exc}") from exc
         if manifest is None:
             raise RetrievalError("candidate manifest is missing")
+        if manifest.domain_code != domain_code:
+            raise RetrievalError("candidate manifest domain mismatch")
         try:
             collection = self.client.get_collection(name=manifest.active_collection)
         except Exception as exc:
@@ -343,7 +372,11 @@ class CandidateRetriever:
             return []
         items = self.db.scalars(
             select(KnowledgeItem.public_id)
-            .where(KnowledgeItem.domain_code == domain_code, KnowledgeItem.public_id.in_(ids))
+            .where(
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.status == "published",
+                KnowledgeItem.public_id.in_(ids),
+            )
             .order_by(KnowledgeItem.public_id)
         )
         found = set(items)
@@ -362,7 +395,9 @@ class CandidateRetriever:
         items = list(
             self.db.scalars(
                 select(KnowledgeItem)
-                .where(KnowledgeItem.domain_code == domain_code)
+                .where(
+                    KnowledgeItem.domain_code == domain_code, KnowledgeItem.status == "published"
+                )
                 .order_by(KnowledgeItem.public_id)
             )
         )
@@ -516,8 +551,7 @@ class CandidateRetriever:
                 self._warn(warnings, "candidate_chunk_missing_content")
                 continue
             if metadata.get("domain_code") != domain_code:
-                self._warn(warnings, f"candidate_cross_domain:{record.chunk_id}")
-                continue
+                raise RetrievalError(f"candidate cross-domain chunk rejected: {record.chunk_id}")
             if metadata.get("embedding_model") != manifest.embedding_model:
                 self._warn(warnings, f"candidate_model_mismatch:{record.chunk_id}")
                 continue
@@ -616,7 +650,6 @@ class CandidateRetriever:
         ]
         route_scores = {route: 1.0 - index * 0.15 for index, route in enumerate(route_order)}
         practice_requested = ResourceType.PRACTICE_GUIDE in request.retrieval_plan.resource_types
-        evidence_policy = get_domain_evidence_policy(request.context.domain_code)
 
         def matched_by(record: CandidateRecord) -> RetrievalMatchType:
             return min(record.routes, key=lambda route: MATCH_PRECEDENCE[route])
@@ -642,7 +675,32 @@ class CandidateRetriever:
         def practice_evidence_score(record: CandidateRecord) -> int:
             if not practice_requested:
                 return 0
-            capabilities = evidence_policy.classify_content(record.document)
+            try:
+                heading_path = json.loads(_clean_text(record.metadata.get("heading_path")) or "[]")
+            except (TypeError, ValueError, json.JSONDecodeError):
+                heading_path = []
+            normalized_headings = {
+                _clean_text(value).replace(" ", "")
+                for value in heading_path
+                if isinstance(value, str)
+            }
+            # A section's declared role is stronger evidence than keyword overlap in
+            # nearby error or acceptance sections. The large bonus makes the direct
+            # operation section deterministic for each explicit practice target.
+            heading_bonus = (
+                100
+                if normalized_headings
+                & {
+                    "操作步骤",
+                    "分步操作",
+                    "实操",
+                    "实践任务",
+                    "实验步骤",
+                    "操作方法",
+                }
+                else 0
+            )
+            capabilities = _record_capabilities(record, request.context.domain_code)
             weights = {
                 EvidenceCapability.OPERATION: 8,
                 EvidenceCapability.COMMAND: 4,
@@ -650,7 +708,9 @@ class CandidateRetriever:
                 EvidenceCapability.EXPECTED_RESULT: 2,
                 EvidenceCapability.ERROR_HANDLING: 1,
             }
-            return sum(weight for capability, weight in weights.items() if capability in capabilities)
+            return heading_bonus + sum(
+                weight for capability, weight in weights.items() if capability in capabilities
+            )
 
         ranked = sorted(
             available,
@@ -680,8 +740,10 @@ class CandidateRetriever:
                 missing.append(knowledge_id)
                 continue
             chosen = matches[0]
-            if practice_requested and EvidenceCapability.OPERATION not in evidence_policy.classify_content(
-                chosen.document
+            if (
+                practice_requested
+                and EvidenceCapability.OPERATION
+                not in _record_capabilities(chosen, request.context.domain_code)
             ):
                 self._warn(warnings, f"practice_operation_evidence_missing:{knowledge_id}")
             if chosen.chunk_id not in selected_ids:

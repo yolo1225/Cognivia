@@ -19,7 +19,7 @@
           :title="item.label"
           @click="router.push(item.route)"
         >
-          <span class="nav-icon">{{ item.icon }}</span>
+          <span class="nav-icon"><AppIcon :name="item.icon" /></span>
           {{ item.label }}
         </button>
       </template>
@@ -38,6 +38,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import { useLearnerStore } from '@/stores/learnerStore'
 import { useProfileGateStore } from '@/stores/profileGateStore'
+import AppIcon from '@/components/Shared/AppIcon.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -61,17 +62,18 @@ const allNavGroups: NavGroup[] = [
   {
     label: '学习体验',
     items: [
-      { page: 'dashboard', label: '首页', icon: '⌂', route: '/dashboard' },
-      { page: 'resources', label: '学习资源', icon: '▤', route: '/resources' },
-      { page: 'report', label: '学习报告', icon: '⌁', route: '/report' },
-      { page: 'metrics', label: '任务记录', icon: '▥', route: '/metrics' },
+      { page: 'dashboard', label: '首页', icon: 'home', route: '/dashboard' },
+      { page: 'resources', label: '学习资源', icon: 'resources', route: '/resources' },
+      { page: 'report', label: '学习报告', icon: 'report', route: '/report' },
+      { page: 'metrics', label: '学习历程', icon: 'history', route: '/metrics' },
     ],
   },
   {
     label: '管理与质量',
     items: [
-      { page: 'learners', label: '用户管理', icon: '♙', route: '/learners' },
-      { page: 'domainHub', label: '领域管理', icon: '▦', route: '/domain-hub' },
+      { page: 'learners', label: '用户管理', icon: 'users', route: '/learners' },
+      { page: 'domainHub', label: '领域管理', icon: 'domain', route: '/domain-hub' },
+      { page: 'modelSettings', label: '模型配置', icon: 'settings', route: '/model-settings' },
     ],
   },
 ]

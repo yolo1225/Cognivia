@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -16,6 +16,7 @@ class KnowledgeItem(TimestampMixin, Base):
     category: Mapped[str] = mapped_column(String(64))
     difficulty: Mapped[int] = mapped_column(default=1)
     tags_json: Mapped[list] = mapped_column(JSON, default=list)
+    evidence_capabilities_json: Mapped[list] = mapped_column(JSON, default=list)
     content_md: Mapped[str] = mapped_column(Text)
     source_title: Mapped[str] = mapped_column(String(255))
     source_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -24,6 +25,9 @@ class KnowledgeItem(TimestampMixin, Base):
     source_document_id: Mapped[int | None] = mapped_column(
         ForeignKey("knowledge_documents.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    ability_weights_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    source_locator_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="published", index=True)
 
 
 class KnowledgeDocument(TimestampMixin, Base):
@@ -57,3 +61,20 @@ class KnowledgeRelation(TimestampMixin, Base):
     source_item_id: Mapped[int] = mapped_column(ForeignKey("knowledge_items.id"))
     target_item_id: Mapped[int] = mapped_column(ForeignKey("knowledge_items.id"))
     relation_type: Mapped[str] = mapped_column(String(32))
+
+
+class KnowledgeImportCandidate(TimestampMixin, Base):
+    __tablename__ = "knowledge_import_candidates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    public_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE"), index=True
+    )
+    domain_code: Mapped[str] = mapped_column(String(64), index=True)
+    candidate_type: Mapped[str] = mapped_column(String(32), index=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    source_locator_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    validation_errors_json: Mapped[list] = mapped_column(JSON, default=list)

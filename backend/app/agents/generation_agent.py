@@ -10,7 +10,7 @@ from contextvars import copy_context
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.agents.contracts import (
     GenerateResourceInput,
@@ -20,6 +20,7 @@ from app.agents.contracts import (
     LectureContent,
     PracticeGuideContent,
     QuestionType,
+    QuizQuestion,
     QuizLevel,
     ResourceType,
     SourceRef,
@@ -27,6 +28,11 @@ from app.agents.contracts import (
     structured_source_ref_ids,
 )
 from app.agents.observability import record_model_call
+from app.agents.claim_policy import (
+    capability_violation_for_claim,
+    sanitize_deterministic_text,
+)
+from app.agents.prompt_registry import get_prompt
 from app.agents.domain_evidence_policy import (
     EvidenceCapability,
     evidence_capability_payload,
@@ -34,82 +40,45 @@ from app.agents.domain_evidence_policy import (
 )
 from app.agents.prompt_budget import bounded_text, estimate_tokens
 from app.core.config import settings
-from app.services.llm_service import ModelResponseError, OpenAICompatibleGateway, gateway
+from app.services.llm_service import (
+    ModelCallError,
+    ModelResponseError,
+    OpenAICompatibleGateway,
+    gateway,
+)
 
 
 GENERATION_AGENT_NAME = "content_generation_agent_v3"
-SYSTEM_PROMPT = (
-    "你是内容生成智能体。必须仅复述和组织输入 retrieved_knowledge 中明确出现的信息，"
-    "不得调用检索、数据库或向量库，不得使用模型自身常识补全版本号、能力边界、工具关系、"
-    "因果关系或最佳实践。证据未明确说明的事实必须删除或改写为不含额外结论的学习提示。"
-    "所有事实性内容必须关联输入白名单中的 source_ref_ids。只返回结构化内容，不生成"
-    "content_md，不负责审核或发布决策。summary 只能总结已讲授的知识结论，"
-    "不得声称内容全部来自官方资料、引用完整或未引入外部推断。实践指南的命令、"
-    "配置、预期结果和排错结论只能在绑定证据正文明确支持时生成；证据只说明原理时，"
-    "改写为不含额外技术结论的说明性步骤。"
-    "环境准备应写成条件式前提，不得声称学习者当前环境已经具备某项能力；"
-    "验收标准应描述学习者需要完成的记录、核对或提交动作，不得声称这些动作已经发生。"
-    "允许根据学习者画像调整讲授顺序、难度、解释粒度、示例组织和练习形式，但不得因此"
-    "增加 retrieved_knowledge 之外的技术事实。生成正文前先在内部逐字段建立"
-    "字段—事实—source_ref_id 映射；纯教学动作可以不作为事实，但混合句中的技术结论"
-    "仍必须有直接来源。"
-)
-SOURCE_REPAIR_PROMPT = (
-    "你是 V3 内容生成智能体的来源引用纠错步骤。只修复输入候选资源中不合法的"
-    "source_ref_ids，并删除或重写无法由合法检索证据支持的内容。只能逐字复制"
-    "allowed_source_ref_ids 中的值，禁止用知识点 ID、标题、URL 或自行构造的 ID 替代。"
-    "保持资源类型不变，只返回符合给定 JSON Schema 的数据。summary 不得包含来源完整性"
-    "或未引入外部推断的自述；命令、预期结果和排错结论必须由绑定证据正文直接支持。"
-)
-COVERAGE_REPAIR_PROMPT = (
-    "你是 V3 内容生成智能体的定向覆盖补写步骤。编辑现有候选资源，只补充"
-    "missing_knowledge_ids 对应的实质教学内容及其合法来源引用，同时完整保留"
-    "preserve_knowledge_ids 已有内容。不得重写无关章节、不得删除已有合法来源，"
-    "只能使用输入中的 allowed_source_ref_ids，并返回完整且符合 JSON Schema 的资源。不得补写"
-    "来源完整性自述；命令、预期结果和排错结论必须由绑定证据正文直接支持。"
-)
-CONTENT_POLICY_REPAIR_PROMPT = (
-    "你是 V3 内容生成智能体的内容策略修复步骤。只重写 policy_violations 指定的字段，"
-    "删除生成过程、资料权威性、引用完整性或未引入外部推断的自述。summary 必须改为"
-    "对已讲授知识结论的简短总结。version_boundary_missing 要删除具体版本限制；"
-    "environment_evidence_missing 要将对应环境要求改为不含具体工具或配置断言的受控环境说明；"
-    "operation_evidence_missing 要将 instruction 改为只观察或学习证据所述概念的说明性步骤；"
-    "executable_evidence_missing 要将 code_or_command 设为 null 并保留不新增事实的说明性步骤；"
-    "expected_result_evidence_missing 要将 expected_result 改为记录实际结果并与引用材料核对，"
-    "不得声称固定输出；error_evidence_missing 要将 troubleshooting 设为 null。"
-    "acceptance_evidence_missing 要将验收项改为学习记录或对比清单，不得保留技术结果断言。"
-    "其他字段和合法引用必须保持不变，"
-    "只返回符合 JSON Schema 的完整资源。"
-)
-REVISION_PROMPT = (
-    "你是内容生成智能体的候选资源局部修订步骤。candidate 是上一轮资源，"
-    "只能修改 revision_field_paths 指向的事实字段，并使用 retrieved_knowledge 中的直接证据。"
-    "未点名字段必须原样保留；不得新增章节、步骤、题目、声明或来源。"
-    "无直接证据时，删除无依据的技术结论，但保留合理的教学动作；环境前提使用条件式表达，"
-    "验收项使用学习者待完成的记录、核对或提交动作，不得声称当前环境状态或动作已经发生。"
-    "只返回完整且符合 JSON Schema 的候选资源。"
-)
-QUIZ_REPAIR_PROMPT = (
-    "你是分级测验的局部修复步骤。仅重写 quiz_violations 指出的题目槽位；"
-    "preserve_question_ids 中的题目必须逐字保留。每个槽位的 question_id、level、"
-    "question_type、knowledge_id、difficulty 和 allowed_source_ref_ids 必须与 quiz_blueprint 一致。"
-    "只返回完整且符合给定 JSON Schema 的测验。"
-)
+SYSTEM_PROMPT = get_prompt("generation")
+SOURCE_REPAIR_PROMPT = get_prompt("generation.source_repair")
+COVERAGE_REPAIR_PROMPT = get_prompt("generation.coverage_repair")
+CONTENT_POLICY_REPAIR_PROMPT = get_prompt("generation.content_policy_repair")
+REVISION_PROMPT = get_prompt("generation.revision")
+QUIZ_REPAIR_PROMPT = get_prompt("generation.quiz_repair")
 MAX_SOURCE_REPAIR_ATTEMPTS = 1
 MAX_COVERAGE_REPAIR_ATTEMPTS = 1
 MAX_CONTENT_POLICY_REPAIR_ATTEMPTS = 1
-
-_PROVENANCE_META_PATTERNS = (
-    re.compile(
-        r"(?:所有|全部|以上|本(?:讲义|资源|内容)).{0,24}(?:均|都|严格)?(?:源自|来自|基于|依据).{0,24}(?:官方|所列|引用|检索)(?:文档|资料|来源|证据)"
-    ),
-    re.compile(r"(?:未|没有)(?:引入|使用).{0,16}(?:外部常识|外部知识|工具能力|额外推断|自行推断)"),
-    re.compile(r"(?:引用|来源).{0,12}(?:完整|齐全|全部覆盖|均可追溯)"),
+_QUIZ_UNSUPPORTED_DISTRACTOR_RE = re.compile(
+    r"(?:证据|材料|文档|原文|RFC).{0,24}(?:未提到|未出现|未说明|未声明)|"
+    r"(?:未在|没有在).{0,24}(?:证据|材料|文档|原文).{0,12}(?:出现|说明|声明)|"
+    r"(?:故|因此|所以)(?:应)?(?:排除|仅选|只选|不选)"
 )
 
 
 class GenerationError(RuntimeError):
     """Controlled error raised at the V3 generation boundary."""
+
+    def __init__(
+        self,
+        code: str,
+        *,
+        field_paths: list[str] | None = None,
+        violations: list[dict[str, object]] | None = None,
+    ) -> None:
+        super().__init__(code)
+        self.code = code
+        self.field_paths = [str(path)[:200] for path in (field_paths or [])][:20]
+        self.violations = [dict(item) for item in (violations or [])][:20]
 
 
 class GeneratedContentResponse(BaseModel):
@@ -117,6 +86,19 @@ class GeneratedContentResponse(BaseModel):
 
     structured_content: StructuredResourceContent
     difficulty: int
+
+
+class RevisionFieldPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=512)
+    value: str | None = Field(default=None, max_length=6000)
+
+
+class RevisionPatchResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    patches: list[RevisionFieldPatch] = Field(default_factory=list, max_length=30)
 
 
 class LectureGenerationResponse(BaseModel):
@@ -179,9 +161,18 @@ class OpenAICompatibleStructuredGenerator:
         *,
         model: str | None = None,
         model_gateway: OpenAICompatibleGateway = gateway,
+        evidence_capabilities_by_knowledge: dict[str, list[str]] | None = None,
     ) -> None:
         self._model = model if model is not None else settings.primary_llm_model
         self._gateway = model_gateway
+        self._evidence_capabilities_by_knowledge = evidence_capabilities_by_knowledge or {}
+
+    def _payload(self, *args: Any, **kwargs: Any) -> dict[str, object]:
+        return _generation_payload(
+            *args,
+            **kwargs,
+            evidence_capabilities_by_knowledge=self._evidence_capabilities_by_knowledge,
+        )
 
     def generate(
         self,
@@ -194,7 +185,7 @@ class OpenAICompatibleStructuredGenerator:
         result, metadata = self._gateway.complete_json(
             model=self._model,
             system_prompt=SYSTEM_PROMPT,
-            payload=_generation_payload(
+            payload=self._payload(
                 request, resource_type, allowed_sources, response_model=response_model
             ),
             fixture_factory=lambda: fixture.model_dump(mode="json"),
@@ -214,15 +205,16 @@ class OpenAICompatibleStructuredGenerator:
         resource_type: ResourceType,
         allowed_sources: list[SourceRef],
         candidate: GeneratedContentResponse,
-    ) -> GeneratedContentResponse:
+    ) -> RevisionPatchResponse:
         revision_plan = request.requirements.revision_plan
         if revision_plan is None:
             raise GenerationError("revision_plan_required")
-        response_model = _response_model_for(resource_type)
+        response_model = RevisionPatchResponse
+        field_paths = revision_plan.field_paths_by_resource.get(resource_type, [])
         result, metadata = self._gateway.complete_json(
             model=self._model,
             system_prompt=REVISION_PROMPT,
-            payload=_generation_payload(
+            payload=self._payload(
                 request,
                 resource_type,
                 allowed_sources,
@@ -230,9 +222,11 @@ class OpenAICompatibleStructuredGenerator:
                 correction_attempt=revision_plan.revision_count,
                 response_model=response_model,
             ),
-            fixture_factory=lambda: candidate.model_dump(mode="json"),
+            fixture_factory=lambda: _revision_patch_fixture(candidate, field_paths).model_dump(
+                mode="json"
+            ),
             response_model=response_model,
-            max_output_tokens=_max_output_tokens_for(resource_type),
+            max_output_tokens=min(2000, _max_output_tokens_for(resource_type)),
         )
         record_model_call(
             metadata,
@@ -241,7 +235,7 @@ class OpenAICompatibleStructuredGenerator:
             correction_attempt=revision_plan.revision_count,
             correction_kind="field_revision",
         )
-        return GeneratedContentResponse.model_validate(result)
+        return RevisionPatchResponse.model_validate(result)
 
     def repair(
         self,
@@ -257,7 +251,7 @@ class OpenAICompatibleStructuredGenerator:
         result, metadata = self._gateway.complete_json(
             model=self._model,
             system_prompt=SOURCE_REPAIR_PROMPT,
-            payload=_generation_payload(
+            payload=self._payload(
                 request,
                 resource_type,
                 allowed_sources,
@@ -292,7 +286,7 @@ class OpenAICompatibleStructuredGenerator:
         result, metadata = self._gateway.complete_json(
             model=self._model,
             system_prompt=COVERAGE_REPAIR_PROMPT,
-            payload=_generation_payload(
+            payload=self._payload(
                 request,
                 resource_type,
                 allowed_sources,
@@ -324,7 +318,7 @@ class OpenAICompatibleStructuredGenerator:
     ) -> GeneratedContentResponse:
         fixture = _fixture_response(request, resource_type, allowed_sources)
         response_model = _response_model_for(resource_type)
-        payload = _generation_payload(
+        payload = self._payload(
             request,
             resource_type,
             allowed_sources,
@@ -362,7 +356,7 @@ class OpenAICompatibleStructuredGenerator:
         result, metadata = self._gateway.complete_json(
             model=self._model,
             system_prompt=QUIZ_REPAIR_PROMPT,
-            payload=_generation_payload(
+            payload=self._payload(
                 request,
                 resource_type,
                 allowed_sources,
@@ -395,8 +389,12 @@ class ContentGenerationAgent:
         generator: StructuredContentGenerator | None = None,
         logger: logging.Logger | None = None,
         renderer: Callable[[StructuredResourceContent, list[SourceRef]], str] | None = None,
+        evidence_capabilities_by_knowledge: dict[str, list[str]] | None = None,
     ) -> None:
-        self._generator = generator or OpenAICompatibleStructuredGenerator()
+        self._evidence_capabilities_by_knowledge = evidence_capabilities_by_knowledge or {}
+        self._generator = generator or OpenAICompatibleStructuredGenerator(
+            evidence_capabilities_by_knowledge=self._evidence_capabilities_by_knowledge
+        )
         self._logger = logger or logging.getLogger(__name__)
         self._renderer = renderer
 
@@ -417,11 +415,29 @@ class ContentGenerationAgent:
             audited_claims_by_type or {},
         )
 
+    def converge(
+        self,
+        request: GenerateResourceInput,
+        candidates: list[GeneratedResourceArtifact],
+        removable_claims_by_type: dict[ResourceType, dict[str, list[str]]],
+    ) -> GenerateResourceOutput:
+        """Apply the single post-revision deterministic contraction pass."""
+        if request.requirements.revision_plan is None:
+            raise GenerationError("revision_plan_required")
+        return self._execute(
+            request,
+            {candidate.resource_type: candidate for candidate in candidates},
+            removable_claims_by_type,
+            deterministic_only=True,
+        )
+
     def _execute(
         self,
         request: GenerateResourceInput,
         candidates_by_type: dict[ResourceType, GeneratedResourceArtifact],
         audited_claims_by_type: dict[ResourceType, dict[str, list[str]]],
+        *,
+        deterministic_only: bool = False,
     ) -> GenerateResourceOutput:
         if not isinstance(request, GenerateResourceInput):
             self._logger.warning("generation_rejected error_code=invalid_generate_input_type")
@@ -470,26 +486,101 @@ class ContentGenerationAgent:
                         difficulty=previous_candidate.difficulty,
                     )
                     revise = getattr(self._generator, "revise", None)
-                    proposed = (
-                        GeneratedContentResponse.model_validate(
+                    try:
+                        proposed = (
+                            RevisionPatchResponse()
+                            if deterministic_only
+                            else (
                             revise(
                                 validated,
                                 resource_type,
                                 allowed_sources,
                                 candidate_response,
                             )
+                            if callable(revise)
+                            else RevisionPatchResponse()
+                            )
                         )
-                        if callable(revise)
-                        else candidate_response
+                    except ModelResponseError as exc:
+                        # The previous candidate already passed the frozen contract.  A
+                        # malformed model response must not destroy that valid recovery
+                        # point.  Record only sanitized validation metadata, then let the
+                        # deterministic merge remove the audited claims below.  The result
+                        # still goes through source, coverage and dual-model quality gates.
+                        record_model_call(
+                            exc.metadata,
+                            role="generation_model",
+                            resource_type=resource_type.value,
+                            correction_attempt=(
+                                validated.requirements.revision_plan.revision_count
+                            ),
+                            correction_kind="field_revision_structure_fallback",
+                        )
+                        self._logger.warning(
+                            "generation_revision_structure_fallback task_id=%s "
+                            "resource_type=%s validation_fields=%s",
+                            validated.task_id,
+                            resource_type.value,
+                            [
+                                str(field)[:160]
+                                for field in exc.metadata.get("validation_fields", [])
+                            ][:20],
+                        )
+                        proposed = RevisionPatchResponse()
+                    field_paths = validated.requirements.revision_plan.field_paths_by_resource.get(
+                        resource_type, []
                     )
-                    response = _merge_revision_candidate(
-                        candidate_response,
-                        proposed,
-                        validated.requirements.revision_plan.field_paths_by_resource.get(
-                            resource_type, []
-                        ),
-                        audited_claims_by_type.get(resource_type, {}),
-                    )
+                    if isinstance(proposed, RevisionPatchResponse):
+                        proposed, rejected_paths = _sanitize_revision_patches(
+                            candidate_response,
+                            proposed,
+                            field_paths,
+                        )
+                        if rejected_paths:
+                            self._logger.warning(
+                                "generation_revision_patch_filtered task_id=%s "
+                                "resource_type=%s rejected_paths=%s accepted_count=%s",
+                                validated.task_id,
+                                resource_type.value,
+                                rejected_paths[:20],
+                                len(proposed.patches),
+                            )
+                        try:
+                            response = _apply_revision_patches(
+                                candidate_response,
+                                proposed,
+                                field_paths,
+                                audited_claims_by_type.get(resource_type, {}),
+                            )
+                        except GenerationError as exc:
+                            if str(exc) != "patch_validation_failed":
+                                raise
+                            # Reject the invalid model patch, then recover from
+                            # the valid candidate by removing only audited
+                            # unsupported claims. This is still revalidated by
+                            # structure, source, coverage and both review models.
+                            self._logger.warning(
+                                "generation_revision_patch_fallback task_id=%s "
+                                "resource_type=%s rejected_paths=%s",
+                                validated.task_id,
+                                resource_type.value,
+                                [patch.path[:160] for patch in proposed.patches[:20]],
+                            )
+                            response = _apply_revision_patches(
+                                candidate_response,
+                                RevisionPatchResponse(),
+                                field_paths,
+                                audited_claims_by_type.get(resource_type, {}),
+                            )
+                    else:
+                        # Compatibility for deterministic test doubles; the live
+                        # gateway always uses the V6 patch contract.
+                        response = _merge_revision_candidate(
+                            candidate_response,
+                            GeneratedContentResponse.model_validate(proposed),
+                            field_paths,
+                            audited_claims_by_type.get(resource_type, {}),
+                        )
                     before_fingerprints = _revision_field_fingerprints(
                         candidate_response.structured_content,
                         validated.requirements.revision_plan.field_paths_by_resource.get(
@@ -516,6 +607,7 @@ class ContentGenerationAgent:
                         changed_paths,
                         sorted(set(after_fingerprints) - set(changed_paths)),
                     )
+                    response = _ground_practice_revision_fallbacks(response, validated)
                 whitelist = {source.source_ref_id for source in allowed_sources}
                 for attempt in range(MAX_SOURCE_REPAIR_ATTEMPTS + 1):
                     if response.structured_content.resource_type != resource_type.value:
@@ -561,6 +653,7 @@ class ContentGenerationAgent:
                             response.structured_content,
                             validated,
                             allowed_sources,
+                            self._evidence_capabilities_by_knowledge,
                         ),
                     ]
                     if not policy_violations:
@@ -578,6 +671,7 @@ class ContentGenerationAgent:
                                 response.structured_content,
                                 validated,
                                 allowed_sources,
+                                self._evidence_capabilities_by_knowledge,
                             ),
                         ]
                         if not policy_violations:
@@ -589,10 +683,26 @@ class ContentGenerationAgent:
                             resource_type.value,
                             [item["path"] for item in policy_violations],
                         )
-                        raise GenerationError("generated_content_policy_invalid")
+                        raise GenerationError(
+                            "generated_content_policy_invalid",
+                            field_paths=[item["path"] for item in policy_violations],
+                            violations=_observable_policy_violations(
+                                policy_violations,
+                                response.structured_content,
+                                validated,
+                                self._evidence_capabilities_by_knowledge,
+                            ),
+                        )
                     repair_policy = getattr(self._generator, "repair_content_policy", None)
                     if not callable(repair_policy):
-                        raise GenerationError("generated_content_policy_invalid")
+                        response = response.model_copy(
+                            update={
+                                "structured_content": _apply_content_policy_fallback(
+                                    response.structured_content, policy_violations
+                                )
+                            }
+                        )
+                        continue
                     response = GeneratedContentResponse.model_validate(
                         repair_policy(
                             validated,
@@ -602,13 +712,56 @@ class ContentGenerationAgent:
                             policy_violations,
                         )
                     )
+                if previous_candidate is not None:
+                    response = _strip_audited_claims_after_repairs(
+                        response,
+                        resource_type,
+                        audited_claims_by_type.get(resource_type, {}),
+                    )
+                    policy_violations = [
+                        *_content_policy_violations(response.structured_content),
+                        *_evidence_depth_violations(
+                            response.structured_content,
+                            validated,
+                            allowed_sources,
+                            self._evidence_capabilities_by_knowledge,
+                        ),
+                    ]
+                    if policy_violations:
+                        raise GenerationError("revision_post_repair_validation_failed")
                 if _source_violations(response.structured_content, whitelist):
                     raise GenerationError("generated_source_outside_whitelist_after_repair")
 
+                stabilized_content = _stabilize_lecture_summary(
+                    response.structured_content
+                )
+                if stabilized_content is not response.structured_content:
+                    response = response.model_copy(
+                        update={"structured_content": stabilized_content}
+                    )
+
                 if resource_type == ResourceType.GRADED_QUIZ:
                     blueprint = _quiz_blueprint(validated, allowed_sources)
+                    if previous_candidate is not None:
+                        audited_quiz_violations = _audited_quiz_slot_violations(
+                            response.structured_content,
+                            audited_claims_by_type.get(resource_type, {}),
+                        )
+                        if audited_quiz_violations:
+                            response = response.model_copy(
+                                update={
+                                    "structured_content": _apply_quiz_blueprint_fallback(
+                                        response.structured_content,
+                                        audited_quiz_violations,
+                                        blueprint,
+                                        validated,
+                                    )
+                                }
+                            )
                     quiz_violations = _quiz_blueprint_violations(
-                        response.structured_content, blueprint
+                        response.structured_content,
+                        blueprint,
+                        validated,
                     )
                     if quiz_violations:
                         repair_quiz = getattr(self._generator, "repair_quiz", None)
@@ -622,9 +775,36 @@ class ContentGenerationAgent:
                                 quiz_violations,
                             )
                         )
-                        response = _merge_quiz_slot_repairs(response, repaired, quiz_violations)
+                        response = _merge_quiz_slot_repairs(
+                            response,
+                            repaired,
+                            quiz_violations,
+                            blueprint,
+                        )
+                        response = _strip_audited_claims_after_repairs(
+                            response,
+                            resource_type,
+                            audited_claims_by_type.get(resource_type, {}),
+                        )
                         quiz_violations = _quiz_blueprint_violations(
-                            response.structured_content, blueprint
+                            response.structured_content,
+                            blueprint,
+                            validated,
+                        )
+                    if quiz_violations:
+                        fallback_content = _apply_quiz_blueprint_fallback(
+                            response.structured_content,
+                            quiz_violations,
+                            blueprint,
+                            validated,
+                        )
+                        response = response.model_copy(
+                            update={"structured_content": fallback_content}
+                        )
+                        quiz_violations = _quiz_blueprint_violations(
+                            response.structured_content,
+                            blueprint,
+                            validated,
                         )
                     if quiz_violations:
                         self._logger.warning(
@@ -644,7 +824,7 @@ class ContentGenerationAgent:
                 missing = sorted(target_ids - covered_before)
                 if missing:
                     repair_coverage = getattr(self._generator, "repair_coverage", None)
-                    if callable(repair_coverage):
+                    if callable(repair_coverage) and not deterministic_only:
                         preserve = sorted(covered_before)
                         candidate = GeneratedContentResponse.model_validate(
                             repair_coverage(
@@ -727,9 +907,29 @@ class ContentGenerationAgent:
             )
             self._log_failure(request, "generated_structured_output_invalid")
             raise GenerationError("generated_structured_output_invalid") from exc
+        except ModelCallError as exc:
+            self._log_failure(request, "model_call_failed")
+            raise GenerationError("model_call_failed") from exc
         except (KeyError, ValidationError) as exc:
-            self._log_failure(request, "invalid_generate_resource_output")
-            raise GenerationError("invalid_generate_resource_output") from exc
+            revision = getattr(request, "requirements", None) and request.requirements.revision_plan
+            error_code = (
+                "patch_validation_failed"
+                if revision
+                else "generated_structure_validation_failed"
+            )
+            validation_fields = (
+                [".".join(str(part) for part in item["loc"]) for item in exc.errors()]
+                if isinstance(exc, ValidationError)
+                else ["mapping_key"]
+            )
+            self._logger.warning(
+                "generation_validation_failed task_id=%s error_code=%s validation_fields=%s",
+                getattr(request, "task_id", "unknown"),
+                error_code,
+                validation_fields[:20],
+            )
+            self._log_failure(request, error_code)
+            raise GenerationError(error_code, field_paths=validation_fields) from exc
         except Exception as exc:
             self._log_failure(request, "generation_execution_failed")
             raise GenerationError("generation_execution_failed") from exc
@@ -760,8 +960,9 @@ def _generation_payload(
     correction_attempt: int = 0,
     missing_knowledge_ids: list[str] | None = None,
     preserve_knowledge_ids: list[str] | None = None,
-    response_model: GenerationResponseModel | None = None,
+    response_model: type[BaseModel] | None = None,
     quiz_violations: list[dict[str, object]] | None = None,
+    evidence_capabilities_by_knowledge: dict[str, list[str]] | None = None,
 ) -> dict[str, object]:
     chunks_by_source = {chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks}
     allowed_source_ref_ids = [source.source_ref_id for source in allowed_sources]
@@ -791,6 +992,7 @@ def _generation_payload(
         "evidence_capabilities": evidence_capability_payload(
             [chunks_by_source[source.source_ref_id] for source in allowed_sources],
             request.context.domain_code,
+            evidence_capabilities_by_knowledge,
         ),
         "allowed_source_ref_ids": allowed_source_ref_ids,
         "resource_target_knowledge_ids": target_ids,
@@ -857,6 +1059,13 @@ def _generation_payload(
     }
     if resource_type == ResourceType.GRADED_QUIZ:
         payload["quiz_blueprint"] = _quiz_blueprint(request, allowed_sources)
+        payload["quiz_fact_rules"] = [
+            "每道题的题干事实前提、正确答案和解析必须分别由该题 source_ref_ids 的证据原文直接推出",
+            "禁止把证据中分别出现的概念改写成共同、核心、保证、决定、导致等新关系",
+            "单选和多选的 correct_answer 必须逐字复制一个或多个 options 文本",
+            "短答题答案优先使用证据原文中的最小连续表述，不增加目的、效果或权威性说明",
+            "不得在 prompt、correct_answer、explanation 中显示 source_ref_id、chunk ID 或内部知识 ID",
+        ]
         payload["reference_questions"] = [
             item.model_dump(mode="json")
             for item in request.reference_questions
@@ -983,10 +1192,141 @@ def _write_path(payload: object, tokens: list[str | int], value: object) -> None
     current[tokens[-1]] = value  # type: ignore[index]
 
 
+def _revision_patch_fixture(
+    candidate: GeneratedContentResponse, field_paths: list[str]
+) -> RevisionPatchResponse:
+    resource_type = ResourceType(candidate.structured_content.resource_type)
+    payload = candidate.structured_content.model_dump(mode="python")
+    patches: list[RevisionFieldPatch] = []
+    for requested in field_paths:
+        path = _normalize_revision_path(requested, resource_type)
+        if path is None or any(item.path == path for item in patches):
+            continue
+        try:
+            value = _read_path(payload, _path_tokens(path))
+        except (IndexError, KeyError, TypeError):
+            continue
+        if isinstance(value, str) or value is None:
+            patches.append(RevisionFieldPatch(path=path, value=value))
+    return RevisionPatchResponse(patches=patches)
+
+
+def _apply_revision_patches(
+    original: GeneratedContentResponse,
+    proposed: RevisionPatchResponse,
+    field_paths: list[str],
+    audited_claims: dict[str, list[str]] | None = None,
+) -> GeneratedContentResponse:
+    """Apply V6 field patches without allowing structural resource rewrites."""
+    resource_type = ResourceType(original.structured_content.resource_type)
+    allowed = {
+        normalized
+        for path in field_paths
+        if (normalized := _normalize_revision_path(path, resource_type)) is not None
+    }
+    payload = original.structured_content.model_dump(mode="python")
+    safe_baseline = original.structured_content.model_dump(mode="python")
+    _remove_residual_audited_claims(
+        safe_baseline,
+        resource_type,
+        audited_claims or {},
+    )
+    seen: set[str] = set()
+    for patch in proposed.patches:
+        normalized = _normalize_revision_path(patch.path, resource_type)
+        if normalized is None or normalized not in allowed or normalized in seen:
+            raise GenerationError("patch_validation_failed")
+        seen.add(normalized)
+        tokens = _path_tokens(normalized)
+        try:
+            old_value = _read_path(payload, tokens)
+        except (IndexError, KeyError, TypeError) as exc:
+            raise GenerationError("patch_validation_failed") from exc
+        if old_value is not None and not isinstance(old_value, str):
+            raise GenerationError("patch_validation_failed")
+        if old_value is not None and patch.value is None and not normalized.endswith(
+            (".code_or_command", ".troubleshooting")
+        ):
+            raise GenerationError("patch_validation_failed")
+        if isinstance(old_value, str) and isinstance(patch.value, str):
+            if _claim_unit_count(patch.value) > max(1, _claim_unit_count(old_value)):
+                raise GenerationError("patch_validation_failed")
+        _write_path(payload, tokens, patch.value)
+    _remove_residual_audited_claims(payload, resource_type, audited_claims or {})
+    _stabilize_practice_revision_fields(
+        payload,
+        safe_baseline,
+        resource_type,
+        audited_claims or {},
+    )
+    try:
+        content = type(original.structured_content).model_validate(payload)
+    except ValidationError as exc:
+        raise GenerationError("patch_validation_failed") from exc
+    return GeneratedContentResponse(
+        structured_content=content,
+        difficulty=original.difficulty,
+    )
+
+
+def _sanitize_revision_patches(
+    original: GeneratedContentResponse,
+    proposed: RevisionPatchResponse,
+    field_paths: list[str],
+) -> tuple[RevisionPatchResponse, list[str]]:
+    """Keep independent valid patches and bound each replacement's claim surface."""
+    resource_type = ResourceType(original.structured_content.resource_type)
+    allowed = {
+        normalized
+        for path in field_paths
+        if (normalized := _normalize_revision_path(path, resource_type)) is not None
+    }
+    payload = original.structured_content.model_dump(mode="python")
+    accepted: list[RevisionFieldPatch] = []
+    rejected: list[str] = []
+    seen: set[str] = set()
+    for patch in proposed.patches:
+        normalized = _normalize_revision_path(patch.path, resource_type)
+        if normalized is None or normalized not in allowed or normalized in seen:
+            rejected.append(patch.path[:160])
+            continue
+        try:
+            old_value = _read_path(payload, _path_tokens(normalized))
+        except (IndexError, KeyError, TypeError):
+            rejected.append(patch.path[:160])
+            continue
+        if old_value is not None and not isinstance(old_value, str):
+            rejected.append(patch.path[:160])
+            continue
+        if old_value is not None and patch.value is None and not normalized.endswith(
+            (".code_or_command", ".troubleshooting")
+        ):
+            rejected.append(patch.path[:160])
+            continue
+        value = patch.value
+        if isinstance(old_value, str) and isinstance(value, str):
+            value = _truncate_claim_units(value, max(1, _claim_unit_count(old_value)))
+            if not value.strip():
+                rejected.append(patch.path[:160])
+                continue
+        accepted.append(RevisionFieldPatch(path=normalized, value=value))
+        seen.add(normalized)
+    return RevisionPatchResponse(patches=accepted), rejected
+
+
 def _claim_unit_count(value: object) -> int:
     if not isinstance(value, str):
         return 0
     return len([item for item in re.split(r"[。！？!?；;\n]+", value) if item.strip()])
+
+
+def _truncate_claim_units(value: str, maximum: int) -> str:
+    units = [
+        item.strip()
+        for item in re.findall(r"[^。！？!?；;\n]+[。！？!?；;\n]*", value)
+        if item.strip()
+    ]
+    return "".join(units[:maximum]).strip() if units else value.strip()
 
 
 def _merge_revision_candidate(
@@ -1000,6 +1340,12 @@ def _merge_revision_candidate(
     if proposed.structured_content.resource_type != resource_type.value:
         return original
     original_payload = original.structured_content.model_dump(mode="python")
+    safe_baseline = original.structured_content.model_dump(mode="python")
+    _remove_residual_audited_claims(
+        safe_baseline,
+        resource_type,
+        audited_claims or {},
+    )
     proposed_payload = proposed.structured_content.model_dump(mode="python")
     merged_payload = original.structured_content.model_dump(mode="python")
     normalized_paths = list(
@@ -1025,6 +1371,12 @@ def _merge_revision_candidate(
         _write_path(merged_payload, tokens, new_value)
     _remove_residual_audited_claims(
         merged_payload,
+        resource_type,
+        audited_claims or {},
+    )
+    _stabilize_practice_revision_fields(
+        merged_payload,
+        safe_baseline,
         resource_type,
         audited_claims or {},
     )
@@ -1058,13 +1410,76 @@ def _remove_residual_audited_claims(
             continue
         cleaned = value
         for claim in dict.fromkeys(claims):
-            normalized = claim.strip().strip("。！？!?；;，,")
+            normalized = _audited_claim_body(parent, claim).strip().strip("。！？!?；;，,")
             if normalized and normalized in cleaned:
                 cleaned = cleaned.replace(normalized, "", 1)
         cleaned = re.sub(r"^[\s。！？!?；;，,]+|[\s；;，,]+$", "", cleaned)
         cleaned = re.sub(r"([。！？!?；;，,])\s*[。！？!?；;，,]+", r"\1", cleaned)
         if cleaned != value:
-            _write_path(payload, tokens, cleaned or _revision_fallback_text(parent))
+            replacement: str | None = cleaned or _revision_fallback_text(parent)
+            if not cleaned and parent.endswith((".code_or_command", ".troubleshooting")):
+                replacement = None
+            _write_path(payload, tokens, replacement)
+
+
+def _strip_audited_claims_after_repairs(
+    response: GeneratedContentResponse,
+    resource_type: ResourceType,
+    audited_claims: dict[str, list[str]],
+) -> GeneratedContentResponse:
+    """Prevent downstream full-candidate repairs from restoring rejected prose."""
+    if not audited_claims:
+        return response
+    payload = response.structured_content.model_dump(mode="python")
+    _remove_residual_audited_claims(payload, resource_type, audited_claims)
+    try:
+        content = type(response.structured_content).model_validate(payload)
+    except ValidationError as exc:
+        raise GenerationError("revision_post_repair_validation_failed") from exc
+    return response.model_copy(update={"structured_content": content})
+
+
+def _stabilize_practice_revision_fields(
+    payload: dict[str, object],
+    safe_baseline: dict[str, object],
+    resource_type: ResourceType,
+    audited_claims: dict[str, list[str]],
+) -> None:
+    """Keep supported prose while preventing rejected practice claims from being replaced.
+
+    Once review rejects a factual practice-guide field, the deterministic baseline
+    removes that exact claim and falls back to a non-factual learner action if nothing
+    remains. Reusing the cleaned value for every affected practice field prevents the
+    revision model from replacing one unsupported operational assertion with an
+    equivalent or stronger assertion on the next review round.
+    """
+    if resource_type is not ResourceType.PRACTICE_GUIDE:
+        return
+    stable_paths = {
+        parent
+        for field_path in audited_claims
+        if (parent := _normalize_revision_path(field_path, resource_type)) is not None
+    }
+    for path in stable_paths:
+        tokens = _path_tokens(path)
+        try:
+            value = _read_path(safe_baseline, tokens)
+            _write_path(payload, tokens, value)
+        except (IndexError, KeyError, TypeError):
+            continue
+
+
+def _audited_claim_body(path: str, claim: str) -> str:
+    markers = {
+        ".code_or_command": "以下代码或命令应能完成该步骤：\n",
+        ".prompt": "请判断该题题干中的事实前提是否准确：\n",
+        ".correct_answer": "请判断该题正确答案是否准确：\n",
+        ".explanation": "请判断该题解析是否准确：\n",
+    }
+    for suffix, marker in markers.items():
+        if path.endswith(suffix) and marker in claim:
+            return claim.split(marker, 1)[1]
+    return claim
 
 
 def _revision_fallback_text(path: str) -> str:
@@ -1088,6 +1503,79 @@ def _revision_fallback_text(path: str) -> str:
     if path.startswith("questions["):
         return "请根据引用材料完成该题并核对答案。"
     return "阅读引用材料并完成对应学习记录。"
+
+
+def _ground_practice_revision_fallbacks(
+    response: GeneratedContentResponse,
+    request: GenerateResourceInput,
+) -> GeneratedContentResponse:
+    """Replace claim-free practice placeholders with literal cited evidence.
+
+    A rejected operational assertion may leave an instruction containing only the
+    non-factual safety placeholder.  Such a guide has no auditable claim and used to
+    abort the following review node.  Copying the already-whitelisted evidence body
+    keeps the revision conservative while ensuring the dual reviewers still receive
+    a factual statement to verify.
+    """
+    content = response.structured_content
+    if not isinstance(content, PracticeGuideContent):
+        return response
+    placeholder = _revision_fallback_text("steps[0].instruction")
+    chunks_by_source = {
+        chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks
+    }
+    changed = False
+    steps = []
+    for step in content.steps:
+        instruction = step.instruction
+        if instruction.strip() == placeholder:
+            chunk = next(
+                (
+                    chunks_by_source[source_id]
+                    for source_id in step.source_ref_ids
+                    if source_id in chunks_by_source
+                ),
+                None,
+            )
+            if chunk is not None:
+                grounded = _candidate_evidence_body(chunk.content).strip()
+                if grounded:
+                    instruction = grounded[:6000]
+                    changed = True
+        steps.append(step.model_copy(update={"instruction": instruction}))
+    if not changed:
+        return response
+    return response.model_copy(
+        update={"structured_content": content.model_copy(update={"steps": steps})}
+    )
+
+
+def _audited_quiz_slot_violations(
+    content: StructuredResourceContent,
+    audited_claims: dict[str, list[str]],
+) -> list[dict[str, object]]:
+    """Force affected quiz slots through the evidence-copying fallback.
+
+    Revising only an answer or explanation lets a model replace an unsupported
+    causal statement with a semantically equivalent one. Rebuilding the whole
+    affected slot from its assigned evidence keeps the question structure while
+    bounding every factual field to text present in the retrieved material.
+    """
+    if not isinstance(content, GradedQuizContent):
+        return []
+    indexes = {
+        int(match.group(1))
+        for path in audited_claims
+        if (match := re.match(r"^questions\[(\d+)\]\.", path)) is not None
+    }
+    return [
+        {
+            "question_id": content.questions[index].question_id,
+            "field": "assessment_content",
+        }
+        for index in sorted(indexes)
+        if 0 <= index < len(content.questions)
+    ]
 
 
 def _revision_field_fingerprints(
@@ -1163,126 +1651,104 @@ def _merge_coverage_additions(
     )
 
 
+_NON_PROSE_POLICY_FIELDS = {
+    "source_ref_ids",
+    "reference_question_ids",
+    "knowledge_id",
+    "question_type",
+    "level",
+}
+
+
+def _iter_policy_text_fields(value: object, path: str = "") -> list[tuple[str, str]]:
+    """Enumerate auditable prose without resource-type-specific omissions."""
+    if isinstance(value, BaseModel):
+        return _iter_policy_text_fields(value.model_dump(mode="python"), path)
+    if isinstance(value, dict):
+        fields: list[tuple[str, str]] = []
+        for key, nested in value.items():
+            if key in _NON_PROSE_POLICY_FIELDS:
+                continue
+            child = f"{path}.{key}" if path else str(key)
+            fields.extend(_iter_policy_text_fields(nested, child))
+        return fields
+    if isinstance(value, list):
+        fields = []
+        for index, nested in enumerate(value):
+            fields.extend(_iter_policy_text_fields(nested, f"{path}[{index}]"))
+        return fields
+    if isinstance(value, str) and value.strip():
+        return [(path, value)]
+    return []
+
+
 def _content_policy_violations(
     content: StructuredResourceContent,
 ) -> list[dict[str, str]]:
-    """Reject only explicit provenance/process self-claims, not technical prose."""
-    values: list[tuple[str, str]] = []
-    if isinstance(content, LectureContent):
-        values.append(("summary", content.summary))
-        values.extend(
-            (f"core_concepts[{index}].explanation", block.explanation)
-            for index, block in enumerate(content.core_concepts)
-        )
-        values.extend(
-            (f"core_concepts[{index}].example", block.example)
-            for index, block in enumerate(content.core_concepts)
-            if block.example
-        )
-    elif isinstance(content, PracticeGuideContent):
-        values.extend(
-            (f"steps[{index}].instruction", step.instruction)
-            for index, step in enumerate(content.steps)
-        )
-    else:
-        values.extend(
-            (f"questions[{index}].explanation", question.explanation)
-            for index, question in enumerate(content.questions)
-        )
-    return [
-        {"path": path, "code": "provenance_meta_claim"}
-        for path, value in values
-        if any(pattern.search(value) for pattern in _PROVENANCE_META_PATTERNS)
-    ]
+    """Run the single deterministic claim policy before semantic review."""
+    values = _iter_policy_text_fields(content)
+    violations: list[dict[str, str]] = []
+    for path, value in values:
+        _cleaned, codes = sanitize_deterministic_text(path, value)
+        violations.extend({"path": path, "code": code} for code in codes)
+        if path.endswith(".explanation") and _QUIZ_UNSUPPORTED_DISTRACTOR_RE.search(value):
+            violations.append({"path": path, "code": "unsupported_distractor_rationale"})
+    return violations
 
 
 def _evidence_depth_violations(
     content: StructuredResourceContent,
     request: GenerateResourceInput,
     allowed_sources: list[SourceRef],
+    evidence_capabilities_by_knowledge: dict[str, list[str]] | None = None,
 ) -> list[dict[str, str]]:
     if not isinstance(content, PracticeGuideContent):
         return []
     chunks_by_source = {chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks}
-    policy = get_domain_evidence_policy(request.context.domain_code)
+    policy = get_domain_evidence_policy(
+        request.context.domain_code, evidence_capabilities_by_knowledge
+    )
 
-    def capabilities(source_ids: list[str]) -> set[EvidenceCapability]:
-        result: set[EvidenceCapability] = set()
+    def capabilities(source_ids: list[str]) -> set[str]:
+        result: set[str] = set()
         for source_id in source_ids:
             chunk = chunks_by_source.get(source_id)
             if chunk is not None:
-                result.update(policy.classify(chunk))
+                result.update(item.value for item in policy.classify(chunk))
         return result
 
     violations: list[dict[str, str]] = []
     all_capabilities = capabilities([source.source_ref_id for source in allowed_sources])
-    if EvidenceCapability.OPERATION not in all_capabilities:
-        for index, requirement in enumerate(content.environment_requirements):
-            if "与引用材料相符" in requirement:
-                continue
+    for index, requirement in enumerate(content.environment_requirements):
+        code = capability_violation_for_claim(
+            "environment_requirement", requirement, all_capabilities
+        )
+        if code:
             violations.append(
-                {
-                    "path": f"environment_requirements[{index}]",
-                    "code": "environment_evidence_missing",
-                }
+                {"path": f"environment_requirements[{index}]", "code": code}
             )
-    if EvidenceCapability.VERSION_BOUNDARY not in all_capabilities:
-        for index, requirement in enumerate(content.environment_requirements):
-            if re.search(r"\b\d+(?:\.\d+)+(?:\+|以上|以下)?\b", requirement):
-                violations.append(
-                    {
-                        "path": f"environment_requirements[{index}]",
-                        "code": "version_boundary_missing",
-                    }
-                )
-    if EvidenceCapability.EXPECTED_RESULT not in all_capabilities:
-        for index, criterion in enumerate(content.acceptance_criteria):
-            if re.search(
-                r"返回|输出|显示|生成|状态码|字段|自动|固定|成功状态|失败状态|"
-                r"版本|命令|代码|接口响应",
-                criterion,
-            ):
-                violations.append(
-                    {
-                        "path": f"acceptance_criteria[{index}]",
-                        "code": "acceptance_evidence_missing",
-                    }
-                )
+    for index, criterion in enumerate(content.acceptance_criteria):
+        code = capability_violation_for_claim(
+            "acceptance_criterion", criterion, all_capabilities
+        )
+        if code:
+            violations.append({"path": f"acceptance_criteria[{index}]", "code": code})
     for index, step in enumerate(content.steps):
         step_capabilities = capabilities(step.source_ref_ids)
-        if EvidenceCapability.OPERATION not in step_capabilities and re.search(
-            r"执行|运行|安装|配置|提交|调用|请求|创建|启动|输入命令|设置", step.instruction
-        ):
-            violations.append(
-                {
-                    "path": f"steps[{index}].instruction",
-                    "code": "operation_evidence_missing",
-                }
-            )
-        if step.code_or_command and not step_capabilities.intersection(
-            {EvidenceCapability.COMMAND, EvidenceCapability.CODE_EXAMPLE}
-        ):
-            violations.append(
-                {
-                    "path": f"steps[{index}].code_or_command",
-                    "code": "executable_evidence_missing",
-                }
-            )
-        if step.troubleshooting and EvidenceCapability.ERROR_HANDLING not in step_capabilities:
-            violations.append(
-                {
-                    "path": f"steps[{index}].troubleshooting",
-                    "code": "error_evidence_missing",
-                }
-            )
-        safe_observation = "记录实际结果" in step.expected_result and "引用材料" in step.expected_result
-        if EvidenceCapability.EXPECTED_RESULT not in step_capabilities and not safe_observation:
-            violations.append(
-                {
-                    "path": f"steps[{index}].expected_result",
-                    "code": "expected_result_evidence_missing",
-                }
-            )
+        fields = (
+            ("instruction", step.instruction),
+            ("code_or_command", step.code_or_command),
+            ("expected_result", step.expected_result),
+            ("troubleshooting", step.troubleshooting),
+        )
+        for field_group, value in fields:
+            if not value:
+                continue
+            code = capability_violation_for_claim(field_group, value, step_capabilities)
+            if code:
+                violations.append(
+                    {"path": f"steps[{index}].{field_group}", "code": code}
+                )
     return violations
 
 
@@ -1302,9 +1768,12 @@ def _apply_practice_evidence_fallback(
     for index in range(len(environment_requirements)):
         path = f"environment_requirements[{index}]"
         if codes_by_path.get(path, set()).intersection(
-            {"environment_evidence_missing", "version_boundary_missing"}
+            {
+                "environment_evidence_missing",
+                "version_boundary_missing",
+            }
         ):
-            environment_requirements[index] = "与引用材料相符的受控学习环境"
+            environment_requirements[index] = "准备练习所需的材料与受控环境。"
 
     acceptance_criteria = list(content.acceptance_criteria)
     for index in range(len(acceptance_criteria)):
@@ -1331,6 +1800,20 @@ def _apply_practice_evidence_fallback(
             f"steps[{index}].troubleshooting", set()
         ):
             updates["troubleshooting"] = None
+        command = updates.get("code_or_command", step.code_or_command)
+        if isinstance(command, str):
+            # A local revision can remove an unsupported separator from a
+            # multi-command field. Never publish the resulting token-glued
+            # string (for example ``git diffgit commit``).
+            normalized_command = re.sub(
+                r"(?<=[\w\"'<>])(?=git\s+(?:status|diff|add|commit|log|push|pull|"
+                r"fetch|switch|checkout|merge|rebase|restore)\b)",
+                "\n",
+                command,
+                flags=re.I,
+            )
+            if normalized_command != command:
+                updates["code_or_command"] = normalized_command
         steps.append(step.model_copy(update=updates) if updates else step)
 
     return content.model_copy(
@@ -1347,29 +1830,118 @@ def _apply_content_policy_fallback(
     violations: list[dict[str, str]],
 ) -> StructuredResourceContent:
     """Remove policy-only provenance self-claims without relaxing factual safeguards."""
-    provenance_paths = {
-        item["path"] for item in violations if item["code"] == "provenance_meta_claim"
+    deterministic_paths = {
+        item["path"]
+        for item in violations
+        if item["code"] in {"forbidden_meta_claim", "misplaced_field_content"}
     }
-    sanitized = _sanitize_provenance_meta_claims(content, provenance_paths)
+    sanitized = _sanitize_deterministic_policy_claims(content, deterministic_paths)
+    distractor_paths = {
+        item["path"]
+        for item in violations
+        if item["code"] == "unsupported_distractor_rationale"
+    }
+    sanitized = _sanitize_quiz_distractor_rationales(sanitized, distractor_paths)
     return _apply_practice_evidence_fallback(sanitized, violations)
 
 
-def _sanitize_provenance_text(value: str, fallback: str | None) -> str | None:
-    """Drop only sentences that make unsupported claims about the resource itself."""
-    sentences = re.findall(r"[^。！？!?；;\n]+[。！？!?；;\n]*", value)
-    kept = [
-        sentence.strip()
-        for sentence in sentences
-        if sentence.strip()
-        and not any(pattern.search(sentence) for pattern in _PROVENANCE_META_PATTERNS)
+def _stabilize_lecture_summary(
+    content: StructuredResourceContent,
+) -> StructuredResourceContent:
+    """Keep a lecture summary within the facts actually taught by its blocks."""
+    if not isinstance(content, LectureContent):
+        return content
+    safe_actions = (
+        "请结合本讲义的核心概念",
+        "回顾本讲义涉及的核心知识",
+    )
+    if content.summary.startswith(safe_actions):
+        return content
+
+    taught_parts = [
+        value.strip()
+        for block in content.core_concepts
+        for value in (block.explanation, block.example)
+        if value and value.strip()
     ]
-    cleaned = "".join(kept).strip(" \t\r\n。！？!?；;")
+    taught_parts.extend(
+        block.correction.strip()
+        for block in content.misconceptions
+        if block.correction.strip()
+    )
+    taught_text = " ".join(taught_parts)
+    taught_tokens = _quiz_semantic_tokens(taught_text)
+    summary_sentences = [
+        item.strip()
+        for item in re.findall(r"[^。！？!?\n]+[。！？!?]?", content.summary)
+        if item.strip()
+    ]
+
+    def is_taught(sentence: str) -> bool:
+        normalized = sentence.strip().strip("。！？!?")
+        if normalized and normalized in taught_text:
+            return True
+        tokens = _quiz_semantic_tokens(normalized)
+        return bool(tokens) and len(tokens & taught_tokens) / len(tokens) >= 0.45
+
+    if summary_sentences and all(is_taught(sentence) for sentence in summary_sentences):
+        return content
+
+    selected: list[str] = []
+    for part in taught_parts:
+        first_sentence = next(
+            (
+                item.strip()
+                for item in re.findall(r"[^。！？!?\n]+[。！？!?]?", part)
+                if item.strip()
+            ),
+            "",
+        )
+        if not first_sentence:
+            continue
+        candidate = " ".join([*selected, first_sentence])
+        if len(candidate) > 2000:
+            break
+        selected.append(first_sentence)
+    if not selected:
+        return content
+    return content.model_copy(update={"summary": " ".join(selected)})
+
+
+def _sanitize_quiz_distractor_rationales(
+    content: StructuredResourceContent,
+    paths: set[str],
+) -> StructuredResourceContent:
+    """Keep directly supported explanation clauses and drop absence-based distractor logic."""
+    if not paths or not isinstance(content, GradedQuizContent):
+        return content
+    questions = []
+    for index, question in enumerate(content.questions):
+        path = f"questions[{index}].explanation"
+        explanation = question.explanation
+        if path in paths:
+            clauses = re.findall(r"[^。！？!?；;]+[。！？!?；;]*", explanation)
+            kept = [
+                clause.strip()
+                for clause in clauses
+                if clause.strip() and not _QUIZ_UNSUPPORTED_DISTRACTOR_RE.search(clause)
+            ]
+            explanation = "".join(kept).strip() or (
+                f"根据题干所列信息，正确答案为：{question.correct_answer}。"
+            )
+        questions.append(question.model_copy(update={"explanation": explanation}))
+    return content.model_copy(update={"questions": questions})
+
+
+def _sanitize_policy_text(path: str, value: str, fallback: str | None) -> str | None:
+    """Remove deterministic policy violations without introducing new facts."""
+    cleaned, _codes = sanitize_deterministic_text(path, value)
     if cleaned:
         return cleaned
     return fallback
 
 
-def _sanitize_provenance_meta_claims(
+def _sanitize_deterministic_policy_claims(
     content: StructuredResourceContent,
     paths: set[str],
 ) -> StructuredResourceContent:
@@ -1377,46 +1949,45 @@ def _sanitize_provenance_meta_claims(
     if not paths:
         return content
 
-    if isinstance(content, LectureContent):
-        summary = content.summary
-        if "summary" in paths:
-            summary = _sanitize_provenance_text(
-                summary,
-                "请结合本讲义的核心概念，梳理关键要点并记录自己的理解。",
-            )
+    payload = content.model_dump(mode="python")
 
-        concepts = []
-        for index, block in enumerate(content.core_concepts):
-            explanation = block.explanation
-            example = block.example
-            explanation_path = f"core_concepts[{index}].explanation"
-            example_path = f"core_concepts[{index}].example"
-            if explanation_path in paths:
-                explanation = _sanitize_provenance_text(
-                    explanation,
-                    "请阅读对应材料，梳理其中明确说明的关键概念。",
-                )
-            if example is not None and example_path in paths:
-                example = _sanitize_provenance_text(example, None)
-            concepts.append(
-                block.model_copy(update={"explanation": explanation, "example": example})
-            )
-        return content.model_copy(update={"summary": summary, "core_concepts": concepts})
+    def locate(path: str) -> tuple[object, str | int] | None:
+        tokens: list[str | int] = []
+        for name, index in re.findall(r"([^.\[\]]+)|\[(\d+)\]", path):
+            tokens.append(int(index) if index else name)
+        if not tokens:
+            return None
+        parent: object = payload
+        for token in tokens[:-1]:
+            try:
+                parent = parent[token]  # type: ignore[index]
+            except (KeyError, IndexError, TypeError):
+                return None
+        return parent, tokens[-1]
 
-    if isinstance(content, GradedQuizContent):
-        questions = []
-        for index, question in enumerate(content.questions):
-            path = f"questions[{index}].explanation"
-            explanation = question.explanation
-            if path in paths:
-                explanation = _sanitize_provenance_text(
-                    explanation,
-                    "请结合题干和所列信息，重新梳理判断依据。",
-                )
-            questions.append(question.model_copy(update={"explanation": explanation}))
-        return content.model_copy(update={"questions": questions})
+    def fallback(path: str) -> str | None:
+        if path == "summary":
+            return "请结合本讲义的核心概念，梳理关键要点并记录自己的理解。"
+        if path.endswith(".example") or path.endswith(".code_or_command") or path.endswith(
+            ".troubleshooting"
+        ):
+            return None
+        if path.endswith(".title") or path == "title":
+            return "学习内容"
+        return _revision_fallback_text(path)
 
-    return content
+    for path in paths:
+        located = locate(path)
+        if located is None:
+            continue
+        parent, key = located
+        try:
+            value = parent[key]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError):
+            continue
+        if isinstance(value, str):
+            parent[key] = _sanitize_policy_text(path, value, fallback(path))  # type: ignore[index]
+    return type(content).model_validate(payload)
 
 
 def _source_constrained_schema(
@@ -1480,7 +2051,9 @@ def _quiz_blueprint(
 
 
 def _quiz_blueprint_violations(
-    content: StructuredResourceContent, blueprint: list[dict[str, object]]
+    content: StructuredResourceContent,
+    blueprint: list[dict[str, object]],
+    request: GenerateResourceInput | None = None,
 ) -> list[dict[str, object]]:
     if not isinstance(content, GradedQuizContent):
         return [{"question_id": "<resource>", "field": "resource_type"}]
@@ -1514,13 +2087,206 @@ def _quiz_blueprint_violations(
         allowed_sources = set(slot["allowed_source_ref_ids"])
         if not set(question.source_ref_ids).issubset(allowed_sources):
             violations.append({"question_id": question_id, "field": "source_ref_ids"})
+        fallback = _revision_fallback_text(f"questions[{question_id}].prompt")
+        if any(
+            value.strip() == fallback
+            for value in (question.prompt, question.correct_answer, question.explanation)
+        ):
+            violations.append({"question_id": question_id, "field": "assessment_content"})
+        if question.question_type in {
+            QuestionType.SINGLE_CHOICE,
+            QuestionType.MULTIPLE_CHOICE,
+        } and not _choice_answer_matches_options(question.correct_answer, question.options):
+            violations.append({"question_id": question_id, "field": "correct_answer"})
+        if request is not None and not _quiz_question_matches_target(question, slot, request):
+            violations.append({"question_id": question_id, "field": "knowledge_alignment"})
     return violations
+
+
+def _observable_policy_violations(
+    violations: list[dict[str, str]],
+    content: StructuredResourceContent,
+    request: GenerateResourceInput,
+    evidence_capabilities_by_knowledge: dict[str, list[str]],
+) -> list[dict[str, object]]:
+    """Build a privacy-safe failure summary without resource prose."""
+    chunks_by_source = {chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks}
+    source_ids_by_path: dict[str, list[str]] = {}
+    if isinstance(content, PracticeGuideContent):
+        for index, step in enumerate(content.steps):
+            for field in (
+                "title",
+                "instruction",
+                "code_or_command",
+                "expected_result",
+                "troubleshooting",
+            ):
+                source_ids_by_path[f"steps[{index}].{field}"] = list(step.source_ref_ids)
+    result = []
+    for violation in violations:
+        source_ids = source_ids_by_path.get(violation["path"], [])
+        capabilities = sorted(
+            {
+                capability
+                for source_id in source_ids
+                if source_id in chunks_by_source
+                for capability in evidence_capabilities_by_knowledge.get(
+                    chunks_by_source[source_id].knowledge_id, [EvidenceCapability.CONCEPT.value]
+                )
+            }
+        )
+        result.append(
+            {
+                "path": violation["path"],
+                "code": violation["code"],
+                "source_ref_ids": source_ids[:10],
+                "capabilities": capabilities,
+                "repair_attempts": MAX_CONTENT_POLICY_REPAIR_ATTEMPTS,
+            }
+        )
+    return result
+
+
+def _quiz_semantic_tokens(text: str) -> set[str]:
+    lowered = text.lower()
+    words = {word for word in re.findall(r"[a-z0-9_]+", lowered) if len(word) > 1}
+    cjk = "".join(re.findall(r"[\u4e00-\u9fff]", lowered))
+    words.update(cjk[index : index + 2] for index in range(max(0, len(cjk) - 1)))
+    return words
+
+
+def _quiz_question_matches_target(
+    question: QuizQuestion,
+    slot: dict[str, object],
+    request: GenerateResourceInput,
+) -> bool:
+    question_tokens = _quiz_semantic_tokens(
+        " ".join((question.prompt, question.correct_answer, question.explanation))
+    )
+    chunks_by_source = {chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks}
+    target_tokens = _quiz_semantic_tokens(
+        " ".join(
+            chunks_by_source[source_id].content
+            for source_id in slot["allowed_source_ref_ids"]
+            if source_id in chunks_by_source
+        )
+    )
+    target_overlap = len(question_tokens & target_tokens)
+    other_overlaps: list[int] = []
+    for knowledge_id in request.requirements.resource_knowledge_targets[
+        ResourceType.GRADED_QUIZ
+    ]:
+        if knowledge_id == slot["knowledge_id"]:
+            continue
+        other_tokens = _quiz_semantic_tokens(
+            " ".join(
+                chunk.content
+                for chunk in request.retrieved_chunks
+                if chunk.knowledge_id == knowledge_id
+            )
+        )
+        other_overlaps.append(len(question_tokens & other_tokens))
+    return not other_overlaps or max(other_overlaps) <= target_overlap + 2
+
+
+def _apply_quiz_blueprint_fallback(
+    content: StructuredResourceContent,
+    violations: list[dict[str, object]],
+    blueprint: list[dict[str, object]],
+    request: GenerateResourceInput,
+) -> StructuredResourceContent:
+    """Replace only invalid quiz slots with minimal facts copied from target evidence."""
+    if not isinstance(content, GradedQuizContent):
+        return content
+    invalid_ids = {
+        str(item["question_id"])
+        for item in violations
+        if str(item["question_id"]).startswith("Q")
+    }
+    slots = {str(slot["question_id"]): slot for slot in blueprint}
+    chunks_by_source = {chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks}
+    questions = []
+    for question in content.questions:
+        if question.question_id not in invalid_ids or question.question_id not in slots:
+            questions.append(question)
+            continue
+        slot = slots[question.question_id]
+        evidence_text = "\n".join(
+            _candidate_evidence_body(chunks_by_source[source_id].content)
+            for source_id in slot["allowed_source_ref_ids"]
+            if source_id in chunks_by_source
+        )
+        facts = [
+            bounded_text(part.strip(), 220)
+            for part in re.split(r"[。！？!?\n]+", evidence_text)
+            if part.strip() and not part.lstrip().startswith("#")
+        ][:2]
+        if not facts:
+            return content
+        question_type = QuestionType(str(slot["question_type"]))
+        correct_facts = facts[:2] if question_type is QuestionType.MULTIPLE_CHOICE else facts[:1]
+        options = []
+        if question_type in {QuestionType.SINGLE_CHOICE, QuestionType.MULTIPLE_CHOICE}:
+            options = [
+                *correct_facts,
+                "材料未直接支持的干扰表述一",
+                "材料未直接支持的干扰表述二",
+            ][:4]
+        correct_answer = "，".join(correct_facts)
+        questions.append(
+            question.model_copy(
+                update={
+                    "level": QuizLevel(str(slot["level"])),
+                    "question_type": question_type,
+                    "prompt": "下列哪项是材料直接说明的要点？"
+                    if options
+                    else "请概括材料直接说明的关键要点。",
+                    "options": options,
+                    "correct_answer": correct_answer,
+                    "explanation": "。".join(correct_facts) + "。",
+                    "knowledge_id": str(slot["knowledge_id"]),
+                    "difficulty": int(slot["difficulty"]),
+                    "source_ref_ids": list(slot["allowed_source_ref_ids"]),
+                    "reference_question_ids": list(slot["reference_question_ids"]),
+                }
+            )
+        )
+    return content.model_copy(update={"questions": questions})
+
+
+def _candidate_evidence_body(value: str) -> str:
+    """Remove Candidate embedding metadata before deriving fallback facts."""
+    header_prefixes = ("知识点：", "分类：", "难度：", "标签：", "标题：")
+    lines = value.splitlines()
+    separator_index = next(
+        (index for index, line in enumerate(lines) if not line.strip()),
+        None,
+    )
+    if separator_index is None:
+        return value
+    header = [line.strip() for line in lines[:separator_index] if line.strip()]
+    if not header or not all(line.startswith(header_prefixes) for line in header):
+        return value
+    body = "\n".join(lines[separator_index + 1 :]).strip()
+    return body or value
+
+
+def _choice_answer_matches_options(answer: str, options: list[str]) -> bool:
+    """Reject unrelated choice answers while accepting text or A/B/C-style notation."""
+    compact_answer = re.sub(r"\s+", "", answer).strip("。；;，,")
+    if not compact_answer or not options:
+        return False
+    compact_options = [re.sub(r"\s+", "", option) for option in options]
+    if any(option in compact_answer or compact_answer in option for option in compact_options):
+        return True
+    return bool(re.fullmatch(r"(?:[A-ZＡ-Ｚ](?:[、,，/\s]+|$))+", answer.strip(), re.I))
 
 
 def _merge_quiz_slot_repairs(
     original: GeneratedContentResponse,
     repaired: GeneratedContentResponse,
     violations: list[dict[str, object]],
+    blueprint: list[dict[str, object]],
 ) -> GeneratedContentResponse:
     if not isinstance(original.structured_content, GradedQuizContent) or not isinstance(
         repaired.structured_content, GradedQuizContent
@@ -1534,8 +2300,31 @@ def _merge_quiz_slot_repairs(
     repaired_by_id = {
         question.question_id: question for question in repaired.structured_content.questions
     }
+    blueprint_by_id = {str(slot["question_id"]): slot for slot in blueprint}
+
+    def repaired_question(question):
+        candidate = repaired_by_id.get(question.question_id, question)
+        slot = blueprint_by_id.get(question.question_id)
+        if slot is None:
+            return candidate
+        question_type = QuestionType(str(slot["question_type"]))
+        return candidate.model_copy(
+            update={
+                "question_id": str(slot["question_id"]),
+                "level": QuizLevel(str(slot["level"])),
+                "question_type": question_type,
+                "knowledge_id": str(slot["knowledge_id"]),
+                "difficulty": int(slot["difficulty"]),
+                "source_ref_ids": list(slot["allowed_source_ref_ids"]),
+                "reference_question_ids": list(slot["reference_question_ids"]),
+                "options": (
+                    [] if question_type is QuestionType.SHORT_ANSWER else candidate.options
+                ),
+            }
+        )
+
     questions = [
-        repaired_by_id.get(question.question_id, question)
+        repaired_question(question)
         if question.question_id in invalid_ids
         else question
         for question in original.structured_content.questions
@@ -1639,7 +2428,7 @@ def _fixture_response(
                     "prompt": f"说明{chunk.name}的关键点。",
                     "options": ["A. 正确做法", "B. 错误做法"] if choice else [],
                     "correct_answer": "A. 正确做法" if choice else chunk.content[:1000],
-                    "explanation": f"答案依据来源 {slot['allowed_source_ref_ids'][0]}。",
+                    "explanation": "请根据该题绑定的知识材料核对答案依据。",
                     "knowledge_id": knowledge_id,
                     "difficulty": slot["difficulty"],
                     "source_ref_ids": slot["allowed_source_ref_ids"],

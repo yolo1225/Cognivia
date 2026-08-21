@@ -10,5 +10,6 @@ class Domain(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     domain_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), default="draft", index=True)
     schema_version: Mapped[str] = mapped_column(String(32), default="1.0")
     config_json: Mapped[dict] = mapped_column(JSON, default=dict)

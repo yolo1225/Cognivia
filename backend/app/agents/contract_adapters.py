@@ -47,7 +47,7 @@ STATE_FIELD_OWNERS: dict[str, str] = {
 def _required(state: AgentGraphState, key: str):
     value = state.get(key)  # type: ignore[literal-required]
     if value is None:
-        raise ValueError(f"V4 state requires '{key}' before this node")
+        raise ValueError(f"V6 state requires '{key}' before this node")
     return value
 
 
@@ -102,11 +102,28 @@ def build_analyze_profile_input(
 def build_retrieve_knowledge_input(state: AgentGraphState) -> RetrieveKnowledgeInput:
     context = _context(state)
     analysis = _required(state, "analyze_profile")
+    plan = analysis.retrieval_plan
+    if context.resource_knowledge_targets:
+        inherited_ids = list(
+            dict.fromkeys(
+                knowledge_id
+                for values in context.resource_knowledge_targets.values()
+                for knowledge_id in values
+            )
+        )
+        plan = plan.model_copy(
+            update={
+                "priority_knowledge_ids": inherited_ids[:20],
+                "query_terms": list(
+                    dict.fromkeys([*inherited_ids, *plan.query_terms])
+                )[:30],
+            }
+        )
     return RetrieveKnowledgeInput(
         task_id=context.task_id,
         context=context,
         profile=analysis.profile,
-        retrieval_plan=analysis.retrieval_plan,
+        retrieval_plan=plan,
         revision_plan=state.get("revision_plan"),
         purpose=_purpose(analysis.retrieval_plan.strategy),
     )
@@ -116,9 +133,20 @@ def _generation_requirements(state: AgentGraphState) -> GenerationRequirements:
     analysis = _required(state, "analyze_profile")
     retrieval = _required(state, "retrieve_knowledge")
     plan = analysis.retrieval_plan
-    required_ids = list(
-        dict.fromkeys([*plan.priority_knowledge_ids, *plan.prerequisite_knowledge_ids])
-    )[:10]
+    inherited_targets = _context(state).resource_knowledge_targets
+    required_ids = (
+        list(
+            dict.fromkeys(
+                knowledge_id
+                for values in inherited_targets.values()
+                for knowledge_id in values
+            )
+        )
+        if inherited_targets
+        else list(
+            dict.fromkeys([*plan.priority_knowledge_ids, *plan.prerequisite_knowledge_ids])
+        )[:10]
+    )
     if not required_ids:
         required_ids = list(retrieval.covered_knowledge_ids)[:10]
     source_ids = list(dict.fromkeys(chunk.source.source_ref_id for chunk in retrieval.chunks))
@@ -141,8 +169,12 @@ def _generation_requirements(state: AgentGraphState) -> GenerationRequirements:
         target_difficulty=plan.target_difficulty,
         strategy=plan.strategy,
         required_knowledge_ids=required_ids,
-        resource_knowledge_targets=allocate_resource_knowledge_targets(
-            required_ids, retrieval.chunks, plan.resource_types
+        resource_knowledge_targets=(
+            inherited_targets
+            if inherited_targets
+            else allocate_resource_knowledge_targets(
+                required_ids, retrieval.chunks, plan.resource_types, _context(state).domain_code
+            )
         ),
         source_whitelist=source_ids,
         adaptation_notes=[analysis.decision_reason],
@@ -213,7 +245,7 @@ def _output_patch(node_name: str, output: OutputT) -> AgentGraphState:
     if expected_field is None:
         raise ValueError(f"unknown V3 node '{node_name}'")
     if output.contract_version != CONTRACT_VERSION:
-        raise ValueError("output contract version does not match frozen V5")
+        raise ValueError("output contract version does not match Agent Contract V6")
     return cast(AgentGraphState, {expected_field: output})
 
 

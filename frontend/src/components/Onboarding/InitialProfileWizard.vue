@@ -14,7 +14,7 @@
     </header>
 
     <form v-if="step === 'context'" class="wizard-body context-form" @submit.prevent="startDiagnostic">
-      <div class="identity"><span>学习者</span><strong>{{ authStore.userId || learnerId }}</strong><span class="tag">人工智能应用开发实训</span></div>
+      <div class="identity"><span>学习者</span><strong>{{ authStore.userId || learnerId }}</strong><span class="tag">{{ domainStore.currentDomainName || domainCode }}</span></div>
       <div class="form-grid">
         <label>学历层次
           <select v-model="form.education_level" required>
@@ -51,11 +51,11 @@
       <article v-if="currentQuestion" class="question-panel">
         <div class="question-meta"><span class="tag">{{ currentQuestion.question_type === 'single_choice' ? '选择题' : '简答题' }}</span><span class="tag">难度 {{ currentQuestion.difficulty }}/5</span></div>
         <h2>{{ currentQuestion.stem }}</h2>
-        <div v-if="currentQuestion.question_type === 'single_choice'" class="options"><label v-for="(option, index) in currentQuestion.options" :key="index"><input v-model="answers[currentIndex]" type="radio" :name="`question-${currentIndex}`" :value="index" />{{ String.fromCharCode(65 + index) }}. {{ option }}</label></div>
-        <textarea v-else v-model="answers[currentIndex]" rows="6" placeholder="请输入你的分析与答案" aria-label="简答题答案"></textarea>
+        <div v-if="currentQuestion.question_type === 'single_choice'" class="options"><label v-for="(option, index) in currentQuestion.options" :key="index"><input v-model="answers[currentIndex]" type="radio" :name="`question-${currentIndex}`" :value="index" :disabled="submitting || scoringPending" />{{ String.fromCharCode(65 + index) }}. {{ option }}</label></div>
+        <textarea v-else v-model="answers[currentIndex]" rows="6" placeholder="请输入你的分析与答案" aria-label="简答题答案" :disabled="submitting || scoringPending"></textarea>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
-        <p class="draft-note">当前答案已暂存，可在提交前返回任意题目修改。</p>
-        <footer class="wizard-actions split"><button class="btn" type="button" :disabled="currentIndex === 0 || submitting" @click="currentIndex--">上一题</button><button v-if="currentIndex < session.questions.length - 1" class="btn primary" type="button" :disabled="submitting" @click="currentIndex++">下一题</button><button v-else class="btn primary" type="button" :disabled="submitting || answeredCount !== session.question_count" @click="submitDiagnostic">{{ submitting ? '正在生成画像...' : answeredCount === session.question_count ? '提交并生成画像' : `还有 ${session.question_count - answeredCount} 题未完成` }}</button></footer>
+        <p class="draft-note">{{ scoringPending ? '仍有简答题等待评分，可重试未完成题。' : submitting ? `AI 正在评分，进度 ${scoringProgress}% ，可离开页面后再返回。` : '当前答案已暂存，可在提交前返回任意题目修改。' }}</p>
+        <footer class="wizard-actions split"><button class="btn" type="button" :disabled="currentIndex === 0 || submitting" @click="currentIndex--">上一题</button><button v-if="currentIndex < session.questions.length - 1" class="btn primary" type="button" :disabled="submitting" @click="currentIndex++">下一题</button><button v-else class="btn primary" type="button" :disabled="submitting || (!scoringPending && answeredCount !== session.question_count)" @click="submitDiagnostic">{{ submitting ? `正在评分 ${scoringProgress}%` : scoringPending ? '重试未完成评分' : answeredCount === session.question_count ? '提交并生成画像' : `还有 ${session.question_count - answeredCount} 题未完成` }}</button></footer>
       </article>
     </section>
 
@@ -72,30 +72,37 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { createDiagnosticSession, submitDiagnosticSession, type DiagnosticResult, type DiagnosticSession } from '@/api/diagnostics'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { createDiagnosticSession, getCurrentDiagnosticSession, getDiagnosticSession, retryDiagnosticSession, streamDiagnosticSession, submitDiagnosticSession, type DiagnosticResult, type DiagnosticSession, type DiagnosticSessionStatus } from '@/api/diagnostics'
 import { getLearnerProfile, updateInitialContext, type InitialContextPayload } from '@/api/learners'
 import { useAuthStore } from '@/stores/authStore'
+import { useDomainStore } from '@/stores/domainStore'
 import RadarChart from '@/components/Charts/RadarChart.vue'
 
 const props = defineProps<{ learnerId: string }>()
 defineEmits<{ complete: [] }>()
+const route = useRoute()
+const router = useRouter()
 const authStore = useAuthStore()
+const domainStore = useDomainStore()
 const step = ref<'context' | 'diagnostic' | 'result'>('context')
 const saving = ref(false)
 const submitting = ref(false)
+const scoringPending = ref(false)
+const scoringProgress = ref(0)
 const error = ref('')
 const session = ref<DiagnosticSession | null>(null)
 const result = ref<DiagnosticResult | null>(null)
+const domainCode = ref('')
 const currentIndex = ref(0)
 const answers = ref<Record<number, string | number>>({})
+let scoringEvents: EventSource | null = null
 const form = reactive<InitialContextPayload>({ education_level: '', major: '', experience_years: 0, learning_style: 'mixed', direction_tags: [] })
-const directions = [
-  { value: 'llm_application', label: '大模型应用开发', description: '模型调用、接口与应用流程' },
-  { value: 'prompt_engineering', label: 'Prompt 工程', description: '指令、上下文与结构化输出' },
-  { value: 'rag_knowledge_base', label: 'RAG 知识库构建', description: '检索、向量和知识管理' },
-  { value: 'agent_orchestration', label: 'Agent 编排', description: '工具调用、多智能体与工作流' },
-]
+const directions = computed(() => {
+  const domain = domainStore.domains.find(item => item.domain_code === domainCode.value)
+  return (domain?.config?.learning_directions as Array<{ value: string; label: string; description: string }> | undefined) || []
+})
 const currentQuestion = computed(() => session.value?.questions[currentIndex.value] || null)
 const answeredCount = computed(() => session.value?.questions.filter((_, index) => hasAnswer(index)).length || 0)
 const radarValues = computed(() => ['theory', 'practice', 'problem_solving', 'breadth', 'learning_speed'].map((key) => Number(result.value?.ability_profile?.[key] || 0)))
@@ -105,11 +112,16 @@ function hasAnswer(index: number) { return String(answers.value[index] ?? '').tr
 function profileLabel(type: string) { return ({ beginner: '基础起步型画像', intermediate: '进阶提升型画像', advanced: '综合应用型画像', practice_oriented: '实操导向型画像' } as Record<string, string>)[type] || '个性化学习画像' }
 
 async function startDiagnostic() {
+  if (!domainStore.readiness?.diagnostic_ready) {
+    error.value = `当前领域尚未满足诊断条件：${domainStore.readiness?.runtime_reasons?.join('、') || '领域配置不可用'}`
+    return
+  }
   error.value = ''
   saving.value = true
   try {
     await updateInitialContext(props.learnerId, form)
-    session.value = await createDiagnosticSession(props.learnerId)
+    session.value = await createDiagnosticSession(domainCode.value, props.learnerId)
+    await router.replace({ query: { ...route.query, diagnostic_session_id: session.value.session_id } })
     answers.value = {}
     currentIndex.value = 0
     step.value = 'diagnostic'
@@ -118,13 +130,58 @@ async function startDiagnostic() {
   } finally { saving.value = false }
 }
 
+function applyDiagnosticStatus(status: DiagnosticSessionStatus) {
+  if (status.questions?.length) session.value = status
+  scoringProgress.value = status.progress
+  if (status.status === 'scored' && status.result) {
+    result.value = status.result
+    scoringPending.value = false
+    submitting.value = false
+    step.value = 'result'
+    scoringEvents?.close()
+    scoringEvents = null
+  } else if (status.status === 'pending_scoring') {
+    scoringPending.value = true
+    submitting.value = false
+    error.value = '部分简答题暂未完成评分，可安全重试未完成题。'
+  } else if (status.status === 'failed') {
+    scoringPending.value = status.retryable
+    submitting.value = false
+    error.value = status.retryable ? '评分暂时失败，可重试未完成题。' : `诊断失败：${status.error_code || '未知错误'}`
+  } else if (status.status === 'scoring') {
+    submitting.value = true
+    scoringPending.value = false
+  }
+}
+
+function followScoring(sessionId: string) {
+  scoringEvents?.close()
+  scoringEvents = streamDiagnosticSession(sessionId, props.learnerId, event => applyDiagnosticStatus(event))
+  scoringEvents.onerror = async () => {
+    scoringEvents?.close()
+    scoringEvents = null
+    try {
+      const status = await getDiagnosticSession(sessionId, props.learnerId)
+      applyDiagnosticStatus(status)
+      if (status.status === 'scoring') followScoring(sessionId)
+    } catch {
+      submitting.value = false
+      error.value = '评分连接中断，请刷新页面恢复进度。'
+    }
+  }
+}
+
 async function submitDiagnostic() {
   if (!session.value) return
   error.value = ''
   submitting.value = true
   try {
-    result.value = await submitDiagnosticSession(session.value.session_id, session.value.questions.map((question, index) => ({ question_id: question.question_id, answer: answers.value[index] })), props.learnerId)
-    step.value = 'result'
+    const status = scoringPending.value
+      ? await retryDiagnosticSession(session.value.session_id, props.learnerId)
+      : await submitDiagnosticSession(session.value.session_id, session.value.questions.map((question, index) => ({ question_id: question.question_id, answer: answers.value[index] })), domainCode.value, props.learnerId)
+    error.value = ''
+    applyDiagnosticStatus(status)
+    if (status.status === 'scoring') followScoring(session.value.session_id)
   } catch (caught: any) {
     error.value = caught.response?.data?.error?.message || '诊断提交失败，请稍后重试。'
   } finally { submitting.value = false }
@@ -133,13 +190,28 @@ async function submitDiagnostic() {
 onMounted(async () => {
   try {
     const detail = await getLearnerProfile(props.learnerId)
+    domainCode.value = detail.domain_code
+    await domainStore.initialize(detail.domain_code)
     form.education_level = detail.education_level || ''
     form.major = detail.major || ''
     form.experience_years = detail.experience_years || 0
     form.learning_style = detail.learning_style as InitialContextPayload['learning_style'] || 'mixed'
     form.direction_tags = detail.direction_tags || []
+    const explicitSessionId = String(route.query.diagnostic_session_id || '').trim()
+    const status = explicitSessionId
+      ? await getDiagnosticSession(explicitSessionId, props.learnerId)
+      : await getCurrentDiagnosticSession(props.learnerId, detail.domain_code)
+    if (status) {
+      if (!explicitSessionId) {
+        await router.replace({ query: { ...route.query, diagnostic_session_id: status.session_id } })
+      }
+      applyDiagnosticStatus(status)
+      step.value = status.status === 'scored' ? 'result' : 'diagnostic'
+      if (status.status === 'scoring') followScoring(status.session_id)
+    }
   } catch { /* The form remains usable for a newly registered learner. */ }
 })
+onBeforeUnmount(() => scoringEvents?.close())
 </script>
 
 <style scoped>

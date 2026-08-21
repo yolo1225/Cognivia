@@ -21,7 +21,7 @@ from app.agents.contracts import (
     RetrievalPlan,
     WeakKnowledge,
 )
-from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V1, ProfileAnalysisConfig
+from app.agents.profile_analysis_config import ProfileAnalysisConfig
 
 
 class ProfileAnalysisError(ValueError):
@@ -30,7 +30,7 @@ class ProfileAnalysisError(ValueError):
 
 def analyze_profile(
     node_input: AnalyzeProfileInput,
-    config: ProfileAnalysisConfig = AI_APP_DEV_PROFILE_V1,
+    config: ProfileAnalysisConfig,
 ) -> AnalyzeProfileOutput:
     if node_input.task_id != node_input.context.task_id:
         raise ProfileAnalysisError("task_id_context_mismatch")
@@ -91,10 +91,14 @@ def analyze_profile(
         needs_generation=needs_generation,
         current_path_node=node_input.current_path_node,
         resource_knowledge_targets={
-            resource_type: list(dict.fromkeys([
-                *retrieval_plan.priority_knowledge_ids,
-                *retrieval_plan.prerequisite_knowledge_ids,
-            ]))[:10]
+            resource_type: list(
+                dict.fromkeys(
+                    [
+                        *retrieval_plan.priority_knowledge_ids,
+                        *retrieval_plan.prerequisite_knowledge_ids,
+                    ]
+                )
+            )[:10]
             for resource_type in retrieval_plan.resource_types
         },
     )
@@ -297,7 +301,11 @@ def _updated_ability_scores(
         ]
         if not pairs:
             continue
-        target = round(sum(mastery * weight for mastery, weight in pairs) / sum(weight for _, weight in pairs) * 100)
+        target = round(
+            sum(mastery * weight for mastery, weight in pairs)
+            / sum(weight for _, weight in pairs)
+            * 100
+        )
         delta = max(
             -config.max_ability_change_per_update,
             min(config.max_ability_change_per_update, target - current[dimension]),
@@ -311,7 +319,9 @@ def _updated_ability_scores(
     return AbilityScores(**next_scores), changes
 
 
-def _profile_type(scores: AbilityScores, masteries: dict[str, float], catalog, config: ProfileAnalysisConfig) -> ProfileType:
+def _profile_type(
+    scores: AbilityScores, masteries: dict[str, float], catalog, config: ProfileAnalysisConfig
+) -> ProfileType:
     covered_categories = {catalog[knowledge_id].category for knowledge_id in masteries}
     if (
         len(covered_categories) >= config.minimum_category_coverage_for_practice_oriented
@@ -416,7 +426,7 @@ def _build_retrieval_plan(
             GenerationStrategy.CHALLENGE: "挑战任务",
         }[strategy]
     )
-    query_terms = list(dict.fromkeys(term for term in terms if term))[:30] or ["ai_app_dev"]
+    query_terms = list(dict.fromkeys(term for term in terms if term))[:30] or ["基础知识"]
     unique_resource_types = list(dict.fromkeys(resource_types))
     planned_target_count = min(10, len([*priority_ids, *prerequisite_ids]))
     if action in {RecommendedAction.REVIEW, RecommendedAction.REGENERATE}:
@@ -446,13 +456,21 @@ def _prioritized_weak_knowledge(
 
     def sort_key(item: WeakKnowledge) -> tuple[float, str]:
         confidence = max(
-            (evidence_by_id[evidence_id].confidence for evidence_id in item.evidence_ids if evidence_id in evidence_by_id),
+            (
+                evidence_by_id[evidence_id].confidence
+                for evidence_id in item.evidence_ids
+                if evidence_id in evidence_by_id
+            ),
             default=0.0,
         )
-        relevant = 1.0 if any(
-            token and token.casefold() in normalized_goal
-            for token in (item.knowledge_id, item.name, item.category)
-        ) else 0.5
+        relevant = (
+            1.0
+            if any(
+                token and token.casefold() in normalized_goal
+                for token in (item.knowledge_id, item.name, item.category)
+            )
+            else 0.5
+        )
         return (-(item.weakness_level * confidence * relevant), item.knowledge_id)
 
     return sorted(weak_knowledge, key=sort_key)

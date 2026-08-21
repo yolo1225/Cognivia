@@ -87,6 +87,11 @@ export interface LearnerCreatePayload {
   learning_style: 'theory' | 'practice' | 'mixed'
 }
 
+export interface TargetDomainResult extends LearnerSummary {
+  domain_changed: boolean
+  direction_tags: string[]
+}
+
 export function listLearners() {
   return getData<LearnerSummary[]>('/learners')
 }
@@ -101,4 +106,10 @@ export function getLearnerProfile(learnerId: string) {
 
 export function updateInitialContext(learnerId: string, payload: InitialContextPayload) {
   return putData<InitialContextResult>(`/learners/${learnerId}/initial-context`, payload)
+}
+
+export function updateTargetDomain(learnerId: string, domainCode: string) {
+  return putData<TargetDomainResult>(`/learners/${learnerId}/target-domain`, {
+    domain_code: domainCode,
+  })
 }

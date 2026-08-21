@@ -4,20 +4,22 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.db import get_db
-from app.core.config import settings
 from app.core.security import Principal, get_current_user, principal_learner, require_resource, require_tutoring
-from app.core.db import SessionLocal
-from app.models import Learner, TutoringMessage
+from app.models import Learner, TutoringMessage, TutoringSession
 from app.schemas.common import ApiResponse, ok
 from app.services.learner_service import get_or_create_demo_learner
 from app.services.profile_service import default_profile_for_learner
-from app.services.llm_service import ModelGatewayError, gateway
-from app.services.resource_tutoring_service import SYSTEM_PROMPT
-from app.services.tutoring_service import (add_learner_message, create_session, create_streaming_messages,
-    serialize_session, stream_context_for_message, update_streaming_reply)
+from app.services.tutoring_service import (
+    create_streaming_messages,
+    create_session,
+    execute_tutoring_turn,
+    serialize_session,
+    submit_assessment_answer,
+    update_streaming_reply,
+)
 from app.workers.generation_worker import run_generation_task
 
 router = APIRouter()
@@ -67,101 +69,206 @@ def post_tutoring_message(
     if session is None:
         raise HTTPException(status_code=404, detail="Tutoring session not found")
     content = str((payload or {}).get("content") or "").strip()
+    evidence = (payload or {}).get("evidence") or []
     if not content:
         raise HTTPException(status_code=422, detail="content is required")
+    if not isinstance(evidence, list):
+        raise HTTPException(status_code=422, detail="evidence must be a list")
     learner = db.get(Learner, session.learner_id)
     if learner is None:
         raise HTTPException(status_code=404, detail="Learner not found")
     profile = default_profile_for_learner(db, learner)
     try:
-        _, reply, feedback, task, output = add_learner_message(
+        result = execute_tutoring_turn(
             db,
             session=session,
             profile=profile,
             content=content,
-            evidence=list((payload or {}).get("evidence") or []),
+            evidence=evidence[:50],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.commit()
+    if result.task:
+        background_tasks.add_task(run_generation_task, result.task.public_id)
+    return ok(result.serialize())
+
+
+@router.post("/sessions/{session_id}/messages/stream")
+def stream_tutoring_message(
+    session_id: str, background_tasks: BackgroundTasks, payload: dict[str, Any] | None = None,
+    db: Session = Depends(get_db), principal: Principal = Depends(get_current_user),
+) -> StreamingResponse:
+    session = require_tutoring(db, principal, session_id)
+    content = str((payload or {}).get("content") or "").strip()
+    evidence = (payload or {}).get("evidence") or []
+    if not content:
+        raise HTTPException(status_code=422, detail="content is required")
+    if not isinstance(evidence, list):
+        raise HTTPException(status_code=422, detail="evidence must be a list")
+    stream_session_factory = sessionmaker(
+        bind=db.get_bind(), autocommit=False, autoflush=False
+    )
+    learner_message, reply, _resource = create_streaming_messages(
+        db, session=session, content=content
+    )
+    db.commit()
+    learner_message_id = learner_message.public_id
+    reply_id = reply.public_id
+
+    def generate():
+        accumulated = ""
+        yield _event(
+            "accepted",
+            {
+                "session_id": session_id,
+                "learner_message_id": learner_message_id,
+                "reply_message_id": reply_id,
+            },
+        )
+        yield _event("agent_status", {"agent": "tutoring_agent", "status": "running"})
+        try:
+            with stream_session_factory() as stream_db:
+                current_session = stream_db.scalar(
+                    select(TutoringSession).where(TutoringSession.public_id == session_id)
+                )
+                if current_session is None:
+                    raise ValueError("Tutoring session not found")
+                learner = stream_db.get(Learner, current_session.learner_id)
+                profile = default_profile_for_learner(stream_db, learner)
+                prepared_learner_message = stream_db.scalar(
+                    select(TutoringMessage).where(
+                        TutoringMessage.public_id == learner_message_id
+                    )
+                )
+                prepared_reply = stream_db.scalar(
+                    select(TutoringMessage).where(TutoringMessage.public_id == reply_id)
+                )
+                result = execute_tutoring_turn(
+                    stream_db,
+                    session=current_session,
+                    profile=profile,
+                    content=content,
+                    evidence=evidence[:50],
+                    prepared_learner_message=prepared_learner_message,
+                    prepared_reply=prepared_reply,
+                )
+                serialized = result.serialize()
+                task_id = serialized["task_id"]
+                full_content = serialized["reply"]["content"]
+                result.reply.content = ""
+                result.reply.metadata_json = {
+                    **(result.reply.metadata_json or {}),
+                    "stream_status": "streaming",
+                }
+                stream_db.commit()
+            if task_id:
+                background_tasks.add_task(run_generation_task, task_id)
+            for offset in range(0, len(full_content), 24):
+                delta = full_content[offset : offset + 24]
+                with stream_session_factory() as stream_db:
+                    current_reply = stream_db.scalar(
+                        select(TutoringMessage).where(TutoringMessage.public_id == reply_id)
+                    )
+                    if current_reply is None:
+                        raise ValueError("tutoring reply not found")
+                    if (current_reply.metadata_json or {}).get("stream_status") == "paused":
+                        update_streaming_reply(
+                            stream_db,
+                            reply=current_reply,
+                            content=accumulated,
+                            status="paused",
+                        )
+                        yield _event(
+                            "paused", {"reply_message_id": reply_id, "content": accumulated}
+                        )
+                        return
+                accumulated += delta
+                yield _event("delta", {"reply_message_id": reply_id, "content": delta})
+            with stream_session_factory() as stream_db:
+                current_reply = stream_db.scalar(
+                    select(TutoringMessage).where(TutoringMessage.public_id == reply_id)
+                )
+                if current_reply is None:
+                    raise ValueError("tutoring reply not found")
+                update_streaming_reply(
+                    stream_db,
+                    reply=current_reply,
+                    content=full_content,
+                    status="completed",
+                )
+            reply_payload = serialized["reply"]
+            yield _event("agent_status", {"agent": "tutoring_agent", "status": "completed"})
+            yield _event("completed", {"reply_message_id": reply_id, "content": reply_payload["content"], "sources": reply_payload["sources"], "scope_status": reply_payload["scope_status"], "assessment": reply_payload["assessment"], "assessment_unavailable": reply_payload["assessment_unavailable"], "feedback_id": serialized["feedback_id"], "feedback_intent": serialized["feedback_intent"], "recommended_action": serialized["recommended_action"], "profile_update_required": serialized["profile_update_required"], "decision_reason": serialized["decision_reason"], "task_id": task_id})
+        except ValueError as exc:
+            with stream_session_factory() as stream_db:
+                current_reply = stream_db.scalar(
+                    select(TutoringMessage).where(TutoringMessage.public_id == reply_id)
+                )
+                if current_reply is not None:
+                    update_streaming_reply(
+                        stream_db,
+                        reply=current_reply,
+                        content=accumulated,
+                        status="interrupted" if accumulated else "failed",
+                        error_code=str(exc),
+                    )
+            yield _event("error", {"reply_message_id": reply_id, "code": str(exc), "recoverable": bool(accumulated)})
+        except Exception:
+            with stream_session_factory() as stream_db:
+                current_reply = stream_db.scalar(
+                    select(TutoringMessage).where(TutoringMessage.public_id == reply_id)
+                )
+                if current_reply is not None:
+                    update_streaming_reply(
+                        stream_db,
+                        reply=current_reply,
+                        content=accumulated,
+                        status="interrupted" if accumulated else "failed",
+                        error_code="tutoring_turn_failed",
+                    )
+            yield _event("error", {"reply_message_id": reply_id, "code": "tutoring_turn_failed", "recoverable": bool(accumulated)})
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/sessions/{session_id}/assessments/{assessment_id}/answers", response_model=ApiResponse)
+def answer_tutoring_assessment(
+    session_id: str,
+    assessment_id: str,
+    background_tasks: BackgroundTasks,
+    payload: dict[str, Any] | None = None,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    session = require_tutoring(db, principal, session_id)
+    learner = db.get(Learner, session.learner_id)
+    profile = default_profile_for_learner(db, learner)
+    if "answer" not in (payload or {}):
+        raise HTTPException(status_code=422, detail="answer is required")
+    try:
+        record, feedback, task, decision = submit_assessment_answer(
+            db,
+            session=session,
+            profile=profile,
+            assessment_id=assessment_id,
+            answer=(payload or {})["answer"],
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.commit()
     if task:
         background_tasks.add_task(run_generation_task, task.public_id)
-    return ok(
-        {
-            "session_id": session.public_id,
-            "reply": {
-                "message_id": reply.public_id,
-                "message_type": reply.message_type,
-                "content": reply.content,
-                "sources": output.get("sources", []),
-                "scope_status": output.get("scope_status"),
-                "assessment": output.get("assessment"),
-            },
-            "feedback_intent": output["feedback_intent"],
-            "recommended_action": feedback.recommended_action,
-            "profile_update_required": feedback.feedback_intent in {"too_hard", "too_easy"}
-            and any(
-                item.get("type") in {"scored_quiz", "diagnostic_result", "validated_behavior"}
-                and (
-                    float(item.get("confidence", 0) or 0) >= 0.7
-                    or item.get("confirmed") is True
-                )
-                for item in (feedback.profile_change_evidence_json or [])
-                if isinstance(item, dict)
-            ),
-            "decision_reason": feedback.decision_reason,
-            "task_id": task.public_id if task else None,
-        }
-    )
-
-
-@router.post("/sessions/{session_id}/messages/stream")
-def stream_tutoring_message(
-    session_id: str, payload: dict[str, Any] | None = None,
-    db: Session = Depends(get_db), principal: Principal = Depends(get_current_user),
-) -> StreamingResponse:
-    session = require_tutoring(db, principal, session_id)
-    content = str((payload or {}).get("content") or "").strip()
-    if not content:
-        raise HTTPException(status_code=422, detail="content is required")
-    learner_message, reply, resource = create_streaming_messages(db, session=session, content=content)
-    db.commit()
-    payload_context, sources, scope_status, assessment = stream_context_for_message(
-        db, session=session, resource=resource, content=content
-    )
-
-    def generate():
-        accumulated = ""
-        yield _event("accepted", {"session_id": session_id, "learner_message_id": learner_message.public_id, "reply_message_id": reply.public_id})
-        try:
-            for delta in gateway.stream_text(model=settings.primary_llm_model, system_prompt=SYSTEM_PROMPT, payload=payload_context):
-                with SessionLocal() as stream_db:
-                    current = stream_db.get(TutoringMessage, reply.id)
-                    if current is None or (current.metadata_json or {}).get("stream_status") == "paused":
-                        yield _event("paused", {"reply_message_id": reply.public_id, "content": accumulated})
-                        return
-                    accumulated += delta
-                    update_streaming_reply(stream_db, reply=current, content=accumulated)
-                yield _event("delta", {"reply_message_id": reply.public_id, "content": delta})
-            with SessionLocal() as stream_db:
-                current = stream_db.get(TutoringMessage, reply.id)
-                if current is not None:
-                    update_streaming_reply(stream_db, reply=current, content=accumulated, status="completed", sources=sources, scope_status=scope_status, assessment=assessment)
-            yield _event("completed", {"reply_message_id": reply.public_id, "content": accumulated, "sources": sources, "scope_status": scope_status, "assessment": assessment, "task_id": None})
-        except ModelGatewayError as exc:
-            with SessionLocal() as stream_db:
-                current = stream_db.get(TutoringMessage, reply.id)
-                if current is not None:
-                    update_streaming_reply(stream_db, reply=current, content=accumulated, status="interrupted" if accumulated else "failed", error_code=type(exc).__name__)
-            yield _event("error", {"reply_message_id": reply.public_id, "code": type(exc).__name__, "recoverable": bool(accumulated)})
-        except Exception:
-            with SessionLocal() as stream_db:
-                current = stream_db.get(TutoringMessage, reply.id)
-                if current is not None:
-                    update_streaming_reply(stream_db, reply=current, content=accumulated, status="interrupted" if accumulated else "failed", error_code="stream_failed")
-            yield _event("error", {"reply_message_id": reply.public_id, "code": "stream_failed", "recoverable": bool(accumulated)})
-
-    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return ok({
+        "answer_record_id": str(record.id),
+        "score": record.score,
+        "is_correct": record.is_correct,
+        "confirmed": decision["confirmed"],
+        "feedback_id": str(feedback.id),
+        "profile_update_required": decision["profile_update_required"],
+        "decision_reason": decision["decision_reason"],
+        "task_id": task.public_id if task else None,
+    })
 
 
 @router.post("/sessions/{session_id}/messages/{reply_message_id}/pause", response_model=ApiResponse)

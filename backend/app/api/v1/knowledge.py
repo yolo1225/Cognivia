@@ -1,7 +1,7 @@
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -10,6 +10,8 @@ from app.core.db import get_db
 from app.models import KnowledgeItem, KnowledgeRelation
 from app.rag.readiness import candidate_rag_status
 from app.schemas.common import ApiResponse, ok
+from app.services import candidate_index_job
+from app.services.domain_api_service import default_ability_weights, mark_domain_preparing
 from app.services.knowledge_update_service import (
     mark_affected_content,
     related_knowledge_ids,
@@ -21,12 +23,17 @@ router = APIRouter()
 
 @router.get("/relations", response_model=ApiResponse)
 def list_knowledge_relations(
-    domain_code: str = Query("ai_app_dev"),
+    domain_code: str = Query(...),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
     items = list(
-        db.scalars(select(KnowledgeItem).where(KnowledgeItem.domain_code == domain_code))
+        db.scalars(
+            select(KnowledgeItem).where(
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.status == "published",
+            )
+        )
     )
     item_by_id = {item.id: item for item in items}
     if not item_by_id:
@@ -55,7 +62,7 @@ def list_knowledge_relations(
 
 
 class KnowledgeItemCreate(BaseModel):
-    domain_code: str = Field(default="ai_app_dev", min_length=1, max_length=64)
+    domain_code: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=255)
     category: str = Field(default="未分类", min_length=1, max_length=64)
     difficulty: int = Field(default=2, ge=1, le=5)
@@ -94,18 +101,24 @@ def serialize_knowledge_item(item: KnowledgeItem) -> dict[str, Any]:
         "source_url": item.source_url,
         "license_note": item.license_note,
         "needs_reembedding": item.needs_reembedding,
+        "ability_weights": item.ability_weights_json or {},
+        "source_locator": item.source_locator_json or {},
+        "status": item.status,
     }
 
 
 @router.get("/items", response_model=ApiResponse)
 def list_knowledge_items(
-    domain_code: str = Query(default="ai_app_dev"),
+    domain_code: str = Query(...),
     category: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
-    filters = [KnowledgeItem.domain_code == domain_code]
+    filters = [
+        KnowledgeItem.domain_code == domain_code,
+        KnowledgeItem.status == "published",
+    ]
     if category:
         filters.append(KnowledgeItem.category == category)
 
@@ -143,7 +156,9 @@ def create_knowledge_item(
         )
     )
     if duplicate is not None:
-        raise HTTPException(status_code=409, detail=f"Knowledge item already exists: {payload.name}")
+        raise HTTPException(
+            status_code=409, detail=f"Knowledge item already exists: {payload.name}"
+        )
 
     item = KnowledgeItem(
         public_id=f"ki_{uuid4().hex[:12]}",
@@ -156,7 +171,9 @@ def create_knowledge_item(
         source_title=payload.source_title.strip(),
         source_url=payload.source_url,
         license_note=payload.license_note.strip(),
+        ability_weights_json=default_ability_weights(),
         needs_reembedding=True,
+        status="published",
     )
     db.add(item)
     db.flush()
@@ -177,6 +194,7 @@ def create_knowledge_item(
         affected_knowledge_ids=affected_ids,
         reason="manual_import",
     )
+    mark_domain_preparing(db, item.domain_code)
 
     db.commit()
     db.refresh(item)
@@ -250,6 +268,7 @@ def update_knowledge_item(
         affected_knowledge_ids=affected_ids,
         reason="knowledge_item_updated",
     )
+    mark_domain_preparing(db, item.domain_code)
     db.commit()
     db.refresh(item)
     return ok(
@@ -267,13 +286,16 @@ def update_knowledge_item(
 @router.get("/search", response_model=ApiResponse)
 def search_knowledge(
     query: str = Query(min_length=1),
-    domain_code: str = Query(default="ai_app_dev"),
+    domain_code: str = Query(...),
     n_results: int = Query(default=5, ge=1, le=20),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
     statement = (
         select(KnowledgeItem)
-        .where(KnowledgeItem.domain_code == domain_code)
+        .where(
+            KnowledgeItem.domain_code == domain_code,
+            KnowledgeItem.status == "published",
+        )
         .where(KnowledgeItem.name.contains(query) | KnowledgeItem.content_md.contains(query))
         .order_by(KnowledgeItem.public_id)
         .limit(n_results)
@@ -305,11 +327,20 @@ def search_knowledge(
 
 
 @router.post("/rebuild-index", response_model=ApiResponse)
-def rebuild_vector_index(domain_code: str = Query(default="ai_app_dev")) -> ApiResponse:
-    raise HTTPException(
-        status_code=409,
-        detail=(
-            "CANDIDATE_INDEX_REBUILD_REQUIRES_LIVE_COMMAND: "
-            f"run python -m app.scripts.build_chroma_candidate_index --domain-code {domain_code} --live"
-        ),
-    )
+def rebuild_vector_index(
+    background_tasks: BackgroundTasks,
+    domain_code: str = Query(...),
+    db: Session = Depends(get_db),
+) -> ApiResponse:
+    job = candidate_index_job.try_start(db, domain_code)
+    if job is None:
+        raise HTTPException(status_code=409, detail="候选索引正在重建中，请稍后再试")
+    background_tasks.add_task(candidate_index_job.run_rebuild, job.id, domain_code)
+    return ok({"job_id": job.id, "status": "running", "domain_code": domain_code})
+
+
+@router.get("/rebuild-index/status", response_model=ApiResponse)
+def rebuild_index_status(
+    domain_code: str = Query(...), db: Session = Depends(get_db)
+) -> ApiResponse:
+    return ok(candidate_index_job.status(db, domain_code))

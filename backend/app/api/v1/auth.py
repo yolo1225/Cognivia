@@ -21,6 +21,7 @@ from app.core.security import (
 from app.models import Learner, User
 from app.schemas.common import ApiResponse, ok
 from app.services.session_service import session_store
+from app.services.domain_runtime_service import unique_ready_domain_code
 
 router = APIRouter()
 
@@ -84,7 +85,10 @@ def register(
 ) -> ApiResponse:
     if db.scalar(select(User).where(User.username == payload.username)):
         raise HTTPException(409, "用户名已存在")
-    learner = Learner(public_id=f"learner_{uuid4().hex[:16]}", target_domain="ai_app_dev")
+    learner = Learner(
+        public_id=f"learner_{uuid4().hex[:16]}",
+        target_domain=unique_ready_domain_code(db),
+    )
     db.add(learner)
     db.flush()
     user = User(

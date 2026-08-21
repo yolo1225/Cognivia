@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.agents.contracts import RetrieveKnowledgeInput, RetrieveKnowledgeOutput
+from app.agents.prompt_registry import get_prompt
 from app.core.config import Settings
 from app.core.db import SessionLocal
 from app.rag.candidate_manifest import CandidateManifestStore
@@ -12,10 +13,7 @@ from app.rag.vector_store import VectorStore
 
 
 RETRIEVAL_AGENT_NAME = "knowledge_retrieval_agent_v3"
-SYSTEM_PROMPT = (
-    "你是 V3 知识检索智能体。只返回 candidate 索引中可追溯的知识片段与来源，"
-    "不生成教学内容，不编造来源，不调用语言模型；唯一允许的模型调用是查询 embedding。"
-)
+SYSTEM_PROMPT = get_prompt("retrieval")
 
 
 class KnowledgeRetrievalAgent:

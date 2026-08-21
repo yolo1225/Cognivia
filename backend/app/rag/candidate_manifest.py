@@ -197,3 +197,7 @@ class CandidateManifestStore:
             temporary.unlink(missing_ok=True)
             raise
         return path
+
+    def remove(self, domain_code: str) -> None:
+        """Remove a manifest when compensating a failed first activation."""
+        self.path_for(domain_code).unlink(missing_ok=True)

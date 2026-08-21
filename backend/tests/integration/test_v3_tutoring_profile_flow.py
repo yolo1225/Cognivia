@@ -22,15 +22,13 @@ from app.agents.contracts import (
 )
 from app.agents.state import AgentGraphState
 from app.agents.profile_analysis_agent import ProfileAnalysisAgent
+from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.agents.tutoring_agent import TutoringAgent
 from app.services.tutoring_policy import TutoringSemanticResult
 
 
 FIXTURE_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "fixtures"
-    / "v3_tutoring"
-    / "minimal_feedback_input.json"
+    Path(__file__).resolve().parents[1] / "fixtures" / "v3_tutoring" / "minimal_feedback_input.json"
 )
 KNOWLEDGE_ID = "rag_pipeline_overview"
 
@@ -91,10 +89,8 @@ def _run_flow(
     ).execute(tutoring_input)
     state.update(interpret_feedback_output_to_patch(tutoring_output))
 
-    profile_input = build_analyze_profile_input(
-        state, knowledge_assessments=knowledge_assessments
-    )
-    profile_output = ProfileAnalysisAgent().execute(profile_input)
+    profile_input = build_analyze_profile_input(state, knowledge_assessments=knowledge_assessments)
+    profile_output = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2).execute(profile_input)
     return tutoring_output, profile_input, profile_output
 
 

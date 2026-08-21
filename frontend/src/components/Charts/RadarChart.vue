@@ -17,10 +17,16 @@ function renderChart() {
   if (!chartRef.value) return
   chart ??= echarts.init(chartRef.value)
   chart.setOption({
-    color: ['#2563eb'],
-    tooltip: {},
+    color: ['#315fce'],
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1b2737',
+      borderWidth: 0,
+      textStyle: { color: '#f8fafc', fontSize: 12 },
+    },
     radar: {
       radius: '66%',
+      splitNumber: 4,
       indicator: [
         { name: '理论基础', max: 100 },
         { name: '实操能力', max: 100 },
@@ -28,18 +34,28 @@ function renderChart() {
         { name: '知识广度', max: 100 },
         { name: '学习速度', max: 100 },
       ],
-      splitArea: {
-        areaStyle: {
-          color: ['#f8fafc', '#eef5ff'],
-        },
-      },
+      axisName: { color: '#5e6f84', fontSize: 12, fontWeight: 600 },
+      splitLine: { lineStyle: { color: '#e4eaf2' } },
+      splitArea: { areaStyle: { color: ['#fafcff', '#f2f6fd'] } },
+      axisLine: { lineStyle: { color: '#dfe6ef' } },
     },
     series: [
       {
         type: 'radar',
         data: [{ value: props.values, name: '当前画像' }],
-        areaStyle: { opacity: 0.18 },
-        lineStyle: { width: 2 },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(49, 95, 206, 0.30)' },
+              { offset: 1, color: 'rgba(49, 95, 206, 0.06)' },
+            ],
+          },
+        },
+        lineStyle: { width: 2, color: '#315fce' },
+        itemStyle: { color: '#315fce', borderColor: '#fff', borderWidth: 1.5 },
+        symbol: 'circle',
         symbolSize: 5,
       },
     ],
@@ -64,6 +80,6 @@ onBeforeUnmount(() => {
 <style scoped>
 .chart {
   width: 100%;
-  min-height: 330px;
+  min-height: 320px;
 }
 </style>

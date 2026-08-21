@@ -6,8 +6,10 @@ retrieval clients live in ``AgentRuntime`` and are captured by node closures.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import RLock
 
 from app.agents.contract_adapters import (
     analyze_profile_output_to_patch,
@@ -30,26 +32,61 @@ from app.agents.contracts import (
     GenerateResourceInput,
     GenerateResourceOutput,
     GenerationRequirements,
+    KnowledgeAssessment,
     ResourceType,
     RetrieveKnowledgeOutput,
     ReviewResourceInput,
 )
 from app.agents.state import AgentGraphState
 from app.agents.generation_agent import ContentGenerationAgent
-from app.agents.orchestrator_agent import OrchestratorAgent
+from app.agents.claim_policy import RiskLevel
+from app.agents.domain_evidence_policy import register_domain_evidence_capabilities
+from app.agents.orchestrator_agent import (
+    DETERMINISTIC_CONVERGENCE_MARKER,
+    OrchestratorAgent,
+)
 from app.agents.profile_analysis_agent import ProfileAnalysisAgent
+from app.agents.profile_analysis_config import MASTERY_BASELINES, ProfileAnalysisConfig
 from app.agents.retrieval_agent import KnowledgeRetrievalAgent
 from app.agents.review_agent import (
     ReviewBatchCache,
     ReviewValidationAgent,
     TaskScopedArbitrationRetriever,
     build_review_resource_output,
+    extract_atomic_claims,
 )
 from app.agents.tutoring_agent import TutoringAgent
 
 
 NodeFunc = Callable[[AgentGraphState], AgentGraphState]
 GRAPH_STATE = AgentGraphState
+_CONVERGENCE_AUDITS: dict[str, dict[str, object]] = {}
+_CONVERGENCE_AUDITS_LOCK = RLock()
+
+
+def pop_convergence_audit(task_id: str) -> dict[str, object] | None:
+    with _CONVERGENCE_AUDITS_LOCK:
+        return _CONVERGENCE_AUDITS.pop(task_id, None)
+
+
+def _structural_profile_config() -> ProfileAnalysisConfig:
+    """Graph-inspection runtime; production workers always inject a domain config."""
+    return ProfileAnalysisConfig(
+        version="structural_runtime",
+        seed_sha256="none",
+        prior_mastery=0.5,
+        prior_weight=1.0,
+        mastery_thresholds=(0.4, 0.6, 0.8),
+        minimum_effective_change=5,
+        max_ability_change_per_update=10,
+        max_weakness_level_change_per_update=1,
+        default_n_results=8,
+        multi_priority_remedial_n_results=10,
+        maximum_n_results=12,
+        ability_weights={},
+        knowledge_catalog={},
+        mastery_baselines=MASTERY_BASELINES,
+    )
 
 
 @dataclass
@@ -61,20 +98,34 @@ class AgentRuntime:
     review_agent_factory: Callable[[TaskScopedArbitrationRetriever], ReviewValidationAgent]
     review_batch_cache: ReviewBatchCache
     orchestrator: OrchestratorAgent
+    knowledge_assessments: list[KnowledgeAssessment] = field(default_factory=list)
     _retrieval_agent: KnowledgeRetrievalAgent | None = None
 
     @classmethod
     def production(
-        cls, review_batch_cache: ReviewBatchCache | None = None
+        cls,
+        profile_config: ProfileAnalysisConfig | None = None,
+        domain_code: str | None = None,
+        domain_display_name: str | None = None,
+        review_batch_cache: ReviewBatchCache | None = None,
+        evidence_capabilities_by_knowledge: dict[str, list[str]] | None = None,
     ) -> "AgentRuntime":
         cache = review_batch_cache or ReviewBatchCache()
+        if domain_code:
+            register_domain_evidence_capabilities(
+                domain_code,
+                evidence_capabilities_by_knowledge or {},
+            )
         return cls(
-            profile_agent=ProfileAnalysisAgent(),
-            tutoring_agent=TutoringAgent(),
+            profile_agent=ProfileAnalysisAgent(profile_config or _structural_profile_config()),
+            tutoring_agent=TutoringAgent(domain_display_name=domain_display_name),
             retrieval_agent_factory=KnowledgeRetrievalAgent.production,
             # Rendering is a composition concern.  The V3 generator only
             # receives this deterministic callable and never imports adapters.
-            generation_agent=ContentGenerationAgent(renderer=render_resource_markdown),
+            generation_agent=ContentGenerationAgent(
+                renderer=render_resource_markdown,
+                evidence_capabilities_by_knowledge=evidence_capabilities_by_knowledge,
+            ),
             review_agent_factory=lambda evidence_retriever: ReviewValidationAgent(
                 evidence_retriever=evidence_retriever,
                 batch_cache=cache,
@@ -123,14 +174,10 @@ def _partial_generation_input(
 ) -> GenerateResourceInput:
     requirements = _partial_requirements(node_input.requirements, resource_types)
     target_ids = set(requirements.required_knowledge_ids)
-    chunks = [
-        chunk for chunk in node_input.retrieved_chunks if chunk.knowledge_id in target_ids
-    ]
+    chunks = [chunk for chunk in node_input.retrieved_chunks if chunk.knowledge_id in target_ids]
     source_ids = [chunk.source.source_ref_id for chunk in chunks]
     requirements = requirements.model_copy(update={"source_whitelist": source_ids})
-    return node_input.model_copy(
-        update={"retrieved_chunks": chunks, "requirements": requirements}
-    )
+    return node_input.model_copy(update={"retrieved_chunks": chunks, "requirements": requirements})
 
 
 def _partial_review_input(
@@ -139,13 +186,9 @@ def _partial_review_input(
 ) -> ReviewResourceInput:
     requirements = _partial_requirements(node_input.requirements, resource_types)
     resources = [
-        resource
-        for resource in node_input.resources
-        if resource.resource_type in resource_types
+        resource for resource in node_input.resources if resource.resource_type in resource_types
     ]
-    cited = {
-        source.source_ref_id for resource in resources for source in resource.source_refs
-    }
+    cited = {source.source_ref_id for resource in resources for source in resource.source_refs}
     target_ids = set(requirements.required_knowledge_ids)
     evidence = [
         chunk
@@ -192,6 +235,70 @@ def _audited_revision_claims(
     return result
 
 
+def _safe_convergence_claims(
+    state: AgentGraphState,
+) -> dict[ResourceType, dict[str, list[str]]]:
+    """Select only removable low/normal-risk unresolved facts from the final review."""
+    reviewed = state.get("review_resource")
+    generated = state.get("generate_resource")
+    if reviewed is None or generated is None:
+        return {}
+    request = build_review_resource_input(state)
+    resources = {resource.resource_type: resource for resource in generated.resources}
+    result: dict[ResourceType, dict[str, list[str]]] = {}
+    removed_claim_ids: list[str] = []
+    removed_field_paths: list[str] = []
+    category_counts: Counter[str] = Counter()
+    coverage_before: dict[str, float] = {}
+    for report in reviewed.reports:
+        if (
+            report.contradicted_claim_ids
+            or report.missing_knowledge_ids
+            or report.final_scores.difficulty_match < 85
+            or report.final_scores.core_knowledge_coverage < 90
+        ):
+            continue
+        resource = resources.get(report.resource_type)
+        if resource is None:
+            continue
+        candidate_ids = (
+            set(report.undetermined_claim_ids) | set(report.unresolved_claim_ids)
+        ) - set(report.contradicted_claim_ids)
+        canonical = extract_atomic_claims(resource, request)
+        category_counts.update(claim.category.value for claim in canonical)
+        claims_per_knowledge: Counter[str] = Counter(
+            knowledge_id
+            for claim in canonical
+            for knowledge_id in set(claim.knowledge_ids)
+        )
+        by_path: dict[str, list[str]] = {}
+        for claim in canonical:
+            if claim.claim_id not in candidate_ids or claim.risk_level is RiskLevel.HIGH:
+                continue
+            if any(
+                claims_per_knowledge[knowledge_id] <= 1
+                for knowledge_id in claim.knowledge_ids
+                if knowledge_id in report.target_knowledge_ids
+            ):
+                continue
+            by_path.setdefault(claim.field_path, []).append(claim.claim)
+            removed_claim_ids.append(claim.claim_id)
+            removed_field_paths.append(claim.field_path)
+        if by_path:
+            result[report.resource_type] = by_path
+            coverage_before[report.resource_type.value] = (
+                report.final_scores.core_knowledge_coverage
+            )
+    with _CONVERGENCE_AUDITS_LOCK:
+        _CONVERGENCE_AUDITS[request.task_id] = {
+            "removed_claim_ids": sorted(set(removed_claim_ids)),
+            "removed_field_paths": sorted(set(removed_field_paths)),
+            "category_counts": dict(sorted(category_counts.items())),
+            "coverage_before": coverage_before,
+        }
+    return result
+
+
 def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
     def active_revision_plan(state: AgentGraphState):
         """Read the last orchestrator decision without adding mutable V3 State.
@@ -206,7 +313,9 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
         return state.get("revision_plan")
 
     def prepare_task(state: AgentGraphState) -> AgentGraphState:
-        return prepare_task_output_to_patch(runtime.orchestrator.execute(build_prepare_task_input(state)))
+        return prepare_task_output_to_patch(
+            runtime.orchestrator.execute(build_prepare_task_input(state))
+        )
 
     def interpret_feedback(state: AgentGraphState) -> AgentGraphState:
         return interpret_feedback_output_to_patch(
@@ -215,7 +324,11 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
 
     def analyze_profile(state: AgentGraphState) -> AgentGraphState:
         return analyze_profile_output_to_patch(
-            runtime.profile_agent.execute(build_analyze_profile_input(state))
+            runtime.profile_agent.execute(
+                build_analyze_profile_input(
+                    state, knowledge_assessments=runtime.knowledge_assessments
+                )
+            )
         )
 
     def retrieve_knowledge(state: AgentGraphState) -> AgentGraphState:
@@ -235,9 +348,7 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
                 for source in resource.source_refs
             }
             chunks = [
-                chunk
-                for chunk in previous.chunks
-                if chunk.source.source_ref_id in cited_source_ids
+                chunk for chunk in previous.chunks if chunk.source.source_ref_id in cited_source_ids
             ]
             known = {chunk.source.source_ref_id for chunk in chunks}
             chunks.extend(
@@ -245,9 +356,7 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
             )
             known = {chunk.source.source_ref_id for chunk in chunks}
             chunks.extend(
-                chunk
-                for chunk in previous.chunks
-                if chunk.source.source_ref_id not in known
+                chunk for chunk in previous.chunks if chunk.source.source_ref_id not in known
             )
             chunks = chunks[:12]
             covered = list(
@@ -287,10 +396,19 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
             ]
             partial_input = _partial_generation_input(node_input, active_types)
             previous_by_type = {item.resource_type: item for item in previous.resources}
-            changed = runtime.generation_agent.revise(
-                partial_input,
-                [previous_by_type[item] for item in active_types],
-                _audited_revision_claims(state),
+            convergence = DETERMINISTIC_CONVERGENCE_MARKER in revision_plan.required_changes
+            changed = (
+                runtime.generation_agent.converge(
+                    partial_input,
+                    [previous_by_type[item] for item in active_types],
+                    _safe_convergence_claims(state),
+                )
+                if convergence
+                else runtime.generation_agent.revise(
+                    partial_input,
+                    [previous_by_type[item] for item in active_types],
+                    _audited_revision_claims(state),
+                )
             )
             changed_by_type = {item.resource_type: item for item in changed.resources}
             output = GenerateResourceOutput(
@@ -355,8 +473,15 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
             node_input = node_input.model_copy(
                 update={"revision_count": revision_plan.revision_count}
             )
+        convergence_attempted = bool(
+            revision_plan is not None
+            and DETERMINISTIC_CONVERGENCE_MARKER in revision_plan.required_changes
+        )
         return finalize_task_output_to_patch(
-            runtime.orchestrator.execute(node_input)
+            runtime.orchestrator.execute(
+                node_input,
+                deterministic_convergence_attempted=convergence_attempted,
+            )
         )
 
     return {

@@ -6,10 +6,17 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import Principal, assert_learner_access, get_current_user, require_task
-from app.models import Feedback, GenerationTask, Learner, LearningPath, LearningResource, ReviewReport
+from app.models import Feedback, GenerationTask, Learner, LearningResource, ReviewReport
 from app.schemas.common import ApiResponse, ok
-from app.services.profile_service import is_initial_profile_ready, latest_profile_for_learner, profile_source, serialize_profile_detail
+from app.services.profile_service import (
+    is_initial_profile_ready,
+    latest_path_for_profile,
+    latest_profile_for_learner,
+    profile_source,
+    serialize_profile_detail,
+)
 from app.services.report_service import build_metric_summary, refresh_learning_path
+from app.services.learning_path_service import serialize_learning_path
 
 router = APIRouter()
 
@@ -51,19 +58,13 @@ def _source_coverage(resources: list[LearningResource]) -> int:
     return len(source_ids)
 
 
-def _latest_path_for_learner(db: Session, learner: Learner) -> LearningPath | None:
-    return db.scalar(
-        select(LearningPath)
-        .where(LearningPath.learner_id == learner.id)
-        .order_by(LearningPath.id.desc())
-    )
-
-
 def _serialize_resource(resource: LearningResource, task: GenerationTask | None) -> dict[str, Any]:
     return {
         "resource_id": resource.public_id,
         "resource_type": resource.resource_type,
-        "resource_type_label": RESOURCE_TYPE_LABELS.get(resource.resource_type, resource.resource_type),
+        "resource_type_label": RESOURCE_TYPE_LABELS.get(
+            resource.resource_type, resource.resource_type
+        ),
         "title": resource.title,
         "difficulty": resource.difficulty,
         "review_status": resource.review_status,
@@ -146,18 +147,26 @@ def get_learning_report(
     if learner is None:
         raise HTTPException(status_code=404, detail=f"Learner not found: {learner_id}")
 
-    profile = latest_profile_for_learner(db, learner)
-    detail = serialize_profile_detail(db, learner, profile)
-    path = _latest_path_for_learner(db, learner)
+    profile = latest_profile_for_learner(
+        db, learner, task.domain_code if task_id and task is not None else learner.target_domain
+    )
+    path = latest_path_for_profile(db, profile) if profile is not None else None
+    original_path_payload = dict(path.path_json or {}) if path is not None else None
+    detail = serialize_profile_detail(db, learner, profile, path=path)
     path_refresh_performed = False
     if path is not None and path.needs_refresh and profile is not None:
-        detail["learning_path"] = refresh_learning_path(
+        refresh_learning_path(
+            db=db,
             path=path,
             profile=profile,
             profile_detail=detail,
         )
+        detail["learning_path"] = serialize_learning_path(path)
         db.commit()
         path_refresh_performed = True
+    elif path is not None:
+        if path.path_json != original_path_payload:
+            db.commit()
     learning_path = detail.get("learning_path") or {}
     stages = learning_path.get("stages", []) if isinstance(learning_path, dict) else []
     path_needs_refresh = bool(path.needs_refresh) if path else False
@@ -175,10 +184,7 @@ def get_learning_report(
         )
     )
     resources = [resource for resource, _task in resource_rows]
-    recent_resources = [
-        _serialize_resource(resource, task)
-        for resource, task in resource_rows[:6]
-    ]
+    recent_resources = [_serialize_resource(resource, task) for resource, task in resource_rows[:6]]
 
     review_reports = list(
         db.scalars(
@@ -218,6 +224,7 @@ def get_learning_report(
     return ok(
         {
             "learner_id": learner.public_id,
+            "domain_code": profile.domain_code if profile else learner.target_domain,
             "profile_id": detail.get("profile_id"),
             "profile_type": detail.get("profile_type"),
             "profile_source": profile_source(profile) if profile else None,
@@ -230,6 +237,7 @@ def get_learning_report(
             "radar": detail.get("radar", [0, 0, 0, 0, 0]),
             "path": [stage.get("name", "") for stage in stages],
             "path_detail": stages,
+            "learning_path": learning_path,
             "weak_knowledge": detail.get("weak_knowledge", []),
             "diagnostic_summary": diagnostic_summary,
             "metrics": build_metric_summary(
@@ -264,7 +272,9 @@ def get_learning_report(
             },
             "feedback_summary": {
                 "total": feedback_count,
-                "latest_action": recent_feedback[0]["triggered_action"] if recent_feedback else None,
+                "latest_action": recent_feedback[0]["triggered_action"]
+                if recent_feedback
+                else None,
                 "learning_path_needs_refresh": path_needs_refresh,
                 "path_refresh_performed": path_refresh_performed,
                 "recent": recent_feedback,

@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 from app.core.db import get_db
 from app.core.security import Principal, get_current_user
 from app.main import app
-from app.models import Base, Learner, LearnerProfile, LearningPath
+from app.models import Base, Domain, Learner, LearnerProfile, LearningPath
 
 
 def build_test_session() -> sessionmaker[Session]:
@@ -61,6 +61,9 @@ def test_list_learners_returns_not_started_without_profile() -> None:
 
 def test_create_learner_returns_not_started_summary_and_is_listed() -> None:
     testing_session = build_test_session()
+    with testing_session() as db:
+        db.add(Domain(domain_code="ai_app_dev", name="AI", status="ready"))
+        db.commit()
     app.dependency_overrides[get_db] = make_override(testing_session)
     try:
         client = TestClient(app)
@@ -116,6 +119,12 @@ def test_admin_can_complete_initial_context_only_for_own_learner() -> None:
     with testing_session() as db:
         db.add_all(
             [
+                Domain(
+                    domain_code="ai_app_dev",
+                    name="AI",
+                    status="ready",
+                    config_json={"learning_directions": [{"value": "rag_knowledge_base"}]},
+                ),
                 Learner(public_id="learner_admin_self", target_domain="ai_app_dev"),
                 Learner(public_id="learner_other", target_domain="ai_app_dev"),
             ]
@@ -138,9 +147,7 @@ def test_admin_can_complete_initial_context_only_for_own_learner() -> None:
         own_response = client.put(
             "/api/v1/learners/learner_admin_self/initial-context", json=payload
         )
-        other_response = client.put(
-            "/api/v1/learners/learner_other/initial-context", json=payload
-        )
+        other_response = client.put("/api/v1/learners/learner_other/initial-context", json=payload)
     finally:
         app.dependency_overrides.clear()
 
@@ -164,11 +171,11 @@ def test_admin_can_start_diagnostics_only_for_own_learner(monkeypatch) -> None:
         client = TestClient(app)
         own_response = client.post(
             "/api/v1/diagnostics/sessions",
-            json={"learner_id": "learner_admin_self"},
+            json={"learner_id": "learner_admin_self", "domain_code": "ai_app_dev"},
         )
         other_response = client.post(
             "/api/v1/diagnostics/sessions",
-            json={"learner_id": "learner_other"},
+            json={"learner_id": "learner_other", "domain_code": "ai_app_dev"},
         )
     finally:
         app.dependency_overrides.clear()
@@ -228,9 +235,7 @@ def test_get_profile_and_report_share_radar_values() -> None:
                 profile_id=profile.id,
                 domain_code="ai_app_dev",
                 path_json={
-                    "stages": [
-                        {"name": "攻克薄弱知识点", "description": "集中练习 RAG 切片。"}
-                    ]
+                    "stages": [{"name": "攻克薄弱知识点", "description": "集中练习 RAG 切片。"}]
                 },
                 needs_refresh=False,
             )
@@ -238,6 +243,9 @@ def test_get_profile_and_report_share_radar_values() -> None:
         db.commit()
 
     app.dependency_overrides[get_db] = make_override(testing_session)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "test_learner", "learner", "learner_ready"
+    )
     try:
         client = TestClient(app)
         profile_response = client.get("/api/v1/learners/learner_ready/profile")

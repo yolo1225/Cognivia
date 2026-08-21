@@ -13,25 +13,35 @@ from sqlalchemy.orm import Session
 from app.agents.checkpointer import MySQLLangGraphCheckpointer
 from app.agents.contracts import (
     ConversationSummary,
+    EvidenceRef,
+    EvidenceType,
     FeedbackContext,
     FeedbackIntent,
+    FinalizeTaskOutput,
     LearningPathNodeSnapshot,
     LearningPathSnapshot,
+    KnowledgeAssessment,
     ResourceSummary,
     TaskRequest,
 )
-from app.services.evaluation_case_service import evaluation_profile_override
+from app.services.domain_runtime_service import load_domain_runtime
 from app.agents.graphs import build_learning_graph
 from app.agents.observability import collect_model_calls
 from app.agents.nodes import GRAPH_STATE, AgentRuntime, build_nodes
+from app.agents.prompt_registry import PROMPT_VERSION, node_prompt_hash
 from app.agents.review_agent import ReviewBatchCache
 from app.core.compatibility import AGENT_CONTRACT_VERSION
 from app.core.db import SessionLocal
 from app.models import (
     AgentMessageRecord,
     AgentRun,
+    AnswerRecord,
+    DiagnosticQuestion,
     Feedback,
     GenerationTask,
+    GraphCheckpoint,
+    KnowledgeUpdateImpact,
+    KnowledgeItem,
     Learner,
     LearnerProfile,
     LearningPath,
@@ -40,6 +50,11 @@ from app.models import (
     TutoringSession,
 )
 from app.services.generation_service import persist_generated_resources
+from app.services.learning_path_service import (
+    node_id_for,
+    normalize_learning_path,
+    normalize_path_for_domain,
+)
 from app.services.profile_service import build_learning_path_from_snapshot, public_id
 from app.services.contract_mapping import ability_profile_payload, profile_snapshot
 
@@ -63,6 +78,18 @@ NODE_PROGRESS = {
     "review_resource": 78,
     "finalize_task": 95,
 }
+RECOVERABLE_CHECKPOINT_FAILURES = {
+    "generated_structured_output_invalid",
+    "generated_structure_validation_failed",
+    # Read-only compatibility for checkpoints created before V6 error typing.
+    "invalid_generate_resource_output",
+    "generation_execution_failed",
+    "review_model_call_failed",
+    "review_output_truncated",
+    "review_structured_output_invalid",
+    "review_execution_failed",
+}
+INTERRUPTED_TASK_STATUSES = {"running", "retry_pending"}
 
 
 def _message(
@@ -71,6 +98,7 @@ def _message(
     sender: str,
     payload: dict[str, Any],
     *,
+    receiver: str = "orchestrator_agent",
     message_type: str = "observation",
 ) -> None:
     db.add(
@@ -78,7 +106,7 @@ def _message(
             session_id=task.public_id,
             task_id=task.public_id,
             sender=sender,
-            receiver="orchestrator_agent",
+            receiver=receiver,
             message_type=message_type,
             payload_summary_json=payload,
         )
@@ -94,6 +122,60 @@ def _resource_summary(resource: LearningResource) -> dict[str, Any]:
         "review_status": resource.review_status,
         "sources": [item.get("knowledge_id") for item in (resource.sources_json or [])],
     }
+
+
+def _feedback_assessments(
+    db: Session,
+    task: GenerationTask,
+    learner: Learner,
+    feedback: Feedback | None,
+) -> tuple[list[EvidenceRef], list[KnowledgeAssessment]]:
+    if feedback is None or feedback.tutoring_session_id is None:
+        return [], []
+    evidence: list[EvidenceRef] = []
+    assessments: list[KnowledgeAssessment] = []
+    for record in db.scalars(select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)):
+        summary = record.answer_summary_json or {}
+        if (
+            summary.get("tutoring_session_id") != feedback.tutoring_session_id
+            or summary.get("confirmed") is not True
+            or summary.get("consumed_by_profile_id") is not None
+        ):
+            continue
+        question = db.get(DiagnosticQuestion, record.question_id)
+        knowledge = db.get(KnowledgeItem, record.knowledge_item_id)
+        if (
+            question is None
+            or knowledge is None
+            or question.domain_code != task.domain_code
+            or knowledge.domain_code != task.domain_code
+        ):
+            continue
+        evidence_id = f"answer_record:{record.id}"
+        confidence = max(0.0, min(1.0, float(summary.get("confidence") or 0.9)))
+        evidence.append(
+            EvidenceRef(
+                evidence_id=evidence_id,
+                evidence_type=EvidenceType.SCORED_QUIZ,
+                summary="导学正式验证题已由服务端评分",
+                knowledge_id=knowledge.public_id,
+                source_ref_id=question.public_id,
+                confidence=confidence,
+                confirmed=True,
+            )
+        )
+        assessments.append(
+            KnowledgeAssessment(
+                assessment_id=str(summary.get("assessment_id") or f"assessment_{record.id}"),
+                evidence_id=evidence_id,
+                knowledge_id=knowledge.public_id,
+                score=record.score,
+                difficulty=question.difficulty,
+                attempted=True,
+                confidence=confidence,
+            )
+        )
+    return evidence, assessments
 
 
 def _initial_state(
@@ -118,6 +200,24 @@ def _initial_state(
     )
     if task.trigger_type == "resource_feedback" and (feedback is None or resource is None):
         raise ValueError("resource_feedback_task_missing_source_references")
+    inherited_targets: dict[str, list[str]] = {}
+    if task.source_task_id:
+        source_task = db.get(GenerationTask, task.source_task_id)
+        if source_task is None:
+            raise ValueError("source_package_not_found")
+        if (source_task.package_quality_json or {}).get(
+            "quality_rule_version"
+        ) != "quality-v6-20260818":
+            raise ValueError("v6_full_regeneration_required")
+        stored_targets = (source_task.package_coverage_json or {}).get(
+            "resource_knowledge_targets"
+        ) or {}
+        inherited_targets = {
+            resource_type: list(stored_targets.get(resource_type) or [])
+            for resource_type in (task.resource_types_json or [])
+        }
+        if any(not values for values in inherited_targets.values()):
+            raise ValueError("v6_source_target_mapping_missing")
     request = TaskRequest(
         task_id=task.public_id,
         session_id=task.public_id,
@@ -128,12 +228,13 @@ def _initial_state(
         domain_code=task.domain_code,
         resource_types=task.resource_types_json or ["lecture"],
         learning_goal=task.learning_goal or "根据诊断结果生成个性化学习资源",
+        resource_knowledge_targets=inherited_targets,
         resource_id=resource.public_id if resource else None,
         feedback_id=str(feedback.id) if feedback else None,
         tutoring_session_id=session.public_id if session else None,
         tutoring_message_id=message.public_id if message else None,
     )
-    active_profile = evaluation_profile_override(request.learning_goal) or profile_snapshot(profile)
+    active_profile = profile_snapshot(profile)
     learning_path = db.scalar(
         select(LearningPath)
         .where(
@@ -156,6 +257,19 @@ def _initial_state(
         state["current_path_node"] = current_path_node
     if feedback is not None and resource is not None:
         quick_tag = feedback.feedback_intent or feedback.feedback_type
+        supporting_evidence, _ = _feedback_assessments(db, task, learner, feedback)
+        previous_intents = list(
+            db.scalars(
+                select(Feedback.feedback_intent)
+                .where(
+                    Feedback.tutoring_session_id == feedback.tutoring_session_id,
+                    Feedback.id != feedback.id,
+                    Feedback.feedback_intent.is_not(None),
+                )
+                .order_by(Feedback.id.desc())
+                .limit(20)
+            )
+        )
         state["feedback_context"] = FeedbackContext(
             resource=ResourceSummary(
                 resource_id=resource.public_id,
@@ -174,37 +288,73 @@ def _initial_state(
                 latest_message_summary=(
                     message.content if message else feedback.comment or "学习者提交资源反馈"
                 )[:500],
+                previous_intents=[
+                    item for item in previous_intents if item in {value.value for value in FeedbackIntent}
+                ],
             ),
             feedback_summary=(feedback.comment or feedback.feedback_type or "学习者反馈")[:500],
             quick_tag=quick_tag
             if quick_tag in {item.value for item in FeedbackIntent}
             else FeedbackIntent.OTHER,
             rating=feedback.rating,
+            supporting_evidence=supporting_evidence,
         )
     return state
 
 
+def _next_receiver(step: str, patch: GRAPH_STATE) -> str:
+    if step == "prepare_task":
+        next_node = patch["prepare_task"].next_node
+    elif step == "interpret_feedback":
+        next_node = "analyze_profile"
+    elif step == "analyze_profile":
+        next_node = (
+            "retrieve_knowledge" if patch["analyze_profile"].needs_generation else "finalize_task"
+        )
+    elif step == "retrieve_knowledge":
+        next_node = "generate_resource"
+    elif step == "generate_resource":
+        next_node = "review_resource"
+    elif step == "review_resource":
+        next_node = "finalize_task"
+    elif step == "finalize_task":
+        decision = patch["finalize_task"].decision.value
+        next_node = "retrieve_knowledge" if decision == "revision_required" else "orchestrator_agent"
+    else:
+        next_node = "orchestrator_agent"
+    return NODE_AGENT_NAMES.get(next_node, next_node)
+
+
 def _learning_path_snapshot(
-    path: LearningPath | None, profile,
+    path: LearningPath | None,
+    profile,
 ) -> tuple[LearningPathSnapshot | None, LearningPathNodeSnapshot | None]:
     if path is None:
         return None, None
-    payload = path.path_json or {}
-    difficulty = max(1, min(5, round(sum(profile.ability_scores.model_dump().values()) / 60)))
+    payload = normalize_learning_path(path)
+    ability_values = list(profile.ability_scores.model_dump().values())
+    average_ability = sum(ability_values) / len(ability_values)
+    difficulty = max(1, min(5, round(average_ability / 20)))
     nodes: list[LearningPathNodeSnapshot] = []
-    for stage_index, stage in enumerate(payload.get("stages") or [], start=1):
-        for knowledge_index, knowledge_id in enumerate(stage.get("knowledge_ids") or [], start=1):
+    seen_knowledge_ids: set[str] = set()
+    for stage in payload.get("stages") or []:
+        for knowledge_id in stage.get("knowledge_ids") or []:
+            knowledge_id = str(knowledge_id)
+            if knowledge_id in seen_knowledge_ids:
+                continue
+            seen_knowledge_ids.add(knowledge_id)
             nodes.append(
                 LearningPathNodeSnapshot(
-                    path_node_id=f"{path.public_id}:{stage_index}:{knowledge_index}",
-                    knowledge_id=str(knowledge_id),
+                    path_node_id=node_id_for(knowledge_id),
+                    knowledge_id=knowledge_id,
                     title=str(stage.get("name") or knowledge_id),
                     path_order=len(nodes) + 1,
                     target_difficulty=difficulty,
                     learning_objective=str(stage.get("description") or f"掌握 {knowledge_id}"),
                 )
             )
-    current = nodes[0] if nodes else None
+    current_node_id = payload.get("current_node_id")
+    current = next((node for node in nodes if node.path_node_id == current_node_id), None)
     return (
         LearningPathSnapshot(
             path_id=path.public_id,
@@ -314,6 +464,7 @@ def _compact_review_report(report: dict[str, Any]) -> dict[str, Any]:
         "claim_counts": {
             "supported": len(report.get("supported_claim_ids", [])),
             "contradicted": len(report.get("contradicted_claim_ids", [])),
+            "evidence_insufficient": len(report.get("undetermined_claim_ids", [])),
             "unable_to_determine": len(report.get("undetermined_claim_ids", [])),
             "unresolved": len(report.get("unresolved_claim_ids", [])),
         },
@@ -409,6 +560,34 @@ def _failure_code(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def _finalization_failure_code(result: FinalizeTaskOutput | None) -> str:
+    """Map a valid final decision to a stable, machine-readable terminal reason."""
+    if result is None:
+        return "generation_failed"
+    if result.decision.value == "failed" and result.revision_count >= 2:
+        return "revision_exhausted"
+    if result.decision.value == "rejected":
+        return "resource_rejected"
+    return "generation_incomplete"
+
+
+def _restore_refresh_impact(db: Session, task: GenerationTask) -> None:
+    if task.event_type != "knowledge_refresh" or not task.source_task_id:
+        return
+    impact = db.scalar(
+        select(KnowledgeUpdateImpact)
+        .where(
+            KnowledgeUpdateImpact.package_task_id == task.source_task_id,
+            KnowledgeUpdateImpact.resolved_by_task_id == task.id,
+            KnowledgeUpdateImpact.status == "refreshing",
+        )
+        .order_by(KnowledgeUpdateImpact.id.desc())
+    )
+    if impact is not None:
+        impact.status = "pending"
+        impact.resolved_by_task_id = None
+
+
 def _persist_profile_update(
     db: Session, task: GenerationTask, original: LearnerProfile, state: GRAPH_STATE
 ) -> LearnerProfile:
@@ -442,8 +621,68 @@ def _persist_profile_update(
     db.add(next_profile)
     db.flush()
     task.profile_id = next_profile.id
-    for path in db.scalars(select(LearningPath).where(LearningPath.profile_id == original.id)):
+    consumed_ids = {item.evidence_id for item in analysis.evidence_refs}
+    for record in db.scalars(
+        select(AnswerRecord).where(AnswerRecord.learner_id == original.learner_id)
+    ):
+        if f"answer_record:{record.id}" in consumed_ids:
+            summary = dict(record.answer_summary_json or {})
+            summary["consumed_by_profile_id"] = next_profile.id
+            record.answer_summary_json = summary
+    feedback = db.get(Feedback, task.source_feedback_id) if task.source_feedback_id else None
+    if feedback is not None:
+        affected_knowledge_ids = list(
+            dict.fromkeys(
+                [
+                    *analysis.affected_scope.knowledge_ids,
+                    *[item.knowledge_id for item in analysis.evidence_refs if item.knowledge_id],
+                ]
+            )
+        )
+        learner_resources = db.scalars(
+            select(LearningResource)
+            .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
+            .where(
+                GenerationTask.learner_id == original.learner_id,
+                LearningResource.is_current.is_(True),
+            )
+        )
+        feedback.profile_update_required = True
+        feedback.decision_reason = analysis.decision_reason
+        feedback.decision_confidence = analysis.confidence
+        feedback.affected_knowledge_ids_json = affected_knowledge_ids
+        feedback.affected_path_node_ids_json = list(analysis.affected_scope.path_node_ids)
+        feedback.affected_resource_ids_json = [
+            resource.public_id
+            for resource in learner_resources
+            if any(
+                source.get("knowledge_id") in affected_knowledge_ids
+                for source in (resource.sources_json or [])
+                if isinstance(source, dict)
+            )
+        ]
+    previous_paths = list(
+        db.scalars(
+            select(LearningPath)
+            .where(LearningPath.profile_id == original.id)
+            .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
+        )
+    )
+    previous_path = previous_paths[0] if previous_paths else None
+    for path in previous_paths:
         path.needs_refresh = True
+        if path.status == "active":
+            path.status = "superseded"
+    path_payload = build_learning_path_from_snapshot(
+        next_profile.ability_profile_json,
+        next_profile.weak_knowledge_json,
+    )
+    path_payload = normalize_path_for_domain(
+        db,
+        domain_code=original.domain_code,
+        payload=path_payload,
+        previous_payload=previous_path.path_json if previous_path else None,
+    )
     db.add(
         LearningPath(
             public_id=public_id("path"),
@@ -451,9 +690,7 @@ def _persist_profile_update(
             profile_id=next_profile.id,
             domain_code=original.domain_code,
             status="active",
-            path_json=build_learning_path_from_snapshot(
-                next_profile.ability_profile_json, next_profile.weak_knowledge_json
-            ),
+            path_json=path_payload,
             needs_refresh=False,
         )
     )
@@ -479,16 +716,24 @@ def _observable_node(
             generation_task_id=task.id,
             agent_name=agent_name,
             status="running",
-            input_summary_json={"task_id": task.public_id, "step": step},
+            input_summary_json={
+                "task_id": task.public_id,
+                "thread_id": task.public_id,
+                "step": step,
+                "contract_version": AGENT_CONTRACT_VERSION,
+            },
             output_summary_json=initial_output,
-            prompt_version="v3",
+            prompt_version=PROMPT_VERSION,
+            prompt_hash=node_prompt_hash(step),
+            contract_version=AGENT_CONTRACT_VERSION,
         )
         db.add(run)
         _message(
             db,
             task,
-            agent_name,
-            {"step": step, "status": "running", "contract_version": "agent-contract-v5"},
+            "orchestrator_agent",
+            {"step": step, "status": "running", "contract_version": "agent-contract-v6"},
+            receiver=agent_name,
         )
         db.commit()
         if step == "review_resource":
@@ -503,17 +748,40 @@ def _observable_node(
             runtime.review_batch_cache.set_persist_callback(persist_review_cache)
         model_calls: list[dict[str, Any]] = []
         try:
+            path_refresh: dict[str, str | None] | None = None
             with collect_model_calls() as collector:
                 patch = node(state)
             model_calls = collector.snapshot()
             next_state = {**state, **patch}
             if step == "analyze_profile":
-                _persist_profile_update(db, task, profile, next_state)
+                updated_profile = _persist_profile_update(db, task, profile, next_state)
+                if updated_profile.id != profile.id:
+                    new_path = db.scalar(
+                        select(LearningPath)
+                        .where(LearningPath.profile_id == updated_profile.id)
+                        .order_by(LearningPath.id.desc())
+                    )
+                    old_path = db.scalar(
+                        select(LearningPath)
+                        .where(LearningPath.profile_id == profile.id)
+                        .order_by(LearningPath.id.desc())
+                    )
+                    path_refresh = {
+                        "old_path_id": old_path.public_id if old_path else None,
+                        "new_path_id": new_path.public_id if new_path else None,
+                    }
+                if updated_profile.id == profile.id and task.source_feedback_id:
+                    feedback = db.get(Feedback, task.source_feedback_id)
+                    if feedback is not None:
+                        feedback.profile_update_required = False
+                        feedback.decision_reason = patch["analyze_profile"].decision_reason
             if step == "finalize_task":
                 persist_generated_resources(
                     db, task, db.get(LearnerProfile, task.profile_id) or profile, next_state
                 )
             output = _summary(step, patch)
+            if path_refresh is not None:
+                output["path_refresh"] = path_refresh
             if step == "review_resource":
                 output["review_batch_cache"] = runtime.review_batch_cache.snapshot()
             _apply_model_call_metrics(run, output, model_calls)
@@ -529,8 +797,9 @@ def _observable_node(
                     "step": step,
                     "status": "completed",
                     "output": output,
-                    "contract_version": "agent-contract-v5",
+                    "contract_version": "agent-contract-v6",
                 },
+                receiver=_next_receiver(step, patch),
                 message_type="result",
             )
             db.commit()
@@ -562,21 +831,30 @@ def _observable_node(
                     dict.fromkeys(str(item.get("role")) for item in model_calls if item.get("role"))
                 ),
             }
+            field_paths = getattr(exc, "field_paths", None)
+            if isinstance(field_paths, list) and field_paths:
+                output["field_paths"] = [str(path)[:200] for path in field_paths[:20]]
+            violations = getattr(exc, "violations", None)
+            if isinstance(violations, list) and violations:
+                output["policy_violations"] = violations[:20]
             if step == "review_resource":
                 output["review_batch_cache"] = runtime.review_batch_cache.snapshot()
             _apply_model_call_metrics(run, output, model_calls)
             run.output_summary_json = output
             run.duration_ms = round((time.perf_counter() - started) * 1000)
+            error_payload = {
+                "step": step,
+                "status": "failed",
+                "error": type(exc).__name__,
+                "failure_code": _failure_code(exc),
+            }
+            if output.get("field_paths"):
+                error_payload["field_paths"] = output["field_paths"]
             _message(
                 db,
                 task,
                 agent_name,
-                {
-                    "step": step,
-                    "status": "failed",
-                    "error": type(exc).__name__,
-                    "failure_code": _failure_code(exc),
-                },
+                error_payload,
                 message_type="error",
             )
             db.commit()
@@ -620,6 +898,93 @@ def _load_review_batch_cache(db: Session, task: GenerationTask) -> ReviewBatchCa
     return ReviewBatchCache()
 
 
+def recover_interrupted_generation_tasks() -> list[str]:
+    """Claim interrupted tasks for one checkpoint-backed startup recovery."""
+
+    claimed: list[str] = []
+    with SessionLocal() as db:
+        tasks = list(
+            db.scalars(
+                select(GenerationTask)
+                .where(GenerationTask.status.in_(INTERRUPTED_TASK_STATUSES))
+                .order_by(GenerationTask.id)
+            )
+        )
+        for task in tasks:
+            checkpoint = db.scalar(
+                select(GraphCheckpoint).where(GraphCheckpoint.task_id == task.public_id)
+            )
+            checkpoint_payload = dict(checkpoint.state_json or {}) if checkpoint else {}
+            recovery_count = int(checkpoint_payload.get("auto_recovery_count") or 0)
+            has_native_checkpoint = bool(checkpoint_payload.get("native_checkpoint"))
+            running_runs = list(
+                db.scalars(
+                    select(AgentRun)
+                    .where(AgentRun.generation_task_id == task.id)
+                    .where(AgentRun.status == "running")
+                    .order_by(AgentRun.id)
+                )
+            )
+            failure_code = (
+                "checkpoint_recovery_exhausted"
+                if has_native_checkpoint and recovery_count >= 1
+                else "checkpoint_missing_after_interruption"
+            )
+            for run in running_runs:
+                output = dict(run.output_summary_json or {})
+                output.update(
+                    {
+                        "error": "ProcessInterrupted",
+                        "failure_code": "persistence_interrupted",
+                        "failed_step": (run.input_summary_json or {}).get("step"),
+                        "recoverable": has_native_checkpoint and recovery_count < 1,
+                    }
+                )
+                run.status = "failed"
+                run.error_message = "persistence_interrupted"
+                run.output_summary_json = output
+
+            if has_native_checkpoint and recovery_count < 1:
+                checkpoint_payload["auto_recovery_count"] = recovery_count + 1
+                checkpoint.state_json = checkpoint_payload
+                checkpoint.status = "recovery_scheduled"
+                task.status = "retry_pending"
+                task.decision = "pending"
+                task.failure_reason = ""
+                claimed.append(task.public_id)
+                _message(
+                    db,
+                    task,
+                    "generation_worker",
+                    {
+                        "task_id": task.public_id,
+                        "status": "checkpoint_auto_recovery",
+                        "failure_code": "persistence_interrupted",
+                        "retry_count": recovery_count + 1,
+                    },
+                    message_type="event",
+                )
+            else:
+                task.status = "failed"
+                task.decision = "failed"
+                task.failure_reason = failure_code
+                _restore_refresh_impact(db, task)
+                _message(
+                    db,
+                    task,
+                    "generation_worker",
+                    {
+                        "task_id": task.public_id,
+                        "status": "failed",
+                        "failure_code": failure_code,
+                        "failed_step": "generation_worker",
+                    },
+                    message_type="error",
+                )
+        db.commit()
+    return claimed
+
+
 def run_generation_task(task_id: str) -> dict[str, Any]:
     with SessionLocal() as db:
         task = db.scalar(select(GenerationTask).where(GenerationTask.public_id == task_id))
@@ -650,20 +1015,65 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
         task.decision = "pending"
         db.commit()
         review_batch_cache = _load_review_batch_cache(db, task)
-        runtime = AgentRuntime.production(review_batch_cache=review_batch_cache)
+        domain_runtime = load_domain_runtime(db, task.domain_code)
+        if not domain_runtime.generation_ready or domain_runtime.profile_config is None:
+            raise ValueError(f"DOMAIN_GENERATION_NOT_READY:{','.join(domain_runtime.reasons)}")
+        runtime = AgentRuntime.production(
+            profile_config=domain_runtime.profile_config,
+            domain_code=task.domain_code,
+            domain_display_name=domain_runtime.display_name,
+            review_batch_cache=review_batch_cache,
+            evidence_capabilities_by_knowledge={
+                item.public_id: list(item.evidence_capabilities_json or [])
+                for item in db.scalars(
+                    select(KnowledgeItem).where(
+                        KnowledgeItem.domain_code == task.domain_code,
+                        KnowledgeItem.status == "published",
+                    )
+                )
+            },
+        )
+        _, runtime.knowledge_assessments = _feedback_assessments(db, task, learner, feedback)
         checkpointer = MySQLLangGraphCheckpointer(SessionLocal)
         try:
             graph = _build_graph(db, task, profile, checkpointer, runtime)
             graph_config = {"configurable": {"thread_id": task.public_id}}
-            graph_input: GRAPH_STATE | None = _initial_state(
-                db, task, learner, profile, feedback
-            )
+            graph_input: GRAPH_STATE | None = _initial_state(db, task, learner, profile, feedback)
             if resume_failed and checkpointer.get_tuple(graph_config) is not None:
                 # A failed LangGraph node leaves the last successful checkpoint
                 # intact. Invoking with None resumes that node and preserves the
                 # generated resources already present in state.
                 graph_input = None
-            final = graph.invoke(graph_input, config=graph_config)
+            final = None
+            for checkpoint_attempt in range(2):
+                try:
+                    final = graph.invoke(graph_input, config=graph_config)
+                    break
+                except Exception as exc:
+                    failure_code = _failure_code(exc)
+                    can_resume = (
+                        checkpoint_attempt == 0
+                        and failure_code in RECOVERABLE_CHECKPOINT_FAILURES
+                        and checkpointer.get_tuple(graph_config) is not None
+                    )
+                    if not can_resume:
+                        raise
+                    _message(
+                        db,
+                        task,
+                        "generation_worker",
+                        {
+                            "task_id": task.public_id,
+                            "status": "checkpoint_retry",
+                            "failure_code": failure_code,
+                            "retry_count": 1,
+                        },
+                        message_type="event",
+                    )
+                    db.commit()
+                    graph_input = None
+            if final is None:  # pragma: no cover - loop either returns or raises
+                raise RuntimeError("checkpoint_resume_failed")
             result = final.get("finalize_task")
             task.revision_count = result.revision_count if result else 0
             task.decision = result.decision.value if result else "failed"
@@ -673,7 +1083,8 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
                 checkpointer.mark_status(task.public_id, "resolved")
             else:
                 task.status = "failed"
-                task.failure_reason = result.decision_reason if result else "generation_failed"
+                task.failure_reason = _finalization_failure_code(result)
+                _restore_refresh_impact(db, task)
             db.commit()
             resources = list(
                 db.scalars(
@@ -691,6 +1102,7 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
         except Exception as exc:
             task.status = task.decision = "failed"
             task.failure_reason = _failure_code(exc)
+            _restore_refresh_impact(db, task)
             _message(
                 db,
                 task,

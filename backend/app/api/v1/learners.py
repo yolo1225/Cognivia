@@ -13,7 +13,7 @@ from app.core.security import (
     require_admin,
     self_service_learner,
 )
-from app.models import Learner
+from app.models import Domain, Learner
 from app.schemas.common import ApiResponse, ok
 from app.services.learner_service import get_or_create_demo_learner
 from app.services.profile_service import (
@@ -29,7 +29,7 @@ router = APIRouter()
 class LearnerCreate(BaseModel):
     learner_id: str = Field(min_length=3, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
     background: str = Field(default="", max_length=255)
-    target_domain: str = Field(default="ai_app_dev", min_length=1, max_length=64)
+    target_domain: str = Field(min_length=1, max_length=64)
     experience_years: int = Field(default=0, ge=0, le=50)
     learning_style: str = Field(default="mixed", pattern=r"^(theory|practice|mixed)$")
 
@@ -39,12 +39,6 @@ class LearnerCreate(BaseModel):
         return str(value).strip()
 
 
-INITIAL_DIRECTIONS = {
-    "llm_application",
-    "prompt_engineering",
-    "rag_knowledge_base",
-    "agent_orchestration",
-}
 INITIAL_EDUCATION_LEVELS = {"中职/高中", "专科", "本科", "硕士及以上"}
 
 
@@ -74,9 +68,18 @@ class InitialContextUpdate(BaseModel):
     @classmethod
     def validate_direction_tags(cls, value: list[str]) -> list[str]:
         normalized = [str(item).strip() for item in value]
-        if len(set(normalized)) != len(normalized) or any(item not in INITIAL_DIRECTIONS for item in normalized):
+        if len(set(normalized)) != len(normalized) or any(not item for item in normalized):
             raise ValueError("invalid direction_tags")
         return normalized
+
+
+class TargetDomainUpdate(BaseModel):
+    domain_code: str = Field(min_length=1, max_length=64)
+
+    @field_validator("domain_code", mode="before")
+    @classmethod
+    def strip_domain_code(cls, value: str) -> str:
+        return str(value).strip()
 
 
 def serialize_learner_summary(db: Session, learner: Learner) -> dict[str, Any]:
@@ -94,11 +97,17 @@ def serialize_learner_summary(db: Session, learner: Learner) -> dict[str, Any]:
 
 
 @router.get("", response_model=ApiResponse)
-def list_learners(db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+def list_learners(
+    db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)
+) -> ApiResponse:
     if principal.role != "admin" and principal.learner_id:
         learner = db.scalar(select(Learner).where(Learner.public_id == principal.learner_id))
         return ok([serialize_learner_summary(db, learner)] if learner else [])
-    learners = list(db.scalars(select(Learner).order_by(Learner.public_id)))
+    learners = list(
+        db.scalars(
+            select(Learner).where(Learner.is_evaluation.is_(False)).order_by(Learner.public_id)
+        )
+    )
     if not learners:
         learners = [get_or_create_demo_learner(db, "learner_001")]
         db.commit()
@@ -107,10 +116,17 @@ def list_learners(db: Session = Depends(get_db), principal: Principal = Depends(
 
 
 @router.post("", response_model=ApiResponse)
-def create_learner(payload: LearnerCreate, db: Session = Depends(get_db), _principal: Principal = Depends(require_admin)) -> ApiResponse:
+def create_learner(
+    payload: LearnerCreate,
+    db: Session = Depends(get_db),
+    _principal: Principal = Depends(require_admin),
+) -> ApiResponse:
     duplicate = db.scalar(select(Learner).where(Learner.public_id == payload.learner_id))
     if duplicate is not None:
         raise HTTPException(status_code=409, detail=f"Learner already exists: {payload.learner_id}")
+    domain = db.scalar(select(Domain).where(Domain.domain_code == payload.target_domain))
+    if domain is None or domain.status != "ready":
+        raise HTTPException(status_code=409, detail="DOMAIN_NOT_READY")
 
     learner = Learner(
         public_id=payload.learner_id,
@@ -125,6 +141,35 @@ def create_learner(payload: LearnerCreate, db: Session = Depends(get_db), _princ
     return ok(serialize_learner_summary(db, learner))
 
 
+@router.put("/{learner_id}/target-domain", response_model=ApiResponse)
+def update_target_domain(
+    learner_id: str,
+    payload: TargetDomainUpdate,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    assert_learner_access(principal, learner_id)
+    learner = db.scalar(select(Learner).where(Learner.public_id == learner_id))
+    if learner is None:
+        raise HTTPException(status_code=404, detail="LEARNER_NOT_FOUND")
+    domain = db.scalar(select(Domain).where(Domain.domain_code == payload.domain_code))
+    if domain is None or domain.status != "ready":
+        raise HTTPException(status_code=409, detail="DOMAIN_NOT_READY")
+    changed = learner.target_domain != payload.domain_code
+    learner.target_domain = payload.domain_code
+    if changed:
+        learner.direction_tags_json = []
+    db.commit()
+    db.refresh(learner)
+    return ok(
+        {
+            **serialize_learner_summary(db, learner),
+            "domain_changed": changed,
+            "direction_tags": learner.direction_tags_json or [],
+        }
+    )
+
+
 @router.put("/{learner_id}/initial-context", response_model=ApiResponse)
 def update_initial_context(
     learner_id: str,
@@ -136,6 +181,19 @@ def update_initial_context(
     learner = db.scalar(select(Learner).where(Learner.public_id == resolved_learner_id))
     if learner is None:
         raise HTTPException(status_code=404, detail="LEARNER_NOT_FOUND")
+    domain = db.scalar(select(Domain).where(Domain.domain_code == learner.target_domain))
+    if domain is None or domain.status != "ready":
+        raise HTTPException(status_code=409, detail="LEARNER_DOMAIN_NOT_CONFIGURED")
+    direction_options = list((domain.config_json or {}).get("learning_directions") or [])
+    allowed_directions = {
+        str(item.get("value"))
+        for item in direction_options
+        if isinstance(item, dict) and item.get("value")
+    }
+    if not allowed_directions:
+        raise HTTPException(status_code=409, detail="DOMAIN_LEARNING_DIRECTIONS_MISSING")
+    if any(item not in allowed_directions for item in payload.direction_tags):
+        raise HTTPException(status_code=422, detail="INVALID_DOMAIN_DIRECTION_TAG")
 
     learner.education_level = payload.education_level
     learner.major = payload.major
@@ -143,7 +201,6 @@ def update_initial_context(
     learner.experience_years = payload.experience_years
     learner.learning_style = payload.learning_style
     learner.direction_tags_json = payload.direction_tags
-    learner.target_domain = "ai_app_dev"
     db.commit()
 
     return ok(
@@ -162,7 +219,9 @@ def update_initial_context(
 
 
 @router.get("/{learner_id}/profile", response_model=ApiResponse)
-def get_learner_profile(learner_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)) -> ApiResponse:
+def get_learner_profile(
+    learner_id: str, db: Session = Depends(get_db), principal: Principal = Depends(get_current_user)
+) -> ApiResponse:
     assert_learner_access(principal, learner_id)
     learner = db.scalar(select(Learner).where(Learner.public_id == learner_id))
     if learner is None:

@@ -10,7 +10,7 @@ import pytest
 
 from app.agents.contracts import AnalyzeProfileInput, GenerationStrategy, ProfileType
 from app.agents.profile_analysis_config import (
-    AI_APP_DEV_PROFILE_V1,
+    AI_APP_DEV_PROFILE_V2,
     validate_ai_app_dev_profile_config,
 )
 from app.services.profile_v3_fixture_service import (
@@ -57,9 +57,9 @@ def _seed_knowledge_ids() -> set[str]:
 def test_ai_app_dev_profile_config_maps_every_seed_knowledge_item() -> None:
     knowledge_ids = _seed_knowledge_ids()
     assert len(knowledge_ids) == 50
-    validate_ai_app_dev_profile_config(knowledge_ids, AI_APP_DEV_PROFILE_V1)
+    validate_ai_app_dev_profile_config(knowledge_ids, AI_APP_DEV_PROFILE_V2)
 
-    config = AI_APP_DEV_PROFILE_V1
+    config = AI_APP_DEV_PROFILE_V2
     assert config.prior_mastery == 0.5
     assert config.prior_weight == 1.0
     assert config.mastery_thresholds == (0.40, 0.60, 0.80)
@@ -85,7 +85,7 @@ def test_profile_seed_fingerprint_is_independent_of_line_endings() -> None:
         separators=(",", ":"),
     ).encode("utf-8")
 
-    assert hashlib.sha256(canonical).hexdigest() == AI_APP_DEV_PROFILE_V1.seed_sha256
+    assert hashlib.sha256(canonical).hexdigest() == AI_APP_DEV_PROFILE_V2.seed_sha256
 
 def test_profile_v3_case_distribution_and_unique_ids() -> None:
     documents = _all_case_documents()

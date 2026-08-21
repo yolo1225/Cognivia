@@ -17,6 +17,7 @@ from app.models import (
     Base,
     AgentMessageRecord,
     AgentRun,
+    Domain,
     GenerationTask,
     GraphCheckpoint,
     Learner,
@@ -44,6 +45,7 @@ def override(testing_session: sessionmaker[Session]):
 
 
 def seed_resource(db: Session):
+    db.add(Domain(domain_code="ai_app_dev", name="人工智能应用开发实训", config_json={}))
     learner = Learner(
         public_id="learner_001",
         background="test",
@@ -122,9 +124,7 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
     try:
         resources = client.get("/api/v1/resources").json()["data"]
         assert [item["resource_id"] for item in resources] == ["resource_visible"]
-        admin_resources = client.get(
-            "/api/v1/resources?include_unpublished=true"
-        ).json()["data"]
+        admin_resources = client.get("/api/v1/resources?include_unpublished=true").json()["data"]
         assert {item["resource_id"] for item in admin_resources} == {
             "resource_visible",
             "resource_hidden",
@@ -147,7 +147,9 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
         with testing_session() as db:
             run = db.query(AgentRun).filter_by(agent_name="tutoring_agent").one()
             messages = db.query(AgentMessageRecord).filter_by(session_id=session_id).all()
-            assert run.prompt_version == "v3"
+            assert run.prompt_version == "v6"
+            assert run.contract_version == "agent-contract-v6"
+            assert len(run.prompt_hash) == 64
             assert run.status == "completed"
             assert {item.message_type for item in messages} >= {"command", "result"}
 
@@ -157,6 +159,40 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
         ).json()["data"]
         assert feedback["profile_update_required"] is False
         assert feedback["task_id"] is None
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_v5_resource_feedback_requires_full_v6_regeneration(monkeypatch) -> None:
+    testing_session = build_test_session()
+    with testing_session() as db:
+        seed_resource(db)
+
+    rag_checked = False
+
+    def unexpected_rag_check(_domain_code: str):
+        nonlocal rag_checked
+        rag_checked = True
+        raise AssertionError("V5 compatibility must be checked before RAG readiness")
+
+    monkeypatch.setattr(
+        "app.api.v1.resources.require_candidate_rag",
+        unexpected_rag_check,
+    )
+    app.dependency_overrides[get_db] = override(testing_session)
+    client = TestClient(app)
+    try:
+        response = client.post(
+            "/api/v1/resources/resource_visible/feedback",
+            json={"feedback_type": "has_error", "rating": 1},
+        )
+        assert response.status_code == 409
+        error = response.json()["error"]
+        assert error["code"] == "V6_FULL_REGENERATION_REQUIRED"
+        assert error["message"] == "V6_FULL_REGENERATION_REQUIRED"
+        assert rag_checked is False
+        with testing_session() as db:
+            assert db.query(GenerationTask).count() == 1
     finally:
         app.dependency_overrides.clear()
 
@@ -220,9 +256,7 @@ def test_task_resource_query_uses_task_owner_when_client_learner_is_stale() -> N
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert [item["resource_id"] for item in response.json()["data"]] == [
-        "resource_task_owner"
-    ]
+    assert [item["resource_id"] for item in response.json()["data"]] == ["resource_task_owner"]
 
 
 def test_admin_report_requires_own_learner_unless_viewing_task() -> None:
@@ -265,9 +299,7 @@ def test_admin_report_requires_own_learner_unless_viewing_task() -> None:
     )
     try:
         client = TestClient(app)
-        direct_response = client.get(
-            "/api/v1/reports/learners/learner_report_task_owner"
-        )
+        direct_response = client.get("/api/v1/reports/learners/learner_report_task_owner")
         task_response = client.get(
             "/api/v1/reports/learners/learner_report_task_owner",
             params={"task_id": "task_report_owner"},
@@ -320,25 +352,17 @@ def test_failed_generation_task_can_schedule_checkpoint_retry(monkeypatch) -> No
         db.commit()
 
     scheduled: list[str] = []
-    monkeypatch.setattr(
-        "app.api.v1.generation_tasks.run_generation_task", scheduled.append
-    )
-    monkeypatch.setattr(
-        "app.api.v1.generation_tasks.require_candidate_rag", lambda _domain: {}
-    )
+    monkeypatch.setattr("app.api.v1.generation_tasks.run_generation_task", scheduled.append)
+    monkeypatch.setattr("app.api.v1.generation_tasks.require_candidate_rag", lambda _domain: {})
     app.dependency_overrides[get_db] = override(testing_session)
     try:
-        response = TestClient(app).post(
-            "/api/v1/generation-tasks/task_retryable/retry"
-        )
+        response = TestClient(app).post("/api/v1/generation-tasks/task_retryable/retry")
         assert response.status_code == 200
         assert response.json()["data"]["status"] == "retry_pending"
         assert scheduled == ["task_retryable"]
         with testing_session() as db:
             task = db.scalar(
-                select(GenerationTask).where(
-                    GenerationTask.public_id == "task_retryable"
-                )
+                select(GenerationTask).where(GenerationTask.public_id == "task_retryable")
             )
             assert task.status == "retry_pending"
             assert task.decision == "pending"
@@ -417,10 +441,13 @@ def test_active_generation_task_returns_latest_non_terminal_task_for_learner() -
         )
         assert active.status_code == 200
         assert active.json()["data"]["task_id"] == "task_active_latest"
-        assert client.get(
-            "/api/v1/generation-tasks/active",
-            params={"learner_id": "learner_other"},
-        ).json()["data"] is None
+        assert (
+            client.get(
+                "/api/v1/generation-tasks/active",
+                params={"learner_id": "learner_other"},
+            ).json()["data"]
+            is None
+        )
 
         with testing_session() as db:
             db.query(GenerationTask).filter(
@@ -431,9 +458,12 @@ def test_active_generation_task_returns_latest_non_terminal_task_for_learner() -
                 synchronize_session=False,
             )
             db.commit()
-        assert client.get(
-            "/api/v1/generation-tasks/active",
-            params={"learner_id": "learner_active"},
-        ).json()["data"] is None
+        assert (
+            client.get(
+                "/api/v1/generation-tasks/active",
+                params={"learner_id": "learner_active"},
+            ).json()["data"]
+            is None
+        )
     finally:
         app.dependency_overrides.clear()

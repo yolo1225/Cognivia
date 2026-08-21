@@ -25,6 +25,8 @@ from app.agents.review_agent import (
     _adapt_model_review_payload,
     _build_review_payload,
     _cross_validate,
+    _decision_from_claims,
+    _deterministic_coverage,
     _review_decision,
     _reviews_disagree,
     _plan_review_batches,
@@ -37,6 +39,25 @@ from app.services.llm_service import ModelCallError, ModelOutputTruncatedError
 class DeterministicChannel:
     def review(self, *, deterministic_review, **_kwargs):
         return deterministic_review
+
+
+def test_resource_decision_defers_difficulty_and_coverage_to_package() -> None:
+    assert (
+        _decision_from_claims(
+            contradicted_ids=[],
+            undetermined_ids=[],
+            unresolved_ids=set(),
+        )
+        is ReviewDecision.PASSED
+    )
+    assert (
+        _decision_from_claims(
+            contradicted_ids=[],
+            undetermined_ids=["claim_missing_evidence"],
+            unresolved_ids=set(),
+        )
+        is ReviewDecision.REVISION_REQUIRED
+    )
 
 
 class PersistentConflictChannel:
@@ -68,7 +89,7 @@ def _with_verdicts(deterministic_review, verdict: EvidenceVerdict, source_ids=No
             update={
                 "verdict": verdict,
                 "supported": True if verdict is EvidenceVerdict.SUPPORTED else False,
-                "determinable": verdict is not EvidenceVerdict.UNABLE_TO_DETERMINE,
+                "determinable": verdict is not EvidenceVerdict.EVIDENCE_INSUFFICIENT,
                 "source_ref_ids": (
                     list(source_ids or check.source_ref_ids)
                     if verdict is EvidenceVerdict.SUPPORTED
@@ -126,7 +147,7 @@ class SupplementalOnlyChannel:
             checks = list(reviewed.fact_checks)
             checks[0] = checks[0].model_copy(
                 update={
-                    "verdict": EvidenceVerdict.UNABLE_TO_DETERMINE,
+                    "verdict": EvidenceVerdict.EVIDENCE_INSUFFICIENT,
                     "supported": None,
                     "determinable": False,
                     "source_ref_ids": [],
@@ -225,6 +246,9 @@ def _input() -> ReviewResourceInput:
     requirements = request.requirements.model_copy(
         update={
             "resource_types": [ResourceType.LECTURE],
+            "required_knowledge_ids": request.requirements.resource_knowledge_targets[
+                ResourceType.LECTURE
+            ],
             "resource_knowledge_targets": {
                 ResourceType.LECTURE: request.requirements.resource_knowledge_targets[
                     ResourceType.LECTURE
@@ -256,7 +280,7 @@ def test_v3_review_emits_dual_model_contract_report() -> None:
     output = ReviewValidationAgent(channel=DeterministicChannel()).execute(_input())
 
     report = output.reports[0]
-    assert output.contract_version == "agent-contract-v5"
+    assert output.contract_version == "agent-contract-v6"
     assert report.primary_review.model_role == "primary_review_model"
     assert report.secondary_review.model_role == "secondary_review_model"
     assert report.decision in {ReviewDecision.PASSED, ReviewDecision.REVISION_REQUIRED}
@@ -279,7 +303,20 @@ def test_evidence_not_mentioned_is_undetermined_without_factual_penalty() -> Non
     assert report.final_scores.source_traceability == 0
     assert report.undetermined_claim_ids
     assert not report.contradicted_claim_ids
-    assert not report.arbitration.required
+    assert report.arbitration.required
+    assert report.quality_metrics.evaluated_claim_count == sum(
+        len(values)
+        for values in (
+            report.supported_claim_ids,
+            report.contradicted_claim_ids,
+            report.undetermined_claim_ids,
+            report.unresolved_claim_ids,
+        )
+    )
+    assert report.quality_metrics.evidence_insufficient_claim_count == len(
+        report.undetermined_claim_ids
+    )
+    assert report.quality_metrics.hallucination_rate == 0
 
 
 def test_consensus_contradiction_requires_revision_not_manual_review() -> None:
@@ -290,7 +327,7 @@ def test_consensus_contradiction_requires_revision_not_manual_review() -> None:
     assert report.decision is ReviewDecision.REVISION_REQUIRED
     assert report.final_scores.factual_accuracy == 0
     assert report.contradicted_claim_ids
-    assert not report.arbitration.required
+    assert report.arbitration.required
 
 
 def test_resolved_claim_conflict_rechecks_only_the_disputed_claim() -> None:
@@ -372,7 +409,176 @@ def test_atomic_claim_extraction_is_field_specific_and_excludes_wrong_options() 
     )
     quiz_claims = extract_atomic_claims(quiz, quiz_request)
     assert all("明显错误选项" not in item.claim for item in quiz_claims)
-    assert all("正确答案：" in item.claim and "解析：" in item.claim for item in quiz_claims)
+    assert {item.field_path for item in quiz_claims} == {
+        f"questions[{index}].{field_name}"
+        for index in range(len(quiz_content.questions))
+        for field_name in ("correct_answer", "explanation")
+    }
+    for claim in quiz_claims:
+        question_index = int(claim.field_path.split("[", 1)[1].split("]", 1)[0])
+        field_name = claim.field_path.rsplit(".", 1)[-1]
+        assert getattr(quiz_content.questions[question_index], field_name) in claim.claim
+
+
+def test_quiz_prompt_excludes_questions_but_keeps_independent_factual_premises() -> None:
+    request = _input()
+    quiz = resource_examples()[2]
+    content = quiz.structured_content.model_copy(deep=True)
+    content.questions[0].prompt = "哪一种做法更适合当前任务？"
+    content.questions[1].prompt = "系统默认自动重试三次，哪一种说明正确？"
+    content.questions[2].prompt = "规范将哪些机制共同列为核心要素？"
+    quiz = quiz.model_copy(update={"structured_content": content})
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.GRADED_QUIZ],
+            "resource_knowledge_targets": {
+                ResourceType.GRADED_QUIZ: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    quiz_request = request.model_copy(
+        update={"resources": [quiz], "requirements": requirements}
+    )
+
+    paths = {claim.field_path for claim in extract_atomic_claims(quiz, quiz_request)}
+
+    assert "questions[0].prompt" not in paths
+    assert "questions[1].prompt" in paths
+    assert "questions[2].prompt" not in paths
+    assert "questions[0].correct_answer" in paths
+    assert "questions[0].explanation" in paths
+
+
+def test_quiz_prompt_excludes_short_answer_directive_without_question_mark() -> None:
+    request = _input()
+    quiz = resource_examples()[2]
+    content = quiz.structured_content.model_copy(deep=True)
+    content.questions[0].prompt = "请概括材料直接说明的关键要点。"
+    quiz = quiz.model_copy(update={"structured_content": content})
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.GRADED_QUIZ],
+            "resource_knowledge_targets": {
+                ResourceType.GRADED_QUIZ: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    quiz_request = request.model_copy(
+        update={"resources": [quiz], "requirements": requirements}
+    )
+
+    paths = {claim.field_path for claim in extract_atomic_claims(quiz, quiz_request)}
+
+    assert "questions[0].prompt" not in paths
+    assert "questions[0].correct_answer" in paths
+    assert "questions[0].explanation" in paths
+
+
+def test_quiz_prompt_does_not_audit_the_unknown_answer_slot_twice() -> None:
+    request = _input()
+    quiz = resource_examples()[2]
+    content = quiz.structured_content.model_copy(deep=True)
+    content.questions[0].prompt = (
+        "根据引用材料，哪三类内容不应进入 Git 版本库？请列举一项。"
+    )
+    quiz = quiz.model_copy(update={"structured_content": content})
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.GRADED_QUIZ],
+            "resource_knowledge_targets": {
+                ResourceType.GRADED_QUIZ: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    quiz_request = request.model_copy(
+        update={"resources": [quiz], "requirements": requirements}
+    )
+
+    paths = {claim.field_path for claim in extract_atomic_claims(quiz, quiz_request)}
+
+    assert "questions[0].prompt" not in paths
+    assert "questions[0].correct_answer" in paths
+    assert "questions[0].explanation" in paths
+
+
+def test_quiz_prompt_does_not_treat_contextual_need_as_an_independent_fact() -> None:
+    request = _input()
+    quiz = resource_examples()[2]
+    content = quiz.structured_content.model_copy(deep=True)
+    content.questions[0].prompt = (
+        "当多智能体需要协调执行流程时，可采用哪两种控制权交接方式？"
+    )
+    quiz = quiz.model_copy(update={"structured_content": content})
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.GRADED_QUIZ],
+            "resource_knowledge_targets": {
+                ResourceType.GRADED_QUIZ: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    quiz_request = request.model_copy(
+        update={"resources": [quiz], "requirements": requirements}
+    )
+
+    paths = {claim.field_path for claim in extract_atomic_claims(quiz, quiz_request)}
+
+    assert "questions[0].prompt" not in paths
+    assert "questions[0].correct_answer" in paths
+    assert "questions[0].explanation" in paths
+
+
+def test_quiz_prompt_excludes_context_clause_with_automatic_review_wording() -> None:
+    request = _input()
+    quiz = resource_examples()[2]
+    content = quiz.structured_content.model_copy(deep=True)
+    content.questions[0].prompt = (
+        "当评审智能体在自动评审中发现高风险事实时，应采取什么处置动作？"
+    )
+    quiz = quiz.model_copy(update={"structured_content": content})
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.GRADED_QUIZ],
+            "resource_knowledge_targets": {
+                ResourceType.GRADED_QUIZ: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    quiz_request = request.model_copy(
+        update={"resources": [quiz], "requirements": requirements}
+    )
+
+    paths = {claim.field_path for claim in extract_atomic_claims(quiz, quiz_request)}
+
+    assert "questions[0].prompt" not in paths
+    assert "questions[0].correct_answer" in paths
+    assert "questions[0].explanation" in paths
+
+
+def test_practice_instruction_excludes_conditional_request_for_reason() -> None:
+    request = _input()
+    practice = resource_examples()[1]
+    content = practice.structured_content.model_copy(deep=True)
+    content.steps[0].instruction = (
+        "若请求中断，根据幂等性判断是否重试；若不允许，请说明理由。"
+    )
+    practice = practice.model_copy(update={"structured_content": content})
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "resource_knowledge_targets": {
+                ResourceType.PRACTICE_GUIDE: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    practice_request = request.model_copy(
+        update={"resources": [practice], "requirements": requirements}
+    )
+
+    paths = {claim.field_path for claim in extract_atomic_claims(practice, practice_request)}
+
+    assert "steps[0].instruction[0]" in paths
+    assert "steps[0].instruction[1]" not in paths
 
 
 def test_summary_excludes_meta_prose_but_preserves_factual_claims_and_ids() -> None:
@@ -512,6 +718,75 @@ def test_unsupported_determinable_fact_cannot_pass_even_with_perfect_scores() ->
     assert not validated.passed
     assert validated.scores.factual_accuracy < 85
     assert any(issue.code.value == "contradicted_claim" for issue in validated.issues)
+
+
+def test_supported_model_verdict_restores_canonical_source_ids_when_omitted() -> None:
+    request = _input()
+    deterministic = ReviewValidationAgent(channel=DeterministicChannel())._review_pair(
+        request.resources[0], request, recheck=False
+    )[0]
+    first = deterministic.fact_checks[0]
+    reviewed = deterministic.model_copy(
+        update={
+            "fact_checks": [
+                check.model_copy(update={"source_ref_ids": []})
+                if check.claim_id == first.claim_id
+                else check
+                for check in deterministic.fact_checks
+            ]
+        }
+    )
+
+    validated = _cross_validate(reviewed, deterministic, request)
+    restored = next(
+        check for check in validated.fact_checks if check.claim_id == first.claim_id
+    )
+
+    assert restored.verdict is EvidenceVerdict.SUPPORTED
+    assert restored.source_ref_ids == first.source_ref_ids
+
+
+def test_exact_command_literal_overrides_model_contradiction() -> None:
+    request = _input()
+    practice = resource_examples()[1]
+    content = practice.structured_content.model_copy(deep=True)
+    content.steps[0].code_or_command = "RAG 检索需要保留知识片段与来源标识"
+    practice = practice.model_copy(update={"structured_content": content})
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "resource_knowledge_targets": {
+                ResourceType.PRACTICE_GUIDE: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    practice_request = request.model_copy(
+        update={"resources": [practice], "requirements": requirements}
+    )
+    canonical, _ = ReviewValidationAgent(channel=DeterministicChannel())._review_pair(
+        practice,
+        practice_request,
+        recheck=False,
+    )
+    code_check = next(
+        check for check in canonical.fact_checks if check.field_path.endswith(".code_or_command")
+    )
+    contradicted = canonical.model_copy(
+        update={
+            "fact_checks": [
+                check.model_copy(update={"verdict": EvidenceVerdict.CONTRADICTED})
+                if check.claim_id == code_check.claim_id
+                else check
+                for check in canonical.fact_checks
+            ]
+        }
+    )
+
+    validated = _cross_validate(contradicted, canonical, practice_request)
+
+    result = next(check for check in validated.fact_checks if check.claim_id == code_check.claim_id)
+    assert result.verdict is EvidenceVerdict.SUPPORTED
+    assert result.source_ref_ids == code_check.source_ref_ids
 
 
 def test_unsupported_fact_difference_requires_arbitration_and_never_passes() -> None:
@@ -807,7 +1082,7 @@ def test_review_adapter_safely_normalizes_source_reference_shapes() -> None:
         "fact_checks": [
             {
                 "claim_id": "clm_no_sources_001",
-                "verdict": "unable_to_determine",
+                "verdict": "evidence_insufficient",
                 "source_ref_ids": None,
             },
             {
@@ -891,6 +1166,14 @@ def test_pedagogical_actions_are_excluded_but_mixed_technical_claims_remain() ->
                 "troubleshooting": None,
             }
         ),
+        template.model_copy(
+            update={
+                "instruction": "阅读引用材料，整理其中明确描述的处理流程。",
+                "expected_result": "记录实际结果并与引用材料中的描述进行核对。",
+                "code_or_command": None,
+                "troubleshooting": None,
+            }
+        ),
     ]
     practice = practice.model_copy(update={"structured_content": content})
     requirements = request.requirements.model_copy(
@@ -913,6 +1196,59 @@ def test_pedagogical_actions_are_excluded_but_mixed_technical_claims_remain() ->
     assert "steps[1].expected_result[0]" not in paths
     assert "steps[2].instruction[0]" not in paths
     assert "steps[2].expected_result[0]" in paths
+    assert "steps[3].instruction[0]" not in paths
+    assert "steps[3].expected_result[0]" not in paths
+
+
+def test_operational_pedagogical_step_counts_toward_practice_coverage() -> None:
+    request = _input()
+    practice = resource_examples()[1]
+    chunk = request.evidence[0].model_copy(
+        update={"content": "## 操作步骤\n1. 记录目标服务实际响应字段并整理来源。"}
+    )
+    content = practice.structured_content.model_copy(deep=True)
+    content.steps = [
+        content.steps[0].model_copy(
+            update={
+                "instruction": "记录目标服务实际响应字段并整理来源。",
+                "source_ref_ids": [chunk.source.source_ref_id],
+                "code_or_command": None,
+                "expected_result": "记录实际结果并与引用材料中的描述进行核对。",
+                "troubleshooting": None,
+            }
+        )
+    ]
+    practice = practice.model_copy(
+        update={
+            "structured_content": content,
+            "source_refs": [chunk.source],
+            "knowledge_coverage": {
+                chunk.knowledge_id: [chunk.source.source_ref_id]
+            },
+        }
+    )
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "required_knowledge_ids": [chunk.knowledge_id],
+            "resource_knowledge_targets": {
+                ResourceType.PRACTICE_GUIDE: [chunk.knowledge_id]
+            },
+            "source_whitelist": [chunk.source.source_ref_id],
+        }
+    )
+    practice_request = request.model_copy(
+        update={
+            "resources": [practice],
+            "requirements": requirements,
+            "evidence": [chunk],
+        }
+    )
+
+    targets, covered = _deterministic_coverage(practice, practice_request)
+
+    assert targets == {chunk.knowledge_id}
+    assert covered == targets
 
 
 def test_practice_environment_and_acceptance_actions_are_not_factual_claims() -> None:
@@ -928,6 +1264,9 @@ def test_practice_environment_and_acceptance_actions_are_not_factual_claims() ->
         "学习者记录 Python 脚本运行结果，并对照 Python 官方文档核对其行为",
         "学习者提交练习记录并标注引用材料",
         "命令固定返回 JSON 字段",
+        "错误响应分析包含 request_id 提取过程及识别依据",
+        "在清单旁注明所识别出的至少一处可量化指标示例和一处失败样例反馈路径描述",
+        "在清单旁注明接口固定返回 JSON 字段",
     ]
     practice = practice.model_copy(update={"structured_content": content})
     requirements = request.requirements.model_copy(
@@ -951,9 +1290,44 @@ def test_practice_environment_and_acceptance_actions_are_not_factual_claims() ->
     assert "acceptance_criteria[1][0]" not in claims_by_path
     assert claims_by_path["environment_requirements[2][0]"] == "API 默认 30 秒超时"
     assert claims_by_path["acceptance_criteria[2][0]"] == "命令固定返回 JSON 字段"
+    assert "acceptance_criteria[3][0]" not in claims_by_path
+    assert "acceptance_criteria[4][0]" not in claims_by_path
+    assert claims_by_path["acceptance_criteria[5][0]"] == "在清单旁注明接口固定返回 JSON 字段"
 
 
-def test_realistic_regression_shapes_extract_20_39_6_claims() -> None:
+def test_workflow_mapping_and_learning_record_are_pedagogical_actions() -> None:
+    request = _input()
+    practice = resource_examples()[1]
+    content = practice.structured_content.model_copy(deep=True)
+    content.steps[0].instruction = (
+        "将前序步骤中的 API 调用行为映射至流程清单中的具体环节，"
+        "说明该动作在任务定义、知识准备、模型接入、编排、输出校验、"
+        "离线评测或运行监控等环节中的定位，并明确其输入、输出、"
+        "可观察结果及失败处理方式。"
+    )
+    content.acceptance_criteria = [
+        "完成一份学习记录，包含所列七个环节的简要说明及对应来源核对结论"
+    ]
+    practice = practice.model_copy(update={"structured_content": content})
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "resource_knowledge_targets": {
+                ResourceType.PRACTICE_GUIDE: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    practice_request = request.model_copy(
+        update={"resources": [practice], "requirements": requirements}
+    )
+
+    paths = {claim.field_path for claim in extract_atomic_claims(practice, practice_request)}
+
+    assert "steps[0].instruction[0]" not in paths
+    assert "acceptance_criteria[0][0]" not in paths
+
+
+def test_realistic_regression_shapes_extract_20_38_12_claims() -> None:
     request = _input()
     lecture, _, quiz = resource_examples()
     lecture_content = lecture.structured_content.model_copy(deep=True)
@@ -987,9 +1361,9 @@ def test_realistic_regression_shapes_extract_20_39_6_claims() -> None:
     ]
     quiz = quiz.model_copy(update={"structured_content": quiz_content})
 
-    assert len(extract_atomic_claims(lecture, request)) == 20
+    assert len(extract_atomic_claims(lecture, request)) == 19
     assert len(extract_atomic_claims(practice_request.resources[0], practice_request)) == 38
-    assert len(extract_atomic_claims(quiz, request)) == 6
+    assert len(extract_atomic_claims(quiz, request)) == 12
 
 
 def test_long_practice_uses_stable_budgeted_batches_for_both_models() -> None:
@@ -1025,11 +1399,20 @@ def test_long_practice_uses_stable_budgeted_batches_for_both_models() -> None:
 
     channel = RecordingBatchChannel()
     ReviewValidationAgent(channel=channel).execute(request)
-    primary_calls = [ids for role, _, ids in channel.calls if role == "primary_review_model"]
-    secondary_calls = [ids for role, _, ids in channel.calls if role == "secondary_review_model"]
+    primary_calls = [
+        ids
+        for role, recheck, ids in channel.calls
+        if role == "primary_review_model" and not recheck
+    ]
+    secondary_calls = [
+        ids
+        for role, recheck, ids in channel.calls
+        if role == "secondary_review_model" and not recheck
+    ]
     expected = {batch.claim_ids for batch in batches}
     assert len(primary_calls) == len(secondary_calls) == len(batches)
     assert set(primary_calls) == set(secondary_calls) == expected
+    assert any(recheck for _role, recheck, _ids in channel.calls)
 
 
 def test_review_batches_run_in_bounded_parallel_pairs() -> None:
@@ -1127,7 +1510,9 @@ def test_package_quality_uses_weighted_counts_after_partial_revision() -> None:
         hallucinated = hallucinated_counts[index]
         metrics = report.quality_metrics.model_copy(
             update={
+                "evaluated_claim_count": claim_counts[index],
                 "verifiable_claim_count": claim_counts[index],
+                "contradicted_claim_count": hallucinated,
                 "hallucinated_claim_count": hallucinated,
                 "hallucination_rate": round(100 * hallucinated / claim_counts[index], 2),
                 "difficulty_match_score": 100,
@@ -1163,5 +1548,74 @@ def test_package_quality_uses_weighted_counts_after_partial_revision() -> None:
     assert output.package_quality.hallucination_rate == 19.67
     assert output.package_quality.difficulty_match_score == 100
     assert output.package_quality.revision_count == 1
+    assert not output.package_quality.passed
+    assert not output.package_passed
+
+
+@pytest.mark.parametrize("resource_count", [1, 2, 3])
+def test_package_quality_accepts_exact_requested_resource_set(resource_count: int) -> None:
+    flow = initial_generation_flow_example()
+    reports = flow["review_resource"]["output"].reports[:resource_count]
+
+    output = build_review_resource_output(
+        task_id="task_partial_refresh",
+        reports=reports,
+        expected_resource_types=[report.resource_type for report in reports],
+        required_knowledge_ids=sorted(
+            {knowledge_id for report in reports for knowledge_id in report.target_knowledge_ids}
+        ),
+        revision_count=0,
+    )
+
+    assert output.package_quality.passed
+    assert output.package_passed
+
+
+def test_quiz_assessment_cannot_backfill_primary_teaching_coverage() -> None:
+    flow = initial_generation_flow_example()
+    lecture = flow["review_resource"]["output"].reports[0]
+    quiz = flow["review_resource"]["output"].reports[2]
+    knowledge_id = lecture.target_knowledge_ids[0]
+    lecture = lecture.model_copy(
+        update={
+            "target_knowledge_ids": [knowledge_id],
+            "covered_knowledge_ids": [],
+            "missing_knowledge_ids": [knowledge_id],
+        }
+    )
+    quiz = quiz.model_copy(
+        update={
+            "target_knowledge_ids": [knowledge_id],
+            "covered_knowledge_ids": [knowledge_id],
+            "missing_knowledge_ids": [],
+        }
+    )
+
+    output = build_review_resource_output(
+        task_id="task_primary_owner",
+        reports=[lecture, quiz],
+        expected_resource_types=[ResourceType.LECTURE, ResourceType.GRADED_QUIZ],
+        required_knowledge_ids=[knowledge_id],
+        revision_count=0,
+    )
+
+    assert output.package_covered_knowledge_ids == []
+    assert output.package_missing_knowledge_ids == [knowledge_id]
+    assert output.package_quality.core_knowledge_coverage == 0
+    assert not output.package_passed
+
+
+def test_package_quality_rejects_mismatched_requested_resource_set() -> None:
+    flow = initial_generation_flow_example()
+    reports = flow["review_resource"]["output"].reports[:2]
+
+    output = build_review_resource_output(
+        task_id="task_partial_refresh",
+        reports=reports,
+        expected_resource_types=[ResourceType.LECTURE, ResourceType.GRADED_QUIZ],
+        required_knowledge_ids=[],
+        revision_count=0,
+    )
+
     assert not output.package_quality.passed
     assert not output.package_passed

@@ -1,0 +1,132 @@
+{
+  "status": "passed",
+  "domain_code": "m3_live_acceptance",
+  "learner_id": "learner_m3_live_acceptance",
+  "started_at": "2026-08-20T03:45:49.092643+00:00",
+  "finished_at": "2026-08-20T03:48:18.881247+00:00",
+  "document_id": "kdoc_0e0da077daf840d6",
+  "import": {
+    "resumed": true,
+    "document_status": "ready",
+    "published": {
+      "knowledge_items": 10,
+      "questions": 10
+    }
+  },
+  "index": {
+    "resumed": true,
+    "rag": {
+      "ready": true,
+      "domain_code": "m3_live_acceptance",
+      "active_collection": "knowledge_m3_live_acceptance_candidate_20260820031457754393_70fc3d7c",
+      "indexed_chunk_count": 10,
+      "index_version": "sha256:c99703da67773464f845d77fe173abf859332928d8c9ffaec258997f8b887417",
+      "source_data_version": "sha256:3aca3b090359d0bf112792e368814b71c11b90dd0d5810b3f3f05be799e44fe3",
+      "embedding_model": "qwen3.7-text-embedding",
+      "embedding_dimensions": 1024
+    }
+  },
+  "publish": {
+    "readiness_passed": true,
+    "counts": {
+      "knowledge_items": 10,
+      "diagnostic_questions": 10,
+      "knowledge_relations": 9
+    },
+    "issues": []
+  },
+  "diagnosis": {
+    "session_id": "resumed",
+    "question_count": 10,
+    "selection_summary": {
+      "single_choice_count": 6,
+      "short_answer_count": 4,
+      "theory_count": 5,
+      "practice_count": 5
+    },
+    "profile_id": "profile_3649c629bcd1",
+    "path_id": "path_0c5122ca5a2d"
+  },
+  "generation": {
+    "task_id": "task_ecfe44716ea7",
+    "worker_result": {
+      "task_id": "task_ecfe44716ea7",
+      "status": "completed",
+      "decision": "completed",
+      "resources": [
+        {
+          "resource_id": "res_task_ecfe44716ea7_lecture_v1",
+          "resource_type": "lecture",
+          "title": "Python Web 应用开发核心概念巩固讲义（面向初学者）",
+          "difficulty": 4,
+          "review_status": "passed",
+          "sources": [
+            "ki_c070196cff26",
+            "ki_0b5f4dbd8543",
+            "ki_3e98a9b405e7",
+            "ki_50b9f0f667fd",
+            "ki_5dfba92e0752",
+            "ki_7fae3fe3d097",
+            "ki_8af9279cb85b",
+            "ki_c551ecd3cca0",
+            "ki_fa7d90cd766e"
+          ]
+        },
+        {
+          "resource_id": "res_task_ecfe44716ea7_practice_guide_v1",
+          "resource_type": "practice_guide",
+          "title": "API 调试基础实践指南",
+          "difficulty": 4,
+          "review_status": "passed",
+          "sources": [
+            "ki_c2ceba8b33c3"
+          ]
+        },
+        {
+          "resource_id": "res_task_ecfe44716ea7_graded_quiz_v1",
+          "resource_type": "graded_quiz",
+          "title": "Python Web 应用开发核心知识点巩固测验",
+          "difficulty": 4,
+          "review_status": "passed",
+          "sources": [
+            "ki_c070196cff26",
+            "ki_0b5f4dbd8543",
+            "ki_3e98a9b405e7",
+            "ki_50b9f0f667fd",
+            "ki_5dfba92e0752",
+            "ki_7fae3fe3d097"
+          ]
+        }
+      ]
+    },
+    "revision_count": 1,
+    "resource_ids": [
+      "res_task_ecfe44716ea7_lecture_v1",
+      "res_task_ecfe44716ea7_practice_guide_v1",
+      "res_task_ecfe44716ea7_graded_quiz_v1"
+    ],
+    "resource_types": [
+      "graded_quiz",
+      "lecture",
+      "practice_guide"
+    ],
+    "source_ids": [
+      "ki_0b5f4dbd8543",
+      "ki_3e98a9b405e7",
+      "ki_50b9f0f667fd",
+      "ki_5dfba92e0752",
+      "ki_7fae3fe3d097",
+      "ki_8af9279cb85b",
+      "ki_c070196cff26",
+      "ki_c2ceba8b33c3",
+      "ki_c551ecd3cca0",
+      "ki_fa7d90cd766e"
+    ]
+  },
+  "disable": {
+    "domain_status": "disabled",
+    "new_task_blocked": true,
+    "historical_task_status": "completed",
+    "historical_resource_count": 3
+  }
+}

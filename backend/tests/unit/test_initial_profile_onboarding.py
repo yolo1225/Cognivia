@@ -9,7 +9,9 @@ from app.services.diagnostic_service import _initial_context_snapshot, _sample_d
 from app.services.profile_service import is_initial_profile_ready
 
 
-def _question(index: int, question_type: str, practice: bool) -> tuple[DiagnosticQuestion, KnowledgeItem]:
+def _question(
+    index: int, question_type: str, practice: bool
+) -> tuple[DiagnosticQuestion, KnowledgeItem]:
     category = "RAG 实操" if practice else "Prompt 理论"
     knowledge = KnowledgeItem(
         id=index,
@@ -17,6 +19,7 @@ def _question(index: int, question_type: str, practice: bool) -> tuple[Diagnosti
         name=f"知识点 {index}",
         category=category,
         tags_json=["rag"] if practice else ["prompt"],
+        evidence_capabilities_json=["concept", "operation"] if practice else ["concept"],
         content_md="content",
         source_title="source",
     )
@@ -33,7 +36,7 @@ def _question(index: int, question_type: str, practice: bool) -> tuple[Diagnosti
     return question, knowledge
 
 
-def test_initial_context_requires_known_unique_direction_tags() -> None:
+def test_initial_context_requires_nonempty_unique_direction_tags() -> None:
     payload = {
         "education_level": "本科",
         "major": "软件工程",
@@ -47,10 +50,13 @@ def test_initial_context_requires_known_unique_direction_tags() -> None:
         InitialContextUpdate.model_validate({**payload, "direction_tags": []})
     with pytest.raises(ValidationError):
         InitialContextUpdate.model_validate({**payload, "education_level": "其他"})
+    assert InitialContextUpdate.model_validate(
+        {**payload, "direction_tags": ["domain_specific_direction"]}
+    ).direction_tags == ["domain_specific_direction"]
     with pytest.raises(ValidationError):
-        InitialContextUpdate.model_validate({**payload, "direction_tags": ["unknown"]})
-    with pytest.raises(ValidationError):
-        InitialContextUpdate.model_validate({**payload, "direction_tags": ["rag_knowledge_base"] * 2})
+        InitialContextUpdate.model_validate(
+            {**payload, "direction_tags": ["rag_knowledge_base"] * 2}
+        )
 
 
 def test_initial_diagnostic_has_required_type_and_scenario_distribution() -> None:
@@ -90,6 +96,7 @@ def test_context_snapshot_is_required_and_profile_readiness_requires_it() -> Non
         background="本科｜软件工程",
         experience_years=2,
         learning_style="mixed",
+        target_domain="ai_app_dev",
         direction_tags_json=["agent_orchestration"],
     )
     snapshot = _initial_context_snapshot(learner)
