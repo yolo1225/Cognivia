@@ -130,7 +130,7 @@ const pageLabel = computed(() => labels[route.path] || '工作区')
 <style scoped>
 .header-actions { display: flex; align-items: center; gap: 5px; }
 .account-menu, .notification-menu { position: relative; }
-.top-icon-button { position: relative; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: #52627a; font-size: 18px; transition: background var(--transition-fast), color var(--transition-fast); }
+.top-icon-button { position: relative; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 18px; transition: background var(--transition-fast), color var(--transition-fast); }
 .top-icon-button:hover { background: var(--soft); color: var(--blue); }
 .notification-badge { position: absolute; top: 7px; right: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 2px #fff; }
 .top-profile { display: flex; align-items: center; gap: 8px; min-height: 42px; border: 0; border-radius: 10px; background: transparent; padding: 4px 7px 4px 5px; color: var(--ink); text-align: left; transition: background var(--transition-fast); }
@@ -139,18 +139,18 @@ const pageLabel = computed(() => labels[route.path] || '工作区')
 .profile-meta { display: grid; gap: 1px; min-width: 0; }
 .profile-meta strong { max-width: 112px; overflow: hidden; font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .profile-meta small { color: var(--muted); font-size: 10px; line-height: 1.35; }
-.profile-chevron { color: #8291a4; font-size: 16px; line-height: 1; transform: translateY(-2px); }
-.account-dropdown, .notification-dropdown { position: absolute; top: calc(100% + 12px); right: 0; z-index: 10; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: 0 8px 14px rgb(22 35 55 / .12); }
+.profile-chevron { color: var(--muted); font-size: 16px; line-height: 1; transform: translateY(-2px); }
+.account-dropdown, .notification-dropdown { position: absolute; top: calc(100% + 12px); right: 0; z-index: 10; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 8px 14px rgb(22 35 55 / .12); }
 .account-dropdown { width: 236px; }
 .notification-dropdown { width: min(368px, calc(100vw - 32px)); }
-.account-summary { display: grid; gap: 4px; padding: 16px; background: #f8faff; }
+.account-summary { display: grid; gap: 4px; padding: 16px; background: var(--soft); }
 .account-summary strong { overflow: hidden; color: var(--ink); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .account-summary span { color: var(--muted); font-size: 11px; }
-.menu-item, .logout { width: 100%; border: 0; background: #fff; color: #405067; padding: 10px 16px; text-align: left; font-size: 13px; transition: background var(--transition-fast), color var(--transition-fast); }
-.menu-item:hover { background: #f5f8ff; color: var(--blue); }
+.menu-item, .logout { width: 100%; border: 0; background: var(--panel); color: var(--body); padding: 10px 16px; text-align: left; font-size: 13px; transition: background var(--transition-fast), color var(--transition-fast); }
+.menu-item:hover { background: var(--blue2); color: var(--blue); }
 .menu-divider { height: 1px; margin: 5px 12px; background: var(--line); }
-.logout { color: #8b3b3b; }
-.logout:hover { background: #fff6f6; color: var(--red); }
+.logout { color: var(--red); }
+.logout:hover { background: var(--red2); color: var(--red); }
 .dropdown-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 16px 12px; }
 .dropdown-heading div { display: grid; gap: 4px; }
 .dropdown-heading strong { color: var(--ink); font-size: 14px; }
@@ -160,14 +160,14 @@ const pageLabel = computed(() => labels[route.path] || '工作区')
 .notification-list { max-height: 342px; overflow-y: auto; padding: 0 8px 8px; }
 .notification-item { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; border-radius: 9px; padding: 11px 8px; }
 .notification-item + .notification-item { margin-top: 2px; }
-.notification-item.unread { background: #f5f8ff; }
-.notification-state { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; background: #edf4ff; color: var(--info); font-size: 12px; font-weight: 800; }
+.notification-item.unread { background: var(--blue2); }
+.notification-state { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px; background: var(--info2); color: var(--info); font-size: 12px; font-weight: 800; }
 .notification-item.is-success .notification-state { background: var(--green2); color: var(--green); }
-.notification-item.is-error .notification-state { background: #fff0f0; color: var(--red); }
+.notification-item.is-error .notification-state { background: var(--red2); color: var(--red); }
 .notification-item div { min-width: 0; }
 .notification-item strong { display: block; color: var(--ink); font-size: 12px; }
-.notification-item p { margin: 3px 0 0; color: #53637a; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.notification-item time { display: block; margin-top: 4px; color: #8a97a9; font-size: 10px; }
+.notification-item p { margin: 3px 0 0; color: var(--body); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.notification-item time { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
 .notification-empty { display: grid; justify-items: center; gap: 8px; padding: 36px 20px; color: var(--muted); text-align: center; }
 .notification-empty :deep(.app-icon) { color: #9caac0; font-size: 24px; }
 .notification-empty p { margin: 0; font-size: 12px; }

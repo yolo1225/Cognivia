@@ -335,6 +335,47 @@ class OpenAICompatibleGateway:
             if content:
                 yield content
 
+    def stream_json(
+        self,
+        *,
+        model: str | None,
+        system_prompt: str,
+        payload: dict[str, Any],
+        fixture_factory: Callable[[], dict[str, Any]] | None = None,
+    ) -> Iterator[str]:
+        """Yield a single OpenAI-compatible JSON object as it is generated.
+
+        The caller is responsible for validating the completed object.  Keeping
+        that validation at the Agent boundary lets a learner-facing reply be
+        forwarded before the final structured fields are available.
+        """
+        if not model or not settings.openai_api_key:
+            if (
+                settings.app_env != "production"
+                and settings.allow_fixture_llm
+                and fixture_factory is not None
+            ):
+                yield json.dumps(fixture_factory(), ensure_ascii=False)
+                return
+            raise ModelConfigurationError("model channel is not configured")
+
+        stream = self._client().chat.completions.create(
+            model=model,
+            stream=True,
+            response_format={"type": settings.llm_json_schema_mode},
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"Return a valid JSON object.\n\n{system_prompt}",
+                },
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+        )
+        for event in stream:
+            content = event.choices[0].delta.content if event.choices else None
+            if content:
+                yield content
+
     @staticmethod
     def _validate(
         result: dict[str, Any], response_model: type[ResponseModel] | None

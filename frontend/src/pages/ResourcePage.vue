@@ -138,13 +138,13 @@
     </AppDialog>
 
     <AppDrawer v-model="tutorOpen" title="AI 导学" :subtitle="selected?.title || '请选择学习资源'">
-      <div class="tutor-context">围绕当前资源提问。导学记录会按资源分别保存。</div>
-      <div v-if="tutorLoading" class="tutor-state">正在加载导学记录...</div>
+      <div class="tutor-context"><span class="tutor-context-icon"><AppIcon name="resources" /></span><span>当前资源导学会话</span></div>
+      <div v-if="tutorLoading" class="tutor-state tutor-loading" role="status"><span></span><span></span><span></span><p>正在加载导学记录</p></div>
       <div v-else-if="tutorError" class="tutor-state tutor-error"><p>{{ tutorError }}</p><button class="btn" @click="openTutor">重新加载</button></div>
-      <div v-else-if="tutorMessages.length === 0" class="tutor-state">你可以询问概念解释、步骤拆解或练习建议。</div>
+      <div v-else-if="tutorMessages.length === 0" class="tutor-state tutor-empty"><span class="tutor-empty-icon"><AppIcon name="resources" /></span><strong>从当前资源开始提问</strong><p>概念解释、步骤拆解和练习建议都会保存在本资源的导学记录中。</p></div>
       <div v-else ref="messageList" class="tutor-messages" aria-live="polite">
-        <div v-for="message in tutorMessages" :key="message.message_id" class="tutor-message" :class="message.sender === 'learner' ? 'is-learner' : 'is-agent'">
-          <span>{{ message.sender === 'learner' ? '我' : 'AI 导学' }}</span>
+        <article v-for="message in tutorMessages" :key="message.message_id" class="tutor-message" :class="message.sender === 'learner' ? 'is-learner' : 'is-agent'">
+          <div class="tutor-message-meta"><span class="tutor-avatar" aria-hidden="true">{{ message.sender === 'learner' ? '我' : 'AI' }}</span><span>{{ message.sender === 'learner' ? '我' : 'AI 导学' }}</span></div>
           <ResourceMarkdownViewer :content="message.content || (message.stream_status === 'streaming' ? '正在思考…' : '')" />
           <i v-if="message.stream_status === 'streaming'" class="tutor-cursor" aria-label="正在输出" />
           <small v-if="message.stream_status === 'paused'" class="tutor-stream-note">已暂停，保留以上内容。</small>
@@ -163,13 +163,13 @@
             <p>得分 {{ Math.round((message.assessment.score || 0) * 100) }}%</p>
           </div>
           <small v-if="message.assessment_unavailable" class="tutor-stream-note">当前知识点暂无可用的正式验证题，画像保持不变。</small>
-        </div>
+        </article>
       </div>
       <template #footer>
         <form class="tutor-form" @submit.prevent="sendTutorMessage">
-          <textarea v-model="tutorDraft" rows="3" maxlength="2000" placeholder="例如：请用一个例子解释这一部分" :disabled="tutorSending || tutorLoading" @keydown.enter.exact.prevent="sendTutorMessage" />
+          <div class="tutor-composer"><textarea v-model="tutorDraft" rows="3" maxlength="2000" aria-label="输入导学问题" placeholder="输入你想了解的问题" :disabled="tutorSending || tutorLoading" @keydown.enter.exact.prevent="sendTutorMessage" /><small>{{ tutorDraft.length }}/2000</small></div>
           <button v-if="tutorSending" class="btn" type="button" @click="pauseTutorMessage">暂停输出</button>
-          <button v-else class="btn primary" type="submit" :disabled="!tutorDraft.trim() || tutorLoading">发送</button>
+          <button v-else class="tutor-send" type="submit" title="发送问题" aria-label="发送问题" :disabled="!tutorDraft.trim() || tutorLoading"><AppIcon name="send" /></button>
         </form>
       </template>
     </AppDrawer>
@@ -549,7 +549,7 @@ onUnmounted(clearTaskTimer)
 
 <style scoped>
 .resource-page { gap: 20px; max-width: 1080px; margin: 0 auto; }
-.knowledge-impact { display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #efd29f; border-radius: 12px; background: #fff9ed; padding: 16px 18px; }
+.knowledge-impact { display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #efd29f; border-radius: 12px; background: var(--amber2); padding: 16px 18px; }
 .knowledge-impact strong { color: #7a4a08; font-size: 14px; }
 .knowledge-impact p { margin-top: 5px; color: #8a6430; font-size: 12.5px; line-height: 1.6; }
 .knowledge-impact.dismissed { border-color: var(--line); background: var(--soft); }
@@ -558,7 +558,7 @@ onUnmounted(clearTaskTimer)
 .impact-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
 /* 空态 */
-.empty-card { display: grid; justify-items: center; gap: 8px; max-width: 560px; margin: 40px auto; border: 1px dashed var(--line); border-radius: 16px; background: #fff; padding: 48px 32px; text-align: center; }
+.empty-card { display: grid; justify-items: center; gap: 8px; max-width: 560px; margin: 40px auto; border: 1px dashed var(--line); border-radius: 16px; background: var(--panel); padding: 48px 32px; text-align: center; }
 .empty-icon { font-size: 40px; }
 .empty-card h2 { color: var(--ink); font-size: 18px; }
 .empty-card p { max-width: 420px; color: var(--muted); font-size: 13px; line-height: 1.7; }
@@ -576,7 +576,7 @@ onUnmounted(clearTaskTimer)
 
 /* 导航卡 */
 .rp-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.type-card { position: relative; display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 14px; background: #fff; padding: 14px 16px; text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.type-card { position: relative; display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 14px 16px; text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
 .type-card:hover { transform: translateY(-1px); border-color: #c3cede; box-shadow: 0 6px 16px rgb(31 48 75 / .08); }
 .type-card.active { border-color: var(--type); box-shadow: 0 6px 18px rgb(31 48 75 / .1); }
 .type-card-icon { width: 40px; height: 40px; flex-shrink: 0; display: grid; place-items: center; border-radius: 11px; background: var(--type-soft); color: var(--type); font-size: 22px; }
@@ -592,7 +592,7 @@ onUnmounted(clearTaskTimer)
 /* 阅读区：正文恒宽 780px，目录作为固定右侧栏、不压缩正文 */
 .reader-shell { display: grid; grid-template-columns: minmax(0, 780px); max-width: 780px; margin: 0 auto; }
 .reader-shell.has-toc { grid-template-columns: minmax(0, 780px) 220px; max-width: 1030px; gap: 30px; justify-content: center; }
-.reader { min-width: 0; border: 1px solid var(--line); border-top: 3px solid var(--type); border-radius: 16px; background: #fff; padding: 28px 32px 34px; box-shadow: 0 1px 2px rgb(16 24 40 / .03); }
+.reader { min-width: 0; border: 1px solid var(--line); border-top: 3px solid var(--type); border-radius: 16px; background: var(--panel); padding: 28px 32px 34px; box-shadow: 0 1px 2px rgb(16 24 40 / .03); }
 .reader-lecture { --type: #315fce; --type-soft: #e9efff; }
 .reader-practice_guide { --type: #138560; --type-soft: #e9f7f1; }
 .reader-graded_quiz { --type: #b96308; --type-soft: #fff3e2; }
@@ -614,7 +614,7 @@ onUnmounted(clearTaskTimer)
 /* 目录 */
 .reader-toc { position: sticky; top: 96px; display: grid; gap: 2px; align-content: start; max-height: calc(100vh - 130px); overflow-y: auto; padding: 4px 0 4px 18px; border-left: 1px solid var(--line); }
 .toc-title { margin-bottom: 8px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
-.toc-link { border: 0; background: transparent; padding: 5px 8px; text-align: left; color: #5a6b81; font-size: 12.5px; line-height: 1.5; border-radius: 7px; cursor: pointer; }
+.toc-link { border: 0; background: transparent; padding: 5px 8px; text-align: left; color: var(--muted); font-size: 12.5px; line-height: 1.5; border-radius: 7px; cursor: pointer; }
 .toc-link:hover { background: var(--soft); color: var(--ink); }
 .toc-h1 { font-weight: 700; color: var(--ink); }
 .toc-h2 { padding-left: 4px; }
@@ -639,18 +639,18 @@ onUnmounted(clearTaskTimer)
 .tutor-message :deep(.markdown-body > :last-child) { margin-bottom: 0; }
 .tutor-message.is-learner { justify-self: end; }
 .tutor-message.is-learner span { text-align: right; }
-.tutor-message.is-learner :deep(.markdown-body) { background: var(--blue2); color: #27457f; }
+.tutor-message.is-learner :deep(.markdown-body) { background: var(--blue2); color: var(--info); }
 .tutor-cursor { display: inline-block; width: 7px; height: 14px; margin: 6px 0 0 8px; background: var(--blue); animation: tutor-blink 1s steps(2, start) infinite; vertical-align: middle; }
 .tutor-stream-note { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
 .tutor-sources { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.5; }
-.tutor-assessment { margin-top: 9px; border: 1px solid #cbd9f4; border-radius: 8px; background: #f5f8ff; padding: 10px; color: #27457f; font-size: 12px; line-height: 1.6; }
+.tutor-assessment { margin-top: 9px; border: 1px solid #cbd9f4; border-radius: 8px; background: var(--blue2); padding: 10px; color: var(--info); font-size: 12px; line-height: 1.6; }
 .tutor-assessment p { margin: 5px 0; background: transparent; padding: 0; color: inherit; }
 .tutor-assessment small { color: #516788; }
 .assessment-options { display: grid; gap: 6px; margin: 8px 0; }
-.assessment-options button { border: 1px solid #b9cae9; border-radius: 6px; background: #fff; padding: 7px 9px; color: #27457f; text-align: left; cursor: pointer; }
-.assessment-options button:hover:not(:disabled) { border-color: var(--blue); background: #edf3ff; }
-.tutor-assessment.is-correct { border-color: #9ed8c1; background: #effaf5; color: #176a4f; }
-.tutor-assessment.is-wrong { border-color: #efc3bd; background: #fff5f3; color: #9c372d; }
+.assessment-options button { border: 1px solid #b9cae9; border-radius: 6px; background: var(--panel); padding: 7px 9px; color: var(--info); text-align: left; cursor: pointer; }
+.assessment-options button:hover:not(:disabled) { border-color: var(--blue); background: var(--blue2); }
+.tutor-assessment.is-correct { border-color: #9ed8c1; background: var(--green2); color: #176a4f; }
+.tutor-assessment.is-wrong { border-color: #efc3bd; background: var(--red2); color: #9c372d; }
 .tutor-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
 .tutor-form textarea { width: 100%; min-height: 78px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; color: var(--ink); line-height: 1.5; }
 @keyframes tutor-blink { 50% { opacity: 0; } }
@@ -670,5 +670,138 @@ onUnmounted(clearTaskTimer)
   .tutor-messages { max-height: calc(100vh - 340px); }
   .reader { padding: 20px 18px 26px; }
   .reader-head { flex-direction: column; }
+}
+</style>
+
+<style scoped>
+:global(.drawer) { width: min(500px, 95vw); }
+:global(.drawer-head) { padding: 18px 20px 16px; background: var(--panel); }
+:global(.drawer-body) { padding: 16px 18px 20px; background: var(--bg); }
+:global(.drawer-foot) { padding: 14px 18px 18px; background: var(--panel); }
+
+.tutor-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--body);
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 650;
+}
+.tutor-context-icon,
+.tutor-empty-icon {
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--blue2);
+  color: var(--blue);
+}
+.tutor-context-icon { width: 25px; height: 25px; font-size: 14px; }
+.tutor-state {
+  min-height: 220px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  padding: 28px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.65;
+}
+.tutor-state p { max-width: 280px; margin: 0; }
+.tutor-loading { grid-template-columns: 1fr; justify-items: stretch; gap: 9px; }
+.tutor-loading span {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--track);
+}
+.tutor-loading span:nth-child(2) { width: 82%; }
+.tutor-loading span:nth-child(3) { width: 58%; }
+.tutor-loading p { justify-self: center; margin-top: 8px; }
+.tutor-empty-icon { width: 40px; height: 40px; font-size: 20px; }
+.tutor-empty strong { color: var(--ink); font-size: 14px; }
+.tutor-error { border-style: solid; border-color: var(--red); color: var(--red); }
+.tutor-messages {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-height: 260px;
+  max-height: calc(100vh - 316px);
+  overflow-y: auto;
+  padding: 2px 3px 8px;
+}
+.tutor-message { width: min(92%, 390px); display: grid; gap: 5px; }
+.tutor-message.is-learner { justify-self: end; }
+.tutor-message-meta { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.tutor-message.is-learner .tutor-message-meta { flex-direction: row-reverse; justify-content: flex-start; }
+.tutor-avatar {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--blue2);
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 800;
+}
+.tutor-message.is-learner .tutor-avatar { background: var(--blue); color: #fff; }
+.tutor-message :deep(.markdown-body) {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 11px 13px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.tutor-message.is-learner :deep(.markdown-body) { border-color: var(--blue); background: var(--blue2); color: var(--ink); }
+.tutor-cursor { width: 5px; height: 13px; margin: 7px 0 0 12px; border-radius: 2px; }
+.tutor-stream-note,
+.tutor-sources { margin-left: 6px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.tutor-sources { color: var(--body); }
+.tutor-assessment { margin-top: 4px; border-radius: 9px; padding: 12px; }
+.tutor-assessment small { color: var(--body); }
+.assessment-options button { min-height: 34px; border-color: var(--line); color: var(--ink); }
+.tutor-form { grid-template-columns: minmax(0, 1fr) 42px; align-items: stretch; gap: 10px; }
+.tutor-composer { position: relative; min-width: 0; }
+.tutor-form textarea {
+  min-height: 86px;
+  border-radius: 9px;
+  background: var(--soft);
+  padding: 11px 12px 25px;
+  font-size: 13px;
+}
+.tutor-form textarea:focus { border-color: var(--blue); background: var(--panel); }
+.tutor-composer small { position: absolute; right: 10px; bottom: 8px; color: var(--muted); font-size: 10px; pointer-events: none; }
+.tutor-send {
+  width: 42px;
+  height: 42px;
+  align-self: end;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 18px;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+.tutor-send:hover:not(:disabled) { background: #274fae; transform: translateY(-1px); }
+.tutor-send:disabled { background: var(--track); color: var(--muted); }
+.tutor-pause { align-self: end; min-height: 42px; }
+
+@media (max-width: 480px) {
+  :global(.drawer) { width: 100vw; }
+  .tutor-messages { max-height: calc(100vh - 328px); }
+  .tutor-message { width: 96%; }
 }
 </style>

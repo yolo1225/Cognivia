@@ -37,13 +37,13 @@ const toastTitle = computed(() => titles[toastType.value])
 }
 .toast-copy { min-width: 0; display: grid; gap: 2px; padding-top: 1px; }
 .toast-copy strong { color: var(--ink); font-size: 12px; line-height: 1.4; }
-.toast-copy p { margin: 0; color: #405067; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.toast-copy p { margin: 0; color: var(--body); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 .toast-close { width: 24px; height: 24px; flex: 0 0 auto; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; }
 .toast-close:hover { background: var(--soft); color: var(--ink); }
 .toast-success { --toast-accent: var(--green); }
 .toast-success .toast-icon { background: var(--green2); color: var(--green); }
 .toast-error { --toast-accent: var(--red); }
-.toast-error .toast-icon { background: #fff0f0; color: var(--red); }
+.toast-error .toast-icon { background: var(--red2); color: var(--red); }
 .toast-info { --toast-accent: var(--info); }
-.toast-info .toast-icon { background: #edf4ff; color: var(--info); }
+.toast-info .toast-icon { background: var(--info2); color: var(--info); }
 </style>

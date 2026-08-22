@@ -205,7 +205,15 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             decision_reason="主观反馈不能直接更新画像。",
         )
 
+    def stream_execute(self, request, on_reply_delta):
+        output = execute(self, request)
+        on_reply_delta(output.reply)
+        return output
+
     monkeypatch.setattr("app.services.tutoring_service.TutoringAgent.execute", execute)
+    monkeypatch.setattr(
+        "app.services.tutoring_service.TutoringAgent.stream_execute", stream_execute
+    )
     monkeypatch.setattr("app.api.v1.tutoring.run_generation_task", lambda _task_id: None)
     app.dependency_overrides[get_db] = _override(factory)
     client = TestClient(app)

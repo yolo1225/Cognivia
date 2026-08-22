@@ -1,4 +1,6 @@
 import json
+from queue import Queue
+from threading import Thread
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -127,80 +129,62 @@ def stream_tutoring_message(
             },
         )
         yield _event("agent_status", {"agent": "tutoring_agent", "status": "running"})
-        try:
-            with stream_session_factory() as stream_db:
-                current_session = stream_db.scalar(
-                    select(TutoringSession).where(TutoringSession.public_id == session_id)
-                )
-                if current_session is None:
-                    raise ValueError("Tutoring session not found")
-                learner = stream_db.get(Learner, current_session.learner_id)
-                profile = default_profile_for_learner(stream_db, learner)
-                prepared_learner_message = stream_db.scalar(
-                    select(TutoringMessage).where(
-                        TutoringMessage.public_id == learner_message_id
-                    )
-                )
-                prepared_reply = stream_db.scalar(
-                    select(TutoringMessage).where(TutoringMessage.public_id == reply_id)
-                )
-                result = execute_tutoring_turn(
-                    stream_db,
-                    session=current_session,
-                    profile=profile,
-                    content=content,
-                    evidence=evidence[:50],
-                    prepared_learner_message=prepared_learner_message,
-                    prepared_reply=prepared_reply,
-                )
-                serialized = result.serialize()
-                task_id = serialized["task_id"]
-                full_content = serialized["reply"]["content"]
-                result.reply.content = ""
-                result.reply.metadata_json = {
-                    **(result.reply.metadata_json or {}),
-                    "stream_status": "streaming",
-                }
-                stream_db.commit()
-            if task_id:
-                background_tasks.add_task(run_generation_task, task_id)
-            for offset in range(0, len(full_content), 24):
-                delta = full_content[offset : offset + 24]
+        events: Queue[tuple[str, Any]] = Queue()
+
+        def run_turn() -> None:
+            try:
                 with stream_session_factory() as stream_db:
-                    current_reply = stream_db.scalar(
+                    current_session = stream_db.scalar(
+                        select(TutoringSession).where(TutoringSession.public_id == session_id)
+                    )
+                    if current_session is None:
+                        raise ValueError("Tutoring session not found")
+                    learner = stream_db.get(Learner, current_session.learner_id)
+                    profile = default_profile_for_learner(stream_db, learner)
+                    prepared_learner_message = stream_db.scalar(
+                        select(TutoringMessage).where(
+                            TutoringMessage.public_id == learner_message_id
+                        )
+                    )
+                    prepared_reply = stream_db.scalar(
                         select(TutoringMessage).where(TutoringMessage.public_id == reply_id)
                     )
-                    if current_reply is None:
-                        raise ValueError("tutoring reply not found")
-                    if (current_reply.metadata_json or {}).get("stream_status") == "paused":
-                        update_streaming_reply(
-                            stream_db,
-                            reply=current_reply,
-                            content=accumulated,
-                            status="paused",
-                        )
-                        yield _event(
-                            "paused", {"reply_message_id": reply_id, "content": accumulated}
-                        )
-                        return
+                    result = execute_tutoring_turn(
+                        stream_db,
+                        session=current_session,
+                        profile=profile,
+                        content=content,
+                        evidence=evidence[:50],
+                        prepared_learner_message=prepared_learner_message,
+                        prepared_reply=prepared_reply,
+                        on_reply_delta=lambda delta: events.put(("delta", delta)),
+                    )
+                    serialized = result.serialize()
+                    stream_db.commit()
+                events.put(("completed", serialized))
+            except ValueError as exc:
+                events.put(("error", (str(exc), bool(accumulated))))
+            except Exception:
+                events.put(("error", ("tutoring_turn_failed", bool(accumulated))))
+
+        Thread(target=run_turn, daemon=True).start()
+        while True:
+            event_name, event_payload = events.get()
+            if event_name == "delta":
+                delta = str(event_payload)
                 accumulated += delta
                 yield _event("delta", {"reply_message_id": reply_id, "content": delta})
-            with stream_session_factory() as stream_db:
-                current_reply = stream_db.scalar(
-                    select(TutoringMessage).where(TutoringMessage.public_id == reply_id)
-                )
-                if current_reply is None:
-                    raise ValueError("tutoring reply not found")
-                update_streaming_reply(
-                    stream_db,
-                    reply=current_reply,
-                    content=full_content,
-                    status="completed",
-                )
-            reply_payload = serialized["reply"]
-            yield _event("agent_status", {"agent": "tutoring_agent", "status": "completed"})
-            yield _event("completed", {"reply_message_id": reply_id, "content": reply_payload["content"], "sources": reply_payload["sources"], "scope_status": reply_payload["scope_status"], "assessment": reply_payload["assessment"], "assessment_unavailable": reply_payload["assessment_unavailable"], "feedback_id": serialized["feedback_id"], "feedback_intent": serialized["feedback_intent"], "recommended_action": serialized["recommended_action"], "profile_update_required": serialized["profile_update_required"], "decision_reason": serialized["decision_reason"], "task_id": task_id})
-        except ValueError as exc:
+                continue
+            if event_name == "completed":
+                serialized = event_payload
+                task_id = serialized["task_id"]
+                if task_id:
+                    background_tasks.add_task(run_generation_task, task_id)
+                reply_payload = serialized["reply"]
+                yield _event("agent_status", {"agent": "tutoring_agent", "status": "completed"})
+                yield _event("completed", {"reply_message_id": reply_id, "content": reply_payload["content"], "sources": reply_payload["sources"], "scope_status": reply_payload["scope_status"], "assessment": reply_payload["assessment"], "assessment_unavailable": reply_payload["assessment_unavailable"], "feedback_id": serialized["feedback_id"], "feedback_intent": serialized["feedback_intent"], "recommended_action": serialized["recommended_action"], "profile_update_required": serialized["profile_update_required"], "decision_reason": serialized["decision_reason"], "task_id": task_id})
+                return
+            error_code, recoverable = event_payload
             with stream_session_factory() as stream_db:
                 current_reply = stream_db.scalar(
                     select(TutoringMessage).where(TutoringMessage.public_id == reply_id)
@@ -211,23 +195,10 @@ def stream_tutoring_message(
                         reply=current_reply,
                         content=accumulated,
                         status="interrupted" if accumulated else "failed",
-                        error_code=str(exc),
+                        error_code=error_code,
                     )
-            yield _event("error", {"reply_message_id": reply_id, "code": str(exc), "recoverable": bool(accumulated)})
-        except Exception:
-            with stream_session_factory() as stream_db:
-                current_reply = stream_db.scalar(
-                    select(TutoringMessage).where(TutoringMessage.public_id == reply_id)
-                )
-                if current_reply is not None:
-                    update_streaming_reply(
-                        stream_db,
-                        reply=current_reply,
-                        content=accumulated,
-                        status="interrupted" if accumulated else "failed",
-                        error_code="tutoring_turn_failed",
-                    )
-            yield _event("error", {"reply_message_id": reply_id, "code": "tutoring_turn_failed", "recoverable": bool(accumulated)})
+            yield _event("error", {"reply_message_id": reply_id, "code": error_code, "recoverable": recoverable})
+            return
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 

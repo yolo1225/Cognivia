@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -326,6 +327,7 @@ def add_learner_message(
     evidence: list[dict] | None = None,
     prepared_learner_message: TutoringMessage | None = None,
     prepared_reply: TutoringMessage | None = None,
+    on_reply_delta: Callable[[str], None] | None = None,
 ) -> tuple[TutoringMessage, TutoringMessage, Feedback, GenerationTask | None, dict]:
     if session.status != "active":
         raise ValueError("tutoring session is not active")
@@ -476,10 +478,15 @@ def add_learner_message(
         db, session=session, resource=resource, question=content
     )
     with collect_model_calls() as collector:
-        output_model = TutoringAgent(
+        agent = TutoringAgent(
             domain_display_name=domain.name,
             resource_context=resource_context,
-        ).execute(request)
+        )
+        output_model = (
+            agent.stream_execute(request, on_reply_delta)
+            if on_reply_delta is not None
+            else agent.execute(request)
+        )
     model_calls = collector.snapshot()
     output = output_model.model_dump(mode="json")
     action = output_model.recommended_action.value
@@ -595,6 +602,7 @@ def execute_tutoring_turn(
     evidence: list[dict] | None = None,
     prepared_learner_message: TutoringMessage | None = None,
     prepared_reply: TutoringMessage | None = None,
+    on_reply_delta: Callable[[str], None] | None = None,
 ) -> TutoringTurnResult:
     learner_message, reply, feedback, task, output = add_learner_message(
         db,
@@ -604,6 +612,7 @@ def execute_tutoring_turn(
         evidence=evidence,
         prepared_learner_message=prepared_learner_message,
         prepared_reply=prepared_reply,
+        on_reply_delta=on_reply_delta,
     )
     return TutoringTurnResult(learner_message, reply, feedback, task, output)
 
