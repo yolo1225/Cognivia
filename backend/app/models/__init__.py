@@ -1,6 +1,11 @@
 from app.models.agent import AgentMessageRecord, AgentRun, GraphCheckpoint
 from app.models.base import Base
-from app.models.diagnostic import AnswerRecord, DiagnosticQuestion, DiagnosticSession
+from app.models.diagnostic import (
+    AnswerRecord,
+    DiagnosticQuestion,
+    DiagnosticSession,
+    PathNodeAssessment,
+)
 from app.models.domain import Domain
 from app.models.evaluation import EvaluationCase
 from app.models.feedback import Feedback
@@ -48,6 +53,7 @@ __all__ = [
     "LearningPath",
     "LearningPackageResource",
     "LearningResource",
+    "PathNodeAssessment",
     "ModelConfig",
     "ReviewReport",
     "TutoringMessage",

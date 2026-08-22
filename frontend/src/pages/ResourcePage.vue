@@ -7,6 +7,11 @@
       </template>
     </PageHeader>
 
+    <div v-if="pathNodeTitle" class="path-context">
+      <span>学习主线</span>
+      <strong>路线第 {{ pathNodeOrder }} 节 · {{ pathNodeTitle }}</strong>
+    </div>
+
     <div v-if="isShowingProgress" class="panel generation-state">
       <strong>{{ generationStatusTitle }}</strong>
       <p class="sub">{{ generationStatusDescription }}</p>
@@ -251,6 +256,8 @@ function scrollToHeading(id: string) {
 const selected = computed(() => resources.value[selectedIdx.value] || null)
 const hasStaleResources = computed(() => resources.value.some((resource) => resource.freshness_status === 'knowledge_changed'))
 const knowledgeImpact = computed(() => currentPackage.value?.knowledge_impact || null)
+const pathNodeTitle = computed(() => taskDetail.value?.path_node_title || currentPackage.value?.path_node_title || '')
+const pathNodeOrder = computed(() => taskDetail.value?.path_node_order || currentPackage.value?.path_node_order || '-')
 // 后端 render_resource_markdown 会在正文末尾统一追加「## 知识来源」，
 // 而页面下方已用更丰富的 source_details 渲染来源，故此处剥离避免重复。
 const bodyContent = computed(() => {
@@ -550,7 +557,10 @@ onUnmounted(clearTaskTimer)
 
 <style scoped>
 .resource-page { gap: 20px; max-width: 1080px; margin: 0 auto; }
-.knowledge-impact { display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #efd29f; border-radius: 12px; background: #fff9ed; padding: 16px 18px; }
+.path-context { display: flex; align-items: center; gap: 10px; border-left: 3px solid var(--blue); padding: 4px 0 4px 12px; }
+.path-context span { color: var(--muted); font-size: 11px; }
+.path-context strong { color: var(--ink); font-size: 14px; }
+.knowledge-impact { display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #efd29f; border-radius: 12px; background: var(--amber2); padding: 16px 18px; }
 .knowledge-impact strong { color: #7a4a08; font-size: 14px; }
 .knowledge-impact p { margin-top: 5px; color: #8a6430; font-size: 12.5px; line-height: 1.6; }
 .knowledge-impact.dismissed { border-color: var(--line); background: var(--soft); }

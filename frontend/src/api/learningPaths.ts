@@ -11,6 +11,50 @@ export interface LearningPathNode {
   completed_at?: string | null
   completion_evidence_ids: string[]
   completion_condition: { type: string; threshold: number }
+  resource_state?: 'not_generated' | 'generating' | 'ready' | 'failed'
+  resource_task_id?: string | null
+}
+
+export interface PathNodeAssessment {
+  assessment_id: string
+  path_id: string
+  node_id: string
+  question_id: string
+  question_type: string
+  difficulty: number
+  stem: string
+  options: string[]
+  status: 'pending' | 'scored'
+  score?: number | null
+  passed?: boolean | null
+}
+
+export interface PathNodeAssessmentResult {
+  assessment_id: string
+  path_id: string
+  node_id: string
+  score: number
+  threshold: number
+  passed: boolean
+  evidence_id: string
+  completed_node_id?: string | null
+  current_node_id?: string | null
+  path_completed: boolean
+  profile_adjustment_task_id?: string | null
+}
+
+export function startPathNodeAssessment(pathId: string, nodeId: string) {
+  return postData<PathNodeAssessment>(
+    `/learning-paths/${encodeURIComponent(pathId)}/nodes/${encodeURIComponent(nodeId)}/assessments`,
+    {},
+  )
+}
+
+export function answerPathNodeAssessment(pathId: string, nodeId: string, assessmentId: string, answer: number) {
+  return postData<PathNodeAssessmentResult>(
+    `/learning-paths/${encodeURIComponent(pathId)}/nodes/${encodeURIComponent(nodeId)}/assessments/${encodeURIComponent(assessmentId)}/answer`,
+    { answer },
+  )
 }
 
 export interface LearningPathState {
@@ -18,29 +62,4 @@ export interface LearningPathState {
   current_node_id?: string | null
   nodes: LearningPathNode[]
   stages: Array<{ name: string; description?: string; knowledge_ids?: string[] }>
-}
-
-export interface PathVerification {
-  path_id: string
-  node_id: string
-  verified: boolean
-  reason: string
-  threshold: number
-  best_score?: number | null
-  evidence_ids: string[]
-  node: LearningPathNode
-}
-
-export function verifyPathNode(pathId: string, nodeId: string, evidenceIds: string[] = []) {
-  return postData<PathVerification>(
-    `/learning-paths/${encodeURIComponent(pathId)}/nodes/${encodeURIComponent(nodeId)}/verify`,
-    { evidence_ids: evidenceIds },
-  )
-}
-
-export function completePathNode(pathId: string, nodeId: string, evidenceIds: string[]) {
-  return postData<{ path: LearningPathState; completed_node_id: string }>(
-    `/learning-paths/${encodeURIComponent(pathId)}/nodes/${encodeURIComponent(nodeId)}/complete`,
-    { evidence_ids: evidenceIds },
-  )
 }

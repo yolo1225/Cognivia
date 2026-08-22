@@ -168,6 +168,28 @@ def get_learning_report(
         if path.path_json != original_path_payload:
             db.commit()
     learning_path = detail.get("learning_path") or {}
+    if path is not None and isinstance(learning_path, dict):
+        node_tasks = list(
+            db.scalars(
+                select(GenerationTask)
+                .where(GenerationTask.learning_path_id == path.id)
+                .order_by(GenerationTask.id.desc())
+            )
+        )
+        latest_by_node = {}
+        for node_task in node_tasks:
+            if node_task.path_node_id:
+                latest_by_node.setdefault(node_task.path_node_id, node_task)
+        for node in learning_path.get("nodes") or []:
+            node_task = latest_by_node.get(node.get("path_node_id"))
+            status = node_task.status if node_task else None
+            node["resource_state"] = (
+                "ready" if status == "completed"
+                else "failed" if status == "failed"
+                else "generating" if status in {"pending", "retry_pending", "running"}
+                else "not_generated"
+            )
+            node["resource_task_id"] = node_task.public_id if node_task else None
     stages = learning_path.get("stages", []) if isinstance(learning_path, dict) else []
     path_needs_refresh = bool(path.needs_refresh) if path else False
 

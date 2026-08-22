@@ -91,8 +91,15 @@
               <div class="path-node-title"><h3>{{ node.title }}</h3><span class="node-status">{{ pathStatusLabel(node.status) }}</span></div>
               <p>{{ node.knowledge_id }} · 通过阈值 {{ Math.round(node.completion_condition.threshold * 100) }}%</p>
               <div v-if="node.status === 'current'" class="path-actions">
-                <button class="btn" :disabled="pathActionLoading" @click="verifyCurrentNode(node.path_node_id)">{{ pathActionLoading ? '验证中...' : '验证掌握情况' }}</button>
-                <button v-if="verifiedNodeId === node.path_node_id" class="btn primary" :disabled="pathActionLoading" @click="completeCurrentNode(node.path_node_id)">完成并推进</button>
+                <button v-if="node.resource_state === 'ready'" class="btn" @click="openNodeResource(node)">继续学习</button>
+                <button v-if="node.resource_state === 'ready'" class="btn primary" :disabled="pathActionLoading" @click="beginAssessment(node.path_node_id)">{{ pathActionLoading ? '正在准备...' : '开始节点验证' }}</button>
+                <button v-else-if="node.resource_state === 'generating'" class="btn primary" @click="openNodeResource(node)">查看生成进度</button>
+                <button v-else class="btn primary" :disabled="creatingGeneration" @click="generateNodeResources(node)">{{ creatingGeneration ? '正在创建...' : node.resource_state === 'failed' ? '重新生成本节点资源' : '生成本节点资源' }}</button>
+              </div>
+              <div v-if="assessment?.node_id === node.path_node_id && assessment.status === 'pending'" class="node-assessment">
+                <span>节点验证 · 难度 {{ assessment.difficulty }}</span>
+                <strong>{{ assessment.stem }}</strong>
+                <button v-for="(option, optionIndex) in assessment.options" :key="optionIndex" type="button" :disabled="assessmentSubmitting" @click="submitNodeAnswer(node.path_node_id, optionIndex)">{{ option }}</button>
               </div>
               <p v-if="pathMessage && node.status === 'current'" class="path-message">{{ pathMessage }}</p>
             </div>
@@ -143,7 +150,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getLearningReport, type LearningReport } from '@/api/reports'
-import { completePathNode, verifyPathNode, type LearningPathNode } from '@/api/learningPaths'
+import { answerPathNodeAssessment, startPathNodeAssessment, type LearningPathNode, type PathNodeAssessment } from '@/api/learningPaths'
 import { useToast } from '@/composables/useToast'
 import { resourceQualityStatusLabel, resourceQualityStatusTone } from '@/utils/resourceQualityStatus'
 import { createGenerationTask } from '@/api/generation'
@@ -172,8 +179,8 @@ const loading = ref(false)
 const errorMessage = ref('')
 const creatingGeneration = ref(false)
 const pathActionLoading = ref(false)
-const verifiedNodeId = ref('')
-const verifiedEvidenceIds = ref<string[]>([])
+const assessmentSubmitting = ref(false)
+const assessment = ref<PathNodeAssessment | null>(null)
 const pathMessage = ref('')
 
 const radarLabels = ['理论基础', '实操能力', '问题解决', '知识广度', '学习速度']
@@ -203,36 +210,45 @@ function pathStatusLabel(status: LearningPathNode['status']) {
   return ({ locked: '未解锁', current: '当前学习', completed: '已完成', skipped: '已跳过' } as const)[status]
 }
 
-async function verifyCurrentNode(nodeId: string) {
+async function beginAssessment(nodeId: string) {
   const pathId = report.value?.learning_path?.path_id
   if (!pathId) return
   pathActionLoading.value = true
   pathMessage.value = ''
   try {
-    const verification = await verifyPathNode(pathId, nodeId)
-    verifiedNodeId.value = verification.verified ? nodeId : ''
-    verifiedEvidenceIds.value = verification.evidence_ids
-    pathMessage.value = verification.verified
-      ? `已找到通过验证的掌握证据（${Math.round(Number(verification.best_score || 0) * 100)}%）。`
-      : '尚无达到阈值的已验证答题证据，请先完成导学验证题。'
+    assessment.value = await startPathNodeAssessment(pathId, nodeId)
   } catch {
     pathMessage.value = '节点验证失败，请稍后重试。'
   } finally { pathActionLoading.value = false }
 }
 
-async function completeCurrentNode(nodeId: string) {
+async function submitNodeAnswer(nodeId: string, answer: number) {
   const pathId = report.value?.learning_path?.path_id
-  if (!pathId || !verifiedEvidenceIds.value.length) return
-  pathActionLoading.value = true
+  if (!pathId || !assessment.value) return
+  assessmentSubmitting.value = true
   try {
-    await completePathNode(pathId, nodeId, verifiedEvidenceIds.value)
-    verifiedNodeId.value = ''
-    verifiedEvidenceIds.value = []
-    pathMessage.value = ''
-    showToast('当前节点已完成，学习路径已推进。', 'success')
+    const result = await answerPathNodeAssessment(pathId, nodeId, assessment.value.assessment_id, answer)
+    assessment.value = null
+    pathMessage.value = result.passed ? '验证通过，系统已自动推进到下一节点。' : '本次尚未通过，当前节点保持不变，可继续学习后再次验证。'
+    showToast(result.passed ? '节点验证通过，路线已自动推进。' : '本次验证未通过，继续巩固当前节点。', result.passed ? 'success' : 'info')
     await loadReport()
-  } catch { showToast('路径推进失败，证据可能已失效。', 'error') }
-  finally { pathActionLoading.value = false }
+  } catch { showToast('验证提交失败，请刷新后重试。', 'error') }
+  finally { assessmentSubmitting.value = false }
+}
+
+function openNodeResource(node: LearningPathNode) {
+  router.push({ path: '/resources', query: node.resource_task_id ? { task_id: node.resource_task_id } : {} })
+}
+
+async function generateNodeResources(node: LearningPathNode) {
+  const pathId = report.value?.learning_path?.path_id
+  if (!pathId || !report.value?.profile_id || !learnerId.value) return
+  creatingGeneration.value = true
+  try {
+    const task = await createGenerationTask(report.value.domain_code, report.value.profile_id, learnerId.value, `学习路径第 ${node.path_order} 节：${node.title}`, { pathId, nodeId: node.path_node_id })
+    router.push({ path: '/resources', query: { learner_id: learnerId.value, task_id: task.task_id } })
+  } catch { showToast('创建节点学习包失败，路线可能已更新，请刷新后重试。', 'error') }
+  finally { creatingGeneration.value = false }
 }
 
 function profileTypeLabel(type?: string) {
@@ -388,6 +404,12 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
 .node-completed .node-status { color: var(--green); }
 .node-locked { opacity: .72; }
 .path-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.node-assessment { display: grid; gap: 9px; margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+.node-assessment > span { color: var(--blue); font-size: 11px; font-weight: 700; }
+.node-assessment > strong { color: var(--ink); font-size: 13px; line-height: 1.6; }
+.node-assessment > button { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--body); padding: 9px 11px; text-align: left; cursor: pointer; }
+.node-assessment > button:hover { border-color: var(--blue); color: var(--blue); }
+.node-assessment > button:disabled { cursor: wait; opacity: .6; }
 .path-message { color: var(--blue) !important; }
 .path-num { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: var(--blue); color: #fff; font-size: 13px; font-weight: 700; }
 .path-h-step h3 { color: var(--ink); font-size: 13.5px; }

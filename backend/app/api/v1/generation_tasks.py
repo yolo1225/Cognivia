@@ -21,6 +21,7 @@ from app.models import (
     Learner,
     LearnerProfile,
     LearningResource,
+    LearningPath,
     ReviewReport,
 )
 from app.schemas.common import ApiResponse, ok
@@ -35,9 +36,11 @@ from app.services.evaluation_case_service import contains_evaluation_marker
 from app.services.profile_service import (
     is_initial_profile_ready,
     latest_profile_for_learner,
+    latest_path_for_profile,
     profile_source,
     public_id,
 )
+from app.services.learning_path_service import normalize_path_for_domain
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.workers.generation_worker import run_generation_task
 
@@ -149,11 +152,21 @@ def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
     failure_output = (
         latest_failed_run.output_summary_json or {} if latest_failed_run is not None else {}
     )
+    path = db.get(LearningPath, task.learning_path_id) if task.learning_path_id else None
+    node = (
+        ((path.path_json or {}).get("node_states") or {}).get(task.path_node_id)
+        if path is not None and task.path_node_id
+        else None
+    )
     return {
         "task_id": task.public_id,
         "thread_id": task.public_id,
         "status": task.status,
         "domain_code": task.domain_code,
+        "path_id": path.public_id if path else None,
+        "path_node_id": task.path_node_id,
+        "path_node_title": node.get("title") if isinstance(node, dict) else None,
+        "path_node_order": node.get("path_order") if isinstance(node, dict) else None,
         "progress": task.progress,
         "trigger_type": task.trigger_type,
         "event_type": task.event_type,
@@ -235,10 +248,28 @@ def create_generation_task(
         raise HTTPException(status_code=409, detail="PROFILE_NOT_READY")
     if profile.domain_code != domain_code or learner.target_domain != domain_code:
         raise HTTPException(status_code=409, detail="DOMAIN_CONTEXT_MISMATCH")
+    path = latest_path_for_profile(db, profile)
+    if path is None:
+        raise HTTPException(status_code=409, detail="LEARNING_PATH_NOT_READY")
+    path.path_json = normalize_path_for_domain(
+        db,
+        domain_code=domain_code,
+        payload=path.path_json or {},
+        previous_payload=path.path_json or {},
+    )
+    current_node_id = (path.path_json or {}).get("current_node_id")
+    requested_path_id = str(payload.get("path_id") or path.public_id)
+    requested_node_id = str(payload.get("path_node_id") or current_node_id or "")
+    if requested_path_id != path.public_id or requested_node_id != current_node_id:
+        raise HTTPException(status_code=409, detail="PATH_NODE_CHANGED")
+    if not current_node_id:
+        raise HTTPException(status_code=409, detail="LEARNING_PATH_COMPLETED")
     task = GenerationTask(
         public_id=public_id("task"),
         learner_id=learner.id,
         profile_id=profile.id,
+        learning_path_id=path.id,
+        path_node_id=current_node_id,
         domain_code=domain_code,
         status="pending",
         resource_types_json=requested_types,
@@ -260,6 +291,8 @@ def create_generation_task(
             "trigger_type": task.trigger_type,
             "execution_mode": task.execution_mode,
             "resource_types": requested_types,
+            "path_id": path.public_id,
+            "path_node_id": current_node_id,
             "agent_graph": "unified_learning_graph_v3",
             **_profile_summary(db, task),
             "decision": task.decision,

@@ -20,6 +20,10 @@ export interface LearningPackage {
   profile_id?: string | null
   profile_version?: number | null
   status: string
+  path_id?: string | null
+  path_node_id?: string | null
+  path_node_title?: string | null
+  path_node_order?: number | null
   event_type: string
   source_task_id?: string | null
   is_current_package: boolean

@@ -64,3 +64,21 @@ class AnswerRecord(TimestampMixin, Base):
     scoring_uncertain: Mapped[bool] = mapped_column(Boolean, default=False)
     ai_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     answer_summary_json: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class PathNodeAssessment(TimestampMixin, Base):
+    __tablename__ = "path_node_assessments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    public_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    learning_path_id: Mapped[int] = mapped_column(ForeignKey("learning_paths.id"), index=True)
+    path_node_id: Mapped[str] = mapped_column(String(128), index=True)
+    learner_id: Mapped[int] = mapped_column(ForeignKey("learners.id"), index=True)
+    question_id: Mapped[int] = mapped_column(ForeignKey("diagnostic_questions.id"))
+    answer_record_id: Mapped[int | None] = mapped_column(
+        ForeignKey("answer_records.id"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    result_json: Mapped[dict] = mapped_column(JSON, default=dict)

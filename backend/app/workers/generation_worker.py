@@ -130,17 +130,28 @@ def _feedback_assessments(
     learner: Learner,
     feedback: Feedback | None,
 ) -> tuple[list[EvidenceRef], list[KnowledgeAssessment]]:
-    if feedback is None or feedback.tutoring_session_id is None:
+    if feedback is None:
+        return [], []
+    explicit_ids = {
+        str(item.get("evidence_id"))
+        for item in (feedback.profile_change_evidence_json or [])
+        if isinstance(item, dict) and item.get("evidence_id")
+    }
+    if feedback.tutoring_session_id is None and not explicit_ids:
         return [], []
     evidence: list[EvidenceRef] = []
     assessments: list[KnowledgeAssessment] = []
     for record in db.scalars(select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)):
         summary = record.answer_summary_json or {}
-        if (
-            summary.get("tutoring_session_id") != feedback.tutoring_session_id
-            or summary.get("confirmed") is not True
-            or summary.get("consumed_by_profile_id") is not None
-        ):
+        evidence_id = f"answer_record:{record.id}"
+        belongs_to_feedback = (
+            summary.get("tutoring_session_id") == feedback.tutoring_session_id
+            if feedback.tutoring_session_id is not None
+            else evidence_id in explicit_ids
+        )
+        if not belongs_to_feedback or summary.get("confirmed") is not True or summary.get(
+            "consumed_by_profile_id"
+        ) is not None:
             continue
         question = db.get(DiagnosticQuestion, record.question_id)
         knowledge = db.get(KnowledgeItem, record.knowledge_item_id)
@@ -151,7 +162,6 @@ def _feedback_assessments(
             or knowledge.domain_code != task.domain_code
         ):
             continue
-        evidence_id = f"answer_record:{record.id}"
         confidence = max(0.0, min(1.0, float(summary.get("confidence") or 0.9)))
         evidence.append(
             EvidenceRef(
@@ -683,8 +693,7 @@ def _persist_profile_update(
         payload=path_payload,
         previous_payload=previous_path.path_json if previous_path else None,
     )
-    db.add(
-        LearningPath(
+    next_path = LearningPath(
             public_id=public_id("path"),
             learner_id=original.learner_id,
             profile_id=next_profile.id,
@@ -693,7 +702,10 @@ def _persist_profile_update(
             path_json=path_payload,
             needs_refresh=False,
         )
-    )
+    db.add(next_path)
+    db.flush()
+    task.learning_path_id = next_path.id
+    task.path_node_id = path_payload.get("current_node_id")
     return next_profile
 
 

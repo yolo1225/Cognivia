@@ -107,6 +107,8 @@ def create_feedback_task(
         public_id=public_id("task"),
         learner_id=learner.id,
         profile_id=profile.id,
+        learning_path_id=source_task.learning_path_id,
+        path_node_id=source_task.path_node_id,
         domain_code=source_task.domain_code,
         status="pending",
         resource_types_json=resource_types or [resource.resource_type],

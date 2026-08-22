@@ -12,10 +12,12 @@ from app.models import (
     LearningPath,
 )
 from app.services.learning_path_service import (
+    answer_path_node_assessment,
     complete_path_node,
     node_id_for,
     normalize_path_payload,
     normalize_path_for_domain,
+    start_path_node_assessment,
     verify_path_node,
 )
 
@@ -119,7 +121,7 @@ def test_verified_server_evidence_completes_and_unlocks_next_node() -> None:
     assert repeated["completed_node_id"] == node_id_for("k1")
 
 
-def test_prerequisites_keep_nodes_locked_and_unlock_all_successors() -> None:
+def test_prerequisites_keep_nodes_locked_and_select_one_successor() -> None:
     db = _db()
     learner = Learner(public_id="learner_branch", target_domain="ai_app_dev")
     items = [
@@ -200,7 +202,7 @@ def test_prerequisites_keep_nodes_locked_and_unlock_all_successors() -> None:
     )["path"]
 
     assert completed["node_states"][node_id_for("k2")]["status"] == "current"
-    assert completed["node_states"][node_id_for("k3")]["status"] == "current"
+    assert completed["node_states"][node_id_for("k3")]["status"] == "locked"
     assert completed["current_node_id"] == node_id_for("k2")
 
 
@@ -249,3 +251,86 @@ def test_prerequisite_refresh_inherits_completed_knowledge() -> None:
 
     assert refreshed["node_states"][node_id_for("k1")]["status"] == "completed"
     assert refreshed["node_states"][node_id_for("k2")]["status"] == "current"
+
+
+def test_node_assessment_failure_stays_and_pass_advances_idempotently() -> None:
+    db = _db()
+    learner = Learner(public_id="learner_assessment", target_domain="ai_app_dev")
+    items = [
+        KnowledgeItem(
+            public_id=knowledge_id,
+            domain_code="ai_app_dev",
+            name=knowledge_id,
+            category="test",
+            difficulty=2,
+            content_md="content",
+            source_title="source",
+            license_note="test",
+            status="published",
+        )
+        for knowledge_id in ("k1", "k2")
+    ]
+    db.add_all([learner, *items])
+    db.flush()
+    question = DiagnosticQuestion(
+        public_id="q_assessment",
+        domain_code="ai_app_dev",
+        knowledge_item_id=items[0].id,
+        question_type="single_choice",
+        stem="choose",
+        options_json=["wrong", "right"],
+        answer_key_json={"correct_option": 1},
+        difficulty=2,
+    )
+    path = LearningPath(
+        public_id="path_assessment",
+        learner_id=learner.id,
+        domain_code="ai_app_dev",
+        path_json={"stages": [{"name": "path", "knowledge_ids": ["k1", "k2"]}]},
+    )
+    db.add_all([question, path])
+    db.commit()
+
+    failed_assessment = start_path_node_assessment(
+        db,
+        path_id=path.public_id,
+        node_id=node_id_for("k1"),
+        learner_public_id=learner.public_id,
+    )
+    failed, task = answer_path_node_assessment(
+        db,
+        path_id=path.public_id,
+        node_id=node_id_for("k1"),
+        assessment_id=failed_assessment["assessment_id"],
+        learner_public_id=learner.public_id,
+        answer=0,
+    )
+    assert failed["passed"] is False
+    assert failed["current_node_id"] == node_id_for("k1")
+    assert task is None
+
+    passing_assessment = start_path_node_assessment(
+        db,
+        path_id=path.public_id,
+        node_id=node_id_for("k1"),
+        learner_public_id=learner.public_id,
+    )
+    passed, _ = answer_path_node_assessment(
+        db,
+        path_id=path.public_id,
+        node_id=node_id_for("k1"),
+        assessment_id=passing_assessment["assessment_id"],
+        learner_public_id=learner.public_id,
+        answer=1,
+    )
+    repeated, _ = answer_path_node_assessment(
+        db,
+        path_id=path.public_id,
+        node_id=node_id_for("k1"),
+        assessment_id=passing_assessment["assessment_id"],
+        learner_public_id=learner.public_id,
+        answer=0,
+    )
+    assert passed["passed"] is True
+    assert passed["current_node_id"] == node_id_for("k2")
+    assert repeated == passed
