@@ -403,8 +403,39 @@ class OpenAICompatibleGateway:
                 normalized["source_ref_ids"] = [normalized["source_ref_ids"]]
             if "options" in normalized and normalized["options"] is None:
                 normalized["options"] = []
+            # Compatible providers often emit ``difficulty`` as a numeric string
+            # (``"3"``) or float (``3.0``) even though the contract types it as
+            # a 1-5 integer.  Coerce it instead of burning the whole bounded
+            # validation-retry budget on a type-only mismatch.
+            if "difficulty" in normalized:
+                normalized["difficulty"] = _coerce_difficulty(normalized["difficulty"])
             return normalized
         return value
+
+
+def _coerce_difficulty(value: Any) -> Any:
+    """Clamp a provider-returned difficulty to the contract's 1-5 integer.
+
+    Accepts an int, a float with an integer value, or a numeric string. Any
+    other value is returned unchanged so the schema validation can still report
+    a precise error rather than silently publishing a wrong difficulty.
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return max(1, min(5, value))
+    if isinstance(value, float):
+        if not value.is_integer():
+            return value
+        return max(1, min(5, int(value)))
+    if isinstance(value, str):
+        stripped = value.strip()
+        try:
+            return max(1, min(5, int(float(stripped))))
+        except ValueError:
+            return value
+    return value
 
     def configuration_status(self) -> dict[str, Any]:
         generation_ready = bool(settings.primary_llm_model)
