@@ -14,6 +14,7 @@ from app.api.v1 import (
     knowledge_imports,
     learners,
     learning_packages,
+    learning_adjustments,
     learning_paths,
     model_settings,
     reports,
@@ -71,6 +72,12 @@ api_router.include_router(
     learning_paths.router,
     prefix="/learning-paths",
     tags=["learning-paths"],
+    dependencies=[Depends(get_current_user)],
+)
+api_router.include_router(
+    learning_adjustments.router,
+    prefix="/learning-adjustments",
+    tags=["learning-adjustments"],
     dependencies=[Depends(get_current_user)],
 )
 api_router.include_router(

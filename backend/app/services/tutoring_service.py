@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import case, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.contracts import (
@@ -32,12 +32,16 @@ from app.models import (
     Learner,
     LearnerProfile,
     KnowledgeItem,
-    LearningPath,
     LearningResource,
+    PathNodeAssessment,
     TutoringMessage,
     TutoringSession,
 )
 from app.services.feedback_service import create_feedback_task
+from app.services.learning_adjustment_service import (
+    answer_adjustment_assessment,
+    maybe_create_automatic_assessment,
+)
 from app.services.profile_service import public_id
 from app.services.contract_mapping import profile_snapshot
 from app.core.compatibility import AGENT_CONTRACT_VERSION
@@ -78,106 +82,6 @@ class TutoringTurnResult:
             "decision_reason": self.feedback.decision_reason,
             "task_id": self.task.public_id if self.task else None,
         }
-
-
-def _current_path_knowledge_id(
-    db: Session, *, learner: Learner, domain_code: str
-) -> str | None:
-    path = db.scalar(
-        select(LearningPath)
-        .where(
-            LearningPath.learner_id == learner.id,
-            LearningPath.domain_code == domain_code,
-            LearningPath.status == "active",
-        )
-        .order_by(LearningPath.id.desc())
-    )
-    payload = path.path_json or {} if path is not None else {}
-    node_id = payload.get("current_node_id")
-    node = (payload.get("node_states") or {}).get(node_id, {}) if node_id else {}
-    knowledge_id = node.get("knowledge_id") if isinstance(node, dict) else None
-    return str(knowledge_id) if knowledge_id else None
-
-
-def _formal_assessment(
-    db: Session,
-    *,
-    session: TutoringSession,
-    learner: Learner,
-    resource: LearningResource,
-    feedback: Feedback,
-    needed: bool,
-) -> tuple[dict[str, Any] | None, str | None]:
-    if not needed:
-        return None, None
-    knowledge_ids = [
-        str(item.get("knowledge_id"))
-        for item in (resource.sources_json or [])
-        if isinstance(item, dict) and item.get("knowledge_id")
-    ]
-    if not knowledge_ids:
-        return None, "assessment_unavailable"
-    attempted_question_ids = [
-        record.question_id
-        for record in db.scalars(
-            select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)
-        )
-        if (record.answer_summary_json or {}).get("tutoring_session_id") == session.id
-    ]
-    source_task = db.get(GenerationTask, resource.generation_task_id)
-    if source_task is None:
-        return None, "assessment_unavailable"
-    current_knowledge_id = _current_path_knowledge_id(
-        db, learner=learner, domain_code=source_task.domain_code
-    )
-    current_first = case(
-        (KnowledgeItem.public_id == current_knowledge_id, 0),
-        else_=1,
-    )
-    question = db.scalar(
-        select(DiagnosticQuestion)
-        .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
-        .where(
-            DiagnosticQuestion.domain_code == source_task.domain_code,
-            DiagnosticQuestion.question_type == "single_choice",
-            KnowledgeItem.public_id.in_(knowledge_ids),
-            DiagnosticQuestion.id.not_in(attempted_question_ids),
-        )
-        .order_by(current_first, DiagnosticQuestion.difficulty, DiagnosticQuestion.id)
-    )
-    if question is None:
-        # A resource may cite a knowledge item with only one validation question.
-        # Keep the second controlled check inside the same domain and session,
-        # while allowing another domain question after source-linked questions
-        # have been exhausted.
-        question = db.scalar(
-            select(DiagnosticQuestion)
-            .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
-            .where(
-                DiagnosticQuestion.domain_code == source_task.domain_code,
-                DiagnosticQuestion.question_type == "single_choice",
-                DiagnosticQuestion.id.not_in(attempted_question_ids),
-            )
-            .order_by(current_first, DiagnosticQuestion.difficulty, DiagnosticQuestion.id)
-        )
-    if question is None:
-        return None, "assessment_unavailable"
-    knowledge = db.get(KnowledgeItem, question.knowledge_item_id)
-    assessment_id = public_id("tval")
-    return {
-        "assessment_id": assessment_id,
-        "question_id": question.public_id,
-        "knowledge_id": knowledge.public_id,
-        "question_type": question.question_type,
-        "difficulty": question.difficulty,
-        "stem": question.stem,
-        "options": question.options_json or [],
-        "status": "pending",
-        "feedback_id": str(feedback.id),
-        "session_id": session.public_id,
-        "learner_id": learner.public_id,
-        "domain_code": source_task.domain_code,
-    }, None
 
 
 def _agent_message(
@@ -500,6 +404,7 @@ def add_learner_message(
     feedback.profile_change_evidence_json = all_evidence
     feedback.decision_confidence = 0.75 if safe_evidence else 0.45
     feedback.decision_reason = output_model.decision_reason
+    db.flush()
     run.status = "completed"
     run.output_summary_json = {
         "task_id": session.public_id,
@@ -538,14 +443,23 @@ def add_learner_message(
     output["reply"] = contextual_answer.answer
     output["sources"] = contextual_answer.sources
     output["scope_status"] = contextual_answer.scope_status
-    assessment, assessment_unavailable = _formal_assessment(
-        db,
-        session=session,
-        learner=learner,
-        resource=resource,
-        feedback=feedback,
-        needed=output_model.feedback_intent.value in {"too_hard", "too_easy"},
-    )
+    assessment = None
+    assessment_unavailable = None
+    try:
+        assessment = maybe_create_automatic_assessment(
+            db,
+            session=session,
+            profile=profile,
+            resource=resource,
+        )
+    except ValueError as exc:
+        if str(exc) == "learning_adjustment_assessment_unavailable":
+            assessment_unavailable = str(exc)
+        elif str(exc) not in {
+            "learning_adjustment_context_missing",
+            "learning_adjustment_context_stale",
+        }:
+            raise
     output["assessment"] = assessment
     output["assessment_unavailable"] = assessment_unavailable
     output["session_id"] = session.public_id
@@ -570,18 +484,8 @@ def add_learner_message(
     db.flush()
 
     task = None
-    has_confirmed_assessment = any(
-        item.evidence_type.value in {"scored_quiz", "validated_behavior"}
-        and item.confirmed
-        and item.confidence >= 0.7
-        for item in safe_evidence
-    )
     # Resource correctness is independently reviewable and never changes mastery.
-    if action == "review" or (
-        has_confirmed_assessment
-        and output_model.needs_generation
-        and action in {"challenge", "explain", "regenerate"}
-    ):
+    if action == "review":
         task = create_feedback_task(
             db,
             learner=learner,
@@ -669,6 +573,24 @@ def submit_assessment_answer(
     assessment_id: str,
     answer: Any,
 ) -> tuple[AnswerRecord, Feedback, GenerationTask | None, dict[str, Any]]:
+    proposal_assessment = db.scalar(
+        select(PathNodeAssessment).where(
+            PathNodeAssessment.public_id == assessment_id,
+            PathNodeAssessment.adjustment_proposal_id.is_not(None),
+        )
+    )
+    if proposal_assessment is not None:
+        record, feedback, result = answer_adjustment_assessment(
+            db,
+            session=session,
+            profile=profile,
+            assessment_id=assessment_id,
+            answer=answer,
+        )
+        return record, feedback, None, {
+            **result,
+            "profile_update_required": result["profile_changed"],
+        }
     message, assessment = _assessment_message(db, session=session, assessment_id=assessment_id)
     question = db.scalar(
         select(DiagnosticQuestion).where(

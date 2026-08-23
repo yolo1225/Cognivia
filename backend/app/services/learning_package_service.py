@@ -11,12 +11,14 @@ from app.models import (
     KnowledgeUpdateImpact,
     Learner,
     LearnerProfile,
+    LearningPath,
     LearningPackageResource,
     LearningResource,
     ReviewReport,
 )
 from app.rag.readiness import candidate_rag_status
 from app.services.demo_flow_service import serialize_resource
+from app.services.node_generation_target_service import generation_basis_for_task
 
 
 RESOURCE_ORDER = {"lecture": 0, "practice_guide": 1, "graded_quiz": 2}
@@ -71,17 +73,33 @@ def package_member_rows(
 
 
 def current_package(db: Session, *, learner_id: int, domain_code: str) -> GenerationTask | None:
+    path = db.scalar(
+        select(LearningPath)
+        .where(
+            LearningPath.learner_id == learner_id,
+            LearningPath.domain_code == domain_code,
+            LearningPath.status.in_(["active", "completed"]),
+        )
+        .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
+    )
+    current_node_id = (path.path_json or {}).get("current_node_id") if path else None
+    if path is not None and current_node_id is None:
+        return None
     task = db.scalar(
         select(GenerationTask)
         .where(
             GenerationTask.learner_id == learner_id,
             GenerationTask.domain_code == domain_code,
             GenerationTask.is_current_package.is_(True),
+            GenerationTask.learning_path_id == path.id if path is not None else True,
+            GenerationTask.path_node_id == current_node_id if path is not None else True,
         )
         .order_by(GenerationTask.id.desc())
     )
     if task is not None:
         return task
+    if path is not None:
+        return None
     # Compatibility for databases created before package membership existed.
     return db.scalar(
         select(GenerationTask)
@@ -108,6 +126,8 @@ def serialize_package(
 ) -> dict:
     learner = db.get(Learner, task.learner_id)
     profile = db.get(LearnerProfile, task.profile_id)
+    path = db.get(LearningPath, task.learning_path_id) if task.learning_path_id else None
+    node = ((path.path_json or {}).get("node_states") or {}).get(task.path_node_id) if path else None
     rows = package_member_rows(db, task)
     report_by_resource: dict[int, ReviewReport] = {}
     if rows:
@@ -159,6 +179,11 @@ def serialize_package(
         "profile_id": profile.public_id if profile else None,
         "profile_version": profile.profile_version if profile else None,
         "status": task.status,
+        "path_id": path.public_id if path else None,
+        "path_node_id": task.path_node_id,
+        "path_node_title": node.get("title") if isinstance(node, dict) else None,
+        "path_node_order": node.get("path_order") if isinstance(node, dict) else None,
+        "generation_basis": generation_basis_for_task(db, task),
         "event_type": task.event_type,
         "source_task_id": (
             db.get(GenerationTask, task.source_task_id).public_id if task.source_task_id else None

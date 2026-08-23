@@ -13,9 +13,14 @@ class GenerationTask(TimestampMixin, Base):
     public_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     learner_id: Mapped[int] = mapped_column(ForeignKey("learners.id"))
     profile_id: Mapped[int] = mapped_column(ForeignKey("learner_profiles.id"))
+    learning_path_id: Mapped[int | None] = mapped_column(
+        ForeignKey("learning_paths.id"), nullable=True, index=True
+    )
+    path_node_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     domain_code: Mapped[str] = mapped_column(String(64), default="ai_app_dev")
     status: Mapped[str] = mapped_column(String(32), default="pending")
     resource_types_json: Mapped[list] = mapped_column(JSON, default=list)
+    resource_knowledge_targets_json: Mapped[dict] = mapped_column(JSON, default=dict)
     revision_count: Mapped[int] = mapped_column(default=0)
     decision: Mapped[str] = mapped_column(String(32), default="pending")
     trigger_type: Mapped[str] = mapped_column(String(32), default="initial_generation")

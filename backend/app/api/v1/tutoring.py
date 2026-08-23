@@ -13,6 +13,7 @@ from app.core.security import Principal, get_current_user, principal_learner, re
 from app.models import Learner, TutoringMessage, TutoringSession
 from app.schemas.common import ApiResponse, ok
 from app.services.learner_service import get_or_create_demo_learner
+from app.services.learning_adjustment_service import request_mastery_assessment
 from app.services.profile_service import default_profile_for_learner
 from app.services.tutoring_service import (
     create_streaming_messages,
@@ -239,7 +240,42 @@ def answer_tutoring_assessment(
         "profile_update_required": decision["profile_update_required"],
         "decision_reason": decision["decision_reason"],
         "task_id": task.public_id if task else None,
+        **{
+            key: value
+            for key, value in decision.items()
+            if key
+            in {
+                "adjustment_proposal_id",
+                "hypothesis_type",
+                "decision",
+                "profile_changed",
+                "resulting_profile_id",
+                "resulting_path_id",
+                "completed_node_id",
+                "current_node_id",
+                "resource_recommendation",
+            }
+        },
     })
+
+
+@router.post("/sessions/{session_id}/mastery-check", response_model=ApiResponse)
+def request_tutoring_mastery_check(
+    session_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    session = require_tutoring(db, principal, session_id)
+    learner = db.get(Learner, session.learner_id)
+    if learner is None:
+        raise HTTPException(status_code=404, detail="Learner not found")
+    profile = default_profile_for_learner(db, learner)
+    try:
+        assessment = request_mastery_assessment(db, session=session, profile=profile)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.commit()
+    return ok(assessment)
 
 
 @router.post("/sessions/{session_id}/messages/{reply_message_id}/pause", response_model=ApiResponse)

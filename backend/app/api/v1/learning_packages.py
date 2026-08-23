@@ -113,9 +113,20 @@ def refresh_affected_resources(
         public_id=public_id("task"),
         learner_id=source_task.learner_id,
         profile_id=source_task.profile_id,
+        learning_path_id=source_task.learning_path_id,
+        path_node_id=source_task.path_node_id,
         domain_code=source_task.domain_code,
         status="pending",
         resource_types_json=affected_types,
+        resource_knowledge_targets_json={
+            resource_type: list(
+                (source_task.resource_knowledge_targets_json or {}).get(resource_type)
+                or (source_task.package_coverage_json or {})
+                .get("resource_knowledge_targets", {})
+                .get(resource_type, [])
+            )
+            for resource_type in affected_types
+        },
         revision_count=0,
         decision="pending",
         trigger_type="initial_generation",

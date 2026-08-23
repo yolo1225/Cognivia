@@ -57,6 +57,29 @@
 
       </div>
 
+      <section v-if="profileChanges.length" class="card profile-change-section">
+        <div class="card-head">
+          <div><h2>本次画像变化</h2><p class="section-note">由交互反馈与正式微验证共同确认</p></div>
+        </div>
+        <article v-for="change in profileChanges" :key="change.proposal_id" class="profile-change-row">
+          <div class="change-version">
+            <span>画像版本</span>
+            <strong>V{{ change.profile_change_summary.original_profile_version }} → V{{ change.profile_change_summary.resulting_profile_version }}</strong>
+          </div>
+          <div class="change-main">
+            <strong>{{ change.profile_change_summary.knowledge_name }}</strong>
+            <p>{{ knowledgeStateLabel(change.profile_change_summary.before_state) }} → {{ knowledgeStateLabel(change.profile_change_summary.after_state) }}</p>
+            <small v-if="change.profile_change_summary.removed_from_weak_knowledge">已从薄弱知识点移除</small>
+            <small v-if="change.profile_change_summary.removed_from_blind_spots">已从知识盲点移除</small>
+          </div>
+          <div class="change-route">
+            <span>{{ change.profile_change_summary.ability_summary }}</span>
+            <small v-if="change.profile_change_summary.completed_node_id">已完成当前节点，路线推进至 {{ nodeTitle(change.profile_change_summary.current_node_id) }}</small>
+            <small v-else>路线保持在当前节点</small>
+          </div>
+        </article>
+      </section>
+
       <!-- 薄弱知识点 -->
       <section class="card">
         <div class="card-head">
@@ -84,6 +107,17 @@
           <div><h2>推荐学习路径</h2><p class="section-note">根据画像与薄弱点动态推荐</p></div>
           <span class="status" :class="report.feedback_summary?.learning_path_needs_refresh ? 'wait' : 'ok'">{{ report.feedback_summary?.learning_path_needs_refresh ? '待刷新' : '当前版本' }}</span>
         </div>
+        <div v-if="report.learning_path?.revision_summary" class="path-revision-summary">
+          <strong>路线已调整</strong>
+          <p>{{ report.learning_path.revision_summary.message }}，请先完成新的当前节点。</p>
+        </div>
+        <div v-for="proposal in report.learning_adjustments || []" :key="proposal.proposal_id" class="adjustment-summary">
+          <div><strong>画像与路线已更新</strong><p>{{ proposal.decision === 'confirmed_mastery' ? '已确认掌握并推进到下一节点。' : '已确认需要补强，当前节点保持不变。' }}</p></div>
+          <div class="path-actions">
+            <button class="btn primary" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'generate')">生成新资源</button>
+            <button class="btn" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'skip')">暂不生成</button>
+          </div>
+        </div>
         <div v-if="pathNodes.length" class="path-h">
           <div v-for="(node, index) in pathNodes" :key="node.path_node_id" class="path-h-step" :class="`node-${node.status}`">
             <span class="path-num">{{ index + 1 }}</span>
@@ -91,10 +125,10 @@
               <div class="path-node-title"><h3>{{ node.title }}</h3><span class="node-status">{{ pathStatusLabel(node.status) }}</span></div>
               <p>{{ node.knowledge_id }} · 通过阈值 {{ Math.round(node.completion_condition.threshold * 100) }}%</p>
               <div v-if="node.status === 'current'" class="path-actions">
-                <button class="btn" :disabled="pathActionLoading" @click="verifyCurrentNode(node.path_node_id)">{{ pathActionLoading ? '验证中...' : '验证掌握情况' }}</button>
-                <button v-if="verifiedNodeId === node.path_node_id" class="btn primary" :disabled="pathActionLoading" @click="completeCurrentNode(node.path_node_id)">完成并推进</button>
+                <button v-if="node.resource_state === 'ready'" class="btn" @click="openNodeResource(node)">继续学习</button>
+                <button v-else-if="node.resource_state === 'generating'" class="btn primary" @click="openNodeResource(node)">查看生成进度</button>
+                <button v-else class="btn primary" :disabled="creatingGeneration" @click="generateNodeResources(node)">{{ creatingGeneration ? '正在创建...' : node.resource_state === 'failed' ? '重新生成本节点资源' : '生成本节点资源' }}</button>
               </div>
-              <p v-if="pathMessage && node.status === 'current'" class="path-message">{{ pathMessage }}</p>
             </div>
           </div>
         </div>
@@ -143,7 +177,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getLearningReport, type LearningReport } from '@/api/reports'
-import { completePathNode, verifyPathNode, type LearningPathNode } from '@/api/learningPaths'
+import type { LearningPathNode } from '@/api/learningPaths'
+import { decideLearningAdjustmentResource } from '@/api/learningAdjustments'
 import { useToast } from '@/composables/useToast'
 import { resourceQualityStatusLabel, resourceQualityStatusTone } from '@/utils/resourceQualityStatus'
 import { createGenerationTask } from '@/api/generation'
@@ -171,10 +206,7 @@ const report = ref<LearningReport | null>(null)
 const loading = ref(false)
 const errorMessage = ref('')
 const creatingGeneration = ref(false)
-const pathActionLoading = ref(false)
-const verifiedNodeId = ref('')
-const verifiedEvidenceIds = ref<string[]>([])
-const pathMessage = ref('')
+const adjustmentSubmitting = ref('')
 
 const radarLabels = ['理论基础', '实操能力', '问题解决', '知识广度', '学习速度']
 const DIRECTION_LABELS: Record<string, string> = {
@@ -198,41 +230,61 @@ const diagnosticAccuracy = computed(() => Math.round(Number(report.value?.diagno
 const weakCount = computed(() => sortedWeakKnowledge.value.length)
 const resourceTotal = computed(() => report.value?.resource_summary?.total || 0)
 const pathNodes = computed<LearningPathNode[]>(() => report.value?.learning_path?.nodes || [])
+const profileChanges = computed(() => report.value?.profile_changes || [])
 
 function pathStatusLabel(status: LearningPathNode['status']) {
   return ({ locked: '未解锁', current: '当前学习', completed: '已完成', skipped: '已跳过' } as const)[status]
 }
 
-async function verifyCurrentNode(nodeId: string) {
-  const pathId = report.value?.learning_path?.path_id
-  if (!pathId) return
-  pathActionLoading.value = true
-  pathMessage.value = ''
-  try {
-    const verification = await verifyPathNode(pathId, nodeId)
-    verifiedNodeId.value = verification.verified ? nodeId : ''
-    verifiedEvidenceIds.value = verification.evidence_ids
-    pathMessage.value = verification.verified
-      ? `已找到通过验证的掌握证据（${Math.round(Number(verification.best_score || 0) * 100)}%）。`
-      : '尚无达到阈值的已验证答题证据，请先完成导学验证题。'
-  } catch {
-    pathMessage.value = '节点验证失败，请稍后重试。'
-  } finally { pathActionLoading.value = false }
+function knowledgeStateLabel(state: string) {
+  return ({
+    unmastered: '未掌握',
+    confused: '易混淆',
+    partial_mastery: '部分掌握',
+    known: '已掌握',
+    not_weak: '非薄弱项',
+  } as Record<string, string>)[state] || state
 }
 
-async function completeCurrentNode(nodeId: string) {
-  const pathId = report.value?.learning_path?.path_id
-  if (!pathId || !verifiedEvidenceIds.value.length) return
-  pathActionLoading.value = true
+function nodeTitle(nodeId?: string | null) {
+  if (!nodeId) return '路线完成'
+  return pathNodes.value.find(node => node.path_node_id === nodeId)?.title || nodeId
+}
+
+async function decideReportAdjustment(proposalId: string, decision: 'generate' | 'skip') {
+  if (adjustmentSubmitting.value) return
+  adjustmentSubmitting.value = proposalId
   try {
-    await completePathNode(pathId, nodeId, verifiedEvidenceIds.value)
-    verifiedNodeId.value = ''
-    verifiedEvidenceIds.value = []
-    pathMessage.value = ''
-    showToast('当前节点已完成，学习路径已推进。', 'success')
-    await loadReport()
-  } catch { showToast('路径推进失败，证据可能已失效。', 'error') }
-  finally { pathActionLoading.value = false }
+    const result = await decideLearningAdjustmentResource(proposalId, decision)
+    if (result.task_id) {
+      await router.push({ path: '/resources', query: { task_id: result.task_id, ...(learnerId.value ? { learner_id: learnerId.value } : {}) } })
+    } else {
+      await loadReport()
+      showToast('已暂不生成，画像与路线调整保持生效。', 'info')
+    }
+  } catch { showToast('资源选择保存失败，路线可能已更新。', 'error') }
+  finally { adjustmentSubmitting.value = '' }
+}
+
+function openNodeResource(node: LearningPathNode) {
+  router.push({ path: '/resources', query: node.resource_task_id ? { task_id: node.resource_task_id } : {} })
+}
+
+async function generateNodeResources(node: LearningPathNode) {
+  const pathId = report.value?.learning_path?.path_id
+  if (!pathId || !report.value?.profile_id || !learnerId.value) return
+  creatingGeneration.value = true
+  try {
+    const task = await createGenerationTask(
+      report.value.domain_code,
+      report.value.profile_id,
+      learnerId.value,
+      `学习路径第 ${node.path_order} 节：${node.title}`,
+      { pathId, nodeId: node.path_node_id },
+    )
+    router.push({ path: '/resources', query: { learner_id: learnerId.value, task_id: task.task_id } })
+  } catch { showToast('创建节点学习包失败，路线可能已更新，请刷新后重试。', 'error') }
+  finally { creatingGeneration.value = false }
 }
 
 function profileTypeLabel(type?: string) {
@@ -331,20 +383,16 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
 .ability-track { height: 8px; margin-top: 7px; border-radius: 999px; background: var(--track); overflow: hidden; }
 .ability-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #6a8bc0, var(--blue)); }
 
-/* 学习闭环 */
-.loop-progress { border-radius: 999px; background: var(--blue2); color: var(--blue); padding: 6px 10px; font-size: 12px; font-weight: 700; }
-.loop-list { display: grid; gap: 10px; }
-.loop-step { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: center; border: 1px solid #edf1f6; border-radius: 12px; padding: 12px 14px; }
-.loop-num { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: var(--soft); color: var(--muted); font-size: 13px; font-weight: 700; }
-.loop-body strong { display: block; color: var(--ink); font-size: 13.5px; }
-.loop-body small { display: block; margin-top: 2px; color: var(--muted); font-size: 11.5px; }
-.loop-badge { border-radius: 6px; padding: 3px 8px; font-size: 11px; font-weight: 650; }
-.loop-step.done .loop-num { background: var(--green2); color: var(--green); }
-.loop-step.done .loop-badge { background: var(--green2); color: var(--green); }
-.loop-step.stale .loop-num { background: var(--amber2); color: var(--amber); }
-.loop-step.stale .loop-badge { background: var(--amber2); color: var(--amber); }
-.loop-step.pending .loop-num { background: var(--soft); color: #9aa7b8; }
-.loop-step.pending .loop-badge { background: var(--soft); color: #9aa7b8; }
+/* 画像变化 */
+.profile-change-section { display: grid; gap: 0; }
+.profile-change-row { display: grid; grid-template-columns: 150px minmax(220px, 1fr) minmax(220px, 1fr); gap: 20px; align-items: center; border-top: 1px solid var(--line); padding: 15px 0; }
+.profile-change-row:first-of-type { border-top: 0; padding-top: 0; }
+.profile-change-row:last-child { padding-bottom: 0; }
+.change-version, .change-main, .change-route { display: grid; gap: 4px; min-width: 0; }
+.change-version span, .change-route span { color: var(--muted); font-size: 11px; }
+.change-version strong, .change-main strong { color: var(--ink); font-size: 13.5px; }
+.change-main p { color: var(--body); font-size: 12.5px; }
+.change-main small, .change-route small { color: var(--green); font-size: 11.5px; line-height: 1.5; }
 
 /* 薄弱知识点 */
 .weak-count { border-radius: 999px; background: var(--amber2); color: var(--amber); padding: 6px 10px; font-size: 12px; font-weight: 750; }
@@ -388,7 +436,13 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
 .node-completed .node-status { color: var(--green); }
 .node-locked { opacity: .72; }
 .path-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.path-message { color: var(--blue) !important; }
+.path-revision-summary { margin-bottom: 14px; border: 1px solid #efd29f; border-radius: 8px; background: var(--amber2); padding: 11px 13px; }
+.path-revision-summary strong { color: var(--ink); font-size: 13px; }
+.path-revision-summary p { margin-top: 3px; color: var(--body); font-size: 12px; line-height: 1.5; }
+.adjustment-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; border-left: 3px solid var(--green); background: var(--green2); padding: 11px 13px; }
+.adjustment-summary strong { color: var(--ink); font-size: 13px; }
+.adjustment-summary p { margin-top: 3px; color: var(--body); font-size: 12px; }
+.adjustment-summary .path-actions { flex-shrink: 0; margin-top: 0; }
 .path-num { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: var(--blue); color: #fff; font-size: 13px; font-weight: 700; }
 .path-h-step h3 { color: var(--ink); font-size: 13.5px; }
 .path-h-step p { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.6; }
@@ -411,6 +465,8 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
   .profile-body { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
+  .profile-change-row { grid-template-columns: 1fr; gap: 10px; }
+  .adjustment-summary { align-items: flex-start; flex-direction: column; }
   .hero { flex-direction: column; align-items: flex-start; }
   .hero-stats { width: 100%; }
   .hero-stats .stat { flex: 1; }

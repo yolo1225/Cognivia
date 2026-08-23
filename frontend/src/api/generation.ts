@@ -1,6 +1,18 @@
 import { getData, postData } from './client'
 import type { ResourceQualityMetrics } from './resources'
 
+export interface GenerationBasis {
+  path_id: string
+  path_node_id: string
+  path_node_title?: string | null
+  path_node_order?: number | null
+  core_knowledge: { knowledge_id: string; name: string } | null
+  prerequisite_knowledge: Array<{ knowledge_id: string; name: string }>
+  profile_id: string
+  profile_version: number
+  resource_knowledge_targets: Record<string, string[]>
+}
+
 export interface GenerationTaskResult {
   task_id: string
   thread_id: string
@@ -13,6 +25,7 @@ export interface GenerationTaskResult {
   trigger_type: string
   execution_mode: string
   resource_types: string[]
+  generation_basis?: GenerationBasis | null
   agent_graph: string
   decision: string
   agent_trace: Array<{
@@ -45,6 +58,11 @@ export interface GenerationTaskDetail {
   profile_changed_dimensions?: string[]
   status: string
   domain_code?: string
+  path_id?: string | null
+  path_node_id?: string | null
+  path_node_title?: string | null
+  path_node_order?: number | null
+  generation_basis?: GenerationBasis | null
   progress?: number
   trigger_type?: string
   execution_mode?: string
@@ -107,6 +125,7 @@ export function createGenerationTask(
   profileId?: string,
   learnerId?: string,
   learningGoal = '个性化学习资源生成',
+  path?: { pathId: string; nodeId: string },
 ) {
   const body: Record<string, unknown> = {
     profile_id: profileId,
@@ -117,6 +136,10 @@ export function createGenerationTask(
     resource_types: ['lecture', 'practice_guide', 'graded_quiz'],
   }
   if (learnerId) body.learner_id = learnerId
+  if (path) {
+    body.path_id = path.pathId
+    body.path_node_id = path.nodeId
+  }
   return postData<GenerationTaskResult>('/generation-tasks', body)
 }
 

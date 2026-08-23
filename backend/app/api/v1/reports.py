@@ -17,6 +17,10 @@ from app.services.profile_service import (
 )
 from app.services.report_service import build_metric_summary, refresh_learning_path
 from app.services.learning_path_service import serialize_learning_path
+from app.services.learning_adjustment_service import (
+    pending_resource_proposals,
+    recent_profile_changes,
+)
 
 router = APIRouter()
 
@@ -168,6 +172,28 @@ def get_learning_report(
         if path.path_json != original_path_payload:
             db.commit()
     learning_path = detail.get("learning_path") or {}
+    if path is not None and isinstance(learning_path, dict):
+        node_tasks = list(
+            db.scalars(
+                select(GenerationTask)
+                .where(GenerationTask.learning_path_id == path.id)
+                .order_by(GenerationTask.id.desc())
+            )
+        )
+        latest_by_node = {}
+        for node_task in node_tasks:
+            if node_task.path_node_id:
+                latest_by_node.setdefault(node_task.path_node_id, node_task)
+        for node in learning_path.get("nodes") or []:
+            node_task = latest_by_node.get(node.get("path_node_id"))
+            status = node_task.status if node_task else None
+            node["resource_state"] = (
+                "ready" if status == "completed"
+                else "failed" if status == "failed"
+                else "generating" if status in {"pending", "retry_pending", "running"}
+                else "not_generated"
+            )
+            node["resource_task_id"] = node_task.public_id if node_task else None
     stages = learning_path.get("stages", []) if isinstance(learning_path, dict) else []
     path_needs_refresh = bool(path.needs_refresh) if path else False
 
@@ -220,6 +246,16 @@ def get_learning_report(
     passed_reviews = sum(1 for report in review_reports if report.passed)
     reviewed_resource_count = len(review_reports)
     feedback_count = len(feedback_rows)
+    adjustment_proposals = pending_resource_proposals(
+        db,
+        learner_id=learner.id,
+        domain_code=profile.domain_code if profile else learner.target_domain,
+    )
+    profile_changes = recent_profile_changes(
+        db,
+        learner_id=learner.id,
+        domain_code=profile.domain_code if profile else learner.target_domain,
+    )
 
     return ok(
         {
@@ -279,6 +315,8 @@ def get_learning_report(
                 "path_refresh_performed": path_refresh_performed,
                 "recent": recent_feedback,
             },
+            "learning_adjustments": adjustment_proposals,
+            "profile_changes": profile_changes,
             "next_actions": _next_actions(
                 has_profile=has_profile,
                 resources=resources,

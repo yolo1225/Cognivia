@@ -1,5 +1,6 @@
 import { getData, postData } from './client'
 import type { ResourceSummary } from './resources'
+import type { GenerationBasis } from './generation'
 
 export interface KnowledgeImpact {
   impact_id: string
@@ -20,6 +21,11 @@ export interface LearningPackage {
   profile_id?: string | null
   profile_version?: number | null
   status: string
+  path_id?: string | null
+  path_node_id?: string | null
+  path_node_title?: string | null
+  path_node_order?: number | null
+  generation_basis?: GenerationBasis | null
   event_type: string
   source_task_id?: string | null
   is_current_package: boolean

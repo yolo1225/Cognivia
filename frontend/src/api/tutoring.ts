@@ -21,6 +21,9 @@ export interface TutoringSession {
 
 export interface TutoringAssessment {
   assessment_id: string
+  adjustment_proposal_id?: string
+  hypothesis_type?: 'mastery_up' | 'support_down'
+  trigger_reason?: string
   question_id: string
   knowledge_id: string
   question_type: 'single_choice'
@@ -30,6 +33,22 @@ export interface TutoringAssessment {
   status: 'pending' | 'scored'
   score?: number
   is_correct?: boolean
+  decision?: 'confirmed_mastery' | 'confirmed_support_need' | 'hypothesis_rejected'
+  profile_changed?: boolean
+  resulting_profile_id?: string
+  resulting_path_id?: string
+  completed_node_id?: string | null
+  current_node_id?: string | null
+  resource_recommendation?: ResourceRecommendation | null
+  resource_decision?: 'generate' | 'skip'
+}
+
+export interface ResourceRecommendation {
+  proposal_id: string
+  path_id: string
+  path_node_id: string | null
+  resource_types: string[]
+  mode: 'next_node' | 'remedial'
 }
 
 export interface TutoringDecision {
@@ -102,7 +121,20 @@ export function answerTutoringAssessment(sessionId: string, assessmentId: string
     profile_update_required: boolean
     decision_reason: string
     task_id: string | null
+    adjustment_proposal_id?: string
+    hypothesis_type?: 'mastery_up' | 'support_down'
+    decision?: 'confirmed_mastery' | 'confirmed_support_need' | 'hypothesis_rejected'
+    profile_changed?: boolean
+    resulting_profile_id?: string
+    resulting_path_id?: string
+    completed_node_id?: string | null
+    current_node_id?: string | null
+    resource_recommendation?: ResourceRecommendation | null
   }>(`/tutoring/sessions/${sessionId}/assessments/${assessmentId}/answers`, { answer })
+}
+
+export function requestMasteryCheck(sessionId: string) {
+  return postData<TutoringAssessment>(`/tutoring/sessions/${sessionId}/mastery-check`)
 }
 
 export function pauseTutoringMessage(sessionId: string, replyMessageId: string) {

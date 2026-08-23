@@ -107,9 +107,20 @@ def create_feedback_task(
         public_id=public_id("task"),
         learner_id=learner.id,
         profile_id=profile.id,
+        learning_path_id=source_task.learning_path_id,
+        path_node_id=source_task.path_node_id,
         domain_code=source_task.domain_code,
         status="pending",
         resource_types_json=resource_types or [resource.resource_type],
+        resource_knowledge_targets_json={
+            resource_type: list(
+                (source_task.resource_knowledge_targets_json or {}).get(resource_type)
+                or (source_task.package_coverage_json or {})
+                .get("resource_knowledge_targets", {})
+                .get(resource_type, [])
+            )
+            for resource_type in (resource_types or [resource.resource_type])
+        },
         revision_count=0,
         decision="pending",
         trigger_type="resource_feedback",
