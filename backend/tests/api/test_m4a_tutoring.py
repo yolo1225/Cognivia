@@ -22,6 +22,7 @@ from app.models import (
     Learner,
     LearnerProfile,
     LearningPath,
+    LearningAdjustmentProposal,
     LearningResource,
 )
 from app.api.v1.generation_tasks import _semantic_events
@@ -122,7 +123,7 @@ def _seed(db: Session) -> None:
         domain_code="ai_app_dev",
         status="completed",
         decision="completed",
-        resource_types_json=["lecture"],
+        resource_types_json=["lecture", "practice_guide", "graded_quiz"],
         package_quality_json={"quality_rule_version": QUALITY_RULE_VERSION},
         package_coverage_json={
             "resource_knowledge_targets": {"lecture": ["rag_pipeline_overview"]}
@@ -179,6 +180,20 @@ def _seed(db: Session) -> None:
             ],
             review_status="passed",
             series_id="resource_m4a",
+            is_current=True,
+        )
+    )
+    db.add(
+        LearningResource(
+            public_id="resource_m4a_practice",
+            generation_task_id=task.id,
+            resource_type="practice_guide",
+            title="M4A practice resource",
+            content_md="实训正文",
+            difficulty=3,
+            sources_json=[{"knowledge_id": knowledge.public_id}],
+            review_status="passed",
+            series_id="resource_m4a_practice",
             is_current=True,
         )
     )
@@ -361,6 +376,144 @@ def test_learning_adjustment_conflict_does_not_trigger_assessment(monkeypatch) -
         ).json()["data"]
         assert first["reply"]["assessment"] is None
         assert second["reply"]["assessment"] is None
+        with factory() as db:
+            assert [
+                item.evidence_status
+                for item in db.query(Feedback).order_by(Feedback.id).all()
+            ] == ["conflict", "conflict"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_node_evidence_aggregates_across_resources_and_allows_cross_session_answer(
+    monkeypatch,
+) -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+
+    def execute(_self, request):
+        return InterpretFeedbackOutput(
+            task_id=request.task_id,
+            feedback_intent=FeedbackIntent.TOO_EASY,
+            recommended_action=RecommendedAction.ASK_FOLLOW_UP,
+            reply="建议完成节点掌握检查。",
+            evidence=[],
+            needs_generation=False,
+            decision_reason="本轮反馈已纳入节点学习判断。",
+        )
+
+    monkeypatch.setattr("app.services.tutoring_service.TutoringAgent.execute", execute)
+    monkeypatch.setattr(
+        "app.services.learning_adjustment_service._analyze_profile",
+        lambda _db, *, proposal, profile, path, **_kwargs: (
+            profile,
+            None,
+            None,
+            {"profile_changed": False, "ability_score_changes": {}},
+        ),
+    )
+    app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
+    client = TestClient(app)
+    try:
+        lecture_session = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_m4a"}
+        ).json()["data"]["session_id"]
+        practice_session = client.post(
+            "/api/v1/tutoring/sessions",
+            json={"resource_id": "resource_m4a_practice"},
+        ).json()["data"]["session_id"]
+
+        first = client.post(
+            f"/api/v1/tutoring/sessions/{lecture_session}/messages",
+            json={"content": "讲义内容我已经掌握了"},
+        ).json()["data"]
+        assert first["node_adjustment_state"] == "collecting"
+        assert first["evidence_accepted"] is True
+
+        second = client.post(
+            f"/api/v1/tutoring/sessions/{practice_session}/messages",
+            json={"content": "实训步骤也很简单"},
+        ).json()["data"]
+        assessment = second["reply"]["assessment"]
+        assert assessment is not None
+        assert second["node_adjustment_state"] == "pending_validation"
+
+        lecture_state = client.get(
+            f"/api/v1/tutoring/sessions/{lecture_session}"
+        ).json()["data"]
+        assert lecture_state["pending_assessment"]["assessment_id"] == assessment[
+            "assessment_id"
+        ]
+
+        answered = client.post(
+            f"/api/v1/tutoring/sessions/{lecture_session}/assessments/{assessment['assessment_id']}/answers",
+            json={"answer": 0},
+        )
+        assert answered.status_code == 200, answered.json()
+        assert answered.json()["data"]["decision"] == "confirmed_mastery"
+
+        with factory() as db:
+            feedback = db.query(Feedback).order_by(Feedback.id).all()
+            assert [item.evidence_status for item in feedback] == ["consumed", "consumed"]
+            proposal = db.query(LearningAdjustmentProposal).one()
+            assert proposal.evidence_summary_json["resource_types"] == [
+                "lecture",
+                "practice_guide",
+            ]
+            assert len(proposal.evidence_summary_json["tutoring_session_ids"]) == 2
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_quick_feedback_is_supporting_only_and_cannot_complete_the_threshold(
+    monkeypatch,
+) -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+
+    def execute(_self, request):
+        return InterpretFeedbackOutput(
+            task_id=request.task_id,
+            feedback_intent=FeedbackIntent.TOO_EASY,
+            recommended_action=RecommendedAction.ASK_FOLLOW_UP,
+            reply="继续收集自然语言学习反馈。",
+            evidence=[],
+            needs_generation=False,
+            decision_reason="快捷反馈不能代替独立学习回合。",
+        )
+
+    monkeypatch.setattr("app.services.tutoring_service.TutoringAgent.execute", execute)
+    app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
+    client = TestClient(app)
+    try:
+        for _ in range(2):
+            response = client.post(
+                "/api/v1/resources/resource_m4a/feedback",
+                json={"feedback_type": "too_easy"},
+            )
+            assert response.status_code == 200
+        session_id = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_m4a"}
+        ).json()["data"]["session_id"]
+        turn = client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/messages",
+            json={"content": "这部分我已经会了"},
+        ).json()["data"]
+        assert turn["reply"]["assessment"] is None
+        with factory() as db:
+            assert db.query(LearningAdjustmentProposal).count() == 0
+            assert [
+                item.evidence_status
+                for item in db.query(Feedback).order_by(Feedback.id).all()
+            ] == ["supporting_only", "supporting_only", "eligible"]
     finally:
         app.dependency_overrides.clear()
 

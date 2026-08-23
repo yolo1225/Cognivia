@@ -103,35 +103,87 @@ def _pending_proposal(
 
 
 def _qualifying_feedback(
-    db: Session, *, session_id: int
+    db: Session,
+    *,
+    learner_id: int,
+    task_id: int,
 ) -> tuple[str | None, list[Feedback]]:
+    # Conversations remain resource-scoped, while normalized learner-turn
+    # evidence is aggregated across resources in the same learning package.
     rows = list(
         db.scalars(
             select(Feedback)
+            .join(LearningResource, LearningResource.id == Feedback.resource_id)
             .where(
-                Feedback.tutoring_session_id == session_id,
+                Feedback.learner_id == learner_id,
+                LearningResource.generation_task_id == task_id,
+                Feedback.tutoring_message_id.is_not(None),
                 Feedback.feedback_intent.in_(INTENT_HYPOTHESES),
                 Feedback.decision_confidence >= 0.4,
+                Feedback.evidence_status == "eligible",
             )
             .order_by(Feedback.id.desc())
         )
     )
-    consumed = {
-        int(feedback_id)
-        for proposal in db.scalars(
-            select(LearningAdjustmentProposal).where(
-                LearningAdjustmentProposal.tutoring_session_id == session_id
-            )
-        )
-        for feedback_id in (proposal.source_feedback_ids_json or [])
-    }
-    rows = [row for row in rows if row.id not in consumed]
     if len(rows) < 2:
         return None, []
     latest_intent = rows[0].feedback_intent
     if rows[1].feedback_intent != latest_intent:
+        rows[0].evidence_status = "conflict"
+        rows[1].evidence_status = "conflict"
+        db.flush()
         return None, []
     return INTENT_HYPOTHESES.get(str(latest_intent)), list(reversed(rows[:2]))
+
+
+def _expire_other_package_evidence(
+    db: Session, *, learner_id: int, current_task_id: int
+) -> None:
+    rows = db.scalars(
+        select(Feedback)
+        .join(LearningResource, LearningResource.id == Feedback.resource_id)
+        .where(
+            Feedback.learner_id == learner_id,
+            Feedback.evidence_status == "eligible",
+            LearningResource.generation_task_id != current_task_id,
+        )
+    )
+    for row in rows:
+        row.evidence_status = "stale"
+
+
+def _proposal_trigger_reason(proposal: LearningAdjustmentProposal) -> str:
+    if proposal.trigger_source == "automatic":
+        return "根据你在本节点多个学习环节中的反馈，建议进行掌握检查"
+    return "学习者主动申请掌握检查"
+
+
+def _serialize_proposal_assessment(
+    *,
+    proposal: LearningAdjustmentProposal,
+    assessment: PathNodeAssessment,
+    question: DiagnosticQuestion,
+    knowledge: KnowledgeItem | None,
+) -> dict[str, Any]:
+    payload = {
+        "assessment_id": assessment.public_id,
+        "adjustment_proposal_id": proposal.public_id,
+        "hypothesis_type": proposal.hypothesis_type,
+        "trigger_reason": _proposal_trigger_reason(proposal),
+        "question_id": question.public_id,
+        "knowledge_id": knowledge.public_id if knowledge else "",
+        "knowledge_item_id": question.knowledge_item_id,
+        "question_type": question.question_type,
+        "difficulty": question.difficulty,
+        "stem": question.stem,
+        "options": question.options_json or [],
+        "status": assessment.status,
+        "proposal_status": proposal.status,
+    }
+    if assessment.status == "scored":
+        payload.update(dict(assessment.result_json or {}))
+        payload["resource_decision"] = proposal.resource_decision
+    return payload
 
 
 def _assessment_for_proposal(
@@ -185,25 +237,12 @@ def _assessment_for_proposal(
     db.add(assessment)
     proposal.status = "pending_validation"
     db.flush()
-    return {
-        "assessment_id": assessment.public_id,
-        "adjustment_proposal_id": proposal.public_id,
-        "hypothesis_type": proposal.hypothesis_type,
-        "trigger_reason": (
-            "根据近期学习反馈，需要确认当前知识点的掌握情况"
-            if proposal.trigger_source == "automatic"
-            else "学习者主动申请掌握检查"
-        ),
-        "question_id": question.public_id,
-        "knowledge_id": knowledge.public_id,
-        "knowledge_item_id": knowledge.id,
-        "question_type": question.question_type,
-        "difficulty": question.difficulty,
-        "stem": question.stem,
-        "options": question.options_json or [],
-        "status": "pending",
-        "proposal_status": proposal.status,
-    }
+    return _serialize_proposal_assessment(
+        proposal=proposal,
+        assessment=assessment,
+        question=question,
+        knowledge=knowledge,
+    )
 
 
 def maybe_create_automatic_assessment(
@@ -213,9 +252,10 @@ def maybe_create_automatic_assessment(
     profile: LearnerProfile,
     resource: LearningResource,
 ) -> dict[str, Any] | None:
-    learner, path, _task, node = _active_context(
+    learner, path, task, node = _active_context(
         db, session=session, profile=profile, resource=resource
     )
+    _expire_other_package_evidence(db, learner_id=learner.id, current_task_id=task.id)
     pending = _pending_proposal(
         db,
         learner_id=learner.id,
@@ -235,24 +275,30 @@ def maybe_create_automatic_assessment(
         if question is None:
             return None
         knowledge = db.get(KnowledgeItem, question.knowledge_item_id)
-        return {
-            "assessment_id": existing.public_id,
-            "adjustment_proposal_id": pending.public_id,
-            "hypothesis_type": pending.hypothesis_type,
-            "trigger_reason": "根据近期学习反馈，需要确认当前知识点的掌握情况",
-            "question_id": question.public_id,
-            "knowledge_id": knowledge.public_id if knowledge else "",
-            "knowledge_item_id": question.knowledge_item_id,
-            "question_type": question.question_type,
-            "difficulty": question.difficulty,
-            "stem": question.stem,
-            "options": question.options_json or [],
-            "status": existing.status,
-            "proposal_status": pending.status,
-        }
-    hypothesis, evidence_rows = _qualifying_feedback(db, session_id=session.id)
+        return _serialize_proposal_assessment(
+            proposal=pending,
+            assessment=existing,
+            question=question,
+            knowledge=knowledge,
+        )
+    hypothesis, evidence_rows = _qualifying_feedback(
+        db, learner_id=learner.id, task_id=task.id
+    )
     if hypothesis is None:
         return None
+    evidence_intent = str(evidence_rows[-1].feedback_intent)
+    evidence_resource_ids = {row.resource_id for row in evidence_rows}
+    supporting_rows = list(
+        db.scalars(
+            select(Feedback).where(
+                Feedback.learner_id == learner.id,
+                Feedback.resource_id.in_(evidence_resource_ids),
+                Feedback.tutoring_message_id.is_(None),
+                Feedback.feedback_intent == evidence_intent,
+                Feedback.evidence_status == "supporting_only",
+            )
+        )
+    )
     proposal = LearningAdjustmentProposal(
         public_id=public_id("adjust"),
         learner_id=learner.id,
@@ -267,15 +313,165 @@ def maybe_create_automatic_assessment(
         source_feedback_ids_json=[item.id for item in evidence_rows],
         evidence_summary_json={
             "signal_count": len(evidence_rows),
-            "intent": evidence_rows[-1].feedback_intent,
+            "intent": evidence_intent,
             "minimum_confidence": min(item.decision_confidence for item in evidence_rows),
+            "generation_task_id": task.public_id,
+            "tutoring_session_ids": sorted(
+                {item.tutoring_session_id for item in evidence_rows if item.tutoring_session_id}
+            ),
+            "resource_ids": sorted({item.resource_id for item in evidence_rows}),
+            "resource_types": sorted(
+                {
+                    item.resource_type
+                    for item in db.scalars(
+                        select(LearningResource).where(
+                            LearningResource.id.in_(
+                                {row.resource_id for row in evidence_rows}
+                            )
+                        )
+                    )
+                }
+            ),
+            "supporting_feedback_ids": [item.id for item in supporting_rows],
         },
         validation_result_json={},
         resource_recommendation_json={},
     )
     db.add(proposal)
     db.flush()
+    for row in evidence_rows:
+        row.evidence_status = "consumed"
+        row.adjustment_proposal_id = proposal.id
+    for row in supporting_rows:
+        row.evidence_status = "consumed"
+        row.adjustment_proposal_id = proposal.id
     return _assessment_for_proposal(db, proposal=proposal, path=path, node=node)
+
+
+def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[str, Any]:
+    resource = db.get(LearningResource, session.resource_id) if session.resource_id else None
+    task = db.get(GenerationTask, resource.generation_task_id) if resource else None
+    if resource is None or task is None:
+        return {
+            "node_adjustment_state": "none",
+            "pending_assessment": None,
+            "node_adjustment_result": None,
+            "evidence_scope": None,
+        }
+    task_proposal = db.scalar(
+        select(LearningAdjustmentProposal)
+        .join(
+            LearningResource,
+            LearningResource.id == LearningAdjustmentProposal.source_resource_id,
+        )
+        .where(
+            LearningAdjustmentProposal.learner_id == session.learner_id,
+            LearningResource.generation_task_id == task.id,
+        )
+        .order_by(LearningAdjustmentProposal.id.desc())
+    )
+    if task_proposal is not None and task_proposal.status in {
+        "resource_pending",
+        "resource_started",
+        "resource_skipped",
+    }:
+        scored_assessment = db.scalar(
+            select(PathNodeAssessment).where(
+                PathNodeAssessment.adjustment_proposal_id == task_proposal.id,
+                PathNodeAssessment.status == "scored",
+            )
+        )
+        question = (
+            db.get(DiagnosticQuestion, scored_assessment.question_id)
+            if scored_assessment
+            else None
+        )
+        result = (
+            _serialize_proposal_assessment(
+                proposal=task_proposal,
+                assessment=scored_assessment,
+                question=question,
+                knowledge=(
+                    db.get(KnowledgeItem, question.knowledge_item_id) if question else None
+                ),
+            )
+            if scored_assessment is not None and question is not None
+            else dict(task_proposal.validation_result_json or {})
+        )
+        return {
+            "node_adjustment_state": "confirmed",
+            "pending_assessment": None,
+            "node_adjustment_result": result,
+            "evidence_scope": {
+                "path_node_id": task_proposal.path_node_id,
+                "path_node_title": None,
+                "generation_task_id": task.public_id,
+            },
+        }
+    path = db.scalar(
+        select(LearningPath)
+        .where(
+            LearningPath.learner_id == session.learner_id,
+            LearningPath.domain_code == task.domain_code,
+            LearningPath.status == "active",
+        )
+        .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
+    )
+    payload = normalize_learning_path(path) if path else {}
+    node_id = payload.get("current_node_id")
+    node = (payload.get("node_states") or {}).get(node_id) if node_id else None
+    if (
+        path is None
+        or not isinstance(node, dict)
+        or task.learning_path_id != path.id
+        or task.path_node_id != node_id
+        or not task.is_current_package
+        or not resource.is_current
+    ):
+        return {
+            "node_adjustment_state": "none",
+            "pending_assessment": None,
+            "node_adjustment_result": None,
+            "evidence_scope": None,
+        }
+    proposal = db.scalar(
+        select(LearningAdjustmentProposal)
+        .where(
+            LearningAdjustmentProposal.learner_id == session.learner_id,
+            LearningAdjustmentProposal.learning_path_id == path.id,
+            LearningAdjustmentProposal.path_node_id == node_id,
+        )
+        .order_by(LearningAdjustmentProposal.id.desc())
+    )
+    pending_assessment = None
+    state = "collecting"
+    if proposal is not None and proposal.status == "pending_validation":
+        assessment = db.scalar(
+            select(PathNodeAssessment).where(
+                PathNodeAssessment.adjustment_proposal_id == proposal.id,
+                PathNodeAssessment.status == "pending",
+            )
+        )
+        question = db.get(DiagnosticQuestion, assessment.question_id) if assessment else None
+        knowledge = db.get(KnowledgeItem, question.knowledge_item_id) if question else None
+        if assessment is not None and question is not None:
+            pending_assessment = _serialize_proposal_assessment(
+                proposal=proposal,
+                assessment=assessment,
+                question=question,
+                knowledge=knowledge,
+            )
+            state = "pending_validation"
+    return {
+        "node_adjustment_state": state,
+        "pending_assessment": pending_assessment,
+        "node_adjustment_result": None,
+        "evidence_scope": {
+            "path_node_id": node_id,
+            "path_node_title": node.get("title") or node.get("knowledge_id"),
+            "generation_task_id": task.public_id,
+        },
+    }
 
 
 def request_mastery_assessment(
@@ -519,7 +715,7 @@ def answer_adjustment_assessment(
         if assessment and assessment.adjustment_proposal_id
         else None
     )
-    if assessment is None or proposal is None or proposal.tutoring_session_id != session.id:
+    if assessment is None or proposal is None or proposal.learner_id != session.learner_id:
         raise ValueError("learning_adjustment_assessment_not_found")
     feedback = db.get(Feedback, (proposal.source_feedback_ids_json or [None])[-1])
     if feedback is None:
@@ -549,9 +745,18 @@ def answer_adjustment_assessment(
     question = db.get(DiagnosticQuestion, assessment.question_id)
     path = db.get(LearningPath, proposal.learning_path_id)
     resource = db.get(LearningResource, proposal.source_resource_id)
+    submitting_resource = (
+        db.get(LearningResource, session.resource_id) if session.resource_id else None
+    )
     if question is None or path is None or resource is None or path.status != "active":
         proposal.status = "stale"
         raise ValueError("learning_adjustment_proposal_stale")
+    if (
+        submitting_resource is None
+        or submitting_resource.generation_task_id != resource.generation_task_id
+        or (path.path_json or {}).get("current_node_id") != proposal.path_node_id
+    ):
+        raise ValueError("learning_adjustment_assessment_context_stale")
     try:
         selected = int(answer)
     except (TypeError, ValueError) as exc:
@@ -675,6 +880,16 @@ def answer_adjustment_assessment(
     assessment.passed = confirmed
     assessment.result_json = result
     proposal.validation_result_json = result
+    for pending_feedback in db.scalars(
+        select(Feedback)
+        .join(LearningResource, LearningResource.id == Feedback.resource_id)
+        .where(
+            Feedback.learner_id == proposal.learner_id,
+            Feedback.evidence_status == "eligible",
+            LearningResource.generation_task_id == resource.generation_task_id,
+        )
+    ):
+        pending_feedback.evidence_status = "stale"
     knowledge = db.get(KnowledgeItem, question.knowledge_item_id)
     feedback.profile_change_evidence_json = [
         *list(feedback.profile_change_evidence_json or []),

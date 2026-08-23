@@ -4,6 +4,14 @@ export interface TutoringSession {
   session_id: string
   status: string
   turn_count: number
+  node_adjustment_state: 'collecting' | 'pending_validation' | 'confirmed' | 'none'
+  pending_assessment?: TutoringAssessment | null
+  node_adjustment_result?: TutoringAssessment | null
+  evidence_scope?: {
+    path_node_id: string
+    path_node_title: string | null
+    generation_task_id: string
+  } | null
   messages: Array<{
     message_id: string
     sender: string
@@ -14,6 +22,8 @@ export interface TutoringSession {
     scope_status?: string | null
     assessment?: TutoringAssessment | null
     assessment_unavailable?: string | null
+    evidence_accepted?: boolean
+    evidence_reason?: string | null
     stream_status?: 'streaming' | 'completed' | 'paused' | 'interrupted' | 'failed'
     error_code?: string | null
   }>
@@ -58,6 +68,12 @@ export interface TutoringDecision {
   profile_update_required: boolean
   decision_reason: string
   task_id: string | null
+  node_adjustment_state: TutoringSession['node_adjustment_state']
+  pending_assessment?: TutoringAssessment | null
+  node_adjustment_result?: TutoringAssessment | null
+  evidence_scope?: TutoringSession['evidence_scope']
+  evidence_accepted: boolean
+  evidence_reason?: string | null
 }
 
 export function createTutoringSession(resourceId: string, learnerId?: string) {

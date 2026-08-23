@@ -150,11 +150,15 @@
     </AppDialog>
 
     <AppDrawer v-model="tutorOpen" title="AI 导学" :subtitle="selected?.title || '请选择学习资源'">
-      <div class="tutor-context"><span class="tutor-context-icon"><AppIcon name="resources" /></span><span>当前资源导学会话</span></div>
+      <div class="tutor-context"><span class="tutor-context-icon"><AppIcon name="resources" /></span><span>{{ pathNodeTitle || '当前节点' }} · {{ selected ? typeLabel(selected.resource_type) : '当前资源' }}导学</span></div>
       <div v-if="tutorLoading" class="tutor-state tutor-loading" role="status"><span></span><span></span><span></span><p>正在加载导学记录</p></div>
       <div v-else-if="tutorError" class="tutor-state tutor-error"><p>{{ tutorError }}</p><button class="btn" @click="openTutor">重新加载</button></div>
-      <div v-else-if="tutorMessages.length === 0" class="tutor-state tutor-empty"><span class="tutor-empty-icon"><AppIcon name="resources" /></span><strong>从当前资源开始提问</strong><p>概念解释、步骤拆解和练习建议都会保存在本资源的导学记录中。</p></div>
+      <div v-else-if="tutorMessages.length === 0 && !nodeAssessment" class="tutor-state tutor-empty"><span class="tutor-empty-icon"><AppIcon name="resources" /></span><strong>从当前资源开始提问</strong><p>概念解释、步骤拆解和练习建议都会保存在本资源的导学记录中。</p></div>
       <div v-else ref="messageList" class="tutor-messages" aria-live="polite">
+        <article v-if="nodeAssessment && !assessmentInMessages" class="tutor-message is-agent node-adjustment-message">
+          <div class="tutor-message-meta"><span class="tutor-avatar" aria-hidden="true">AI</span><span>节点学习判断</span></div>
+          <TutoringAssessmentCard :assessment="nodeAssessment" :submitting="assessmentSubmitting === nodeAssessment.assessment_id" :resource-submitting="resourceDecisionSubmitting === nodeAssessment.adjustment_proposal_id" pending-hint="验证结果将作用于当前节点，不会合并其他资源的对话内容。" @answer="answerAssessment(nodeAssessment, $event)" @resource-decision="decideAssessmentResource(nodeAssessment, $event)" />
+        </article>
         <article v-for="message in tutorMessages" :key="message.message_id" class="tutor-message" :class="message.sender === 'learner' ? 'is-learner' : 'is-agent'">
           <div class="tutor-message-meta"><span class="tutor-avatar" aria-hidden="true">{{ message.sender === 'learner' ? '我' : 'AI' }}</span><span>{{ message.sender === 'learner' ? '我' : 'AI 导学' }}</span></div>
           <ResourceMarkdownViewer :content="message.content || (message.stream_status === 'streaming' ? '正在思考…' : '')" />
@@ -162,30 +166,14 @@
           <small v-if="message.stream_status === 'paused'" class="tutor-stream-note">已暂停，保留以上内容。</small>
           <small v-if="message.stream_status === 'interrupted' || message.stream_status === 'failed'" class="tutor-stream-note">回复中断，可继续提问。</small>
           <small v-if="message.sources?.length" class="tutor-sources">依据：{{ message.sources.map(source => source.name).join('、') }}</small>
-          <div v-if="message.assessment?.status === 'pending'" class="tutor-assessment">
-            <small class="assessment-trigger">{{ message.assessment.trigger_reason || '根据近期学习反馈，需要确认当前知识点的掌握情况' }}</small>
-            <strong>{{ message.assessment.hypothesis_type === 'support_down' ? '补强确认' : '掌握检查' }} · 难度 {{ message.assessment.difficulty }}</strong>
-            <p>{{ message.assessment.stem }}</p>
-            <div class="assessment-options">
-              <button v-for="(option, optionIndex) in message.assessment.options" :key="optionIndex" type="button" :disabled="assessmentSubmitting === message.assessment.assessment_id" @click="submitAssessment(message, optionIndex)">{{ option }}</button>
-            </div>
-            <small>本题只用于确认近期交互形成的判断，不会凭单次回答自由改写画像。</small>
-          </div>
-          <div v-else-if="message.assessment?.status === 'scored'" class="tutor-assessment" :class="message.assessment.decision === 'hypothesis_rejected' ? 'is-neutral' : 'is-correct'">
-            <strong>{{ assessmentDecisionLabel(message.assessment.decision) }}</strong>
-            <p>{{ assessmentDecisionDescription(message.assessment) }}</p>
-            <div v-if="message.assessment.resource_recommendation && !message.assessment.resource_decision" class="adjustment-actions">
-              <button class="btn primary" type="button" :disabled="resourceDecisionSubmitting === message.assessment.adjustment_proposal_id" @click="decideAssessmentResource(message, 'generate')">生成新资源</button>
-              <button class="btn" type="button" :disabled="resourceDecisionSubmitting === message.assessment.adjustment_proposal_id" @click="decideAssessmentResource(message, 'skip')">暂不生成</button>
-            </div>
-            <small v-else-if="message.assessment.resource_decision === 'skip'">已暂不生成，之后可从当前节点重新发起。</small>
-          </div>
+          <small v-if="message.evidence_reason" class="tutor-stream-note">{{ message.evidence_reason }}</small>
+          <TutoringAssessmentCard v-if="message.assessment" :assessment="message.assessment" :submitting="assessmentSubmitting === message.assessment.assessment_id" :resource-submitting="resourceDecisionSubmitting === message.assessment.adjustment_proposal_id" @answer="answerAssessment(message.assessment!, $event)" @resource-decision="decideAssessmentResource(message.assessment!, $event)" />
           <small v-if="message.assessment_unavailable" class="tutor-stream-note">当前知识点暂无可用的正式验证题，画像保持不变。</small>
         </article>
       </div>
       <template #footer>
         <div class="tutor-footer-tools">
-          <button class="btn" type="button" :disabled="masteryCheckLoading || tutorSending || tutorLoading" @click="requestTutorMasteryCheck">{{ masteryCheckLoading ? '正在准备...' : '申请掌握检查' }}</button>
+          <button class="btn" type="button" :disabled="masteryCheckLoading || tutorSending || tutorLoading || !tutorSession?.evidence_scope" @click="requestTutorMasteryCheck">{{ masteryCheckLoading ? '正在准备...' : '申请掌握检查' }}</button>
         </div>
         <form class="tutor-form" @submit.prevent="sendTutorMessage">
           <div class="tutor-composer"><textarea v-model="tutorDraft" rows="3" maxlength="2000" aria-label="输入导学问题" placeholder="输入你想了解的问题" :disabled="tutorSending || tutorLoading" @keydown.enter.exact.prevent="sendTutorMessage" /><small>{{ tutorDraft.length }}/2000</small></div>
@@ -218,6 +206,7 @@ import { decideLearningAdjustmentResource } from '@/api/learningAdjustments'
 import ResourceMarkdownViewer from '@/components/ResourceViewer/ResourceMarkdownViewer.vue'
 import GradedQuizViewer from '@/components/ResourceViewer/GradedQuizViewer.vue'
 import ResourceTypeIcon from '@/components/ResourceViewer/ResourceTypeIcon.vue'
+import TutoringAssessmentCard from '@/components/ResourceViewer/TutoringAssessmentCard.vue'
 import { useAuthStore } from '@/stores/authStore'
 
 const router = useRouter()
@@ -291,7 +280,7 @@ const bodyContent = computed(() => {
   const index = content.lastIndexOf(marker)
   return index >= 0 ? content.slice(0, index).trimEnd() : content
 })
-const canTutor = computed(() => Boolean(selected.value && selected.value.review_status === 'passed' && selected.value.is_current !== false))
+const canTutor = computed(() => Boolean(selected.value && selected.value.review_status === 'passed'))
 const quizContent = computed(() => {
   const structured = selected.value?.structured_content
   return structured && structured.resource_type === 'graded_quiz' ? structured : null
@@ -299,6 +288,8 @@ const quizContent = computed(() => {
 const isGradedQuiz = computed(() => Boolean(quizContent.value))
 const showToc = computed(() => !isGradedQuiz.value && headings.value.length > 1)
 const tutorMessages = computed(() => tutorSession.value?.messages || [])
+const nodeAssessment = computed(() => tutorSession.value?.pending_assessment || tutorSession.value?.node_adjustment_result || null)
+const assessmentInMessages = computed(() => Boolean(nodeAssessment.value && tutorMessages.value.some(message => message.assessment?.assessment_id === nodeAssessment.value?.assessment_id)))
 const taskId = computed(() => String(route.query.task_id || '').trim())
 const currentLearnerId = computed(() => {
   if (taskId.value) return String(taskDetail.value?.learner_id || route.query.learner_id || '').trim()
@@ -381,7 +372,7 @@ async function sendTutorMessage() {
       } else if (event.type !== 'agent_status') {
         const reply = tutorSession.value.messages.find(item => item.message_id === event.reply_message_id)
         if (event.type === 'delta' && reply) reply.content += event.content
-        if (event.type === 'completed' && reply) { reply.content = event.content; reply.sources = event.sources; reply.scope_status = event.scope_status; reply.assessment = event.assessment; reply.assessment_unavailable = event.assessment_unavailable; reply.stream_status = 'completed'; showToast(event.decision_reason); if (event.task_id) showToast('已触发后续学习调整，可前往任务记录查看进度。') }
+        if (event.type === 'completed' && reply) { reply.content = event.content; reply.sources = event.sources; reply.scope_status = event.scope_status; reply.assessment = event.assessment; reply.assessment_unavailable = event.assessment_unavailable; reply.evidence_accepted = event.evidence_accepted; reply.evidence_reason = event.evidence_reason; reply.stream_status = 'completed'; tutorSession.value.node_adjustment_state = event.node_adjustment_state; tutorSession.value.pending_assessment = event.pending_assessment || event.assessment; tutorSession.value.node_adjustment_result = event.node_adjustment_result; tutorSession.value.evidence_scope = event.evidence_scope; showToast(event.decision_reason); if (event.task_id) showToast('已触发后续学习调整，可前往任务记录查看进度。') }
         if (event.type === 'paused' && reply) { reply.content = event.content; reply.stream_status = 'paused' }
         if (event.type === 'error' && reply) reply.stream_status = event.recoverable ? 'interrupted' : 'failed'
       }
@@ -397,30 +388,21 @@ async function sendTutorMessage() {
   }
 }
 
-async function submitAssessment(message: TutoringSession['messages'][number], answer: number) {
-  if (!tutorSession.value || !message.assessment || assessmentSubmitting.value) return
-  assessmentSubmitting.value = message.assessment.assessment_id
+async function answerAssessment(assessment: TutoringAssessment, answer: number) {
+  if (!tutorSession.value || assessmentSubmitting.value) return
+  assessmentSubmitting.value = assessment.assessment_id
   try {
-    const result = await answerTutoringAssessment(tutorSession.value.session_id, message.assessment.assessment_id, answer)
-    Object.assign(message.assessment, result, { status: 'scored' })
+    const result = await answerTutoringAssessment(tutorSession.value.session_id, assessment.assessment_id, answer)
+    Object.assign(assessment, result, { status: 'scored' })
+    tutorSession.value.pending_assessment = null
+    tutorSession.value.node_adjustment_state = result.decision === 'hypothesis_rejected' ? 'none' : 'confirmed'
+    tutorSession.value.node_adjustment_result = assessment
     showToast(result.decision_reason)
   } catch {
-    showToast('验证答案提交失败，请稍后重试。')
+    showToast('验证答案提交失败，请刷新后重试。')
   } finally {
     assessmentSubmitting.value = ''
   }
-}
-
-function assessmentDecisionLabel(decision?: TutoringAssessment['decision']) {
-  if (decision === 'confirmed_mastery') return '确认掌握并推进'
-  if (decision === 'confirmed_support_need') return '确认需要补强'
-  return '当前证据不足'
-}
-
-function assessmentDecisionDescription(assessment: TutoringAssessment) {
-  if (assessment.decision === 'confirmed_mastery') return '画像与路线已应用，下一节点资源等待你的确认。'
-  if (assessment.decision === 'confirmed_support_need') return '画像已更新并保留当前节点，补救资源等待你的确认。'
-  return '验证结果与近期反馈不一致，画像和路线保持不变。'
 }
 
 async function requestTutorMasteryCheck() {
@@ -434,10 +416,9 @@ async function requestTutorMasteryCheck() {
   finally { masteryCheckLoading.value = false }
 }
 
-async function decideAssessmentResource(message: TutoringSession['messages'][number], decision: 'generate' | 'skip') {
-  const assessment = message.assessment
-  const proposalId = assessment?.adjustment_proposal_id
-  if (!assessment || !proposalId || resourceDecisionSubmitting.value) return
+async function decideAssessmentResource(assessment: TutoringAssessment, decision: 'generate' | 'skip') {
+  const proposalId = assessment.adjustment_proposal_id
+  if (!proposalId || resourceDecisionSubmitting.value) return
   resourceDecisionSubmitting.value = proposalId
   try {
     const result = await decideLearningAdjustmentResource(proposalId, decision)
@@ -701,11 +682,6 @@ onUnmounted(clearTaskTimer)
 
 /* AI 导学抽屉 */
 .tutor-error p { margin: 0; }
-.tutor-assessment p { margin: 5px 0; background: transparent; padding: 0; color: inherit; }
-.assessment-options { display: grid; gap: 6px; margin: 8px 0; }
-.assessment-options button:hover:not(:disabled) { border-color: var(--blue); background: var(--blue2); }
-.tutor-assessment.is-correct { border-color: #9ed8c1; background: var(--green2); color: #176a4f; }
-.tutor-assessment.is-wrong { border-color: #efc3bd; background: var(--red2); color: #9c372d; }
 @keyframes tutor-blink { 50% { opacity: 0; } }
 
 @media (max-width: 1100px) {
@@ -819,11 +795,6 @@ onUnmounted(clearTaskTimer)
 .tutor-stream-note,
 .tutor-sources { display: block; margin-left: 6px; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .tutor-sources { color: var(--body); }
-.tutor-assessment { margin-top: 4px; border: 1px solid #cbd9f4; border-radius: 9px; background: var(--blue2); padding: 12px; color: var(--info); font-size: 12px; line-height: 1.6; }
-.tutor-assessment small { color: var(--body); }
-.assessment-trigger { display: block; margin-bottom: 6px; color: var(--blue) !important; font-weight: 650; }
-.assessment-options button { min-height: 34px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 7px 9px; color: var(--ink); text-align: left; cursor: pointer; }
-.adjustment-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .tutor-footer-tools { display: flex; justify-content: flex-start; margin-bottom: 8px; }
 .tutor-form { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: stretch; gap: 10px; }
 .tutor-composer { position: relative; min-width: 0; }

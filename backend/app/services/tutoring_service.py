@@ -41,6 +41,7 @@ from app.services.feedback_service import create_feedback_task
 from app.services.learning_adjustment_service import (
     answer_adjustment_assessment,
     maybe_create_automatic_assessment,
+    node_adjustment_context,
 )
 from app.services.profile_service import public_id
 from app.services.contract_mapping import profile_snapshot
@@ -81,6 +82,12 @@ class TutoringTurnResult:
             "profile_update_required": bool(self.feedback.profile_update_required),
             "decision_reason": self.feedback.decision_reason,
             "task_id": self.task.public_id if self.task else None,
+            "node_adjustment_state": self.output.get("node_adjustment_state", "none"),
+            "pending_assessment": self.output.get("pending_assessment"),
+            "node_adjustment_result": self.output.get("node_adjustment_result"),
+            "evidence_scope": self.output.get("evidence_scope"),
+            "evidence_accepted": bool(self.output.get("evidence_accepted")),
+            "evidence_reason": self.output.get("evidence_reason"),
         }
 
 
@@ -404,6 +411,11 @@ def add_learner_message(
     feedback.profile_change_evidence_json = all_evidence
     feedback.decision_confidence = 0.75 if safe_evidence else 0.45
     feedback.decision_reason = output_model.decision_reason
+    feedback.evidence_status = (
+        "eligible"
+        if output_model.feedback_intent.value in {"too_easy", "too_hard"}
+        else "supporting_only"
+    )
     db.flush()
     run.status = "completed"
     run.output_summary_json = {
@@ -445,6 +457,16 @@ def add_learner_message(
     output["scope_status"] = contextual_answer.scope_status
     assessment = None
     assessment_unavailable = None
+    evidence_accepted = feedback.evidence_status == "eligible"
+    evidence_reason = (
+        "本轮自然语言反馈已纳入当前节点的学习判断"
+        if evidence_accepted
+        else {
+            "incorrect": "资源质量问题已进入内容复核，不用于推断学习能力",
+            "confusing": "本轮用于改进讲解，不直接推断学习能力",
+            "helpful": "本轮作为资源体验反馈保存，不触发画像调整",
+        }.get(output_model.feedback_intent.value, "本轮未形成可用于画像判断的证据")
+    )
     try:
         assessment = maybe_create_automatic_assessment(
             db,
@@ -460,8 +482,22 @@ def add_learner_message(
             "learning_adjustment_context_stale",
         }:
             raise
+        else:
+            feedback.evidence_status = "stale"
+            evidence_accepted = False
+            evidence_reason = "当前资源已不是本节点学习包，不参与画像调整"
+    if feedback.evidence_status == "conflict":
+        evidence_accepted = False
+        evidence_reason = "本轮与近期反馈方向冲突，系统将重新收集学习证据"
+    elif feedback.evidence_status == "consumed":
+        evidence_accepted = True
+        evidence_reason = "本轮已与本节点其他学习环节的反馈共同形成掌握检查"
+    adjustment_context = node_adjustment_context(db, session=session)
     output["assessment"] = assessment
     output["assessment_unavailable"] = assessment_unavailable
+    output.update(adjustment_context)
+    output["evidence_accepted"] = evidence_accepted
+    output["evidence_reason"] = evidence_reason
     output["session_id"] = session.public_id
     reply = prepared_reply or TutoringMessage(
         public_id=public_id("msg"),
@@ -477,6 +513,8 @@ def add_learner_message(
         "scope_status": contextual_answer.scope_status,
         "assessment": assessment,
         "assessment_unavailable": assessment_unavailable,
+        "evidence_accepted": evidence_accepted,
+        "evidence_reason": evidence_reason,
         "stream_status": "completed",
     }
     reply.feedback_id = feedback.id
@@ -735,10 +773,12 @@ def serialize_session(db: Session, session: TutoringSession) -> dict:
             .order_by(TutoringMessage.id)
         )
     )
+    adjustment_context = node_adjustment_context(db, session=session)
     return {
         "session_id": session.public_id,
         "status": session.status,
         "turn_count": session.turn_count,
+        **adjustment_context,
         "messages": [
             {
                 "message_id": item.public_id,
@@ -749,6 +789,13 @@ def serialize_session(db: Session, session: TutoringSession) -> dict:
                 "sources": (item.metadata_json or {}).get("sources", []),
                 "scope_status": (item.metadata_json or {}).get("scope_status"),
                 "assessment": (item.metadata_json or {}).get("assessment"),
+                "assessment_unavailable": (item.metadata_json or {}).get(
+                    "assessment_unavailable"
+                ),
+                "evidence_accepted": (item.metadata_json or {}).get(
+                    "evidence_accepted"
+                ),
+                "evidence_reason": (item.metadata_json or {}).get("evidence_reason"),
                 "stream_status": (item.metadata_json or {}).get("stream_status", "completed"),
                 "error_code": (item.metadata_json or {}).get("error_code"),
             }

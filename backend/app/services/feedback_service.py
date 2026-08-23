@@ -164,6 +164,7 @@ def record_quick_feedback(
         profile_change_evidence_json=[{"type": "quick_feedback", "value": feedback_type}],
         decision_confidence=0.35,
         decision_reason="快捷标签或评分仅作为辅助证据，不直接修改能力画像",
+        evidence_status="supporting_only",
     )
     db.add(feedback)
     db.flush()
