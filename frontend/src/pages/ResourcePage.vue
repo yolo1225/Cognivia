@@ -54,8 +54,8 @@
     <div v-else-if="taskDetail?.status !== 'failed' && resources.length === 0" class="empty-card">
       <div class="empty-icon"><AppIcon name="resources" /></div>
       <h2>暂无学习资源</h2>
-      <p>请先在「学习报告」确认初始画像与学习路线，再创建个性化学习包（讲义、实操指南、分阶测试）。</p>
-      <button class="btn primary" @click="openReport">查看学习画像</button>
+      <p>请先在首页查看当前学习路线，并按“建议下一步”创建个性化学习包（讲义、实操指南、分阶测试）。</p>
+      <button class="btn primary" @click="router.push('/dashboard')">返回首页</button>
     </div>
 
     <template v-else-if="taskDetail?.status !== 'failed'">
@@ -101,7 +101,10 @@
               </div>
             </div>
             <div class="reader-tools">
-              <button class="btn" :disabled="!canTutor" @click="openTutor">AI 导学</button>
+              <button class="tutor-trigger" :disabled="!canTutor" @click="openTutor">
+                <span class="tutor-trigger-icon"><AppIcon name="sparkles" /></span>
+                <span><strong>AI 导学</strong><small>针对本页资源</small></span>
+              </button>
               <button class="btn" @click="exportDialog?.open()">导出</button>
             </div>
           </header>
@@ -148,10 +151,11 @@
     </AppDialog>
 
     <AppDrawer v-model="tutorOpen" title="AI 导学" :subtitle="selected?.title || '请选择学习资源'">
+      <div :key="tutorSession?.session_id || selected?.resource_id || 'no-resource'" class="tutor-panel-content">
       <div class="tutor-context"><span class="tutor-context-icon"><AppIcon name="resources" /></span><span>{{ pathNodeTitle || '当前节点' }} · {{ selected ? typeLabel(selected.resource_type) : '当前资源' }}导学</span></div>
       <div v-if="tutorLoading" class="tutor-state tutor-loading" role="status"><span></span><span></span><span></span><p>正在加载导学记录</p></div>
       <div v-else-if="tutorError" class="tutor-state tutor-error"><p>{{ tutorError }}</p><button class="btn" @click="openTutor">重新加载</button></div>
-      <div v-else-if="tutorMessages.length === 0 && !nodeAssessment" class="tutor-state tutor-empty"><span class="tutor-empty-icon"><AppIcon name="resources" /></span><strong>从当前资源开始提问</strong><p>概念解释、步骤拆解和练习建议都会保存在本资源的导学记录中。</p></div>
+      <div v-else-if="tutorMessages.length === 0 && !nodeAssessment" class="tutor-state tutor-empty"><span class="tutor-empty-icon"><AppIcon name="sparkles" /></span><strong>围绕当前资源开始导学</strong><p>概念解释、步骤拆解和练习建议都会保存在本资源的导学记录中。</p><div class="tutor-suggestions"><button type="button" :disabled="tutorSending" @click="askTutor('请用更容易理解的方式解释当前资源的核心内容。')">解释核心内容</button><button type="button" :disabled="tutorSending" @click="askTutor('请带我拆解当前资源中的关键步骤，并说明容易出错的地方。')">拆解关键步骤</button><button type="button" :disabled="tutorSending" @click="askTutor('请针对当前资源出一道练习题，并在我作答后点评。')">来一道练习</button></div></div>
       <div v-else ref="messageList" class="tutor-messages" aria-live="polite">
         <article v-if="nodeAssessment && !assessmentInMessages" class="tutor-message is-agent node-adjustment-message">
           <div class="tutor-message-meta"><span class="tutor-avatar" aria-hidden="true">AI</span><span>节点学习判断</span></div>
@@ -168,6 +172,7 @@
           <TutoringAssessmentCard v-if="message.assessment" :assessment="message.assessment" :submitting="assessmentSubmitting === message.assessment.assessment_id" :resource-submitting="resourceDecisionSubmitting === message.assessment.adjustment_proposal_id" @answer="answerAssessment(message.assessment!, $event)" @resource-decision="decideAssessmentResource(message.assessment!, $event)" />
           <small v-if="message.assessment_unavailable" class="tutor-stream-note">当前知识点暂无可用的正式验证题，画像保持不变。</small>
         </article>
+      </div>
       </div>
       <template #footer>
         <div class="tutor-footer-tools">
@@ -233,6 +238,7 @@ const tutorSession = ref<TutoringSession | null>(null)
 const messageList = ref<HTMLElement | null>(null)
 let streamController: AbortController | null = null
 let activeReplyId = ''
+let tutorOpenRequestId = 0
 const assessmentSubmitting = ref('')
 const masteryCheckLoading = ref(false)
 const resourceDecisionSubmitting = ref('')
@@ -335,33 +341,57 @@ function scrollTutorToLatest() {
 
 async function openTutor() {
   if (!canTutor.value || !selected.value) return
+  const resourceId = selected.value.resource_id
+  const requestId = ++tutorOpenRequestId
+  streamController?.abort()
+  streamController = null
+  activeReplyId = ''
+  tutorSending.value = false
   tutorOpen.value = true
   tutorLoading.value = true
   tutorError.value = ''
   tutorSession.value = null
   try {
-    tutorSession.value = await createTutoringSession(selected.value.resource_id, currentLearnerId.value || undefined)
+    const session = await createTutoringSession(resourceId, currentLearnerId.value || undefined)
+    if (requestId !== tutorOpenRequestId || !tutorOpen.value || selected.value?.resource_id !== resourceId) return
+    tutorSession.value = session
     scrollTutorToLatest()
   } catch {
-    tutorError.value = '无法打开导学会话，请稍后重试。'
+    if (requestId === tutorOpenRequestId && tutorOpen.value && selected.value?.resource_id === resourceId) {
+      tutorError.value = '无法打开导学会话，请稍后重试。'
+    }
   } finally {
-    tutorLoading.value = false
+    if (requestId === tutorOpenRequestId) tutorLoading.value = false
   }
+}
+
+function clearTutorContext() {
+  tutorOpenRequestId += 1
+  streamController?.abort()
+  streamController = null
+  activeReplyId = ''
+  tutorLoading.value = false
+  tutorSending.value = false
+  tutorError.value = ''
+  tutorDraft.value = ''
+  tutorSession.value = null
 }
 
 async function sendTutorMessage() {
   const content = tutorDraft.value.trim()
   if (!content || !tutorSession.value || tutorSending.value) return
+  const sessionId = tutorSession.value.session_id
+  const controller = new AbortController()
   tutorSending.value = true
   tutorError.value = ''
   const pendingId = `pending_${Date.now()}`
   tutorSession.value.messages.push({ message_id: pendingId, sender: 'learner', message_type: 'question', content, created_at: null, stream_status: 'completed' })
   tutorDraft.value = ''
   scrollTutorToLatest()
-  streamController = new AbortController()
+  streamController = controller
   try {
-    await streamTutoringMessage(tutorSession.value.session_id, content, event => {
-      if (!tutorSession.value) return
+    await streamTutoringMessage(sessionId, content, event => {
+      if (tutorSession.value?.session_id !== sessionId || streamController !== controller) return
       if (event.type === 'accepted') {
         activeReplyId = event.reply_message_id
         const learner = tutorSession.value.messages.find(item => item.message_id === pendingId)
@@ -375,15 +405,22 @@ async function sendTutorMessage() {
         if (event.type === 'error' && reply) reply.stream_status = event.recoverable ? 'interrupted' : 'failed'
       }
       scrollTutorToLatest()
-    }, streamController.signal)
-    tutorSession.value.turn_count += 1
+    }, controller.signal)
+    if (tutorSession.value?.session_id === sessionId) tutorSession.value.turn_count += 1
   } catch (error) {
-    if ((error as Error).name !== 'AbortError') await recoverTutorSession()
+    if ((error as Error).name !== 'AbortError' && tutorSession.value?.session_id === sessionId) await recoverTutorSession()
   } finally {
-    tutorSending.value = false
-    streamController = null
-    activeReplyId = ''
+    if (streamController === controller) {
+      tutorSending.value = false
+      streamController = null
+      activeReplyId = ''
+    }
   }
+}
+
+function askTutor(prompt: string) {
+  tutorDraft.value = prompt
+  void sendTutorMessage()
 }
 
 async function answerAssessment(assessment: TutoringAssessment, answer: number) {
@@ -445,7 +482,12 @@ async function recoverTutorSession() {
 
 watch(selectedIdx, () => {
   headings.value = []
-  if (tutorOpen.value) openTutor()
+  clearTutorContext()
+  if (tutorOpen.value) tutorOpen.value = false
+})
+watch(tutorOpen, (open) => {
+  if (open) return
+  clearTutorContext()
 })
 
 async function loadResources() {
@@ -658,6 +700,14 @@ onUnmounted(clearTaskTimer)
 .reader-kicker { color: var(--muted); font-size: 12px; }
 .reader-title h1 { margin-top: 5px; color: var(--ink); font-size: 21px; line-height: 1.35; }
 .reader-tools { display: flex; gap: 8px; flex-shrink: 0; }
+.tutor-trigger { display: flex; align-items: center; gap: 8px; min-height: 42px; border: 1px solid #5575d8; border-radius: 9px; background: linear-gradient(135deg, #315fce, #5769c8); color: #fff; padding: 5px 11px 5px 6px; box-shadow: 0 4px 10px rgb(49 95 206 / .18); text-align: left; transition: transform var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast); }
+.tutor-trigger:hover:not(:disabled) { background: linear-gradient(135deg, #274fae, #4758ad); box-shadow: 0 6px 14px rgb(49 95 206 / .26); transform: translateY(-1px); }
+.tutor-trigger:disabled { border-color: var(--line); background: var(--track); color: var(--muted); box-shadow: none; }
+.tutor-trigger-icon { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 7px; background: rgb(255 255 255 / .18); font-size: 16px; }
+.tutor-trigger > span:last-child { display: grid; gap: 1px; }
+.tutor-trigger strong { font-size: 12px; line-height: 1.2; }
+.tutor-trigger small { color: rgb(255 255 255 / .78); font-size: 10px; line-height: 1.2; }
+.tutor-trigger:disabled small { color: var(--muted); }
 .reader-body { margin-top: 20px; }
 
 .reader-sources { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
@@ -755,6 +805,10 @@ onUnmounted(clearTaskTimer)
 .tutor-loading p { justify-self: center; margin-top: 8px; }
 .tutor-empty-icon { width: 40px; height: 40px; font-size: 20px; }
 .tutor-empty strong { color: var(--ink); font-size: 14px; }
+.tutor-suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin-top: 3px; }
+.tutor-suggestions button { border: 1px solid #cbd9f4; border-radius: 999px; background: var(--blue2); color: var(--blue); padding: 6px 9px; font-size: 11px; line-height: 1.3; }
+.tutor-suggestions button:hover:not(:disabled) { border-color: var(--blue); background: #dfe9ff; }
+.tutor-suggestions button:disabled { opacity: .62; cursor: not-allowed; }
 .tutor-error { border-style: solid; border-color: var(--red); color: var(--red); }
 .tutor-messages {
   display: grid;

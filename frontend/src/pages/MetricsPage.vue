@@ -2,6 +2,7 @@
   <section class="page journey-page">
     <PageHeader title="学习历程" description="你的每次反馈如何驱动系统更新资源——一条可追溯的学习演进记录。">
       <template #actions>
+        <span v-if="domainStore.currentDomainName" class="domain-tag">当前领域：{{ domainStore.currentDomainName }}</span>
         <select v-model="statusFilter" class="field">
           <option value="">全部状态</option>
           <option value="completed">已完成</option>
@@ -28,7 +29,7 @@
       <div class="empty-icon"><AppIcon name="history" /></div>
       <h2>还没有学习记录</h2>
       <p>完成诊断测评并生成第一份学习包后，这里会记录你每次学习与反馈的演进过程。</p>
-      <button class="btn primary" @click="router.push('/dashboard')">返回学习中心</button>
+      <button class="btn primary" @click="router.push('/dashboard')">返回首页</button>
     </div>
 
     <div v-else class="timeline">
@@ -83,14 +84,19 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getGenerationTask, listGenerationTasks, retryGenerationTask, type GenerationTaskDetail } from '@/api/generation'
+import { getLearnerProfile } from '@/api/learners'
 import { formatBeijingDateTime } from '@/utils/dateTime'
 import AppIcon from '@/components/Shared/AppIcon.vue'
 import PageHeader from '@/components/Shared/PageHeader.vue'
 import PageState from '@/components/Shared/PageState.vue'
 import { resourceQualityStatusLabel, resourceQualityStatusTone } from '@/utils/resourceQualityStatus'
+import { useAuthStore } from '@/stores/authStore'
+import { useDomainStore } from '@/stores/domainStore'
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
+const domainStore = useDomainStore()
 const tasks = ref<GenerationTaskDetail[]>([])
 const selected = ref<GenerationTaskDetail | null>(null)
 const expandedId = ref('')
@@ -138,10 +144,26 @@ function eventTone(task: GenerationTaskDetail): string {
 function stopPolling() { if (pollTimer !== null) { window.clearTimeout(pollTimer); pollTimer = null } }
 function schedulePolling() { stopPolling(); if (tasks.value.some(t => activeStatuses.includes(t.status))) pollTimer = window.setTimeout(() => loadTasks({ silent: true }), 2000) }
 function syncSelectedFromList() { if (!expandedId.value) return; const updated = tasks.value.find(t => t.task_id === expandedId.value); if (updated) selected.value = updated }
+async function initializeDomainScope() {
+  const learnerId = authStore.user?.learner_id
+  if (!learnerId) throw new Error('LEARNER_NOT_ASSOCIATED')
+  const profile = await getLearnerProfile(learnerId)
+  await domainStore.initialize(profile.domain_code)
+}
 async function loadTasks(options: { silent?: boolean } = {}) {
   if (!options.silent) loading.value = true
   errorMessage.value = ''
-  try { tasks.value = await listGenerationTasks({ status: statusFilter.value || undefined }) }
+  const learnerId = authStore.user?.learner_id || undefined
+  const domainCode = domainStore.currentDomainCode
+  if (!domainCode) {
+    tasks.value = []
+    selected.value = null
+    expandedId.value = ''
+    if (!options.silent) errorMessage.value = '当前学习领域未就绪，请先返回首页选择领域。'
+    if (!options.silent) loading.value = false
+    return
+  }
+  try { tasks.value = await listGenerationTasks({ learnerId, domainCode, status: statusFilter.value || undefined }) }
   catch { if (!options.silent) errorMessage.value = '无法读取学习历程，请确认后端服务可用。' }
   finally { if (!options.silent) loading.value = false; syncSelectedFromList(); schedulePolling() }
 }
@@ -158,7 +180,10 @@ async function retryFailedTask() { if (!selected.value || !canRetry.value) retur
 const formatDate = formatBeijingDateTime
 
 watch(statusFilter, () => { stopPolling(); loadTasks() })
+watch(() => domainStore.selectionVersion, () => { stopPolling(); expandedId.value = ''; selected.value = null; loadTasks() })
 onMounted(async () => {
+  try { await initializeDomainScope() }
+  catch { errorMessage.value = '无法确定当前学习领域，请返回首页重新选择。' }
   await loadTasks()
   const id = String(route.query.task_id || '')
   if (id) { const item = tasks.value.find(t => t.task_id === id); if (item) await toggleTask(item) }
@@ -177,6 +202,7 @@ onBeforeUnmount(stopPolling)
 .empty-state .btn { margin-top: 12px; }
 
 .journey-hero { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; border: 1px solid #e2e8f2; border-radius: 16px; padding: 20px 22px; background: linear-gradient(135deg, #eef3ff 0%, #f8fafc 55%, #eef8f3 100%); }
+.domain-tag { border: 1px solid var(--line); border-radius: 6px; background: var(--soft); color: var(--body); padding: 7px 9px; font-size: 12px; white-space: nowrap; }
 .hero-stat { display: grid; gap: 4px; }
 .hero-stat strong { color: var(--ink); font-size: 26px; line-height: 1; }
 .hero-stat span { color: var(--muted); font-size: 12px; }

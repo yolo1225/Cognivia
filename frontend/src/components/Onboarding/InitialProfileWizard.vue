@@ -66,7 +66,7 @@
       <div class="result-radar"><RadarChart :values="radarValues" /></div>
       <div class="result-weak"><strong>优先关注</strong><span v-for="item in result.weak_knowledge.slice(0, 3)" :key="item.knowledge_id">{{ item.name }}</span></div>
       <div v-if="resultStages.length" class="result-route"><strong>推荐学习路线</strong><ol><li v-for="stage in resultStages.slice(0, 3)" :key="stage.name"><span>{{ stage.name }}</span><small>{{ stage.description }}</small></li></ol></div>
-      <footer class="wizard-actions"><button class="btn primary" type="button" @click="$emit('complete')">进入学习中心</button></footer>
+      <footer class="wizard-actions"><button class="btn primary" type="button" @click="$emit('complete')">进入首页</button></footer>
     </section>
   </section>
 </template>

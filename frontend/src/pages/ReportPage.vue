@@ -14,8 +14,8 @@
     <div v-else-if="!report" class="card empty-state">
       <div class="empty-icon"><AppIcon name="report" /></div>
       <h2>尚未生成学习报告</h2>
-      <p>请先在学习中心完成学习背景建档和首次能力诊断，系统将据此生成能力画像与学习路线。</p>
-      <button class="btn primary" @click="router.push('/dashboard')">返回学习中心</button>
+      <p>请先在首页完成学习背景建档和首次能力诊断，系统将据此生成能力画像与学习路线。</p>
+      <button class="btn primary" @click="router.push('/dashboard')">返回首页</button>
     </div>
 
     <template v-else>
@@ -159,16 +159,6 @@
         </div>
       </section>
 
-      <!-- 建议下一步 -->
-      <section v-if="report.next_actions?.length" class="card next-card">
-        <div class="next-copy">
-          <h2>建议下一步</h2>
-          <p>{{ report.next_actions[0].description }}</p>
-        </div>
-        <div class="next-actions">
-          <button v-for="a in report.next_actions" :key="a.type" class="btn" :class="{ primary: a.type === 'generation' }" :disabled="creatingGeneration && a.type === 'generation'" @click="handleNextAction(a)">{{ creatingGeneration && a.type === 'generation' ? '正在创建学习包...' : a.label }}</button>
-        </div>
-      </section>
     </template>
   </section>
 </template>
@@ -182,7 +172,6 @@ import { decideLearningAdjustmentResource } from '@/api/learningAdjustments'
 import { useToast } from '@/composables/useToast'
 import { resourceQualityStatusLabel, resourceQualityStatusTone } from '@/utils/resourceQualityStatus'
 import { createGenerationTask } from '@/api/generation'
-import { getDomainReadiness } from '@/api/domains'
 import RadarChart from '@/components/Charts/RadarChart.vue'
 import AppIcon from '@/components/Shared/AppIcon.vue'
 import PageHeader from '@/components/Shared/PageHeader.vue'
@@ -318,22 +307,6 @@ async function loadReport() {
   finally { loading.value = false }
 }
 
-async function handleNextAction(action: LearningReport['next_actions'][number]) {
-  if (action.type !== 'generation') { router.push(action.route); return }
-  if (!report.value?.profile_id || !learnerId.value) return
-  creatingGeneration.value = true
-  try {
-    const readiness = await getDomainReadiness(report.value.domain_code)
-    if (!readiness.generation_ready) {
-      showToast(`当前领域尚未满足生成条件：${readiness.runtime_reasons?.join('、') || 'Candidate RAG 未就绪'}`, 'error')
-      return
-    }
-    const task = await createGenerationTask(report.value.domain_code, report.value.profile_id, learnerId.value)
-    router.push({ path: '/resources', query: { learner_id: learnerId.value, task_id: task.task_id } })
-  } catch {
-    showToast('创建学习包失败，请确认画像状态和生成环境后重试。', 'error')
-  } finally { creatingGeneration.value = false }
-}
 watch(() => [route.query.learner_id, route.query.task_id], () => {
   loadReport()
 })
@@ -455,12 +428,6 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
 .resource-table tr:last-child td { border-bottom: 0; }
 .cell-title { color: var(--ink); font-weight: 600; }
 
-/* 下一步 */
-.next-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-color: #cbd9f4; background: linear-gradient(135deg, #f5f8ff, #fafcff); }
-.next-copy h2 { color: var(--ink); font-size: 17px; }
-.next-copy p { margin-top: 5px; color: var(--muted); font-size: 13px; }
-.next-actions { display: flex; gap: 8px; flex-shrink: 0; }
-
 @media (max-width: 900px) {
   .profile-body { grid-template-columns: 1fr; }
 }
@@ -470,6 +437,5 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
   .hero { flex-direction: column; align-items: flex-start; }
   .hero-stats { width: 100%; }
   .hero-stats .stat { flex: 1; }
-  .next-card { flex-direction: column; align-items: flex-start; }
 }
 </style>

@@ -19,7 +19,15 @@ _FONTS_REGISTERED = False
 
 
 def _safe_stem(value: str) -> str:
-    return "".join(char for char in value if char.isalnum() or char in {"-", "_"})[:80]
+    normalized = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", value)
+    normalized = " ".join(normalized.split()).strip(". ")
+    return normalized[:80]
+
+
+def _export_file_name(resource: LearningResource, audience: str, suffix: str) -> str:
+    file_stem = _safe_stem(resource.title) or _safe_stem(resource.public_id) or "learning-resource"
+    audience_label = {"learner": "学习者版", "teacher": "教师版"}[audience]
+    return f"{file_stem}_v{resource.version}_{audience_label}{suffix}"
 
 
 def _export_content(resource: LearningResource, audience: str) -> str:
@@ -583,7 +591,7 @@ def export_resource(
     EXPORT_ROOT.mkdir(parents=True, exist_ok=True)
     suffix = {"markdown": ".md", "pdf": ".pdf", "word": ".docx"}[export_format]
     export_id = f"exp_{uuid4().hex}"
-    path = EXPORT_ROOT / f"{_safe_stem(resource.public_id)}_{export_id}{suffix}"
+    path = EXPORT_ROOT / _export_file_name(resource, audience, suffix)
     content = _export_content(resource, audience)
     if export_format == "markdown":
         path.write_text(
