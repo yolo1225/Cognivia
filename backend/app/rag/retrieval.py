@@ -31,6 +31,7 @@ from app.rag.candidate_manifest import (
     CandidateManifestError,
     CandidateManifestStore,
 )
+from app.rag.database_manifest_store import DatabaseManifestStore
 from app.rag.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 
 
@@ -156,7 +157,7 @@ class CandidateRetriever:
         db: Session,
         chroma_client: Any,
         embedding_provider: EmbeddingProvider,
-        manifest_store: CandidateManifestStore | None = None,
+        manifest_store: CandidateManifestStore | DatabaseManifestStore | None = None,
         mode: str = "full",
     ) -> None:
         if mode not in {"full", "semantic-only", "explicit-only", "semantic+relation"}:
@@ -164,7 +165,7 @@ class CandidateRetriever:
         self.db = db
         self.client = chroma_client
         self.provider = embedding_provider
-        self.manifests = manifest_store or CandidateManifestStore()
+        self.manifests = manifest_store or DatabaseManifestStore(db)
         self.mode = mode
 
     def execute(self, request: RetrieveKnowledgeInput) -> RetrieveKnowledgeOutput:

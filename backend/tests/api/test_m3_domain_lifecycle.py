@@ -115,6 +115,23 @@ def test_publish_failure_uses_structured_readiness_error(monkeypatch) -> None:
         app.dependency_overrides.clear()
 
 
+def test_admin_can_create_domain_without_learning_directions() -> None:
+    testing_session = build_test_session()
+    app.dependency_overrides[get_db] = override_db(testing_session)
+    app.dependency_overrides[get_current_user] = lambda: Principal("admin", "admin")
+    try:
+        response = TestClient(app).post(
+            "/api/v1/domains",
+            json={"domain_code": "document_only", "name": "文档驱动领域"},
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["learning_directions"] == []
+        assert data["status"] == "draft"
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_target_domain_switch_restores_domain_specific_profile() -> None:
     testing_session = build_test_session()
     with testing_session() as db:

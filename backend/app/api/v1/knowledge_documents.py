@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from urllib.parse import unquote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,12 +15,17 @@ from app.services.knowledge_document_service import (
     KnowledgeDocumentError,
     create_document,
     delete_document,
-    process_knowledge_document,
     retry_document,
     serialize_document,
 )
+from app.services.knowledge_import_orchestrator import create_import_run, schedule_import
 
 router = APIRouter()
+
+
+def process_knowledge_document(run_id: str) -> None:
+    """Compatibility scheduling hook retained for existing tests and callers."""
+    schedule_import(run_id)
 
 
 def _get_document(db: Session, document_id: str) -> KnowledgeDocument:
@@ -52,7 +57,15 @@ def list_documents(domain_code: str = Query(...), db: Session = Depends(get_db))
             "summary": {
                 "total": len(documents),
                 "ready": statuses["ready"],
-                "processing": statuses["queued"] + statuses["parsing"] + statuses["indexing"],
+                "processing": sum(
+                    statuses[value]
+                    for value in (
+                        "queued", "parsing", "extracting", "graph_generation",
+                        "graph_review", "question_generation", "question_review",
+                        "question_repair", "validating", "staging", "indexing",
+                        "smoke_testing", "publishing",
+                    )
+                ),
                 "failed": statuses["failed"],
                 "chunks": sum(
                     document.chunk_count for document in documents if document.status == "ready"
@@ -65,7 +78,6 @@ def list_documents(domain_code: str = Query(...), db: Session = Depends(get_db))
 @router.post("", response_model=ApiResponse)
 async def upload_document(
     request: Request,
-    background_tasks: BackgroundTasks,
     domain_code: str = Query(...),
     source_title: str = Query(""),
     license_note: str = Query(""),
@@ -94,8 +106,9 @@ async def upload_document(
     except KnowledgeDocumentError as exc:
         code = 409 if "已存在" in str(exc) else 422
         raise HTTPException(status_code=code, detail=str(exc)) from exc
-    background_tasks.add_task(process_knowledge_document, document.public_id)
-    return ok(serialize_document(document))
+    run = create_import_run(db, document)
+    process_knowledge_document(run.public_id)
+    return ok({**serialize_document(document), "import_id": run.public_id, "run_id": run.public_id, "input_version": run.input_version})
 
 
 @router.get("/{document_id}", response_model=ApiResponse)
@@ -106,7 +119,6 @@ def get_document(document_id: str, db: Session = Depends(get_db)) -> ApiResponse
 @router.post("/{document_id}/retry", response_model=ApiResponse)
 def retry_failed_document(
     document_id: str,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> ApiResponse:
     document = _get_document(db, document_id)
@@ -114,15 +126,16 @@ def retry_failed_document(
         retry_document(db, document)
     except KnowledgeDocumentError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    background_tasks.add_task(process_knowledge_document, document.public_id)
-    return ok(serialize_document(document))
+    run = create_import_run(db, document)
+    process_knowledge_document(run.public_id)
+    return ok({**serialize_document(document), "import_id": run.public_id, "run_id": run.public_id, "input_version": run.input_version})
 
 
 @router.delete("/{document_id}", response_model=ApiResponse)
 def remove_document(document_id: str, db: Session = Depends(get_db)) -> ApiResponse:
     document = _get_document(db, document_id)
     try:
-        delete_document(db, document)
+        result = delete_document(db, document)
     except KnowledgeDocumentError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return ok({"document_id": document_id, "status": "deleted"})
+    return ok(result)

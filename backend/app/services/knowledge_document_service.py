@@ -13,11 +13,9 @@ from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
 from app.models import (
-    DiagnosticQuestion,
     KnowledgeDocument,
     KnowledgeImportCandidate,
     KnowledgeItem,
-    KnowledgeRelation,
 )
 from app.services.knowledge_update_service import mark_affected_content
 
@@ -154,35 +152,39 @@ def process_knowledge_document(document_id: str) -> None:
 def retry_document(db: Session, document: KnowledgeDocument) -> None:
     if document.file_type == "seed_package":
         raise KnowledgeDocumentError("系统知识包不需要重新处理")
-    if document.status not in {"failed", "queued", "review_pending"}:
-        raise KnowledgeDocumentError("只有失败或排队中的文件可以重新处理")
+    if document.status not in {
+        "failed", "needs_attention", "interrupted", "queued", "review_pending", "ready"
+    }:
+        raise KnowledgeDocumentError("只有已发布、失败或排队中的文件可以重新处理")
     document.status = "queued"
     document.error_summary = None
     db.commit()
 
 
-def delete_document(db: Session, document: KnowledgeDocument) -> None:
+def delete_document(db: Session, document: KnowledgeDocument) -> dict[str, object]:
     if document.file_type == "seed_package":
         raise KnowledgeDocumentError("系统内置知识包不能删除")
-    if document.status in {"parsing", "indexing"}:
+    if document.status in {
+        "queued", "parsing", "extracting", "graph_generation", "graph_review",
+        "question_generation", "question_review", "question_repair", "validating",
+        "staging", "indexing", "smoke_testing", "publishing",
+    }:
         raise KnowledgeDocumentError("文件正在处理中，暂时不能删除")
-    items = list(
-        db.scalars(select(KnowledgeItem).where(KnowledgeItem.source_document_id == document.id))
-    )
+    from app.models import KnowledgeItemSource
+
+    sources = list(db.scalars(select(KnowledgeItemSource).where(
+        KnowledgeItemSource.document_id == document.id,
+        KnowledgeItemSource.status.in_(("staged", "published")),
+    )))
+    item_ids = {source.knowledge_item_id for source in sources}
+    items = list(db.scalars(select(KnowledgeItem).where(KnowledgeItem.id.in_(item_ids)))) if item_ids else []
     db.execute(
         delete(KnowledgeImportCandidate).where(KnowledgeImportCandidate.document_id == document.id)
     )
+    orphaned: list[KnowledgeItem] = []
+    for source in sources:
+        source.status = "retracted"
     if items:
-        item_ids = [item.id for item in items]
-        db.execute(
-            delete(DiagnosticQuestion).where(DiagnosticQuestion.knowledge_item_id.in_(item_ids))
-        )
-        db.execute(
-            delete(KnowledgeRelation).where(
-                (KnowledgeRelation.source_item_id.in_(item_ids))
-                | (KnowledgeRelation.target_item_id.in_(item_ids))
-            )
-        )
         mark_affected_content(
             db,
             domain_code=document.domain_code,
@@ -190,17 +192,29 @@ def delete_document(db: Session, document: KnowledgeDocument) -> None:
             reason="knowledge_document_deleted",
         )
         for item in items:
-            db.delete(item)
+            remaining = db.scalar(select(KnowledgeItemSource.id).where(
+                KnowledgeItemSource.knowledge_item_id == item.id,
+                KnowledgeItemSource.document_id != document.id,
+                KnowledgeItemSource.status == "published",
+            ))
+            if remaining is None:
+                item.status = "needs_attention"
+                item.needs_reembedding = True
+                orphaned.append(item)
         db.flush()
-    path = _document_path(document)
-    if path.exists():
-        path.unlink()
-    if path.parent.exists():
-        path.parent.rmdir()
-    document.status = "deleted"
+    # A withdrawal changes publication state but keeps the immutable source file
+    # available for evidence review and audit.
+    document.status = "withdrawn"
     document.deleted_at = datetime.now(UTC)
     document.error_summary = None
     db.commit()
+    return {
+        "document_id": document.public_id,
+        "status": "withdrawn",
+        "sources_retracted": len(sources),
+        "knowledge_needs_attention": len(orphaned),
+        "affected_knowledge": len(items),
+    }
 
 
 def serialize_document(document: KnowledgeDocument) -> dict[str, object]:

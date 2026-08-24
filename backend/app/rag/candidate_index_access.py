@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.rag.candidate_manifest import CandidateIndexManifest, CandidateManifestError, CandidateManifestStore
+from app.rag.database_manifest_store import DatabaseManifestStore
 
 
 class CandidateIndexUnavailable(RuntimeError):
@@ -14,7 +15,7 @@ class CandidateIndexAccess:
 
     def __init__(self, chroma_client: Any, manifest_store: CandidateManifestStore | None = None) -> None:
         self.client = chroma_client
-        self.manifests = manifest_store or CandidateManifestStore()
+        self.manifests = manifest_store or DatabaseManifestStore()
 
     def active(self, domain_code: str) -> tuple[CandidateIndexManifest, Any]:
         try:

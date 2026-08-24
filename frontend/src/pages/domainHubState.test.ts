@@ -5,6 +5,7 @@ import {
   configList,
   domainReadiness,
   filterKnowledgeItems,
+  indexUiState,
 } from "./domainHubState";
 
 const items: KnowledgeItem[] = [
@@ -36,6 +37,12 @@ const items: KnowledgeItem[] = [
   },
 ];
 
+const prefixedItem: KnowledgeItem = {
+  ...items[0],
+  knowledge_id: "3",
+  name: "AI 机器学习基础知识库 (ai_ml_basics) / 77. Bahdanau 注意力机制",
+};
+
 it("combines knowledge filters", () => {
   expect(
     filterKnowledgeItems(items, {
@@ -45,6 +52,16 @@ it("combines knowledge filters", () => {
       indexStatus: "pending",
     }).map((item) => item.knowledge_id),
   ).toEqual(["1"]);
+});
+
+it("filters by the normalized knowledge name instead of a source-library prefix", () => {
+  const filters = {
+    category: "all",
+    difficulty: "all",
+    indexStatus: "all",
+  } as const;
+  expect(filterKnowledgeItems([prefixedItem], { ...filters, keyword: "Bahdanau" })).toHaveLength(1);
+  expect(filterKnowledgeItems([prefixedItem], { ...filters, keyword: "ai_ml_basics" })).toHaveLength(0);
 });
 
 it("derives readiness from real targets and failures", () => {
@@ -62,6 +79,13 @@ it("derives readiness from real targets and failures", () => {
   ]);
 });
 
+it("does not report a ready index from pending embeddings alone", () => {
+  expect(indexUiState(false, 0, "success")).toBe("needs_rebuild");
+  expect(indexUiState(true, 0, "success")).toBe("ready");
+  expect(indexUiState(true, 2, "success")).toBe("needs_rebuild");
+  expect(indexUiState(undefined, 0, "running")).toBe("running");
+});
+
 describe("domain config parsing", () => {
   it("reads existing config values", () => {
     const domain = {
@@ -74,15 +98,28 @@ describe("domain config parsing", () => {
     expect(configList(domain)).toEqual({
       abilityDimensions: ["理论"],
       resourceTypes: ["lecture"],
-      mvpTargets: [["knowledge_items", 50]],
+      mvpTargets: [
+        ["minimum_published_knowledge", 50],
+        ["minimum_diagnostic_questions", 10],
+      ],
+      learningDirections: [],
+      sources: {
+        abilityDimensions: "领域配置",
+        resourceTypes: "领域配置",
+        mvpTargets: "领域配置",
+        learningDirections: "等待文档导入",
+      },
     });
   });
 
   it("returns empty groups for missing config", () => {
-    expect(configList(null)).toEqual({
-      abilityDimensions: [],
-      resourceTypes: [],
-      mvpTargets: [],
-    });
+    const config = configList(null);
+    expect(config.abilityDimensions).toHaveLength(5);
+    expect(config.resourceTypes).toEqual(["lecture", "practice_guide", "graded_quiz"]);
+    expect(config.mvpTargets).toEqual([
+      ["minimum_published_knowledge", 10],
+      ["minimum_diagnostic_questions", 10],
+    ]);
+    expect(config.sources.abilityDimensions).toBe("系统默认");
   });
 });

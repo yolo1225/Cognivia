@@ -125,7 +125,6 @@ def test_text_document_is_parsed_into_review_candidates(tmp_path, monkeypatch) -
         assert {candidate.candidate_type for candidate in candidates} == {
             "knowledge_item",
             "diagnostic_question",
-            "knowledge_relation",
         }
         assert all(candidate.source_locator_json for candidate in candidates)
     try:

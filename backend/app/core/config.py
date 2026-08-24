@@ -63,6 +63,13 @@ class Settings(BaseSettings):
     allow_fixture_llm: bool = False
     enable_evaluation_overrides: bool = False
     enable_evaluation_runner: bool = False
+    enable_knowledge_import_models: bool = False
+    knowledge_import_model_concurrency: int = 4
+    knowledge_import_generation_concurrency: int = 3
+    knowledge_import_review_concurrency: int = 2
+    knowledge_import_batch_target_tokens: int = 8000
+    knowledge_import_batch_lease_seconds: int = 120
+    knowledge_import_heartbeat_seconds: int = 30
     review_rule_version: str = "review-v5-claim-policy"
 
     log_level: str = "INFO"

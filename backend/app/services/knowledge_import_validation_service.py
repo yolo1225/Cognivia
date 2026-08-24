@@ -24,6 +24,10 @@ ALLOWED_EVIDENCE = {
 }
 
 
+def _is_blank(value: object) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
 def validate_import(db: Session, document_id: int) -> dict[str, int]:
     document = db.get(KnowledgeDocument, document_id)
     if document is None:
@@ -39,6 +43,7 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
     by_id = {item.public_id: item for item in candidates}
     names: set[str] = set()
     graph: dict[str, list[str]] = defaultdict(list)
+    relation_keys: set[tuple[str, str, str]] = set()
     invalid = 0
     for item in candidates:
         payload = item.payload_json or {}
@@ -75,9 +80,8 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
             if set(payload.get("evidence_capabilities") or []) - ALLOWED_EVIDENCE:
                 errors.append("证据能力不合法")
             normalized = name.casefold()
-            if (
-                normalized in names
-                or db.scalar(
+            if normalized in names or (
+                payload.get("action") == "create" and db.scalar(
                     select(KnowledgeItem.id).where(
                         KnowledgeItem.domain_code == item.domain_code, KnowledgeItem.name == name
                     )
@@ -90,9 +94,9 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
             if payload.get("knowledge_candidate_id") not in by_id:
                 errors.append("关联知识候选不存在")
             if (
-                not payload.get("stem")
-                or not payload.get("answer")
-                or not payload.get("explanation")
+                _is_blank(payload.get("stem"))
+                or _is_blank(payload.get("answer"))
+                or _is_blank(payload.get("explanation"))
             ):
                 errors.append("题干、答案和解析不能为空")
             if payload.get("question_type") in {"choice", "single_choice"}:
@@ -101,14 +105,35 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
                 answer_is_index = isinstance(answer, int) and 0 <= answer < len(options)
                 if not answer_is_index and answer not in options:
                     errors.append("选择题答案不在选项中")
+                if len(options) != len({str(option).strip() for option in options}):
+                    errors.append("选择题选项重复")
+            if "来源章节的知识主题" in str(payload.get("stem") or ""):
+                errors.append("诊断题不能只考查章节标题识别")
+            if _is_blank(payload.get("source_quote")):
+                errors.append("诊断题缺少来源依据")
         elif item.candidate_type == "knowledge_relation":
             source, target = payload.get("source_candidate_id"), payload.get("target_candidate_id")
+            relation_type = str(payload.get("relation_type") or "")
             if source == target:
                 errors.append("知识关系不能自环")
             if source not in by_id or target not in by_id:
                 errors.append("知识关系端点不存在")
-            if payload.get("relation_type") == "prerequisite":
+            if relation_type not in {"prerequisite", "depends_on", "next_step", "related_to"}:
+                errors.append("知识关系类型不合法")
+            key = (str(source), str(target), relation_type)
+            if key in relation_keys:
+                errors.append("知识关系重复")
+            relation_keys.add(key)
+            if not (
+                payload.get("source_quote")
+                or payload.get("evidence_chunk_ids")
+                or (item.source_locator_json or {}).get("chunk_id")
+            ):
+                errors.append("知识关系缺少证据")
+            if relation_type in {"prerequisite", "next_step"}:
                 graph[source].append(target)
+            elif relation_type == "depends_on":
+                graph[target].append(source)
         else:
             errors.append("未知候选类型")
         item.validation_errors_json = errors

@@ -23,7 +23,7 @@ export interface DomainMutationPayload {
   domain_code?: string;
   name: string;
   description: string;
-  learning_directions: LearningDirection[];
+  learning_directions?: LearningDirection[];
 }
 
 export interface DomainStats {

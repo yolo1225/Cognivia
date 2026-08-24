@@ -4,8 +4,8 @@ export const relationTypes = ['prerequisite', 'dependent', 'related'] as const
 export type RelationType = (typeof relationTypes)[number]
 
 export const relationMeta: Record<string, { label: string; color: string; lineType: 'solid' | 'dashed' | 'dotted' }> = {
-  prerequisite: { label: '前置关系', color: '#315fce', lineType: 'solid' },
-  dependent: { label: '后继关系', color: '#138560', lineType: 'solid' },
+  prerequisite: { label: '显式前置', color: '#315fce', lineType: 'solid' },
+  dependent: { label: '教学顺序', color: '#138560', lineType: 'solid' },
   related: { label: '关联关系', color: '#b96308', lineType: 'dashed' },
 }
 
@@ -42,7 +42,28 @@ export function filterRelations(relations: KnowledgeRelation[], enabledTypes: It
 export function findKnowledgeItem(items: KnowledgeItem[], query: string) {
   const normalized = query.trim().toLocaleLowerCase()
   if (!normalized) return null
-  return items.find((item) => item.name.toLocaleLowerCase().includes(normalized)) ?? null
+  return items.find((item) => knowledgeNameLabel(item).toLocaleLowerCase().includes(normalized)) ?? null
+}
+
+export function relativeRelationLabel(
+  relation: KnowledgeRelation,
+  selectedId: string | null,
+) {
+  if (relation.relation_type === 'related') return '关联知识'
+  return relation.source_id === selectedId ? '后继知识' : '前置知识'
+}
+
+export function knowledgeNameLabel(item: Pick<KnowledgeItem, 'name' | 'domain_code'>) {
+  const sourcePrefix = /^.*?\([a-z][a-z0-9_-]*\)\s*[/／]\s*\d+\s*[.．、:-]?\s*/i
+  return item.name.replace(sourcePrefix, '').trim() || item.name
+}
+
+export function resolveKnowledgeSelection(
+  items: KnowledgeItem[],
+  requestedId: string | null | undefined,
+) {
+  if (!requestedId) return null
+  return items.some((item) => item.knowledge_id === requestedId) ? requestedId : null
 }
 
 export function getNeighborIds(relations: KnowledgeRelation[], knowledgeId: string | null) {
@@ -74,12 +95,13 @@ export function buildGraphModel(
     nodes: items.map((item) => {
       const isSelected = item.knowledge_id === selectedId
       const isNeighbor = !selectedId || neighbors.has(item.knowledge_id)
-      const isMatched = Boolean(normalizedQuery) && item.name.toLocaleLowerCase().includes(normalizedQuery)
+      const displayName = knowledgeNameLabel(item)
+      const isMatched = Boolean(normalizedQuery) && displayName.toLocaleLowerCase().includes(normalizedQuery)
       const category = categoryIndex.get(item.category || '未分类') ?? 0
 
       return {
         id: item.knowledge_id,
-        name: item.name,
+        name: displayName,
         category,
         value: item.difficulty,
         symbolSize: isSelected ? 46 : 28 + item.difficulty * 3,

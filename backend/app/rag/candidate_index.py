@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import uuid
+from copy import copy
 from collections import defaultdict
 from datetime import UTC, datetime
 from time import perf_counter
@@ -14,7 +15,7 @@ from chromadb.errors import NotFoundError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
+from app.models import DiagnosticQuestion, KnowledgeImportCandidate, KnowledgeItem, KnowledgeRelation
 from app.rag.candidate_chunker import CHUNKER_VERSION, CandidateChunk, chunk_knowledge_item
 from app.rag.candidate_manifest import (
     DISTANCE_METRIC,
@@ -24,6 +25,7 @@ from app.rag.candidate_manifest import (
     compute_index_version,
 )
 from app.rag.embedding_provider import EmbeddingProvider
+from app.rag.database_manifest_store import DatabaseManifestStore
 from app.scripts.validate_rag_seed import source_data_version
 
 
@@ -172,7 +174,7 @@ class CandidateIndexBuilder:
         self.db = db
         self.client = chroma_client
         self.provider = embedding_provider
-        self.manifests = manifest_store or CandidateManifestStore()
+        self.manifests = manifest_store or DatabaseManifestStore(db)
         self._now = now or (lambda: datetime.now(UTC))
 
     def _collection_exists(self, name: str) -> bool:
@@ -428,6 +430,37 @@ class CandidateIndexBuilder:
                 .order_by(KnowledgeItem.public_id)
             )
         )
+        if staged_document_id is not None:
+            projected: dict[str, KnowledgeItem] = {item.public_id: item for item in items}
+            candidates = self.db.scalars(
+                select(KnowledgeImportCandidate).where(
+                    KnowledgeImportCandidate.document_id == staged_document_id,
+                    KnowledgeImportCandidate.candidate_type == "knowledge_item",
+                    KnowledgeImportCandidate.status == "approved",
+                )
+            )
+            for import_candidate in candidates:
+                payload = import_candidate.payload_json or {}
+                if payload.get("action") not in {"update", "merge"}:
+                    continue
+                target = projected.get(str(payload.get("target_public_id") or ""))
+                if target is None:
+                    continue
+                clone = copy(target)
+                clone.name = str(payload.get("name") or target.name)
+                clone.category = str(payload.get("category") or target.category)
+                clone.difficulty = int(payload.get("difficulty") or target.difficulty)
+                clone.tags_json = list(payload.get("tags") or target.tags_json or [])
+                clone.evidence_capabilities_json = list(
+                    payload.get("evidence_capabilities") or target.evidence_capabilities_json or []
+                )
+                clone.content_md = str(payload.get("content") or target.content_md)
+                clone.source_title = str(payload.get("source_title") or target.source_title)
+                clone.source_url = payload.get("source_url") or target.source_url
+                clone.license_note = str(payload.get("license_note") or target.license_note)
+                clone.needs_reembedding = True
+                projected[target.public_id] = clone
+            items = sorted(projected.values(), key=lambda item: item.public_id)
         if not items:
             raise CandidateIndexError(f"no knowledge items found for domain_code={domain_code}")
         chunks_by_id = self._chunks_for(items)
@@ -613,7 +646,15 @@ class CandidateIndexBuilder:
             if recorded is not None and self._collection_exists(recorded.active_collection)
             else None
         )
-        if previous and previous.active_collection != candidate.previous_collection:
+        if previous and previous.active_collection == candidate.active_collection:
+            if (
+                previous.index_version != candidate.index_version
+                or previous.source_data_version != candidate.source_data_version
+            ):
+                raise CandidateIndexError(
+                    "active manifest version does not match candidate payload"
+                )
+        elif previous and previous.active_collection != candidate.previous_collection:
             raise CandidateIndexError("active manifest changed while candidate was being built")
         if clear_reembedding:
             items = list(

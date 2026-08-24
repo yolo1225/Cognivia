@@ -230,6 +230,9 @@
               清除筛选
             </button>
           </div>
+          <p class="knowledge-results" aria-live="polite">
+            显示 {{ filteredKnowledgeItems.length }} 个，共 {{ knowledgeItems.length }} 个知识点
+          </p>
           <div v-if="filteredKnowledgeItems.length === 0" class="empty-view">
             <strong>{{
               knowledgeItems.length
@@ -253,7 +256,7 @@
               新增知识点
             </button>
           </div>
-          <div v-else class="table-wrap">
+          <div v-else class="table-wrap knowledge-table-wrap">
             <table class="knowledge-table">
               <thead>
                 <tr>
@@ -269,9 +272,11 @@
                 <tr
                   v-for="item in filteredKnowledgeItems"
                   :key="item.knowledge_id"
+                  :ref="(element) => setKnowledgeRowRef(item.knowledge_id, element)"
+                  :class="{ 'is-located': highlightedKnowledgeId === item.knowledge_id }"
                 >
                   <td>
-                    <strong>{{ item.name }}</strong
+                    <strong :title="item.name">{{ knowledgeNameLabel(item) }}</strong
                     ><small>{{
                       item.tags.length
                         ? item.tags.join(" · ")
@@ -287,7 +292,9 @@
                         :class="{ on: level <= item.difficulty }" /></span
                     ><small>{{ item.difficulty }}/5</small>
                   </td>
-                  <td class="source-col">{{ item.source_title }}</td>
+                  <td class="source-col">
+                    <span class="source-text" :title="item.source_title">{{ item.source_title }}</span>
+                  </td>
                   <td>
                     <StatusBadge
                       :label="item.needs_reembedding ? '待重新索引' : '已同步'"
@@ -295,9 +302,10 @@
                     />
                   </td>
                   <td class="table-actions">
-                    <button class="btn text" @click="openKnowledgeEditor(item)">
-                      查看与编辑
-                    </button>
+                    <div class="row-actions">
+                      <button class="btn text" @click="locateInGraph(item.knowledge_id)">图谱定位</button>
+                      <button class="btn text" @click="openKnowledgeEditor(item)">查看与编辑</button>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -395,6 +403,9 @@
             :items="knowledgeItems"
             :relations="relations"
             :loading="graphLoading"
+            :selected-knowledge-id="selectedKnowledgeId"
+            @select="selectedKnowledgeId = $event"
+            @edit="returnToKnowledgeItem"
           />
         </div>
       </section>
@@ -403,19 +414,15 @@
         <section class="panel">
           <div class="section-head">
             <div>
-              <h2>领域规则</h2>
-              <p>以下内容来自当前领域真实配置，供诊断、资源生成与验收读取。</p>
+              <h2>当前生效规则</h2>
+              <p>合并展示系统默认、文档自动生成和领域自定义规则。</p>
             </div>
-            <span class="readonly-badge">当前只读</span>
+            <span class="readonly-badge">自动生效</span>
           </div>
-          <div v-if="!hasDomainConfig" class="empty-view">
-            <strong>当前领域未保存结构化规则</strong>
-            <p>页面不会使用硬编码内容替代缺失配置。</p>
-          </div>
-          <div v-else class="rule-sections">
+          <div class="rule-sections">
             <div class="rule-block">
               <div>
-                <h3>能力维度</h3>
+                <h3>能力维度 <small class="rule-source">{{ parsedConfig.sources.abilityDimensions }}</small></h3>
                 <p>用于诊断画像和学习报告。</p>
               </div>
               <div class="rule-values">
@@ -430,7 +437,7 @@
             </div>
             <div class="rule-block">
               <div>
-                <h3>资源类型</h3>
+                <h3>资源类型 <small class="rule-source">{{ parsedConfig.sources.resourceTypes }}</small></h3>
                 <p>当前领域允许生成的资源形态。</p>
               </div>
               <div class="rule-values">
@@ -443,7 +450,7 @@
             </div>
             <div class="rule-block">
               <div>
-                <h3>MVP 数量目标</h3>
+                <h3>发布数量门槛 <small class="rule-source">{{ parsedConfig.sources.mvpTargets }}</small></h3>
                 <p>领域校验使用的最低数据规模。</p>
               </div>
               <div class="target-list">
@@ -452,6 +459,17 @@
                   ><strong>{{ entry[1] }}</strong>
                 </div>
                 <small v-if="!parsedConfig.mvpTargets.length">未配置</small>
+              </div>
+            </div>
+            <div class="rule-block">
+              <div>
+                <h3>学习方向 <small class="rule-source">{{ parsedConfig.sources.learningDirections }}</small></h3>
+                <p>上传文档后由系统自动生成，可在领域编辑中调整名称和标签映射。</p>
+              </div>
+              <div class="rule-values rule-values-action">
+                <span v-for="direction in parsedConfig.learningDirections" :key="direction.value">{{ direction.label }}</span>
+                <small v-if="!parsedConfig.learningDirections.length">尚未生成，发布首份导入文档后自动出现</small>
+                <button v-if="parsedConfig.learningDirections.length" class="btn small" type="button" @click="openDomainEditor(selectedDomain || undefined)">编辑学习方向</button>
               </div>
             </div>
           </div>
@@ -463,13 +481,13 @@
           <div class="section-head">
             <div>
               <h2>Candidate RAG 索引</h2>
-              <p>知识更新后必须重建索引，生成任务才会使用最新知识。</p>
+              <p>以当前活动索引校验为准；待重新嵌入数量为 0 不代表活动索引已同步。</p>
             </div>
             <StatusBadge :label="indexStatusLabel" :type="indexStatusType" />
           </div>
           <div class="operation-stats">
             <div>
-              <span>待重新索引</span
+              <span>待重新嵌入知识点</span
               ><strong>{{ stats?.pending_embeddings || 0 }}</strong>
             </div>
             <div>
@@ -483,9 +501,9 @@
             </div>
           </div>
           <div
-            v-if="rebuildStatus && rebuildStatus.status !== 'idle'"
+            v-if="showRebuildMessage"
             class="operation-message"
-            :class="rebuildStatus.status"
+            :class="rebuildStatus?.status || currentIndexState"
           >
             <strong>{{ rebuildMessageTitle }}</strong>
             <p>{{ rebuildMessageBody }}</p>
@@ -552,14 +570,14 @@
     <AppDrawer
       v-model="domainDrawerOpen"
       :title="editingDomain ? '编辑领域' : '新建领域'"
-      subtitle="配置基本信息和学习方向；就绪门槛由系统统一管理"
+      :subtitle="editingDomain ? '可调整系统生成的学习方向' : '创建后上传文档，系统将自动生成学习方向'"
     >
       <form id="domain-form" class="drawer-form" @submit.prevent="saveDomain">
         <label>领域代码<input v-model.trim="domainForm.domain_code" class="field" required maxlength="64" pattern="[a-z][a-z0-9_]*" :disabled="Boolean(editingDomain)" /></label>
         <label>领域名称<input v-model.trim="domainForm.name" class="field" required maxlength="128" /></label>
         <label>领域说明<textarea v-model.trim="domainForm.description" rows="3" maxlength="500" /></label>
-        <div class="section-head"><div><strong>学习方向</strong><p>至少 1 项，最多 6 项。</p></div><button class="btn" type="button" :disabled="domainForm.learning_directions.length >= 6" @click="addDirection">添加方向</button></div>
-        <div v-for="(direction, index) in domainForm.learning_directions" :key="index" class="rule-block">
+        <div v-if="editingDomain" class="section-head"><div><strong>学习方向</strong></div><button class="btn" type="button" :disabled="domainForm.learning_directions.length >= 6" @click="addDirection">添加方向</button></div>
+        <div v-for="(direction, index) in (editingDomain ? domainForm.learning_directions : [])" :key="index" class="rule-block">
           <label>代码<input v-model.trim="direction.value" class="field" required pattern="[A-Za-z0-9_-]+" /></label>
           <label>名称<input v-model.trim="direction.label" class="field" required /></label>
           <label>说明<input v-model.trim="direction.description" class="field" /></label>
@@ -728,30 +746,69 @@
 
     <AppDrawer
       v-model="importReviewOpen"
-      title="复核导入候选"
+      title="自动导入进度与发布"
       :subtitle="importSummary ? `${importSummary.import_id} · ${importSummary.status}` : ''"
     >
-      <div v-if="importLoading" class="empty-view"><strong>正在加载候选</strong></div>
-      <div v-else-if="!importCandidates.length" class="empty-view">
-        <strong>暂无候选</strong><p>文档可能仍在解析，稍后重新打开。</p>
-      </div>
+      <div v-if="importLoading" class="empty-view"><strong>正在加载导入状态</strong></div>
+      <div v-else-if="!importSummary" class="empty-view"><strong>暂无导入运行</strong></div>
       <div v-else class="candidate-list">
-        <article v-for="candidate in importCandidates" :key="candidate.candidate_id" class="candidate-item">
-          <header><strong>{{ candidateTypeLabel(candidate.candidate_type) }}</strong><StatusBadge :label="candidate.status" :type="candidate.validation_errors.length ? 'danger' : 'wait'" /></header>
-          <label v-if="candidate.candidate_type === 'knowledge_item'">名称<input v-model="candidate.payload.name" class="field" /></label>
-          <label v-if="candidate.candidate_type === 'knowledge_item'">难度<input v-model.number="candidate.payload.difficulty" class="field" type="number" min="1" max="5" /></label>
-          <label v-if="candidate.candidate_type === 'diagnostic_question'">题干<textarea v-model="candidate.payload.stem" class="field" rows="2" /></label>
-          <p class="candidate-source">来源：{{ sourceLabel(candidate.source_locator) }}</p>
-          <p v-if="candidate.validation_errors.length" class="document-error">{{ candidate.validation_errors.join('；') }}</p>
-          <button class="btn text" :disabled="importActionLoading" @click="saveCandidate(candidate)">保存修改</button>
+        <article class="candidate-item">
+          <header><strong>当前阶段：{{ importSummary.current_step }}</strong><StatusBadge :label="importSummary.status" :type="importSummary.error_summary ? 'danger' : 'wait'" /></header>
+          <p>第 {{ importSummary.attempt }} 次执行 · 基线 {{ importSummary.quality_baseline_version || 'knowledge-import-gold-v1' }}</p>
+          <p v-if="importSummary.total_batches">
+            模型批次 {{ importSummary.completed_batches || 0 }} / {{ importSummary.total_batches }}
+            · 失败 {{ importSummary.failed_batches || 0 }}
+            · 已耗时 {{ Math.round(Number(importSummary.elapsed_ms || 0) / 1000) }} 秒
+            <span v-if="importSummary.eta_seconds">· 预计剩余 {{ importSummary.eta_seconds }} 秒</span>
+          </p>
+          <p v-if="importSummary.error_summary" class="document-error">{{ importSummary.error_summary }}</p>
+        </article>
+        <div class="metric-grid compact">
+          <article><span>知识点</span><strong>{{ importSummary.knowledge_items || 0 }}</strong></article>
+          <article><span>诊断题</span><strong>{{ importSummary.diagnostic_questions || 0 }}</strong></article>
+          <article><span>方向性关系</span><strong>{{ importSummary.directional_relations || 0 }}</strong></article>
+          <article><span>路径参与节点</span><strong>{{ importSummary.path_participating_nodes || 0 }} / {{ importSummary.knowledge_items || 0 }}</strong></article>
+        </div>
+        <div class="metric-grid compact">
+          <article><span>事实关系</span><strong>{{ importSummary.factual_relations || 0 }}</strong></article>
+          <article><span>教学推荐</span><strong>{{ importSummary.recommended_relations || 0 }}</strong></article>
+          <article><span>模型调用</span><strong>{{ importSummary.model_calls || 0 }}</strong></article>
+          <article><span>复用批次</span><strong>{{ importSummary.reused_batches || 0 }}</strong></article>
+        </div>
+        <div class="metric-grid compact">
+          <article><span>全节点参与率</span><strong>{{ Math.round(Number(importSummary.path_participation_ratio || 0) * 100) }}%</strong></article>
+          <article><span>孤立节点</span><strong>{{ importSummary.isolated_nodes || 0 }}（{{ Math.round(Number(importSummary.isolated_node_ratio || 0) * 100) }}%）</strong></article>
+          <article><span>题目覆盖</span><strong>{{ Math.round(Number(importSummary.question_knowledge_coverage || 0) * 100) }}%</strong></article>
+          <article><span>自动修复</span><strong>{{ importSummary.repair_rounds || 0 }} 轮</strong></article>
+        </div>
+        <article v-if="importSummary.blocking_issues?.length" class="candidate-item quality-blockers">
+          <header><strong>暂不可发布</strong><StatusBadge label="质量门禁未通过" type="danger" /></header>
+          <p v-for="issue in importSummary.blocking_issues" :key="`${issue.code}-${issue.message}`">
+            {{ issue.message }}<span v-if="issue.count !== undefined">（{{ issue.count }} 项）</span>
+          </p>
+        </article>
+        <article v-if="importSummary.direction_metrics?.length" class="candidate-item">
+          <header><strong>各学习方向质量</strong><StatusBadge label="全节点口径" type="wait" /></header>
+          <div class="direction-quality-list">
+            <div v-for="metric in importSummary.direction_metrics" :key="metric.value">
+              <strong>{{ metric.label }}</strong>
+              <span>{{ metric.path_participating_nodes }} / {{ metric.nodes }} 节点 · {{ metric.directional_relations }} 条关系 · 主路径 {{ metric.longest_path_nodes }} 节点</span>
+            </div>
+          </div>
+        </article>
+        <article v-if="importSummary.projected_readiness?.proposed_learning_directions?.length" class="candidate-item">
+          <header><strong>系统建议的学习方向</strong><StatusBadge label="确认后生效" type="wait" /></header>
+          <p>{{ importSummary.projected_readiness.proposed_learning_directions.map((item: any) => item.label).join("、") }}</p>
+        </article>
+        <KnowledgeGraph v-if="previewItems.length" :items="previewItems" :relations="previewRelations" />
+        <article v-for="event in importSummary.events || []" :key="event.event_id" class="candidate-item">
+          <header><strong>{{ event.step }}</strong><StatusBadge :label="event.status" type="wait" /></header>
+          <p>执行 {{ event.attempt }} · 事件 {{ event.event_id }}</p>
         </article>
       </div>
       <template #footer>
-        <button class="btn" :disabled="importActionLoading" @click="runImportValidation">校验</button>
-        <button class="btn" :disabled="importActionLoading" @click="approveImport">批准并写入</button>
-        <button class="btn" :disabled="importActionLoading" @click="buildImportIndex">构建索引</button>
-        <button class="btn" :disabled="importActionLoading" @click="smokeImport">冒烟</button>
-        <button class="btn primary" :disabled="importActionLoading" @click="publishImport">发布</button>
+        <button class="btn" :disabled="importActionLoading" @click="loadImportReview">刷新</button>
+        <button class="btn primary" :disabled="importActionLoading || importSummary?.status !== 'ready_to_publish'" @click="confirmImport">确认并发布</button>
       </template>
     </AppDrawer>
 
@@ -761,7 +818,7 @@
       :subtitle="deleteTarget?.original_name || ''"
       ><div class="delete-message">
         <span>!</span>
-        <p>删除后，相关向量和内部知识将同步移除。该操作无法从页面恢复。</p>
+        <p>系统将撤回该文档来源。仍有其他有效来源的知识继续保留；失去全部来源的知识进入待处理状态。</p>
       </div>
       <template #footer
         ><button class="btn" :disabled="deleting" @click="closeDeleteDialog">
@@ -779,7 +836,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  type ComponentPublicInstance,
+} from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppDialog from "@/components/Shared/AppDialog.vue";
 import AppDrawer from "@/components/Shared/AppDrawer.vue";
@@ -787,6 +852,7 @@ import StatusBadge from "@/components/Shared/StatusBadge.vue";
 import PageHeader from "@/components/Shared/PageHeader.vue";
 import ReadinessList from "@/components/Shared/ReadinessList.vue";
 import KnowledgeGraph from "@/components/KnowledgeGraph/KnowledgeGraph.vue";
+import { knowledgeNameLabel } from "@/components/KnowledgeGraph/knowledgeGraph";
 import {
   createDomain,
   disableDomain,
@@ -819,16 +885,10 @@ import {
   type KnowledgeDocumentStatus,
 } from "@/api/knowledgeDocuments";
 import {
-  approveKnowledgeImport,
-  buildKnowledgeImportIndex,
-  getKnowledgeImport,
-  listImportCandidates,
-  publishKnowledgeImport,
-  smokeKnowledgeImport,
-  updateImportCandidate,
-  validateKnowledgeImport,
-  type ImportCandidate,
-  type ImportCandidateType,
+  confirmKnowledgeImport,
+  getKnowledgeImportGraph,
+  getKnowledgeImportSummary,
+  type GraphPreview,
   type KnowledgeImportSummary,
 } from "@/api/knowledgeImports";
 import { useDomainStore } from "@/stores/domainStore";
@@ -838,6 +898,7 @@ import {
   configList,
   domainReadiness,
   filterKnowledgeItems,
+  indexUiState,
   type KnowledgeFilters,
 } from "./domainHubState";
 
@@ -874,6 +935,9 @@ const loading = ref(false),
   rebuilding = ref(false),
   validationResult = ref<DomainValidationResult | null>(null),
   rebuildStatus = ref<RebuildIndexStatus | null>(null);
+const selectedKnowledgeId = ref<string | null>(null),
+  highlightedKnowledgeId = ref<string | null>(null);
+const knowledgeRowRefs = new Map<string, HTMLElement>();
 const domainDrawerOpen = ref(false),
   editingDomain = ref<DomainSummary | null>(null),
   lifecycleLoading = ref(false),
@@ -882,9 +946,7 @@ const domainForm = reactive({
   domain_code: "",
   name: "",
   description: "",
-  learning_directions: [
-    { value: "general", label: "综合学习", description: "", tags: "general" },
-  ],
+  learning_directions: [] as Array<{ value: string; label: string; description: string; tags: string }>,
 });
 const knowledgeFilters = reactive<KnowledgeFilters>({
   keyword: "",
@@ -919,13 +981,28 @@ const importReviewOpen = ref(false),
   importLoading = ref(false),
   importActionLoading = ref(false),
   importSummary = ref<KnowledgeImportSummary | null>(null),
-  importCandidates = ref<ImportCandidate[]>([]),
+  importGraph = ref<GraphPreview | null>(null),
   activeImportId = ref("");
+const previewItems = computed<KnowledgeItem[]>(() => (importGraph.value?.nodes || []).map((node) => ({
+  knowledge_id: node.id, domain_code: selectedCode.value, name: node.name,
+  category: node.category, difficulty: node.difficulty, tags: node.tags,
+  content: "", source_title: node.source_chunk_ids.join(", "), source_url: null,
+  license_note: "", needs_reembedding: true,
+})));
+const previewRelations = computed<KnowledgeRelation[]>(() => {
+  const names = new Map((importGraph.value?.nodes || []).map((node) => [node.id, node.name]));
+  return (importGraph.value?.edges || []).filter((edge) => edge.accepted).map((edge) => ({
+    source_id: edge.source, source_name: names.get(edge.source) || edge.source,
+    target_id: edge.target, target_name: names.get(edge.target) || edge.target,
+    relation_type: edge.relation_type === "depends_on" ? "dependent" : edge.relation_type === "related_to" ? "related" : edge.relation_type,
+  }));
+});
 const deleteDialog = ref<InstanceType<typeof AppDialog> | null>(null),
   deleteTarget = ref<KnowledgeDocumentItem | null>(null),
   deleting = ref(false);
 let pollTimer: number | undefined,
   rebuildPollTimer: number | undefined,
+  highlightTimer: number | undefined,
   loadVersion = 0;
 
 const selectedDomain = computed(
@@ -933,14 +1010,7 @@ const selectedDomain = computed(
     domains.value.find((domain) => domain.domain_code === selectedCode.value) ||
     null,
 );
-const parsedConfig = computed(() => configList(selectedDomain.value)),
-  hasDomainConfig = computed(
-    () =>
-      parsedConfig.value.abilityDimensions.length +
-        parsedConfig.value.resourceTypes.length +
-        parsedConfig.value.mvpTargets.length >
-      0,
-  );
+const parsedConfig = computed(() => configList(selectedDomain.value));
 const filteredKnowledgeItems = computed(() =>
     filterKnowledgeItems(knowledgeItems.value, knowledgeFilters),
   ),
@@ -1015,21 +1085,26 @@ const assetViews = computed(() => [
   },
   { id: "graph" as const, label: "关系图谱", count: relations.value.length },
 ]);
-const indexStatusLabel = computed(() =>
-  rebuilding.value
-    ? "重建中"
-    : rebuildStatus.value?.status === "success"
-      ? "已完成"
-      : ["failed", "interrupted"].includes(rebuildStatus.value?.status || "")
-        ? "异常"
-        : stats.value?.pending_embeddings
-          ? "待同步"
-          : "已同步",
+const currentIndexState = computed(() =>
+  indexUiState(
+    validationResult.value?.rag_ready,
+    stats.value?.pending_embeddings || 0,
+    rebuilding.value ? "running" : rebuildStatus.value?.status,
+  ),
 );
+const indexStatusLabel = computed(() => ({
+  running: "重建中",
+  ready: "已同步",
+  needs_rebuild: "需重建",
+  failed: "异常",
+})[currentIndexState.value]);
 const indexStatusType = computed(() =>
-  indexStatusLabel.value === "已同步" || indexStatusLabel.value === "已完成"
-    ? "ok"
-    : ("wait" as const),
+  currentIndexState.value === "ready" ? "ok" : ("wait" as const),
+);
+const showRebuildMessage = computed(
+  () =>
+    currentIndexState.value === "needs_rebuild" ||
+    Boolean(rebuildStatus.value?.status && rebuildStatus.value.status !== "idle"),
 );
 const rebuildResultLabel = computed(() =>
   rebuildStatus.value?.status === "success"
@@ -1043,7 +1118,9 @@ const rebuildResultLabel = computed(() =>
         : "-",
 );
 const rebuildMessageTitle = computed(() =>
-  rebuildStatus.value?.status === "running"
+  currentIndexState.value === "needs_rebuild"
+    ? "活动索引尚未同步"
+    : rebuildStatus.value?.status === "running"
     ? "正在重建索引"
     : rebuildStatus.value?.status === "success"
       ? "索引重建完成"
@@ -1053,7 +1130,9 @@ const rebuildMessageTitle = computed(() =>
 );
 const rebuildMessageBody = computed(
   () =>
-    rebuildStatus.value?.message ||
+    (currentIndexState.value === "needs_rebuild"
+      ? `当前 Candidate RAG 校验未通过（${validationResult.value?.rag?.reason || "索引版本或数据版本不一致"}），请重建索引。`
+      : rebuildStatus.value?.message) ||
     (rebuildStatus.value?.result?.status === "unchanged"
       ? "知识库没有变化，未重复向量化。"
       : rebuildStatus.value?.status === "success"
@@ -1112,6 +1191,41 @@ function openPendingKnowledge() {
   knowledgeFilters.indexStatus = "pending";
   openAssetView("items");
 }
+function setKnowledgeRowRef(
+  knowledgeId: string,
+  element: Element | ComponentPublicInstance | null,
+) {
+  if (element instanceof HTMLElement) knowledgeRowRefs.set(knowledgeId, element);
+  else knowledgeRowRefs.delete(knowledgeId);
+}
+function locateInGraph(knowledgeId: string) {
+  if (!knowledgeItems.value.some((item) => item.knowledge_id === knowledgeId)) {
+    showToast("未找到该知识点，请刷新数据后重试。", "error");
+    return;
+  }
+  selectedKnowledgeId.value = knowledgeId;
+  openAssetView("graph");
+}
+async function returnToKnowledgeItem(knowledgeId: string) {
+  if (!knowledgeItems.value.some((item) => item.knowledge_id === knowledgeId)) {
+    showToast("未找到该知识点，请刷新数据后重试。", "error");
+    return;
+  }
+  clearKnowledgeFilters();
+  openAssetView("items");
+  await nextTick();
+  const row = knowledgeRowRefs.get(knowledgeId);
+  if (!row) {
+    showToast("知识点已加载，但暂时无法定位到对应行。", "error");
+    return;
+  }
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  highlightedKnowledgeId.value = knowledgeId;
+  if (highlightTimer) window.clearTimeout(highlightTimer);
+  highlightTimer = window.setTimeout(() => {
+    highlightedKnowledgeId.value = null;
+  }, 1500);
+}
 function readinessDescription(item: {
   key: string;
   actual: number;
@@ -1157,10 +1271,7 @@ function openDomainEditor(domain?: DomainSummary) {
   domainForm.domain_code = domain?.domain_code || "";
   domainForm.name = domain?.name || "";
   domainForm.description = domain?.description || "";
-  domainForm.learning_directions = (domain?.learning_directions?.length
-    ? domain.learning_directions
-    : [{ value: "general", label: "综合学习", description: "", match_tags: ["general"] }]
-  ).map((item) => ({
+  domainForm.learning_directions = (domain?.learning_directions || []).map((item) => ({
     value: item.value,
     label: item.label,
     description: item.description || "",
@@ -1176,7 +1287,7 @@ async function saveDomain() {
   const payload = {
     name: domainForm.name,
     description: domainForm.description,
-    learning_directions: domainForm.learning_directions.map((item) => ({
+    learning_directions: (editingDomain.value ? domainForm.learning_directions : []).map((item) => ({
       value: item.value,
       label: item.label,
       description: item.description,
@@ -1261,6 +1372,8 @@ async function switchDomain() {
 }
 async function loadDomain() {
   const version = ++loadVersion;
+  selectedKnowledgeId.value = null;
+  highlightedKnowledgeId.value = null;
   loading.value = true;
   graphLoading.value = true;
   errorMessage.value = "";
@@ -1293,10 +1406,17 @@ async function loadDomain() {
 }
 async function loadDocuments(silent = false) {
   const domain = selectedCode.value;
+  const wasProcessing = documents.value.some((item) => isProcessing(item.status));
   try {
     const data = await listKnowledgeDocuments(domain);
     if (domain !== selectedCode.value) return;
     documents.value = data.documents;
+    if (importReviewOpen.value && activeImportId.value) void loadImportReview();
+    const stillProcessing = documents.value.some((item) => isProcessing(item.status));
+    if (wasProcessing && !stillProcessing) {
+      await loadDomain();
+      return;
+    }
     schedulePolling();
   } catch {
     if (!silent) showToast("来源文档加载失败");
@@ -1425,9 +1545,9 @@ async function loadImportReview() {
   if (!activeImportId.value) return;
   importLoading.value = true;
   try {
-    [importSummary.value, importCandidates.value] = await Promise.all([
-      getKnowledgeImport(activeImportId.value),
-      listImportCandidates(activeImportId.value),
+    [importSummary.value, importGraph.value] = await Promise.all([
+      getKnowledgeImportSummary(activeImportId.value),
+      getKnowledgeImportGraph(activeImportId.value),
     ]);
   } catch (error: any) {
     showToast(error?.response?.data?.detail || "导入候选加载失败");
@@ -1446,14 +1566,15 @@ async function withImportAction(action: () => Promise<unknown>, success: string)
   catch (error: any) { showToast(error?.response?.data?.detail || "导入操作失败"); }
   finally { importActionLoading.value = false; }
 }
-function saveCandidate(candidate: ImportCandidate) { return withImportAction(() => updateImportCandidate(activeImportId.value, candidate.candidate_id, candidate.payload), "候选已保存"); }
-function runImportValidation() { return withImportAction(() => validateKnowledgeImport(activeImportId.value), "候选校验完成"); }
-function approveImport() { return withImportAction(() => approveKnowledgeImport(activeImportId.value), "候选已写入正式知识库"); }
-function buildImportIndex() { return withImportAction(() => buildKnowledgeImportIndex(activeImportId.value), "Candidate 索引任务已启动"); }
-function smokeImport() { return withImportAction(() => smokeKnowledgeImport(activeImportId.value), "检索冒烟通过"); }
-function publishImport() { return withImportAction(() => publishKnowledgeImport(activeImportId.value), "知识导入已发布"); }
-function candidateTypeLabel(type: ImportCandidateType) { return ({ knowledge_item: "知识点", knowledge_relation: "知识关系", diagnostic_question: "诊断题" } as Record<ImportCandidateType, string>)[type]; }
-function sourceLabel(locator: Record<string, any>) { return locator.page_start ? `第 ${locator.page_start} 页` : (locator.heading_path || []).join(" / ") || "已定位段落"; }
+function confirmImport() {
+  const summary = importSummary.value;
+  const indexVersion = summary?.candidate_manifest?.index_version;
+  if (!summary || !indexVersion) return;
+  return withImportAction(
+    () => confirmKnowledgeImport(activeImportId.value, summary.input_version, indexVersion),
+    "知识导入已发布",
+  );
+}
 function handleFileInput(event: Event) {
   uploadFiles(Array.from((event.target as HTMLInputElement).files || []));
 }
@@ -1587,7 +1708,21 @@ async function validate() {
   }
 }
 function isProcessing(status: KnowledgeDocumentStatus) {
-  return ["queued", "parsing", "validating", "indexing"].includes(status);
+  return [
+    "queued",
+    "parsing",
+    "extracting",
+    "graph_generation",
+    "graph_review",
+    "question_generation",
+    "question_review",
+    "question_repair",
+    "validating",
+    "staging",
+    "indexing",
+    "smoke_testing",
+    "publishing",
+  ].includes(status);
 }
 function documentStatusLabel(status: KnowledgeDocumentStatus) {
   return (
@@ -1595,13 +1730,22 @@ function documentStatusLabel(status: KnowledgeDocumentStatus) {
       {
         queued: "等待处理",
         parsing: "正在解析",
+        extracting: "正在抽取知识与关系",
+        graph_generation: "正在生成知识图谱",
+        graph_review: "正在复核事实关系",
+        question_generation: "正在生成诊断题",
+        question_review: "正在复核诊断题",
+        question_repair: "正在补充诊断题",
         validating: "正在校验",
-        review_pending: "等待复核",
-        index_pending: "待构建索引",
-        smoke_passed: "冒烟已通过",
+        staging: "正在暂存候选结果",
         indexing: "正在索引",
+        smoke_testing: "正在验证检索",
+        ready_to_publish: "等待确认发布",
+        publishing: "正在发布",
         ready: "已就绪",
+        needs_attention: "质量检查未通过",
         failed: "处理失败",
+        withdrawn: "已撤回",
       } as Record<string, string>
     )[status] || "未知状态"
   );
@@ -1640,7 +1784,9 @@ function targetLabel(value: string) {
     (
       {
         knowledge_items: "知识点",
+        minimum_published_knowledge: "已发布知识点",
         diagnostic_questions: "诊断题",
+        minimum_diagnostic_questions: "可用诊断题",
         evaluation_cases: "评测样例",
       } as Record<string, string>
     )[value] || value
@@ -1654,6 +1800,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopPolling();
   stopRebuildPolling();
+  if (highlightTimer) window.clearTimeout(highlightTimer);
 });
 </script>
 
@@ -1965,6 +2112,45 @@ onBeforeUnmount(() => {
 .knowledge-filters {
   padding-bottom: 14px;
 }
+.knowledge-results {
+  margin: -4px 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.knowledge-table-wrap {
+  max-height: 480px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.knowledge-table-wrap thead th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: var(--soft);
+  box-shadow: 0 1px 0 var(--line);
+}
+.knowledge-table tbody tr {
+  transition: background-color 180ms ease-out;
+}
+.knowledge-table tbody tr.is-located {
+  background: var(--blue2);
+}
+.knowledge-table .source-col {
+  width: 18%;
+  max-width: 220px;
+}
+.source-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  white-space: nowrap;
+}
 .search-field {
   min-width: 240px;
   flex: 1;
@@ -2086,6 +2272,16 @@ onBeforeUnmount(() => {
   color: var(--muted);
   font-size: 11px;
 }
+.rule-source {
+  display: inline-flex;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--soft);
+  padding: 2px 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+}
 .rule-values {
   display: flex;
   align-items: center;
@@ -2099,6 +2295,9 @@ onBeforeUnmount(() => {
   padding: 6px 9px;
   font-size: 11px;
   font-weight: 650;
+}
+.rule-values-action .btn {
+  margin-left: auto;
 }
 .rule-values small,
 .target-list > small {
@@ -2330,6 +2529,30 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+.quality-blockers {
+  border-color: var(--red);
+  background: var(--red2);
+}
+
+.direction-quality-list {
+  display: grid;
+  gap: 8px;
+}
+
+.direction-quality-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.direction-quality-list span {
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+}
+
 .candidate-item {
   display: grid;
   gap: 10px;
@@ -2439,6 +2662,15 @@ onBeforeUnmount(() => {
   .knowledge-filters > * {
     flex: 1;
   }
+  .knowledge-table-wrap {
+    max-height: none;
+    overflow-y: visible;
+    overscroll-behavior: auto;
+  }
+  .knowledge-table-wrap thead th {
+    position: static;
+    box-shadow: none;
+  }
   .search-field {
     min-width: 100%;
   }
@@ -2488,6 +2720,9 @@ onBeforeUnmount(() => {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .knowledge-table tbody tr {
+    transition: none;
+  }
   .page-skeleton i {
     animation: none;
   }

@@ -110,6 +110,32 @@ export interface KnowledgeRelation {
   relation_type: string
 }
 
+const relationTypeAliases: Record<string, string> = {
+  prerequisite: 'prerequisite',
+  next_step: 'dependent',
+  depends_on: 'dependent',
+  dependent: 'dependent',
+  related_to: 'related',
+  related: 'related',
+}
+
+export function normalizeKnowledgeRelation(relation: KnowledgeRelation): KnowledgeRelation {
+  if (relation.relation_type === 'depends_on') {
+    return {
+      ...relation,
+      source_id: relation.target_id,
+      source_name: relation.target_name,
+      target_id: relation.source_id,
+      target_name: relation.source_name,
+      relation_type: 'dependent',
+    }
+  }
+  return {
+    ...relation,
+    relation_type: relationTypeAliases[relation.relation_type] ?? relation.relation_type,
+  }
+}
+
 export function listKnowledgeItems(domainCode: string, limit = 100) {
   const params = new URLSearchParams({
     domain_code: domainCode,
@@ -118,8 +144,9 @@ export function listKnowledgeItems(domainCode: string, limit = 100) {
   return getData<KnowledgeItemsResponse>(`/knowledge/items?${params.toString()}`)
 }
 
-export function listKnowledgeRelations(domainCode: string) {
-  return getData<KnowledgeRelation[]>(`/knowledge/relations?domain_code=${encodeURIComponent(domainCode)}`)
+export async function listKnowledgeRelations(domainCode: string) {
+  const relations = await getData<KnowledgeRelation[]>(`/knowledge/relations?domain_code=${encodeURIComponent(domainCode)}`)
+  return relations.map(normalizeKnowledgeRelation)
 }
 
 export function searchKnowledge(query: string, domainCode: string, nResults = 5) {

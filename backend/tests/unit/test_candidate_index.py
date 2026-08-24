@@ -15,7 +15,7 @@ from app.rag.candidate_index import (
     database_source_snapshot,
 )
 from app.rag.candidate_chunker import chunk_knowledge_item
-from app.rag.candidate_manifest import CandidateManifestStore
+from app.rag.candidate_manifest import CandidateManifestStore, compute_index_version
 from app.scripts.seed_data import load_json, seed_knowledge_items
 from app.scripts.validate_rag_seed import source_data_version
 
@@ -330,6 +330,23 @@ def test_candidate_build_does_not_activate_or_clear_markers(tmp_path: Path) -> N
         assert active is not None
         assert active.active_collection == result["active_collection"]
         assert item.needs_reembedding is False
+
+        # A prior compatibility read may already have copied the candidate
+        # pointer into MySQL. Exact activation must remain idempotent so the
+        # relational publish transaction can finish aligning its staged rows.
+        builder.activate_candidate(result["candidate_manifest"])
+        mismatched_source = "sha256:" + "f" * 64
+        mismatched = {**result["candidate_manifest"], "source_data_version": mismatched_source}
+        mismatched["index_version"] = compute_index_version(
+            domain_code=mismatched["domain_code"],
+            source_data_version=mismatched_source,
+            embedding_model=mismatched["embedding_model"],
+            embedding_dimensions=mismatched["embedding_dimensions"],
+            distance_metric=mismatched["distance_metric"],
+            chunker_version=mismatched["chunker_version"],
+        )
+        with pytest.raises(CandidateIndexError, match="version does not match"):
+            builder.activate_candidate(mismatched)
 
 
 def test_reset_rebuilds_when_manifest_points_to_missing_collection(tmp_path: Path) -> None:

@@ -11,9 +11,14 @@ from app.models.evaluation import EvaluationCase
 from app.models.feedback import Feedback
 from app.models.index_build_job import IndexBuildJob
 from app.models.knowledge import (
+    DomainIndexManifest,
+    KnowledgeChunk,
     KnowledgeDocument,
     KnowledgeImportCandidate,
+    KnowledgeImportBatch,
+    KnowledgeImportRun,
     KnowledgeItem,
+    KnowledgeItemSource,
     KnowledgeRelation,
 )
 from app.models.learner import Learner, LearnerProfile, LearningPath
@@ -46,9 +51,14 @@ __all__ = [
     "GenerationTask",
     "KnowledgeUpdateImpact",
     "IndexBuildJob",
+    "DomainIndexManifest",
+    "KnowledgeChunk",
     "KnowledgeItem",
+    "KnowledgeItemSource",
     "KnowledgeDocument",
     "KnowledgeImportCandidate",
+    "KnowledgeImportBatch",
+    "KnowledgeImportRun",
     "KnowledgeRelation",
     "Learner",
     "LearnerProfile",
