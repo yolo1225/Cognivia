@@ -143,9 +143,7 @@
       </label>
       <template #footer>
         <button class="btn" @click="exportDialog?.close()">取消</button>
-        <button class="btn primary" :disabled="exportSubmitting" @click="doExport">
-          {{ exportSubmitting ? '正在下载…' : '导出并下载' }}
-        </button>
+        <button class="btn primary" @click="doExport">导出资源</button>
       </template>
     </AppDialog>
 
@@ -220,7 +218,6 @@ const selectedIdx = ref(0)
 const headings = ref<HeadingItem[]>([])
 const exportFormat = ref('markdown')
 const exportDialog = ref<InstanceType<typeof AppDialog> | null>(null)
-const exportSubmitting = ref(false)
 const errorMessage = ref('')
 const feedbackSubmitting = ref(false)
 const retrying = ref(false)
@@ -242,7 +239,8 @@ const resourceDecisionSubmitting = ref('')
 const feedbackOptions = [{ value: 'too_hard', label: '内容太难' }, { value: 'too_easy', label: '内容太简单' }, { value: 'confusing', label: '解释不清楚' }, { value: 'incorrect', label: '内容可能有误' }, { value: 'helpful', label: '对我有帮助' }]
 const formats = [
   { value: 'markdown', label: 'Markdown', desc: '保留标题、表格、代码块和知识来源结构。', tag: '源格式' },
-  { value: 'pdf', label: 'PDF', desc: '适合阅读、打印和提交。', tag: '推荐' },
+  { value: 'pdf', label: 'PDF', desc: '排版美观，适合阅读、打印和提交。', tag: '推荐' },
+  { value: 'word', label: 'Word', desc: '可编辑的 .docx 文档，方便二次修改。', tag: '可编辑' },
 ]
 
 interface HeadingItem { level: number; text: string; id: string }
@@ -573,18 +571,21 @@ async function sendFeedback(type: string) {
 }
 
 async function doExport() {
-  if (!selected.value || exportSubmitting.value) return
-  exportSubmitting.value = true
+  if (!selected.value) return
   try {
-    const r = await exportResource(selected.value.resource_id, exportFormat.value as 'markdown' | 'pdf')
-    await downloadResourceExport(r.download_url, r.file_name)
+    const r = await exportResource(selected.value.resource_id, exportFormat.value as 'markdown' | 'pdf' | 'word')
+    const blob = await downloadResourceExport(r.download_url)
+    const blobUrl = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = blobUrl
+    anchor.download = r.file_name
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(blobUrl)
     exportDialog.value?.close()
-    showToast(`已开始下载：${r.file_name}`)
-  } catch {
-    showToast('导出下载失败，请稍后重试。')
-  } finally {
-    exportSubmitting.value = false
-  }
+    showToast(`已下载：${r.file_name}`)
+  } catch { showToast('导出失败') }
 }
 
 watch(
