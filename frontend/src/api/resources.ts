@@ -130,38 +130,27 @@ export function listResourceVersions(resourceId: string) {
   }>>(`/resources/${resourceId}/versions`)
 }
 
-export interface ResourceExportResult {
-  resource_version: number
-  file_name: string
-  file_hash: string
-  review_report_id: string | null
-  review_status: string
-  download_url: string
-}
-
 export function exportResource(
   resourceId: string,
-  format: 'markdown' | 'pdf',
+  format: 'markdown' | 'pdf' | 'word',
   audience: 'learner' | 'teacher' = 'learner',
 ) {
-  return postData<ResourceExportResult>(`/resources/${resourceId}/export`, { format, audience })
+  return postData<{
+    resource_version: number
+    file_name: string
+    file_hash: string
+    review_report_id: string | null
+    review_status: string
+    download_url: string
+  }>(`/resources/${resourceId}/export`, { format, audience })
 }
 
-export async function downloadResourceExport(downloadUrl: string, fileName: string) {
-  const baseUrl = apiClient.defaults.baseURL || window.location.origin
-  const response = await apiClient.get<Blob>(
-    new URL(downloadUrl, new URL(baseUrl, window.location.origin).origin).toString(),
-    { responseType: 'blob' },
-  )
-  const objectUrl = URL.createObjectURL(response.data)
-  const link = document.createElement('a')
-  link.href = objectUrl
-  link.download = fileName
-  link.style.display = 'none'
-  document.body.append(link)
-  link.click()
-  link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+export async function downloadResourceExport(downloadUrl: string): Promise<Blob> {
+  // download_url is absolute from the backend root (e.g. /api/v1/resources/exports/x.pdf);
+  // the axios baseURL already includes /api/v1, so strip that prefix.
+  const path = downloadUrl.replace(/^\/api\/v1/, '')
+  const response = await apiClient.get(path, { responseType: 'blob' })
+  return response.data as Blob
 }
 
 export function submitFeedback(
