@@ -7,6 +7,18 @@
       </template>
     </PageHeader>
 
+    <div v-if="pathNodeTitle" class="path-context">
+      <span>学习主线</span>
+      <strong>路线第 {{ pathNodeOrder }} 节 · {{ pathNodeTitle }}</strong>
+    </div>
+
+    <section v-if="generationBasis" class="generation-basis" aria-label="生成依据">
+      <strong>生成依据</strong>
+      <span>核心知识点：{{ generationBasis.core_knowledge?.name || pathNodeTitle }}</span>
+      <span>必要前置知识：{{ prerequisiteNames }}</span>
+      <span>适配画像 V{{ generationBasis.profile_version }}</span>
+    </section>
+
     <div v-if="isShowingProgress" class="panel generation-state">
       <strong>{{ generationStatusTitle }}</strong>
       <p class="sub">{{ generationStatusDescription }}</p>
@@ -131,43 +143,42 @@
       </label>
       <template #footer>
         <button class="btn" @click="exportDialog?.close()">取消</button>
-        <button class="btn primary" @click="doExport">导出资源</button>
+        <button class="btn primary" :disabled="exportSubmitting" @click="doExport">
+          {{ exportSubmitting ? '正在下载…' : '导出并下载' }}
+        </button>
       </template>
     </AppDialog>
 
     <AppDrawer v-model="tutorOpen" title="AI 导学" :subtitle="selected?.title || '请选择学习资源'">
-      <div class="tutor-context">围绕当前资源提问。导学记录会按资源分别保存。</div>
-      <div v-if="tutorLoading" class="tutor-state">正在加载导学记录...</div>
+      <div class="tutor-context"><span class="tutor-context-icon"><AppIcon name="resources" /></span><span>{{ pathNodeTitle || '当前节点' }} · {{ selected ? typeLabel(selected.resource_type) : '当前资源' }}导学</span></div>
+      <div v-if="tutorLoading" class="tutor-state tutor-loading" role="status"><span></span><span></span><span></span><p>正在加载导学记录</p></div>
       <div v-else-if="tutorError" class="tutor-state tutor-error"><p>{{ tutorError }}</p><button class="btn" @click="openTutor">重新加载</button></div>
-      <div v-else-if="tutorMessages.length === 0" class="tutor-state">你可以询问概念解释、步骤拆解或练习建议。</div>
+      <div v-else-if="tutorMessages.length === 0 && !nodeAssessment" class="tutor-state tutor-empty"><span class="tutor-empty-icon"><AppIcon name="resources" /></span><strong>从当前资源开始提问</strong><p>概念解释、步骤拆解和练习建议都会保存在本资源的导学记录中。</p></div>
       <div v-else ref="messageList" class="tutor-messages" aria-live="polite">
-        <div v-for="message in tutorMessages" :key="message.message_id" class="tutor-message" :class="message.sender === 'learner' ? 'is-learner' : 'is-agent'">
-          <span>{{ message.sender === 'learner' ? '我' : 'AI 导学' }}</span>
+        <article v-if="nodeAssessment && !assessmentInMessages" class="tutor-message is-agent node-adjustment-message">
+          <div class="tutor-message-meta"><span class="tutor-avatar" aria-hidden="true">AI</span><span>节点学习判断</span></div>
+          <TutoringAssessmentCard :assessment="nodeAssessment" :submitting="assessmentSubmitting === nodeAssessment.assessment_id" :resource-submitting="resourceDecisionSubmitting === nodeAssessment.adjustment_proposal_id" pending-hint="验证结果将作用于当前节点，不会合并其他资源的对话内容。" @answer="answerAssessment(nodeAssessment, $event)" @resource-decision="decideAssessmentResource(nodeAssessment, $event)" />
+        </article>
+        <article v-for="message in tutorMessages" :key="message.message_id" class="tutor-message" :class="message.sender === 'learner' ? 'is-learner' : 'is-agent'">
+          <div class="tutor-message-meta"><span class="tutor-avatar" aria-hidden="true">{{ message.sender === 'learner' ? '我' : 'AI' }}</span><span>{{ message.sender === 'learner' ? '我' : 'AI 导学' }}</span></div>
           <ResourceMarkdownViewer :content="message.content || (message.stream_status === 'streaming' ? '正在思考…' : '')" />
           <i v-if="message.stream_status === 'streaming'" class="tutor-cursor" aria-label="正在输出" />
           <small v-if="message.stream_status === 'paused'" class="tutor-stream-note">已暂停，保留以上内容。</small>
           <small v-if="message.stream_status === 'interrupted' || message.stream_status === 'failed'" class="tutor-stream-note">回复中断，可继续提问。</small>
           <small v-if="message.sources?.length" class="tutor-sources">依据：{{ message.sources.map(source => source.name).join('、') }}</small>
-          <div v-if="message.assessment?.status === 'pending'" class="tutor-assessment">
-            <strong>掌握情况验证 · 难度 {{ message.assessment.difficulty }}</strong>
-            <p>{{ message.assessment.stem }}</p>
-            <div class="assessment-options">
-              <button v-for="(option, optionIndex) in message.assessment.options" :key="optionIndex" type="button" :disabled="assessmentSubmitting === message.assessment.assessment_id" @click="submitAssessment(message, optionIndex)">{{ option }}</button>
-            </div>
-            <small>提交后由服务端按正式题库答案评分，证据达到门槛后才会调整画像。</small>
-          </div>
-          <div v-else-if="message.assessment?.status === 'scored'" class="tutor-assessment" :class="message.assessment.is_correct ? 'is-correct' : 'is-wrong'">
-            <strong>{{ message.assessment.is_correct ? '验证通过' : '验证未通过' }}</strong>
-            <p>得分 {{ Math.round((message.assessment.score || 0) * 100) }}%</p>
-          </div>
+          <small v-if="message.evidence_reason" class="tutor-stream-note">{{ message.evidence_reason }}</small>
+          <TutoringAssessmentCard v-if="message.assessment" :assessment="message.assessment" :submitting="assessmentSubmitting === message.assessment.assessment_id" :resource-submitting="resourceDecisionSubmitting === message.assessment.adjustment_proposal_id" @answer="answerAssessment(message.assessment!, $event)" @resource-decision="decideAssessmentResource(message.assessment!, $event)" />
           <small v-if="message.assessment_unavailable" class="tutor-stream-note">当前知识点暂无可用的正式验证题，画像保持不变。</small>
-        </div>
+        </article>
       </div>
       <template #footer>
+        <div class="tutor-footer-tools">
+          <button class="btn" type="button" :disabled="masteryCheckLoading || tutorSending || tutorLoading || !tutorSession?.evidence_scope" @click="requestTutorMasteryCheck">{{ masteryCheckLoading ? '正在准备...' : '申请掌握检查' }}</button>
+        </div>
         <form class="tutor-form" @submit.prevent="sendTutorMessage">
-          <textarea v-model="tutorDraft" rows="3" maxlength="2000" placeholder="例如：请用一个例子解释这一部分" :disabled="tutorSending || tutorLoading" @keydown.enter.exact.prevent="sendTutorMessage" />
+          <div class="tutor-composer"><textarea v-model="tutorDraft" rows="3" maxlength="2000" aria-label="输入导学问题" placeholder="输入你想了解的问题" :disabled="tutorSending || tutorLoading" @keydown.enter.exact.prevent="sendTutorMessage" /><small>{{ tutorDraft.length }}/2000</small></div>
           <button v-if="tutorSending" class="btn" type="button" @click="pauseTutorMessage">暂停输出</button>
-          <button v-else class="btn primary" type="submit" :disabled="!tutorDraft.trim() || tutorLoading">发送</button>
+          <button v-else class="tutor-send" type="submit" title="发送问题" aria-label="发送问题" :disabled="!tutorDraft.trim() || tutorLoading"><AppIcon name="send" /></button>
         </form>
       </template>
     </AppDrawer>
@@ -178,7 +189,7 @@
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
-import { listResources, exportResource, submitFeedback, type ResourceSummary } from '@/api/resources'
+import { downloadResourceExport, listResources, exportResource, submitFeedback, type ResourceSummary } from '@/api/resources'
 import { resourceQualityStatusLabel } from '@/utils/resourceQualityStatus'
 import { dismissKnowledgeImpact, getCurrentLearningPackage, getLearningPackage, refreshAffectedResources, type LearningPackage } from '@/api/learningPackages'
 import { getActiveGenerationTask, getGenerationTask, retryGenerationTask, type GenerationTaskDetail } from '@/api/generation'
@@ -190,10 +201,12 @@ import AppDrawer from '@/components/Shared/AppDrawer.vue'
 import AppIcon from '@/components/Shared/AppIcon.vue'
 import PageHeader from '@/components/Shared/PageHeader.vue'
 import PageState from '@/components/Shared/PageState.vue'
-import { answerTutoringAssessment, createTutoringSession, getTutoringSession, pauseTutoringMessage, streamTutoringMessage, type TutoringSession } from '@/api/tutoring'
+import { answerTutoringAssessment, createTutoringSession, getTutoringSession, pauseTutoringMessage, requestMasteryCheck, streamTutoringMessage, type TutoringAssessment, type TutoringSession } from '@/api/tutoring'
+import { decideLearningAdjustmentResource } from '@/api/learningAdjustments'
 import ResourceMarkdownViewer from '@/components/ResourceViewer/ResourceMarkdownViewer.vue'
 import GradedQuizViewer from '@/components/ResourceViewer/GradedQuizViewer.vue'
 import ResourceTypeIcon from '@/components/ResourceViewer/ResourceTypeIcon.vue'
+import TutoringAssessmentCard from '@/components/ResourceViewer/TutoringAssessmentCard.vue'
 import { useAuthStore } from '@/stores/authStore'
 
 const router = useRouter()
@@ -207,6 +220,7 @@ const selectedIdx = ref(0)
 const headings = ref<HeadingItem[]>([])
 const exportFormat = ref('markdown')
 const exportDialog = ref<InstanceType<typeof AppDialog> | null>(null)
+const exportSubmitting = ref(false)
 const errorMessage = ref('')
 const feedbackSubmitting = ref(false)
 const retrying = ref(false)
@@ -223,6 +237,8 @@ const messageList = ref<HTMLElement | null>(null)
 let streamController: AbortController | null = null
 let activeReplyId = ''
 const assessmentSubmitting = ref('')
+const masteryCheckLoading = ref(false)
+const resourceDecisionSubmitting = ref('')
 const feedbackOptions = [{ value: 'too_hard', label: '内容太难' }, { value: 'too_easy', label: '内容太简单' }, { value: 'confusing', label: '解释不清楚' }, { value: 'incorrect', label: '内容可能有误' }, { value: 'helpful', label: '对我有帮助' }]
 const formats = [
   { value: 'markdown', label: 'Markdown', desc: '保留标题、表格、代码块和知识来源结构。', tag: '源格式' },
@@ -250,6 +266,12 @@ function scrollToHeading(id: string) {
 const selected = computed(() => resources.value[selectedIdx.value] || null)
 const hasStaleResources = computed(() => resources.value.some((resource) => resource.freshness_status === 'knowledge_changed'))
 const knowledgeImpact = computed(() => currentPackage.value?.knowledge_impact || null)
+const pathNodeTitle = computed(() => taskDetail.value?.path_node_title || currentPackage.value?.path_node_title || '')
+const pathNodeOrder = computed(() => taskDetail.value?.path_node_order || currentPackage.value?.path_node_order || '-')
+const generationBasis = computed(() => taskDetail.value?.generation_basis || currentPackage.value?.generation_basis || null)
+const prerequisiteNames = computed(() => generationBasis.value?.prerequisite_knowledge.length
+  ? generationBasis.value.prerequisite_knowledge.map(item => item.name).join('、')
+  : '无需额外前置复习')
 // 后端 render_resource_markdown 会在正文末尾统一追加「## 知识来源」，
 // 而页面下方已用更丰富的 source_details 渲染来源，故此处剥离避免重复。
 const bodyContent = computed(() => {
@@ -258,7 +280,7 @@ const bodyContent = computed(() => {
   const index = content.lastIndexOf(marker)
   return index >= 0 ? content.slice(0, index).trimEnd() : content
 })
-const canTutor = computed(() => Boolean(selected.value && selected.value.review_status === 'passed' && selected.value.is_current !== false))
+const canTutor = computed(() => Boolean(selected.value && selected.value.review_status === 'passed'))
 const quizContent = computed(() => {
   const structured = selected.value?.structured_content
   return structured && structured.resource_type === 'graded_quiz' ? structured : null
@@ -266,6 +288,8 @@ const quizContent = computed(() => {
 const isGradedQuiz = computed(() => Boolean(quizContent.value))
 const showToc = computed(() => !isGradedQuiz.value && headings.value.length > 1)
 const tutorMessages = computed(() => tutorSession.value?.messages || [])
+const nodeAssessment = computed(() => tutorSession.value?.pending_assessment || tutorSession.value?.node_adjustment_result || null)
+const assessmentInMessages = computed(() => Boolean(nodeAssessment.value && tutorMessages.value.some(message => message.assessment?.assessment_id === nodeAssessment.value?.assessment_id)))
 const taskId = computed(() => String(route.query.task_id || '').trim())
 const currentLearnerId = computed(() => {
   if (taskId.value) return String(taskDetail.value?.learner_id || route.query.learner_id || '').trim()
@@ -348,7 +372,7 @@ async function sendTutorMessage() {
       } else if (event.type !== 'agent_status') {
         const reply = tutorSession.value.messages.find(item => item.message_id === event.reply_message_id)
         if (event.type === 'delta' && reply) reply.content += event.content
-        if (event.type === 'completed' && reply) { reply.content = event.content; reply.sources = event.sources; reply.scope_status = event.scope_status; reply.assessment = event.assessment; reply.assessment_unavailable = event.assessment_unavailable; reply.stream_status = 'completed'; showToast(event.decision_reason); if (event.task_id) showToast('已触发后续学习调整，可前往任务记录查看进度。') }
+        if (event.type === 'completed' && reply) { reply.content = event.content; reply.sources = event.sources; reply.scope_status = event.scope_status; reply.assessment = event.assessment; reply.assessment_unavailable = event.assessment_unavailable; reply.evidence_accepted = event.evidence_accepted; reply.evidence_reason = event.evidence_reason; reply.stream_status = 'completed'; tutorSession.value.node_adjustment_state = event.node_adjustment_state; tutorSession.value.pending_assessment = event.pending_assessment || event.assessment; tutorSession.value.node_adjustment_result = event.node_adjustment_result; tutorSession.value.evidence_scope = event.evidence_scope; showToast(event.decision_reason); if (event.task_id) showToast('已触发后续学习调整，可前往任务记录查看进度。') }
         if (event.type === 'paused' && reply) { reply.content = event.content; reply.stream_status = 'paused' }
         if (event.type === 'error' && reply) reply.stream_status = event.recoverable ? 'interrupted' : 'failed'
       }
@@ -364,21 +388,48 @@ async function sendTutorMessage() {
   }
 }
 
-async function submitAssessment(message: TutoringSession['messages'][number], answer: number) {
-  if (!tutorSession.value || !message.assessment || assessmentSubmitting.value) return
-  assessmentSubmitting.value = message.assessment.assessment_id
+async function answerAssessment(assessment: TutoringAssessment, answer: number) {
+  if (!tutorSession.value || assessmentSubmitting.value) return
+  assessmentSubmitting.value = assessment.assessment_id
   try {
-    const result = await answerTutoringAssessment(tutorSession.value.session_id, message.assessment.assessment_id, answer)
-    message.assessment.status = 'scored'
-    message.assessment.score = result.score
-    message.assessment.is_correct = result.is_correct
+    const result = await answerTutoringAssessment(tutorSession.value.session_id, assessment.assessment_id, answer)
+    Object.assign(assessment, result, { status: 'scored' })
+    tutorSession.value.pending_assessment = null
+    tutorSession.value.node_adjustment_state = result.decision === 'hypothesis_rejected' ? 'none' : 'confirmed'
+    tutorSession.value.node_adjustment_result = assessment
     showToast(result.decision_reason)
-    if (result.task_id) showToast('验证证据已达到门槛，画像分析任务已启动。')
   } catch {
-    showToast('验证答案提交失败，请稍后重试。')
+    showToast('验证答案提交失败，请刷新后重试。')
   } finally {
     assessmentSubmitting.value = ''
   }
+}
+
+async function requestTutorMasteryCheck() {
+  if (!tutorSession.value || masteryCheckLoading.value) return
+  masteryCheckLoading.value = true
+  try {
+    await requestMasteryCheck(tutorSession.value.session_id)
+    tutorSession.value = await getTutoringSession(tutorSession.value.session_id)
+    scrollTutorToLatest()
+  } catch { showToast('暂时无法发起掌握检查，可能已有一项检查待完成。', 'info') }
+  finally { masteryCheckLoading.value = false }
+}
+
+async function decideAssessmentResource(assessment: TutoringAssessment, decision: 'generate' | 'skip') {
+  const proposalId = assessment.adjustment_proposal_id
+  if (!proposalId || resourceDecisionSubmitting.value) return
+  resourceDecisionSubmitting.value = proposalId
+  try {
+    const result = await decideLearningAdjustmentResource(proposalId, decision)
+    assessment.resource_decision = decision
+    if (result.task_id) {
+      await router.push({ path: '/resources', query: { task_id: result.task_id, ...(currentLearnerId.value ? { learner_id: currentLearnerId.value } : {}) } })
+    } else {
+      showToast('已暂不生成资源，画像与路线调整保持生效。', 'info')
+    }
+  } catch { showToast('资源选择保存失败，路线可能已更新，请刷新后重试。', 'error') }
+  finally { resourceDecisionSubmitting.value = '' }
 }
 
 async function pauseTutorMessage() {
@@ -522,12 +573,18 @@ async function sendFeedback(type: string) {
 }
 
 async function doExport() {
-  if (!selected.value) return
+  if (!selected.value || exportSubmitting.value) return
+  exportSubmitting.value = true
   try {
     const r = await exportResource(selected.value.resource_id, exportFormat.value as 'markdown' | 'pdf')
+    await downloadResourceExport(r.download_url, r.file_name)
     exportDialog.value?.close()
-    showToast(`已导出：${r.file_name}`)
-  } catch { showToast('导出失败') }
+    showToast(`已开始下载：${r.file_name}`)
+  } catch {
+    showToast('导出下载失败，请稍后重试。')
+  } finally {
+    exportSubmitting.value = false
+  }
 }
 
 watch(
@@ -540,7 +597,13 @@ onUnmounted(clearTaskTimer)
 
 <style scoped>
 .resource-page { gap: 20px; max-width: 1080px; margin: 0 auto; }
-.knowledge-impact { display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #efd29f; border-radius: 12px; background: #fff9ed; padding: 16px 18px; }
+.path-context { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.path-context span { color: var(--muted); font-size: 11px; }
+.path-context strong { color: var(--ink); font-size: 14px; }
+.generation-basis { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 11px 0; color: var(--body); font-size: 12px; }
+.generation-basis strong { color: var(--ink); font-size: 13px; }
+.generation-basis span { overflow-wrap: anywhere; }
+.knowledge-impact { display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #efd29f; border-radius: 12px; background: var(--amber2); padding: 16px 18px; }
 .knowledge-impact strong { color: #7a4a08; font-size: 14px; }
 .knowledge-impact p { margin-top: 5px; color: #8a6430; font-size: 12.5px; line-height: 1.6; }
 .knowledge-impact.dismissed { border-color: var(--line); background: var(--soft); }
@@ -549,7 +612,7 @@ onUnmounted(clearTaskTimer)
 .impact-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
 /* 空态 */
-.empty-card { display: grid; justify-items: center; gap: 8px; max-width: 560px; margin: 40px auto; border: 1px dashed var(--line); border-radius: 16px; background: #fff; padding: 48px 32px; text-align: center; }
+.empty-card { display: grid; justify-items: center; gap: 8px; max-width: 560px; margin: 40px auto; border: 1px dashed var(--line); border-radius: 16px; background: var(--panel); padding: 48px 32px; text-align: center; }
 .empty-icon { font-size: 40px; }
 .empty-card h2 { color: var(--ink); font-size: 18px; }
 .empty-card p { max-width: 420px; color: var(--muted); font-size: 13px; line-height: 1.7; }
@@ -567,7 +630,7 @@ onUnmounted(clearTaskTimer)
 
 /* 导航卡 */
 .rp-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.type-card { position: relative; display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 14px; background: #fff; padding: 14px 16px; text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.type-card { position: relative; display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 14px 16px; text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
 .type-card:hover { transform: translateY(-1px); border-color: #c3cede; box-shadow: 0 6px 16px rgb(31 48 75 / .08); }
 .type-card.active { border-color: var(--type); box-shadow: 0 6px 18px rgb(31 48 75 / .1); }
 .type-card-icon { width: 40px; height: 40px; flex-shrink: 0; display: grid; place-items: center; border-radius: 11px; background: var(--type-soft); color: var(--type); font-size: 22px; }
@@ -583,7 +646,7 @@ onUnmounted(clearTaskTimer)
 /* 阅读区：正文恒宽 780px，目录作为固定右侧栏、不压缩正文 */
 .reader-shell { display: grid; grid-template-columns: minmax(0, 780px); max-width: 780px; margin: 0 auto; }
 .reader-shell.has-toc { grid-template-columns: minmax(0, 780px) 220px; max-width: 1030px; gap: 30px; justify-content: center; }
-.reader { min-width: 0; border: 1px solid var(--line); border-top: 3px solid var(--type); border-radius: 16px; background: #fff; padding: 28px 32px 34px; box-shadow: 0 1px 2px rgb(16 24 40 / .03); }
+.reader { min-width: 0; border: 1px solid var(--line); border-top: 3px solid var(--type); border-radius: 16px; background: var(--panel); padding: 28px 32px 34px; box-shadow: 0 1px 2px rgb(16 24 40 / .03); }
 .reader-lecture { --type: #315fce; --type-soft: #e9efff; }
 .reader-practice_guide { --type: #138560; --type-soft: #e9f7f1; }
 .reader-graded_quiz { --type: #b96308; --type-soft: #fff3e2; }
@@ -605,7 +668,7 @@ onUnmounted(clearTaskTimer)
 /* 目录 */
 .reader-toc { position: sticky; top: 96px; display: grid; gap: 2px; align-content: start; max-height: calc(100vh - 130px); overflow-y: auto; padding: 4px 0 4px 18px; border-left: 1px solid var(--line); }
 .toc-title { margin-bottom: 8px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
-.toc-link { border: 0; background: transparent; padding: 5px 8px; text-align: left; color: #5a6b81; font-size: 12.5px; line-height: 1.5; border-radius: 7px; cursor: pointer; }
+.toc-link { border: 0; background: transparent; padding: 5px 8px; text-align: left; color: var(--muted); font-size: 12.5px; line-height: 1.5; border-radius: 7px; cursor: pointer; }
 .toc-link:hover { background: var(--soft); color: var(--ink); }
 .toc-h1 { font-weight: 700; color: var(--ink); }
 .toc-h2 { padding-left: 4px; }
@@ -618,32 +681,7 @@ onUnmounted(clearTaskTimer)
 .progress-track i { display: block; height: 100%; background: var(--blue); transition: width .25s ease; }
 
 /* AI 导学抽屉 */
-.tutor-context { margin-bottom: 14px; color: var(--muted); font-size: 12px; line-height: 1.6; }
-.tutor-state { display: grid; gap: 10px; place-items: start; min-height: 140px; color: var(--muted); font-size: 13px; line-height: 1.6; }
-.tutor-error { color: var(--red); }
 .tutor-error p { margin: 0; }
-.tutor-messages { display: grid; gap: 12px; align-content: start; min-height: 220px; max-height: calc(100vh - 290px); overflow-y: auto; padding-right: 2px; }
-.tutor-message { max-width: 92%; }
-.tutor-message span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 650; }
-.tutor-message :deep(.markdown-body) { border-radius: 10px; background: var(--soft); padding: 10px 12px; color: var(--ink); font-size: 13px; overflow-wrap: anywhere; }
-.tutor-message :deep(.markdown-body > :first-child) { margin-top: 0; }
-.tutor-message :deep(.markdown-body > :last-child) { margin-bottom: 0; }
-.tutor-message.is-learner { justify-self: end; }
-.tutor-message.is-learner span { text-align: right; }
-.tutor-message.is-learner :deep(.markdown-body) { background: var(--blue2); color: #27457f; }
-.tutor-cursor { display: inline-block; width: 7px; height: 14px; margin: 6px 0 0 8px; background: var(--blue); animation: tutor-blink 1s steps(2, start) infinite; vertical-align: middle; }
-.tutor-stream-note { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
-.tutor-sources { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.5; }
-.tutor-assessment { margin-top: 9px; border: 1px solid #cbd9f4; border-radius: 8px; background: #f5f8ff; padding: 10px; color: #27457f; font-size: 12px; line-height: 1.6; }
-.tutor-assessment p { margin: 5px 0; background: transparent; padding: 0; color: inherit; }
-.tutor-assessment small { color: #516788; }
-.assessment-options { display: grid; gap: 6px; margin: 8px 0; }
-.assessment-options button { border: 1px solid #b9cae9; border-radius: 6px; background: #fff; padding: 7px 9px; color: #27457f; text-align: left; cursor: pointer; }
-.assessment-options button:hover:not(:disabled) { border-color: var(--blue); background: #edf3ff; }
-.tutor-assessment.is-correct { border-color: #9ed8c1; background: #effaf5; color: #176a4f; }
-.tutor-assessment.is-wrong { border-color: #efc3bd; background: #fff5f3; color: #9c372d; }
-.tutor-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
-.tutor-form textarea { width: 100%; min-height: 78px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; color: var(--ink); line-height: 1.5; }
 @keyframes tutor-blink { 50% { opacity: 0; } }
 
 @media (max-width: 1100px) {
@@ -657,9 +695,144 @@ onUnmounted(clearTaskTimer)
   .impact-actions { display: grid; }
 }
 @media (max-width: 480px) {
-  .tutor-form { grid-template-columns: 1fr; }
-  .tutor-messages { max-height: calc(100vh - 340px); }
   .reader { padding: 20px 18px 26px; }
   .reader-head { flex-direction: column; }
+}
+
+:global(.drawer) { width: min(500px, 95vw); }
+:global(.drawer-head) { padding: 18px 20px 16px; background: var(--panel); }
+:global(.drawer-body) { padding: 16px 18px 20px; background: var(--bg); }
+:global(.drawer-foot) { padding: 14px 18px 18px; background: var(--panel); }
+
+.tutor-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--body);
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.6;
+}
+.tutor-context-icon,
+.tutor-empty-icon {
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--blue2);
+  color: var(--blue);
+}
+.tutor-context-icon { width: 25px; height: 25px; font-size: 14px; }
+.tutor-state {
+  min-height: 220px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  padding: 28px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.65;
+}
+.tutor-state p { max-width: 280px; margin: 0; }
+.tutor-loading { grid-template-columns: 1fr; justify-items: stretch; gap: 9px; }
+.tutor-loading span {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--track);
+}
+.tutor-loading span:nth-child(2) { width: 82%; }
+.tutor-loading span:nth-child(3) { width: 58%; }
+.tutor-loading p { justify-self: center; margin-top: 8px; }
+.tutor-empty-icon { width: 40px; height: 40px; font-size: 20px; }
+.tutor-empty strong { color: var(--ink); font-size: 14px; }
+.tutor-error { border-style: solid; border-color: var(--red); color: var(--red); }
+.tutor-messages {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-height: 260px;
+  max-height: calc(100vh - 316px);
+  overflow-y: auto;
+  padding: 2px 3px 8px;
+}
+.tutor-message { width: min(92%, 390px); max-width: 92%; display: grid; gap: 5px; }
+.tutor-message.is-learner { justify-self: end; }
+.tutor-message-meta { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.tutor-message.is-learner .tutor-message-meta { flex-direction: row-reverse; justify-content: flex-start; }
+.tutor-avatar {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: var(--blue2);
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 800;
+}
+.tutor-message.is-learner .tutor-avatar { background: var(--blue); color: #fff; }
+.tutor-message :deep(.markdown-body) {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 11px 13px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.tutor-message.is-learner :deep(.markdown-body) { border-color: var(--blue); background: var(--blue2); color: var(--ink); }
+.tutor-cursor { width: 5px; height: 13px; display: inline-block; margin: 7px 0 0 12px; border-radius: 2px; background: var(--blue); animation: tutor-blink 1s steps(2, start) infinite; vertical-align: middle; }
+.tutor-stream-note,
+.tutor-sources { display: block; margin-left: 6px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.tutor-sources { color: var(--body); }
+.tutor-footer-tools { display: flex; justify-content: flex-start; margin-bottom: 8px; }
+.tutor-form { display: grid; grid-template-columns: minmax(0, 1fr) 42px; align-items: stretch; gap: 10px; }
+.tutor-composer { position: relative; min-width: 0; }
+.tutor-form textarea {
+  width: 100%;
+  min-height: 86px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--soft);
+  padding: 11px 12px 25px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.tutor-form textarea:focus { border-color: var(--blue); background: var(--panel); }
+.tutor-composer small { position: absolute; right: 10px; bottom: 8px; color: var(--muted); font-size: 10px; pointer-events: none; }
+.tutor-send {
+  width: 42px;
+  height: 42px;
+  align-self: end;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 18px;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+}
+.tutor-send:hover:not(:disabled) { background: #274fae; transform: translateY(-1px); }
+.tutor-send:disabled { background: var(--track); color: var(--muted); }
+.tutor-pause { align-self: end; min-height: 42px; }
+
+@media (max-width: 480px) {
+  :global(.drawer) { width: 100vw; }
+  .tutor-messages { max-height: calc(100vh - 328px); }
+  .tutor-message { width: 96%; }
+  .tutor-form { grid-template-columns: 1fr; }
 }
 </style>

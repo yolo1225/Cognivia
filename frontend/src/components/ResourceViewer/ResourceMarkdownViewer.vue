@@ -133,7 +133,7 @@ watch(html, () => nextTick(decorate))
 
 <style scoped>
 .markdown-body {
-  color: #3e4e63;
+  color: var(--body);
   font-size: 13.5px;
   line-height: 1.8;
   overflow-wrap: anywhere;
@@ -196,7 +196,7 @@ watch(html, () => nextTick(decorate))
   margin: 0 0 12px;
   border: 1px solid #e7edf4;
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
   box-shadow: 0 1px 2px rgb(16 24 40 / .03);
   overflow: hidden;
   scroll-margin-top: 84px;
@@ -214,7 +214,7 @@ watch(html, () => nextTick(decorate))
   box-shadow: inset 3px 0 0 var(--blue);
   user-select: none;
 }
-.markdown-body :deep(details.md-section > summary):hover { background: #eef2f8; }
+.markdown-body :deep(details.md-section > summary):hover { background: var(--soft); }
 .markdown-body :deep(details.md-section > summary)::-webkit-details-marker { display: none; }
 .markdown-body :deep(details.md-section > summary)::before {
   content: '▸';

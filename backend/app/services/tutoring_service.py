@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import case, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.contracts import (
@@ -31,12 +32,17 @@ from app.models import (
     Learner,
     LearnerProfile,
     KnowledgeItem,
-    LearningPath,
     LearningResource,
+    PathNodeAssessment,
     TutoringMessage,
     TutoringSession,
 )
 from app.services.feedback_service import create_feedback_task
+from app.services.learning_adjustment_service import (
+    answer_adjustment_assessment,
+    maybe_create_automatic_assessment,
+    node_adjustment_context,
+)
 from app.services.profile_service import public_id
 from app.services.contract_mapping import profile_snapshot
 from app.core.compatibility import AGENT_CONTRACT_VERSION
@@ -76,107 +82,13 @@ class TutoringTurnResult:
             "profile_update_required": bool(self.feedback.profile_update_required),
             "decision_reason": self.feedback.decision_reason,
             "task_id": self.task.public_id if self.task else None,
+            "node_adjustment_state": self.output.get("node_adjustment_state", "none"),
+            "pending_assessment": self.output.get("pending_assessment"),
+            "node_adjustment_result": self.output.get("node_adjustment_result"),
+            "evidence_scope": self.output.get("evidence_scope"),
+            "evidence_accepted": bool(self.output.get("evidence_accepted")),
+            "evidence_reason": self.output.get("evidence_reason"),
         }
-
-
-def _current_path_knowledge_id(
-    db: Session, *, learner: Learner, domain_code: str
-) -> str | None:
-    path = db.scalar(
-        select(LearningPath)
-        .where(
-            LearningPath.learner_id == learner.id,
-            LearningPath.domain_code == domain_code,
-            LearningPath.status == "active",
-        )
-        .order_by(LearningPath.id.desc())
-    )
-    payload = path.path_json or {} if path is not None else {}
-    node_id = payload.get("current_node_id")
-    node = (payload.get("node_states") or {}).get(node_id, {}) if node_id else {}
-    knowledge_id = node.get("knowledge_id") if isinstance(node, dict) else None
-    return str(knowledge_id) if knowledge_id else None
-
-
-def _formal_assessment(
-    db: Session,
-    *,
-    session: TutoringSession,
-    learner: Learner,
-    resource: LearningResource,
-    feedback: Feedback,
-    needed: bool,
-) -> tuple[dict[str, Any] | None, str | None]:
-    if not needed:
-        return None, None
-    knowledge_ids = [
-        str(item.get("knowledge_id"))
-        for item in (resource.sources_json or [])
-        if isinstance(item, dict) and item.get("knowledge_id")
-    ]
-    if not knowledge_ids:
-        return None, "assessment_unavailable"
-    attempted_question_ids = [
-        record.question_id
-        for record in db.scalars(
-            select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)
-        )
-        if (record.answer_summary_json or {}).get("tutoring_session_id") == session.id
-    ]
-    source_task = db.get(GenerationTask, resource.generation_task_id)
-    if source_task is None:
-        return None, "assessment_unavailable"
-    current_knowledge_id = _current_path_knowledge_id(
-        db, learner=learner, domain_code=source_task.domain_code
-    )
-    current_first = case(
-        (KnowledgeItem.public_id == current_knowledge_id, 0),
-        else_=1,
-    )
-    question = db.scalar(
-        select(DiagnosticQuestion)
-        .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
-        .where(
-            DiagnosticQuestion.domain_code == source_task.domain_code,
-            DiagnosticQuestion.question_type == "single_choice",
-            KnowledgeItem.public_id.in_(knowledge_ids),
-            DiagnosticQuestion.id.not_in(attempted_question_ids),
-        )
-        .order_by(current_first, DiagnosticQuestion.difficulty, DiagnosticQuestion.id)
-    )
-    if question is None:
-        # A resource may cite a knowledge item with only one validation question.
-        # Keep the second controlled check inside the same domain and session,
-        # while allowing another domain question after source-linked questions
-        # have been exhausted.
-        question = db.scalar(
-            select(DiagnosticQuestion)
-            .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
-            .where(
-                DiagnosticQuestion.domain_code == source_task.domain_code,
-                DiagnosticQuestion.question_type == "single_choice",
-                DiagnosticQuestion.id.not_in(attempted_question_ids),
-            )
-            .order_by(current_first, DiagnosticQuestion.difficulty, DiagnosticQuestion.id)
-        )
-    if question is None:
-        return None, "assessment_unavailable"
-    knowledge = db.get(KnowledgeItem, question.knowledge_item_id)
-    assessment_id = public_id("tval")
-    return {
-        "assessment_id": assessment_id,
-        "question_id": question.public_id,
-        "knowledge_id": knowledge.public_id,
-        "question_type": question.question_type,
-        "difficulty": question.difficulty,
-        "stem": question.stem,
-        "options": question.options_json or [],
-        "status": "pending",
-        "feedback_id": str(feedback.id),
-        "session_id": session.public_id,
-        "learner_id": learner.public_id,
-        "domain_code": source_task.domain_code,
-    }, None
 
 
 def _agent_message(
@@ -326,6 +238,7 @@ def add_learner_message(
     evidence: list[dict] | None = None,
     prepared_learner_message: TutoringMessage | None = None,
     prepared_reply: TutoringMessage | None = None,
+    on_reply_delta: Callable[[str], None] | None = None,
 ) -> tuple[TutoringMessage, TutoringMessage, Feedback, GenerationTask | None, dict]:
     if session.status != "active":
         raise ValueError("tutoring session is not active")
@@ -476,10 +389,15 @@ def add_learner_message(
         db, session=session, resource=resource, question=content
     )
     with collect_model_calls() as collector:
-        output_model = TutoringAgent(
+        agent = TutoringAgent(
             domain_display_name=domain.name,
             resource_context=resource_context,
-        ).execute(request)
+        )
+        output_model = (
+            agent.stream_execute(request, on_reply_delta)
+            if on_reply_delta is not None
+            else agent.execute(request)
+        )
     model_calls = collector.snapshot()
     output = output_model.model_dump(mode="json")
     action = output_model.recommended_action.value
@@ -493,6 +411,12 @@ def add_learner_message(
     feedback.profile_change_evidence_json = all_evidence
     feedback.decision_confidence = 0.75 if safe_evidence else 0.45
     feedback.decision_reason = output_model.decision_reason
+    feedback.evidence_status = (
+        "eligible"
+        if output_model.feedback_intent.value in {"too_easy", "too_hard"}
+        else "supporting_only"
+    )
+    db.flush()
     run.status = "completed"
     run.output_summary_json = {
         "task_id": session.public_id,
@@ -531,16 +455,49 @@ def add_learner_message(
     output["reply"] = contextual_answer.answer
     output["sources"] = contextual_answer.sources
     output["scope_status"] = contextual_answer.scope_status
-    assessment, assessment_unavailable = _formal_assessment(
-        db,
-        session=session,
-        learner=learner,
-        resource=resource,
-        feedback=feedback,
-        needed=output_model.feedback_intent.value in {"too_hard", "too_easy"},
+    assessment = None
+    assessment_unavailable = None
+    evidence_accepted = feedback.evidence_status == "eligible"
+    evidence_reason = (
+        "本轮自然语言反馈已纳入当前节点的学习判断"
+        if evidence_accepted
+        else {
+            "incorrect": "资源质量问题已进入内容复核，不用于推断学习能力",
+            "confusing": "本轮用于改进讲解，不直接推断学习能力",
+            "helpful": "本轮作为资源体验反馈保存，不触发画像调整",
+        }.get(output_model.feedback_intent.value, "本轮未形成可用于画像判断的证据")
     )
+    try:
+        assessment = maybe_create_automatic_assessment(
+            db,
+            session=session,
+            profile=profile,
+            resource=resource,
+        )
+    except ValueError as exc:
+        if str(exc) == "learning_adjustment_assessment_unavailable":
+            assessment_unavailable = str(exc)
+        elif str(exc) not in {
+            "learning_adjustment_context_missing",
+            "learning_adjustment_context_stale",
+        }:
+            raise
+        else:
+            feedback.evidence_status = "stale"
+            evidence_accepted = False
+            evidence_reason = "当前资源已不是本节点学习包，不参与画像调整"
+    if feedback.evidence_status == "conflict":
+        evidence_accepted = False
+        evidence_reason = "本轮与近期反馈方向冲突，系统将重新收集学习证据"
+    elif feedback.evidence_status == "consumed":
+        evidence_accepted = True
+        evidence_reason = "本轮已与本节点其他学习环节的反馈共同形成掌握检查"
+    adjustment_context = node_adjustment_context(db, session=session)
     output["assessment"] = assessment
     output["assessment_unavailable"] = assessment_unavailable
+    output.update(adjustment_context)
+    output["evidence_accepted"] = evidence_accepted
+    output["evidence_reason"] = evidence_reason
     output["session_id"] = session.public_id
     reply = prepared_reply or TutoringMessage(
         public_id=public_id("msg"),
@@ -556,6 +513,8 @@ def add_learner_message(
         "scope_status": contextual_answer.scope_status,
         "assessment": assessment,
         "assessment_unavailable": assessment_unavailable,
+        "evidence_accepted": evidence_accepted,
+        "evidence_reason": evidence_reason,
         "stream_status": "completed",
     }
     reply.feedback_id = feedback.id
@@ -563,18 +522,8 @@ def add_learner_message(
     db.flush()
 
     task = None
-    has_confirmed_assessment = any(
-        item.evidence_type.value in {"scored_quiz", "validated_behavior"}
-        and item.confirmed
-        and item.confidence >= 0.7
-        for item in safe_evidence
-    )
     # Resource correctness is independently reviewable and never changes mastery.
-    if action == "review" or (
-        has_confirmed_assessment
-        and output_model.needs_generation
-        and action in {"challenge", "explain", "regenerate"}
-    ):
+    if action == "review":
         task = create_feedback_task(
             db,
             learner=learner,
@@ -595,6 +544,7 @@ def execute_tutoring_turn(
     evidence: list[dict] | None = None,
     prepared_learner_message: TutoringMessage | None = None,
     prepared_reply: TutoringMessage | None = None,
+    on_reply_delta: Callable[[str], None] | None = None,
 ) -> TutoringTurnResult:
     learner_message, reply, feedback, task, output = add_learner_message(
         db,
@@ -604,6 +554,7 @@ def execute_tutoring_turn(
         evidence=evidence,
         prepared_learner_message=prepared_learner_message,
         prepared_reply=prepared_reply,
+        on_reply_delta=on_reply_delta,
     )
     return TutoringTurnResult(learner_message, reply, feedback, task, output)
 
@@ -660,6 +611,24 @@ def submit_assessment_answer(
     assessment_id: str,
     answer: Any,
 ) -> tuple[AnswerRecord, Feedback, GenerationTask | None, dict[str, Any]]:
+    proposal_assessment = db.scalar(
+        select(PathNodeAssessment).where(
+            PathNodeAssessment.public_id == assessment_id,
+            PathNodeAssessment.adjustment_proposal_id.is_not(None),
+        )
+    )
+    if proposal_assessment is not None:
+        record, feedback, result = answer_adjustment_assessment(
+            db,
+            session=session,
+            profile=profile,
+            assessment_id=assessment_id,
+            answer=answer,
+        )
+        return record, feedback, None, {
+            **result,
+            "profile_update_required": result["profile_changed"],
+        }
     message, assessment = _assessment_message(db, session=session, assessment_id=assessment_id)
     question = db.scalar(
         select(DiagnosticQuestion).where(
@@ -804,10 +773,12 @@ def serialize_session(db: Session, session: TutoringSession) -> dict:
             .order_by(TutoringMessage.id)
         )
     )
+    adjustment_context = node_adjustment_context(db, session=session)
     return {
         "session_id": session.public_id,
         "status": session.status,
         "turn_count": session.turn_count,
+        **adjustment_context,
         "messages": [
             {
                 "message_id": item.public_id,
@@ -818,6 +789,13 @@ def serialize_session(db: Session, session: TutoringSession) -> dict:
                 "sources": (item.metadata_json or {}).get("sources", []),
                 "scope_status": (item.metadata_json or {}).get("scope_status"),
                 "assessment": (item.metadata_json or {}).get("assessment"),
+                "assessment_unavailable": (item.metadata_json or {}).get(
+                    "assessment_unavailable"
+                ),
+                "evidence_accepted": (item.metadata_json or {}).get(
+                    "evidence_accepted"
+                ),
+                "evidence_reason": (item.metadata_json or {}).get("evidence_reason"),
                 "stream_status": (item.metadata_json or {}).get("stream_status", "completed"),
                 "error_code": (item.metadata_json or {}).get("error_code"),
             }

@@ -10,3 +10,7 @@
 - `confidence`：0 到 1 之间的数字。
 
 不得返回中文意图名、`challenge`、`explain` 等动作名作为 `intent`。
+
+输出字段必须严格按以下顺序：`intent`、`difficulty_focus`、`unresolved`、
+`mastery_evidence_present`、`confidence`、`candidate_reply`。`candidate_reply` 必须是最后一个
+字段，且不得包含画像更新、资源发布、审核结论或任务创建的承诺。

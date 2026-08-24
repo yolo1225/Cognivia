@@ -82,7 +82,11 @@ class GenerationError(RuntimeError):
 
 
 class GeneratedContentResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # Compatible providers echo request-payload keys (``source_violations``,
+    # ``policy_violations``) back alongside the requested output.  These are
+    # input context, not part of the contract, so tolerate and drop them rather
+    # than burning the bounded validation-retry budget on an extra-field echo.
+    model_config = ConfigDict(extra="ignore")
 
     structured_content: StructuredResourceContent
     difficulty: int
@@ -104,7 +108,7 @@ class RevisionPatchResponse(BaseModel):
 class LectureGenerationResponse(BaseModel):
     """Internal response shape for a lecture-only model call."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     structured_content: LectureContent
     difficulty: int
 
@@ -112,7 +116,7 @@ class LectureGenerationResponse(BaseModel):
 class PracticeGuideGenerationResponse(BaseModel):
     """Internal response shape for a practice-guide-only model call."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     structured_content: PracticeGuideContent
     difficulty: int
 
@@ -120,7 +124,7 @@ class PracticeGuideGenerationResponse(BaseModel):
 class GradedQuizGenerationResponse(BaseModel):
     """Internal response shape for a graded-quiz-only model call."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     structured_content: GradedQuizContent
     difficulty: int
 

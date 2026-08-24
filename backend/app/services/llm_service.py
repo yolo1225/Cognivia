@@ -335,6 +335,47 @@ class OpenAICompatibleGateway:
             if content:
                 yield content
 
+    def stream_json(
+        self,
+        *,
+        model: str | None,
+        system_prompt: str,
+        payload: dict[str, Any],
+        fixture_factory: Callable[[], dict[str, Any]] | None = None,
+    ) -> Iterator[str]:
+        """Yield a single OpenAI-compatible JSON object as it is generated.
+
+        The caller is responsible for validating the completed object.  Keeping
+        that validation at the Agent boundary lets a learner-facing reply be
+        forwarded before the final structured fields are available.
+        """
+        if not model or not settings.openai_api_key:
+            if (
+                settings.app_env != "production"
+                and settings.allow_fixture_llm
+                and fixture_factory is not None
+            ):
+                yield json.dumps(fixture_factory(), ensure_ascii=False)
+                return
+            raise ModelConfigurationError("model channel is not configured")
+
+        stream = self._client().chat.completions.create(
+            model=model,
+            stream=True,
+            response_format={"type": settings.llm_json_schema_mode},
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"Return a valid JSON object.\n\n{system_prompt}",
+                },
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+        )
+        for event in stream:
+            content = event.choices[0].delta.content if event.choices else None
+            if content:
+                yield content
+
     @staticmethod
     def _validate(
         result: dict[str, Any], response_model: type[ResponseModel] | None
@@ -362,8 +403,39 @@ class OpenAICompatibleGateway:
                 normalized["source_ref_ids"] = [normalized["source_ref_ids"]]
             if "options" in normalized and normalized["options"] is None:
                 normalized["options"] = []
+            # Compatible providers often emit ``difficulty`` as a numeric string
+            # (``"3"``) or float (``3.0``) even though the contract types it as
+            # a 1-5 integer.  Coerce it instead of burning the whole bounded
+            # validation-retry budget on a type-only mismatch.
+            if "difficulty" in normalized:
+                normalized["difficulty"] = _coerce_difficulty(normalized["difficulty"])
             return normalized
         return value
+
+
+def _coerce_difficulty(value: Any) -> Any:
+    """Clamp a provider-returned difficulty to the contract's 1-5 integer.
+
+    Accepts an int, a float with an integer value, or a numeric string. Any
+    other value is returned unchanged so the schema validation can still report
+    a precise error rather than silently publishing a wrong difficulty.
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return max(1, min(5, value))
+    if isinstance(value, float):
+        if not value.is_integer():
+            return value
+        return max(1, min(5, int(value)))
+    if isinstance(value, str):
+        stripped = value.strip()
+        try:
+            return max(1, min(5, int(float(stripped))))
+        except ValueError:
+            return value
+    return value
 
     def configuration_status(self) -> dict[str, Any]:
         generation_ready = bool(settings.primary_llm_model)

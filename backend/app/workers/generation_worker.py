@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -53,10 +52,10 @@ from app.services.generation_service import persist_generated_resources
 from app.services.learning_path_service import (
     node_id_for,
     normalize_learning_path,
-    normalize_path_for_domain,
 )
-from app.services.profile_service import build_learning_path_from_snapshot, public_id
-from app.services.contract_mapping import ability_profile_payload, profile_snapshot
+from app.services.profile_revision_service import persist_profile_revision
+from app.services.contract_mapping import profile_snapshot
+from app.services.node_generation_target_service import generation_basis_for_task
 
 
 NodeFunc = Callable[[GRAPH_STATE], GRAPH_STATE]
@@ -130,17 +129,28 @@ def _feedback_assessments(
     learner: Learner,
     feedback: Feedback | None,
 ) -> tuple[list[EvidenceRef], list[KnowledgeAssessment]]:
-    if feedback is None or feedback.tutoring_session_id is None:
+    if feedback is None:
+        return [], []
+    explicit_ids = {
+        str(item.get("evidence_id"))
+        for item in (feedback.profile_change_evidence_json or [])
+        if isinstance(item, dict) and item.get("evidence_id")
+    }
+    if feedback.tutoring_session_id is None and not explicit_ids:
         return [], []
     evidence: list[EvidenceRef] = []
     assessments: list[KnowledgeAssessment] = []
     for record in db.scalars(select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)):
         summary = record.answer_summary_json or {}
-        if (
-            summary.get("tutoring_session_id") != feedback.tutoring_session_id
-            or summary.get("confirmed") is not True
-            or summary.get("consumed_by_profile_id") is not None
-        ):
+        evidence_id = f"answer_record:{record.id}"
+        belongs_to_feedback = (
+            summary.get("tutoring_session_id") == feedback.tutoring_session_id
+            if feedback.tutoring_session_id is not None
+            else evidence_id in explicit_ids
+        )
+        if not belongs_to_feedback or summary.get("confirmed") is not True or summary.get(
+            "consumed_by_profile_id"
+        ) is not None:
             continue
         question = db.get(DiagnosticQuestion, record.question_id)
         knowledge = db.get(KnowledgeItem, record.knowledge_item_id)
@@ -151,7 +161,6 @@ def _feedback_assessments(
             or knowledge.domain_code != task.domain_code
         ):
             continue
-        evidence_id = f"answer_record:{record.id}"
         confidence = max(0.0, min(1.0, float(summary.get("confidence") or 0.9)))
         evidence.append(
             EvidenceRef(
@@ -200,8 +209,13 @@ def _initial_state(
     )
     if task.trigger_type == "resource_feedback" and (feedback is None or resource is None):
         raise ValueError("resource_feedback_task_missing_source_references")
-    inherited_targets: dict[str, list[str]] = {}
-    if task.source_task_id:
+    inherited_targets: dict[str, list[str]] = {
+        str(resource_type): list(knowledge_ids or [])
+        for resource_type, knowledge_ids in (
+            task.resource_knowledge_targets_json or {}
+        ).items()
+    }
+    if not inherited_targets and task.source_task_id:
         source_task = db.get(GenerationTask, task.source_task_id)
         if source_task is None:
             raise ValueError("source_package_not_found")
@@ -244,7 +258,20 @@ def _initial_state(
         )
         .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
     )
-    path_snapshot, current_path_node = _learning_path_snapshot(learning_path, active_profile)
+    basis = generation_basis_for_task(db, task)
+    prerequisites_by_knowledge = {}
+    if basis and basis.get("core_knowledge"):
+        prerequisites_by_knowledge[
+            basis["core_knowledge"]["knowledge_id"]
+        ] = [
+            item["knowledge_id"]
+            for item in basis.get("prerequisite_knowledge") or []
+        ]
+    path_snapshot, current_path_node = _learning_path_snapshot(
+        learning_path,
+        active_profile,
+        prerequisites_by_knowledge=prerequisites_by_knowledge,
+    )
     state: GRAPH_STATE = {
         "contract_version": AGENT_CONTRACT_VERSION,
         "task_request": request,
@@ -328,6 +355,8 @@ def _next_receiver(step: str, patch: GRAPH_STATE) -> str:
 def _learning_path_snapshot(
     path: LearningPath | None,
     profile,
+    *,
+    prerequisites_by_knowledge: dict[str, list[str]] | None = None,
 ) -> tuple[LearningPathSnapshot | None, LearningPathNodeSnapshot | None]:
     if path is None:
         return None, None
@@ -351,6 +380,9 @@ def _learning_path_snapshot(
                     path_order=len(nodes) + 1,
                     target_difficulty=difficulty,
                     learning_objective=str(stage.get("description") or f"掌握 {knowledge_id}"),
+                    prerequisite_knowledge_ids=list(
+                        (prerequisites_by_knowledge or {}).get(knowledge_id, [])
+                    ),
                 )
             )
     current_node_id = payload.get("current_node_id")
@@ -592,108 +624,20 @@ def _persist_profile_update(
     db: Session, task: GenerationTask, original: LearnerProfile, state: GRAPH_STATE
 ) -> LearnerProfile:
     analysis = state.get("analyze_profile")
-    if analysis is None or not analysis.profile_update_required:
+    if analysis is None:
         return original
-    snapshot = analysis.profile
-    if (
-        snapshot.profile_id == original.public_id
-        and snapshot.profile_version <= original.profile_version
-    ):
-        return original
-    next_profile = LearnerProfile(
-        public_id=public_id("profile"),
-        learner_id=original.learner_id,
-        domain_code=original.domain_code,
-        ability_profile_json=ability_profile_payload(snapshot),
-        weak_knowledge_json=[item.model_dump(mode="json") for item in snapshot.weak_knowledge],
-        profile_version=snapshot.profile_version,
-        previous_profile_id=original.id,
-        profile_source="feedback_revision",
-        diagnosis_completed=True,
-        changed_dimensions_json=analysis.changed_dimensions,
-        evidence_refs_json=[item.model_dump(mode="json") for item in analysis.evidence_refs],
-        confidence=analysis.confidence,
-        context_snapshot_json=original.context_snapshot_json or {},
-        trigger_feedback_id=task.source_feedback_id,
-        decision_reason=analysis.decision_reason,
-        profile_changed_at=datetime.now(UTC),
-    )
-    db.add(next_profile)
-    db.flush()
-    task.profile_id = next_profile.id
-    consumed_ids = {item.evidence_id for item in analysis.evidence_refs}
-    for record in db.scalars(
-        select(AnswerRecord).where(AnswerRecord.learner_id == original.learner_id)
-    ):
-        if f"answer_record:{record.id}" in consumed_ids:
-            summary = dict(record.answer_summary_json or {})
-            summary["consumed_by_profile_id"] = next_profile.id
-            record.answer_summary_json = summary
-    feedback = db.get(Feedback, task.source_feedback_id) if task.source_feedback_id else None
-    if feedback is not None:
-        affected_knowledge_ids = list(
-            dict.fromkeys(
-                [
-                    *analysis.affected_scope.knowledge_ids,
-                    *[item.knowledge_id for item in analysis.evidence_refs if item.knowledge_id],
-                ]
-            )
-        )
-        learner_resources = db.scalars(
-            select(LearningResource)
-            .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
-            .where(
-                GenerationTask.learner_id == original.learner_id,
-                LearningResource.is_current.is_(True),
-            )
-        )
-        feedback.profile_update_required = True
-        feedback.decision_reason = analysis.decision_reason
-        feedback.decision_confidence = analysis.confidence
-        feedback.affected_knowledge_ids_json = affected_knowledge_ids
-        feedback.affected_path_node_ids_json = list(analysis.affected_scope.path_node_ids)
-        feedback.affected_resource_ids_json = [
-            resource.public_id
-            for resource in learner_resources
-            if any(
-                source.get("knowledge_id") in affected_knowledge_ids
-                for source in (resource.sources_json or [])
-                if isinstance(source, dict)
-            )
-        ]
-    previous_paths = list(
-        db.scalars(
-            select(LearningPath)
-            .where(LearningPath.profile_id == original.id)
-            .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
-        )
-    )
-    previous_path = previous_paths[0] if previous_paths else None
-    for path in previous_paths:
-        path.needs_refresh = True
-        if path.status == "active":
-            path.status = "superseded"
-    path_payload = build_learning_path_from_snapshot(
-        next_profile.ability_profile_json,
-        next_profile.weak_knowledge_json,
-    )
-    path_payload = normalize_path_for_domain(
+    next_profile, next_path = persist_profile_revision(
         db,
-        domain_code=original.domain_code,
-        payload=path_payload,
-        previous_payload=previous_path.path_json if previous_path else None,
+        original=original,
+        analysis=analysis,
+        trigger_feedback_id=task.source_feedback_id,
     )
-    db.add(
-        LearningPath(
-            public_id=public_id("path"),
-            learner_id=original.learner_id,
-            profile_id=next_profile.id,
-            domain_code=original.domain_code,
-            status="active",
-            path_json=path_payload,
-            needs_refresh=False,
-        )
-    )
+    if next_profile.id == original.id:
+        return original
+    task.profile_id = next_profile.id
+    if next_path is not None:
+        task.learning_path_id = next_path.id
+        task.path_node_id = (next_path.path_json or {}).get("current_node_id")
     return next_profile
 
 

@@ -617,7 +617,7 @@ onMounted(load);
   grid-template-columns: repeat(4, minmax(0, 1fr));
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
 }
 .readiness-item {
   display: grid;
@@ -656,7 +656,7 @@ onMounted(load);
   color: var(--amber);
 }
 .readiness-mark.error {
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
 }
 .inline-error {
@@ -664,7 +664,7 @@ onMounted(load);
   align-items: center;
   justify-content: space-between;
   border-radius: 8px;
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
   padding: 10px 12px;
   font-size: 12px;
@@ -676,9 +676,9 @@ onMounted(load);
   gap: 14px;
   border: 1px solid #cdd9ed;
   border-radius: 9px;
-  background: #f4f7fd;
+  background: var(--soft);
   padding: 10px 13px;
-  color: #27457f;
+  color: var(--info);
 }
 .unsaved-banner p {
   margin: 3px 0 0;
@@ -693,7 +693,7 @@ onMounted(load);
   border-radius: 10px;
   background: var(--amber2);
   padding: 12px 14px;
-  color: #784207;
+  color: var(--amber);
 }
 .index-icon {
   width: 28px;
@@ -701,7 +701,7 @@ onMounted(load);
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #f8deb8;
+  background: var(--amber2);
   font-weight: 800;
 }
 .index-banner p {
@@ -744,7 +744,7 @@ onMounted(load);
 .settings-form label {
   display: grid;
   gap: 6px;
-  color: #405067;
+  color: var(--body);
   font-size: 12px;
   font-weight: 680;
 }
@@ -799,11 +799,11 @@ onMounted(load);
 }
 .clear-key-button {
   flex: 0 0 auto;
-  background: #fff;
+  background: var(--panel);
 }
 .clear-key-button:hover {
   border-color: var(--red);
-  background: #fff7f7;
+  background: var(--red2);
 }
 .role-list {
   display: grid;
@@ -832,11 +832,11 @@ onMounted(load);
   font-weight: 800;
 }
 .role-icon.review {
-  background: #f0ecff;
+  background: var(--blue2);
   color: #6950b5;
 }
 .role-icon.secondary {
-  background: #e8f5f3;
+  background: var(--green2);
   color: #27776d;
 }
 .role-icon.embedding {
@@ -882,7 +882,7 @@ onMounted(load);
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #fff;
+  background: var(--panel);
   color: var(--blue);
 }
 .test-empty p {
@@ -901,7 +901,7 @@ onMounted(load);
   color: var(--green);
 }
 .test-result.failed {
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
 }
 .test-result.stale {
@@ -946,12 +946,12 @@ onMounted(load);
 .config-notes {
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: #fff;
+  background: var(--panel);
 }
 .config-notes summary {
   cursor: pointer;
   padding: 12px 14px;
-  color: #405067;
+  color: var(--body);
   font-size: 11px;
   font-weight: 680;
 }
@@ -969,7 +969,7 @@ onMounted(load);
   margin-bottom: 0;
 }
 .config-notes code {
-  color: #405067;
+  color: var(--body);
 }
 .confirm-message {
   display: grid;
@@ -989,12 +989,12 @@ onMounted(load);
   font-weight: 800;
 }
 .danger-message > span {
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
 }
 .confirm-message p {
   margin: 4px 0;
-  color: #405067;
+  color: var(--body);
   font-size: 12px;
   line-height: 1.65;
 }

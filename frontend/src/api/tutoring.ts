@@ -4,6 +4,14 @@ export interface TutoringSession {
   session_id: string
   status: string
   turn_count: number
+  node_adjustment_state: 'collecting' | 'pending_validation' | 'confirmed' | 'none'
+  pending_assessment?: TutoringAssessment | null
+  node_adjustment_result?: TutoringAssessment | null
+  evidence_scope?: {
+    path_node_id: string
+    path_node_title: string | null
+    generation_task_id: string
+  } | null
   messages: Array<{
     message_id: string
     sender: string
@@ -14,6 +22,8 @@ export interface TutoringSession {
     scope_status?: string | null
     assessment?: TutoringAssessment | null
     assessment_unavailable?: string | null
+    evidence_accepted?: boolean
+    evidence_reason?: string | null
     stream_status?: 'streaming' | 'completed' | 'paused' | 'interrupted' | 'failed'
     error_code?: string | null
   }>
@@ -21,6 +31,9 @@ export interface TutoringSession {
 
 export interface TutoringAssessment {
   assessment_id: string
+  adjustment_proposal_id?: string
+  hypothesis_type?: 'mastery_up' | 'support_down'
+  trigger_reason?: string
   question_id: string
   knowledge_id: string
   question_type: 'single_choice'
@@ -30,6 +43,22 @@ export interface TutoringAssessment {
   status: 'pending' | 'scored'
   score?: number
   is_correct?: boolean
+  decision?: 'confirmed_mastery' | 'confirmed_support_need' | 'hypothesis_rejected'
+  profile_changed?: boolean
+  resulting_profile_id?: string
+  resulting_path_id?: string
+  completed_node_id?: string | null
+  current_node_id?: string | null
+  resource_recommendation?: ResourceRecommendation | null
+  resource_decision?: 'generate' | 'skip'
+}
+
+export interface ResourceRecommendation {
+  proposal_id: string
+  path_id: string
+  path_node_id: string | null
+  resource_types: string[]
+  mode: 'next_node' | 'remedial'
 }
 
 export interface TutoringDecision {
@@ -39,6 +68,12 @@ export interface TutoringDecision {
   profile_update_required: boolean
   decision_reason: string
   task_id: string | null
+  node_adjustment_state: TutoringSession['node_adjustment_state']
+  pending_assessment?: TutoringAssessment | null
+  node_adjustment_result?: TutoringAssessment | null
+  evidence_scope?: TutoringSession['evidence_scope']
+  evidence_accepted: boolean
+  evidence_reason?: string | null
 }
 
 export function createTutoringSession(resourceId: string, learnerId?: string) {
@@ -102,7 +137,20 @@ export function answerTutoringAssessment(sessionId: string, assessmentId: string
     profile_update_required: boolean
     decision_reason: string
     task_id: string | null
+    adjustment_proposal_id?: string
+    hypothesis_type?: 'mastery_up' | 'support_down'
+    decision?: 'confirmed_mastery' | 'confirmed_support_need' | 'hypothesis_rejected'
+    profile_changed?: boolean
+    resulting_profile_id?: string
+    resulting_path_id?: string
+    completed_node_id?: string | null
+    current_node_id?: string | null
+    resource_recommendation?: ResourceRecommendation | null
   }>(`/tutoring/sessions/${sessionId}/assessments/${assessmentId}/answers`, { answer })
+}
+
+export function requestMasteryCheck(sessionId: string) {
+  return postData<TutoringAssessment>(`/tutoring/sessions/${sessionId}/mastery-check`)
 }
 
 export function pauseTutoringMessage(sessionId: string, replyMessageId: string) {

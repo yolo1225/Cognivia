@@ -30,3 +30,11 @@ class Feedback(TimestampMixin, Base):
     affected_path_node_ids_json: Mapped[list] = mapped_column(JSON, default=list)
     affected_resource_ids_json: Mapped[list] = mapped_column(JSON, default=list)
     decision_reason: Mapped[str] = mapped_column(Text, default="")
+    evidence_status: Mapped[str] = mapped_column(
+        String(32), default="supporting_only", index=True
+    )
+    adjustment_proposal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("learning_adjustment_proposals.id", use_alter=True),
+        nullable=True,
+        index=True,
+    )

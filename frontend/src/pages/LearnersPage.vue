@@ -723,7 +723,7 @@ onUnmounted(() => {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
 }
 .account-metric {
   min-width: 0;
@@ -786,7 +786,7 @@ onUnmounted(() => {
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
   padding: 0 11px;
   color: var(--muted);
 }
@@ -816,7 +816,7 @@ onUnmounted(() => {
   gap: 12px;
   margin: 12px 18px 0;
   border-radius: 8px;
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
   padding: 9px 11px;
   font-size: 12px;
@@ -834,7 +834,7 @@ onUnmounted(() => {
   transition: background-color 180ms ease;
 }
 .accounts-table tbody tr:hover {
-  background: #fafcff;
+  background: var(--soft);
 }
 .accounts-table tbody tr:last-child td {
   border-bottom: 0;
@@ -844,7 +844,7 @@ onUnmounted(() => {
 }
 .role-label {
   display: inline-flex;
-  color: #405067;
+  color: var(--body);
   font-weight: 650;
 }
 .role-label.admin {
@@ -863,7 +863,7 @@ onUnmounted(() => {
   background: #b6c0cd;
 }
 .profile-link-state.linked {
-  color: #405067;
+  color: var(--body);
 }
 .profile-link-state.linked i {
   background: var(--green);
@@ -892,8 +892,8 @@ onUnmounted(() => {
   min-height: 32px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fff;
-  color: #405067;
+  background: var(--panel);
+  color: var(--body);
   padding: 5px 9px;
   font: inherit;
   font-size: 12px;
@@ -901,7 +901,7 @@ onUnmounted(() => {
 }
 .more-button:hover {
   border-color: #a9bad1;
-  background: #f8faff;
+  background: var(--soft);
 }
 .menu-popover {
   position: absolute;
@@ -911,7 +911,7 @@ onUnmounted(() => {
   width: 168px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  background: #fff;
+  background: var(--panel);
   padding: 5px;
   box-shadow: 0 8px 14px rgb(22 35 55/0.12);
   text-align: left;
@@ -1055,7 +1055,7 @@ onUnmounted(() => {
   background: var(--line);
 }
 .profile-summary div {
-  background: #fff;
+  background: var(--panel);
   padding: 13px;
 }
 .profile-summary span {
@@ -1096,7 +1096,7 @@ onUnmounted(() => {
 .ability-list > div > div {
   height: 6px;
   border-radius: 4px;
-  background: #e8edf3;
+  background: var(--track);
   overflow: hidden;
 }
 .ability-list i {
@@ -1187,7 +1187,7 @@ onUnmounted(() => {
 }
 .confirm-content p {
   margin: 4px 0 0;
-  color: #405067;
+  color: var(--body);
   font-size: 13px;
   line-height: 1.65;
 }
@@ -1199,7 +1199,7 @@ onUnmounted(() => {
 .reset-form label {
   display: grid;
   gap: 7px;
-  color: #405067;
+  color: var(--body);
   font-size: 13px;
   font-weight: 700;
 }
@@ -1224,7 +1224,7 @@ onUnmounted(() => {
 .reset-error {
   margin: 0;
   border-radius: 7px;
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
   padding: 9px 10px;
   font-size: 12px;

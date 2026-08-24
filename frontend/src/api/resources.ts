@@ -1,4 +1,4 @@
-import { getData, postData } from './client'
+import { apiClient, getData, postData } from './client'
 
 export type QuizLevel = 'foundation' | 'improvement' | 'challenge'
 export type QuestionType = 'single_choice' | 'multiple_choice' | 'short_answer' | 'coding'
@@ -130,19 +130,38 @@ export function listResourceVersions(resourceId: string) {
   }>>(`/resources/${resourceId}/versions`)
 }
 
+export interface ResourceExportResult {
+  resource_version: number
+  file_name: string
+  file_hash: string
+  review_report_id: string | null
+  review_status: string
+  download_url: string
+}
+
 export function exportResource(
   resourceId: string,
   format: 'markdown' | 'pdf',
   audience: 'learner' | 'teacher' = 'learner',
 ) {
-  return postData<{
-    resource_version: number
-    file_name: string
-    file_hash: string
-    review_report_id: string | null
-    review_status: string
-    download_url: string
-  }>(`/resources/${resourceId}/export`, { format, audience })
+  return postData<ResourceExportResult>(`/resources/${resourceId}/export`, { format, audience })
+}
+
+export async function downloadResourceExport(downloadUrl: string, fileName: string) {
+  const baseUrl = apiClient.defaults.baseURL || window.location.origin
+  const response = await apiClient.get<Blob>(
+    new URL(downloadUrl, new URL(baseUrl, window.location.origin).origin).toString(),
+    { responseType: 'blob' },
+  )
+  const objectUrl = URL.createObjectURL(response.data)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = fileName
+  link.style.display = 'none'
+  document.body.append(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
 }
 
 export function submitFeedback(

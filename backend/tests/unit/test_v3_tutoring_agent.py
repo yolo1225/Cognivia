@@ -35,6 +35,22 @@ class FakeInterpreter:
         return self._result
 
 
+class StreamingInterpreter(FakeInterpreter):
+    def __init__(self, result: TutoringSemanticResult) -> None:
+        super().__init__(result)
+        self.finished = False
+
+    def stream_interpret(self, _request: InterpretFeedbackInput, on_json_chunk) -> Any:
+        on_json_chunk(
+            '{"intent":null,"difficulty_focus":null,"unresolved":false,'
+            '"mastery_evidence_present":false,"confidence":0.9,'
+            '"candidate_reply":"先'
+        )
+        on_json_chunk('解释"}')
+        self.finished = True
+        return self._result
+
+
 def _request() -> InterpretFeedbackInput:
     document = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
     return InterpretFeedbackInput.model_validate(document["input"])
@@ -230,3 +246,26 @@ def test_agent_has_no_legacy_graph_or_database_dependency() -> None:
         "generation_worker",
     ):
         assert forbidden_reference not in text
+
+
+def test_stream_execute_forwards_candidate_reply_before_model_completion() -> None:
+    interpreter = StreamingInterpreter(
+        TutoringSemanticResult(
+            intent=None,
+            candidate_reply="先解释",
+            confidence=0.9,
+        )
+    )
+    received: list[str] = []
+
+    def on_delta(chunk: str) -> None:
+        assert interpreter.finished is False
+        received.append(chunk)
+
+    payload = _request().model_dump(mode="python")
+    payload["feedback"]["quick_tag"] = None
+    request = InterpretFeedbackInput.model_validate(payload)
+    output = TutoringAgent(interpreter=interpreter).stream_execute(request, on_delta)
+
+    assert received == ["先", "解释"]
+    assert output.reply == "先解释"

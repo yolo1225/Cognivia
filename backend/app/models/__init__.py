@@ -1,6 +1,11 @@
 from app.models.agent import AgentMessageRecord, AgentRun, GraphCheckpoint
 from app.models.base import Base
-from app.models.diagnostic import AnswerRecord, DiagnosticQuestion, DiagnosticSession
+from app.models.diagnostic import (
+    AnswerRecord,
+    DiagnosticQuestion,
+    DiagnosticSession,
+    PathNodeAssessment,
+)
 from app.models.domain import Domain
 from app.models.evaluation import EvaluationCase
 from app.models.feedback import Feedback
@@ -12,6 +17,7 @@ from app.models.knowledge import (
     KnowledgeRelation,
 )
 from app.models.learner import Learner, LearnerProfile, LearningPath
+from app.models.learning_adjustment import LearningAdjustmentProposal
 from app.models.model_config import ModelConfig
 from app.models.resource import (
     GenerationTask,
@@ -33,6 +39,7 @@ __all__ = [
     "User",
     "DiagnosticQuestion",
     "DiagnosticSession",
+    "PathNodeAssessment",
     "Domain",
     "EvaluationCase",
     "Feedback",
@@ -46,6 +53,7 @@ __all__ = [
     "Learner",
     "LearnerProfile",
     "LearningPath",
+    "LearningAdjustmentProposal",
     "LearningPackageResource",
     "LearningResource",
     "ModelConfig",

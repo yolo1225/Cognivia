@@ -5,19 +5,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.agents.contract_adapters import (
-    analyze_profile_output_to_patch,
-    build_analyze_profile_input,
-    build_prepare_task_input,
-    interpret_feedback_output_to_patch,
-    prepare_task_output_to_patch,
-)
 from app.agents.contracts import FeedbackIntent, InterpretFeedbackOutput, RecommendedAction
 from app.agents.contracts import QUALITY_RULE_VERSION
-from app.agents.profile_analysis_agent import ProfileAnalysisAgent
-from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
-from app.agents.orchestrator_agent import OrchestratorAgent
 from app.core.db import get_db
+from app.core.security import Principal, get_current_user
 from app.main import app
 from app.models import (
     AgentRun,
@@ -31,14 +22,10 @@ from app.models import (
     Learner,
     LearnerProfile,
     LearningPath,
+    LearningAdjustmentProposal,
     LearningResource,
 )
 from app.api.v1.generation_tasks import _semantic_events
-from app.workers.generation_worker import (
-    _feedback_assessments,
-    _initial_state,
-    _persist_profile_update,
-)
 
 
 def _session_factory() -> sessionmaker[Session]:
@@ -136,7 +123,7 @@ def _seed(db: Session) -> None:
         domain_code="ai_app_dev",
         status="completed",
         decision="completed",
-        resource_types_json=["lecture"],
+        resource_types_json=["lecture", "practice_guide", "graded_quiz"],
         package_quality_json={"quality_rule_version": QUALITY_RULE_VERSION},
         package_coverage_json={
             "resource_knowledge_targets": {"lecture": ["rag_pipeline_overview"]}
@@ -145,25 +132,40 @@ def _seed(db: Session) -> None:
     )
     db.add(task)
     db.flush()
-    db.add(
-        LearningPath(
+    path = LearningPath(
             public_id="path_m4a",
             learner_id=learner.id,
             profile_id=profile.id,
             domain_code="ai_app_dev",
             status="active",
             path_json={
+                "stages": [
+                    {"name": "RAG 验证", "knowledge_ids": ["rag_pipeline_overview"]},
+                    {"name": "后续节点", "knowledge_ids": ["distractor_knowledge"]},
+                ],
                 "current_node_id": "knowledge:rag_pipeline_overview",
                 "node_states": {
                     "knowledge:rag_pipeline_overview": {
                         "path_node_id": "knowledge:rag_pipeline_overview",
                         "knowledge_id": "rag_pipeline_overview",
                         "status": "current",
-                    }
+                        "path_order": 1,
+                        "prerequisite_node_ids": [],
+                    },
+                    "knowledge:distractor_knowledge": {
+                        "path_node_id": "knowledge:distractor_knowledge",
+                        "knowledge_id": "distractor_knowledge",
+                        "status": "locked",
+                        "path_order": 2,
+                        "prerequisite_node_ids": ["knowledge:rag_pipeline_overview"],
+                    },
                 },
             },
         )
-    )
+    db.add(path)
+    db.flush()
+    task.learning_path_id = path.id
+    task.path_node_id = "knowledge:rag_pipeline_overview"
     db.add(
         LearningResource(
             public_id="resource_m4a",
@@ -178,6 +180,20 @@ def _seed(db: Session) -> None:
             ],
             review_status="passed",
             series_id="resource_m4a",
+            is_current=True,
+        )
+    )
+    db.add(
+        LearningResource(
+            public_id="resource_m4a_practice",
+            generation_task_id=task.id,
+            resource_type="practice_guide",
+            title="M4A practice resource",
+            content_md="实训正文",
+            difficulty=3,
+            sources_json=[{"knowledge_id": knowledge.public_id}],
+            review_status="passed",
+            series_id="resource_m4a_practice",
             is_current=True,
         )
     )
@@ -205,9 +221,30 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             decision_reason="主观反馈不能直接更新画像。",
         )
 
+    def stream_execute(self, request, on_reply_delta):
+        output = execute(self, request)
+        on_reply_delta(output.reply)
+        return output
+
     monkeypatch.setattr("app.services.tutoring_service.TutoringAgent.execute", execute)
+    monkeypatch.setattr(
+        "app.services.tutoring_service.TutoringAgent.stream_execute", stream_execute
+    )
+    monkeypatch.setattr(
+        "app.services.learning_adjustment_service._analyze_profile",
+        lambda _db, *, proposal, profile, path, **_kwargs: (
+            profile,
+            None,
+            None,
+            {"profile_changed": False, "ability_score_changes": {}},
+        ),
+    )
     monkeypatch.setattr("app.api.v1.tutoring.run_generation_task", lambda _task_id: None)
+    monkeypatch.setattr("app.api.v1.learning_adjustments.run_generation_task", lambda _task_id: None)
     app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
     client = TestClient(app)
     try:
         session_id = client.post(
@@ -230,25 +267,12 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
         ).json()["data"]
         assert first["profile_update_required"] is False
         assert first["task_id"] is None
-        first_assessment = first["reply"]["assessment"]
-        assert first_assessment["question_id"] == "m4a_q_0"
-
-        first_answer = client.post(
-            f"/api/v1/tutoring/sessions/{session_id}/assessments/{first_assessment['assessment_id']}/answers",
-            json={"answer": 0},
-        ).json()["data"]
-        assert first_answer["is_correct"] is True
-        assert first_answer["task_id"] is None
-        repeated = client.post(
-            f"/api/v1/tutoring/sessions/{session_id}/assessments/{first_assessment['assessment_id']}/answers",
-            json={"answer": 0},
-        ).json()["data"]
-        assert repeated["answer_record_id"] == first_answer["answer_record_id"]
+        assert first["reply"]["assessment"] is None
 
         stream = client.post(
             f"/api/v1/tutoring/sessions/{session_id}/messages/stream",
             json={
-                "content": "我可以再验证一次",
+                "content": "还是太简单了",
                 "evidence": [
                     {
                         "evidence_id": "stream_support",
@@ -268,73 +292,285 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
         assert stream.text.index("event: accepted") < stream.text.index("event: delta")
         assert stream.text.index("event: delta") < stream.text.index("event: completed")
         current = client.get(f"/api/v1/tutoring/sessions/{session_id}").json()["data"]
-        second_assessment = next(
+        second_assessment = next((
             message["assessment"]
             for message in reversed(current["messages"])
             if message.get("assessment") and message["assessment"]["status"] == "pending"
-        )
+        ), None)
+        assert second_assessment is not None
         second_answer = client.post(
             f"/api/v1/tutoring/sessions/{session_id}/assessments/{second_assessment['assessment_id']}/answers",
             json={"answer": 0},
         ).json()["data"]
-        assert second_answer["task_id"] is not None
+        assert second_answer["decision"] == "confirmed_mastery"
+        assert second_answer["current_node_id"] == "knowledge:distractor_knowledge"
+        assert second_answer["task_id"] is None
+        repeated = client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/assessments/{second_assessment['assessment_id']}/answers",
+            json={"answer": 0},
+        ).json()["data"]
+        assert repeated["answer_record_id"] == second_answer["answer_record_id"]
+        resource_response = client.post(
+            f"/api/v1/learning-adjustments/{second_answer['adjustment_proposal_id']}/resource-decision",
+            json={"decision": "generate"},
+        )
+        assert resource_response.status_code == 200, resource_response.json()
+        resource_decision = resource_response.json()["data"]
+        assert resource_decision["task_id"] is not None
         with factory() as db:
-            assert db.query(AnswerRecord).count() == 2
+            assert db.query(AnswerRecord).count() == 1
             tutoring_runs = db.query(AgentRun).filter_by(agent_name="tutoring_agent").all()
             assert len(tutoring_runs) == 2
             assert all(
                 run.input_summary_json["session_id"] == session_id for run in tutoring_runs
             )
             assert db.query(Feedback).count() == 2
-            feedback_task = db.query(GenerationTask).filter_by(event_type="resource_feedback").one()
-            feedback = db.get(Feedback, feedback_task.source_feedback_id)
-            learner = db.query(Learner).filter_by(public_id="learner_001").one()
-            evidence, assessments = _feedback_assessments(db, feedback_task, learner, feedback)
-            assert len(evidence) == len(assessments) == 2
-            original_profile = db.get(LearnerProfile, feedback_task.profile_id)
-            state = _initial_state(db, feedback_task, learner, original_profile, feedback)
-            assert state["feedback_context"].conversation.previous_intents == [
-                FeedbackIntent.TOO_EASY
-            ]
-            state.update(
-                prepare_task_output_to_patch(
-                    OrchestratorAgent().execute(build_prepare_task_input(state))
-                )
-            )
-            state.update(
-                interpret_feedback_output_to_patch(
-                    InterpretFeedbackOutput(
-                        task_id=feedback_task.public_id,
-                        feedback_intent=FeedbackIntent.TOO_EASY,
-                        recommended_action=RecommendedAction.CHALLENGE,
-                        reply="验证证据满足画像分析门禁。",
-                        evidence=evidence,
-                        needs_generation=True,
-                        decision_reason="两次独立高置信验证通过。",
-                    )
-                )
-            )
-            analysis = ProfileAnalysisAgent(AI_APP_DEV_PROFILE_V2).execute(
-                build_analyze_profile_input(state, knowledge_assessments=assessments)
-            )
-            assert analysis.profile_update_required is True
-            state.update(analyze_profile_output_to_patch(analysis))
-            next_profile = _persist_profile_update(db, feedback_task, original_profile, state)
-            db.flush()
-            assert next_profile.id != original_profile.id
-            assert next_profile.profile_version == original_profile.profile_version + 1
-            assert feedback.profile_update_required is True
-            assert feedback.affected_knowledge_ids_json
-            assert feedback.affected_resource_ids_json == ["resource_m4a"]
-            consumed = [
-                (record.answer_summary_json or {}).get("consumed_by_profile_id")
-                for record in db.query(AnswerRecord).order_by(AnswerRecord.id)
-            ]
-            assert consumed == [next_profile.id, next_profile.id]
-            evidence, assessments = _feedback_assessments(db, feedback_task, learner, feedback)
-            assert len(evidence) == len(assessments) == 0
+            generated = db.query(GenerationTask).filter_by(public_id=resource_decision["task_id"]).one()
+            assert generated.path_node_id == "knowledge:distractor_knowledge"
+            assert generated.resource_knowledge_targets_json == {
+                "lecture": ["distractor_knowledge"],
+                "practice_guide": ["distractor_knowledge"],
+                "graded_quiz": ["distractor_knowledge"],
+            }
         assert calls == 2
         assert evidence_counts == [1, 1]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_learning_adjustment_conflict_does_not_trigger_assessment(monkeypatch) -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+    intents = iter([FeedbackIntent.TOO_EASY, FeedbackIntent.TOO_HARD])
+
+    def execute(_self, request):
+        intent = next(intents)
+        return InterpretFeedbackOutput(
+            task_id=request.task_id,
+            feedback_intent=intent,
+            recommended_action=RecommendedAction.ASK_FOLLOW_UP,
+            reply="继续收集学习证据。",
+            evidence=[],
+            needs_generation=False,
+            decision_reason="当前交互信号需要进一步确认。",
+        )
+
+    monkeypatch.setattr("app.services.tutoring_service.TutoringAgent.execute", execute)
+    app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
+    client = TestClient(app)
+    try:
+        session_id = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_m4a"}
+        ).json()["data"]["session_id"]
+        first = client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/messages",
+            json={"content": "内容太简单"},
+        ).json()["data"]
+        second = client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/messages",
+            json={"content": "这部分其实太难"},
+        ).json()["data"]
+        assert first["reply"]["assessment"] is None
+        assert second["reply"]["assessment"] is None
+        with factory() as db:
+            assert [
+                item.evidence_status
+                for item in db.query(Feedback).order_by(Feedback.id).all()
+            ] == ["conflict", "conflict"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_node_evidence_aggregates_across_resources_and_allows_cross_session_answer(
+    monkeypatch,
+) -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+
+    def execute(_self, request):
+        return InterpretFeedbackOutput(
+            task_id=request.task_id,
+            feedback_intent=FeedbackIntent.TOO_EASY,
+            recommended_action=RecommendedAction.ASK_FOLLOW_UP,
+            reply="建议完成节点掌握检查。",
+            evidence=[],
+            needs_generation=False,
+            decision_reason="本轮反馈已纳入节点学习判断。",
+        )
+
+    monkeypatch.setattr("app.services.tutoring_service.TutoringAgent.execute", execute)
+    monkeypatch.setattr(
+        "app.services.learning_adjustment_service._analyze_profile",
+        lambda _db, *, proposal, profile, path, **_kwargs: (
+            profile,
+            None,
+            None,
+            {"profile_changed": False, "ability_score_changes": {}},
+        ),
+    )
+    app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
+    client = TestClient(app)
+    try:
+        lecture_session = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_m4a"}
+        ).json()["data"]["session_id"]
+        practice_session = client.post(
+            "/api/v1/tutoring/sessions",
+            json={"resource_id": "resource_m4a_practice"},
+        ).json()["data"]["session_id"]
+
+        first = client.post(
+            f"/api/v1/tutoring/sessions/{lecture_session}/messages",
+            json={"content": "讲义内容我已经掌握了"},
+        ).json()["data"]
+        assert first["node_adjustment_state"] == "collecting"
+        assert first["evidence_accepted"] is True
+
+        second = client.post(
+            f"/api/v1/tutoring/sessions/{practice_session}/messages",
+            json={"content": "实训步骤也很简单"},
+        ).json()["data"]
+        assessment = second["reply"]["assessment"]
+        assert assessment is not None
+        assert second["node_adjustment_state"] == "pending_validation"
+
+        lecture_state = client.get(
+            f"/api/v1/tutoring/sessions/{lecture_session}"
+        ).json()["data"]
+        assert lecture_state["pending_assessment"]["assessment_id"] == assessment[
+            "assessment_id"
+        ]
+
+        answered = client.post(
+            f"/api/v1/tutoring/sessions/{lecture_session}/assessments/{assessment['assessment_id']}/answers",
+            json={"answer": 0},
+        )
+        assert answered.status_code == 200, answered.json()
+        assert answered.json()["data"]["decision"] == "confirmed_mastery"
+
+        with factory() as db:
+            feedback = db.query(Feedback).order_by(Feedback.id).all()
+            assert [item.evidence_status for item in feedback] == ["consumed", "consumed"]
+            proposal = db.query(LearningAdjustmentProposal).one()
+            assert proposal.evidence_summary_json["resource_types"] == [
+                "lecture",
+                "practice_guide",
+            ]
+            assert len(proposal.evidence_summary_json["tutoring_session_ids"]) == 2
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_quick_feedback_is_supporting_only_and_cannot_complete_the_threshold(
+    monkeypatch,
+) -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+
+    def execute(_self, request):
+        return InterpretFeedbackOutput(
+            task_id=request.task_id,
+            feedback_intent=FeedbackIntent.TOO_EASY,
+            recommended_action=RecommendedAction.ASK_FOLLOW_UP,
+            reply="继续收集自然语言学习反馈。",
+            evidence=[],
+            needs_generation=False,
+            decision_reason="快捷反馈不能代替独立学习回合。",
+        )
+
+    monkeypatch.setattr("app.services.tutoring_service.TutoringAgent.execute", execute)
+    app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
+    client = TestClient(app)
+    try:
+        for _ in range(2):
+            response = client.post(
+                "/api/v1/resources/resource_m4a/feedback",
+                json={"feedback_type": "too_easy"},
+            )
+            assert response.status_code == 200
+        session_id = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_m4a"}
+        ).json()["data"]["session_id"]
+        turn = client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/messages",
+            json={"content": "这部分我已经会了"},
+        ).json()["data"]
+        assert turn["reply"]["assessment"] is None
+        with factory() as db:
+            assert db.query(LearningAdjustmentProposal).count() == 0
+            assert [
+                item.evidence_status
+                for item in db.query(Feedback).order_by(Feedback.id).all()
+            ] == ["supporting_only", "supporting_only", "eligible"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_support_hypothesis_wrong_answer_confirms_need_without_advancing(monkeypatch) -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+
+    def execute(_self, request):
+        return InterpretFeedbackOutput(
+            task_id=request.task_id,
+            feedback_intent=FeedbackIntent.TOO_HARD,
+            recommended_action=RecommendedAction.ASK_FOLLOW_UP,
+            reply="再确认一下当前知识点。",
+            evidence=[],
+            needs_generation=False,
+            decision_reason="两次学习反馈方向一致。",
+        )
+
+    monkeypatch.setattr("app.services.tutoring_service.TutoringAgent.execute", execute)
+    monkeypatch.setattr(
+        "app.services.learning_adjustment_service._analyze_profile",
+        lambda _db, *, proposal, profile, path, **_kwargs: (
+            profile,
+            None,
+            None,
+            {"profile_changed": False, "ability_score_changes": {}},
+        ),
+    )
+    app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
+    client = TestClient(app)
+    try:
+        session_id = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_m4a"}
+        ).json()["data"]["session_id"]
+        client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/messages",
+            json={"content": "这部分太难"},
+        )
+        second = client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/messages",
+            json={"content": "仍然无法理解"},
+        ).json()["data"]
+        assessment = second["reply"]["assessment"]
+        assert assessment["hypothesis_type"] == "support_down"
+        result = client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/assessments/{assessment['assessment_id']}/answers",
+            json={"answer": 1},
+        ).json()["data"]
+        assert result["decision"] == "confirmed_support_need"
+        assert result["current_node_id"] == "knowledge:rag_pipeline_overview"
+        assert result["resource_recommendation"]["mode"] == "remedial"
+        assert result["task_id"] is None
     finally:
         app.dependency_overrides.clear()
 

@@ -190,24 +190,24 @@ onBeforeUnmount(() => {
 .knowledge-graph { display: grid; gap: 14px; }
 .graph-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
 .graph-search { display: grid; gap: 5px; min-width: min(250px, 100%); color: var(--muted); font-size: 11px; font-weight: 700; }
-.graph-search input { min-height: 34px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink); padding: 6px 9px; font: inherit; font-size: 12px; }
+.graph-search input { min-height: 34px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); padding: 6px 9px; font: inherit; font-size: 12px; }
 .relation-filters { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 8px; }
-.relation-filter { display: inline-flex; align-items: center; gap: 5px; color: #405067; font-size: 12px; white-space: nowrap; }
+.relation-filter { display: inline-flex; align-items: center; gap: 5px; color: var(--body); font-size: 12px; white-space: nowrap; }
 .relation-filter input { margin: 0; accent-color: var(--blue); }
 .relation-filter i, .category-legend i { width: 8px; height: 8px; border-radius: 50%; }
 .graph-actions { display: flex; gap: 8px; margin-left: auto; }
 .graph-layout { display: grid; grid-template-columns: minmax(0, 1fr) 270px; gap: 14px; align-items: stretch; }
 .graph-stage { min-width: 0; }
-.graph-canvas { min-height: 500px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfe; }
+.graph-canvas { min-height: 500px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .graph-hint { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .graph-state { display: grid; min-height: 260px; place-items: center; border: 1px dashed var(--line); border-radius: 8px; background: var(--soft); color: var(--muted); font-size: 13px; text-align: center; }
-.graph-state.error { border-color: #edc9c9; background: #fffafa; color: var(--red); }
-.node-detail { display: grid; align-content: start; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.graph-state.error { border-color: #edc9c9; background: var(--red2); color: var(--red); }
+.node-detail { display: grid; align-content: start; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .detail-label { color: var(--muted); font-size: 11px; font-weight: 700; }
 .node-detail h3 { font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
 .node-detail p { color: var(--muted); font-size: 12px; line-height: 1.65; }
 .detail-meta, .detail-tags, .category-legend { display: flex; flex-wrap: wrap; gap: 6px; }
-.detail-meta span, .detail-tags span { border: 1px solid var(--line); border-radius: 5px; background: var(--soft); padding: 4px 6px; color: #405067; font-size: 11px; }
+.detail-meta span, .detail-tags span { border: 1px solid var(--line); border-radius: 5px; background: var(--soft); padding: 4px 6px; color: var(--body); font-size: 11px; }
 .detail-relations { display: grid; gap: 7px; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
 .detail-relations strong { font-size: 12px; }
 .detail-relations ul { display: grid; gap: 5px; padding: 0; margin: 0; list-style: none; }
@@ -215,7 +215,7 @@ onBeforeUnmount(() => {
 .detail-relations button:hover { text-decoration: underline; }
 .detail-relations button span { display: block; margin-bottom: 2px; font-size: 10px; font-weight: 700; }
 .category-legend { padding-top: 6px; }
-.category-legend span { display: inline-flex; align-items: center; gap: 5px; color: #405067; font-size: 11px; }
+.category-legend span { display: inline-flex; align-items: center; gap: 5px; color: var(--body); font-size: 11px; }
 @media (max-width: 900px) { .graph-layout { grid-template-columns: 1fr; } .graph-canvas { min-height: 420px; } .graph-actions { margin-left: 0; } }
 @media (max-width: 560px) { .graph-toolbar { align-items: stretch; } .graph-search { width: 100%; } .relation-filters { padding-bottom: 0; } .graph-actions { width: 100%; } .graph-actions .btn { flex: 1; } .graph-canvas { min-height: 360px; } }
 </style>

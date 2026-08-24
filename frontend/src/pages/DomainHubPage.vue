@@ -1676,7 +1676,7 @@ onBeforeUnmount(() => {
   align-self: center;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: var(--panel);
   color: var(--muted);
   padding: 6px 10px;
   font-size: 11px;
@@ -1689,7 +1689,7 @@ onBeforeUnmount(() => {
   gap: 16px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
   padding: 13px 16px;
 }
 .domain-identity {
@@ -1717,7 +1717,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #405067;
+  color: var(--body);
   font-size: 12px;
 }
 .domain-state i {
@@ -1757,7 +1757,7 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--panel);
 }
 .domain-metrics > div {
   padding: 15px 18px;
@@ -1814,7 +1814,7 @@ onBeforeUnmount(() => {
   color: var(--amber);
 }
 .summary-status.error {
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
 }
 .readiness-list {
@@ -1851,7 +1851,7 @@ onBeforeUnmount(() => {
   color: var(--amber);
 }
 .readiness-icon.error {
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
 }
 .readiness-row strong,
@@ -1864,7 +1864,7 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 .readiness-value {
-  color: #405067;
+  color: var(--body);
   font-size: 12px;
   font-weight: 700;
 }
@@ -1877,7 +1877,7 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   background: var(--amber2);
   padding: 14px 16px;
-  color: #784207;
+  color: var(--amber);
 }
 .attention-strip p {
   margin: 5px 0 0;
@@ -1920,7 +1920,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   border-radius: 8px;
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
   padding: 10px 12px;
   font-size: 12px;
@@ -1952,10 +1952,10 @@ onBeforeUnmount(() => {
 }
 .segmented button span {
   margin-left: 5px;
-  color: #8a97a9;
+  color: var(--muted);
 }
 .segmented button.active {
-  background: #fff;
+  background: var(--panel);
   color: var(--blue);
   box-shadow: 0 1px 3px rgb(22 35 55/0.09);
 }
@@ -1974,7 +1974,7 @@ onBeforeUnmount(() => {
   min-height: 36px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #fff;
+  background: var(--panel);
   padding: 0 10px;
   color: var(--muted);
 }
@@ -2032,13 +2032,13 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin-bottom: 14px;
   border-radius: 8px;
-  background: #eef3ff;
+  background: var(--blue2);
   padding: 10px 12px;
-  color: #27457f;
+  color: var(--info);
 }
 .experimental-note span {
   border-radius: 999px;
-  background: #dce7ff;
+  background: var(--blue2);
   padding: 4px 7px;
   font-size: 10px;
   font-weight: 800;
@@ -2095,7 +2095,7 @@ onBeforeUnmount(() => {
 .rule-values span {
   border-radius: 999px;
   background: var(--blue2);
-  color: #27457f;
+  color: var(--info);
   padding: 6px 9px;
   font-size: 11px;
   font-weight: 650;
@@ -2114,7 +2114,7 @@ onBeforeUnmount(() => {
   gap: 20px;
   border-bottom: 1px solid #edf0f4;
   padding-bottom: 8px;
-  color: #405067;
+  color: var(--body);
   font-size: 12px;
 }
 .operations-grid {
@@ -2138,7 +2138,7 @@ onBeforeUnmount(() => {
   background: var(--line);
 }
 .operation-stats > div {
-  background: #fff;
+  background: var(--panel);
   padding: 12px;
 }
 .operation-stats span,
@@ -2166,7 +2166,7 @@ onBeforeUnmount(() => {
 }
 .operation-message.failed,
 .operation-message.interrupted {
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
 }
 .operation-message p {
@@ -2209,7 +2209,7 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   background: var(--amber2);
   padding: 10px;
-  color: #784207;
+  color: var(--amber);
 }
 .validation-issue > span {
   width: 23px;
@@ -2217,7 +2217,7 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #f8deb8;
+  background: var(--amber2);
   font-weight: 800;
 }
 .validation-issue p {
@@ -2252,7 +2252,7 @@ onBeforeUnmount(() => {
 .drawer-form label {
   display: grid;
   gap: 6px;
-  color: #405067;
+  color: var(--body);
   font-size: 12px;
   font-weight: 650;
 }
@@ -2275,7 +2275,7 @@ onBeforeUnmount(() => {
 .form-error {
   margin: 0;
   border-radius: 8px;
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
   padding: 10px;
   font-size: 12px;
@@ -2287,9 +2287,9 @@ onBeforeUnmount(() => {
 }
 .upload-warning {
   border-radius: 9px;
-  background: #eef3ff;
+  background: var(--blue2);
   padding: 12px;
-  color: #27457f;
+  color: var(--info);
 }
 .upload-warning p {
   margin: 6px 0 0;
@@ -2368,13 +2368,13 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #fff0f0;
+  background: var(--red2);
   color: var(--red);
   font-weight: 800;
 }
 .delete-message p {
   margin: 4px 0;
-  color: #405067;
+  color: var(--body);
   font-size: 12px;
   line-height: 1.6;
 }

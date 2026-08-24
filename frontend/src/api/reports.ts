@@ -1,5 +1,6 @@
 import { getData } from './client'
 import type { LearningPathState } from './learningPaths'
+import type { LearningAdjustmentSummary } from './learningAdjustments'
 
 export interface LearningReport {
   diagnosis_completed?: boolean
@@ -83,6 +84,37 @@ export interface LearningReport {
       created_at?: string | null
     }>
   }
+  learning_adjustments?: LearningAdjustmentSummary[]
+  profile_changes?: Array<{
+    proposal_id: string
+    hypothesis_type: 'mastery_up' | 'support_down'
+    decision: string
+    status: string
+    resource_decision?: string | null
+    created_at?: string | null
+    updated_at?: string | null
+    profile_change_summary: {
+      original_profile_id: string
+      original_profile_version: number
+      resulting_profile_id: string
+      resulting_profile_version: number
+      knowledge_id: string
+      knowledge_name: string
+      before_state: string
+      after_state: string
+      before_weakness_level?: number | null
+      after_weakness_level?: number | null
+      removed_from_weak_knowledge?: boolean
+      removed_from_blind_spots?: boolean
+      interaction_evidence_ids?: string[]
+      evidence_ids?: string[]
+      completed_node_id?: string | null
+      current_node_id?: string | null
+      profile_changed: boolean
+      ability_score_changes: Record<string, { before: number; after: number }>
+      ability_summary: string
+    }
+  }>
   next_actions: Array<{
     type: string
     label: string

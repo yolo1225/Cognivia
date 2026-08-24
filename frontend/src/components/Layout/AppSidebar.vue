@@ -1,11 +1,20 @@
 <template>
-  <aside class="side">
+  <aside class="side" :class="{ collapsed }">
     <div class="brand">
       <div class="mark">域</div>
-      <div>
+      <div class="brand-copy">
         <strong>云川智汇</strong>
         <small>学习决策工作台</small>
       </div>
+      <button
+        class="sidebar-toggle"
+        type="button"
+        :aria-label="collapsed ? '展开左侧导航' : '收起左侧导航'"
+        :title="collapsed ? '展开左侧导航' : '收起左侧导航'"
+        @click="emit('toggle-collapse')"
+      >
+        <AppIcon :name="collapsed ? 'panel-expand' : 'panel-collapse'" />
+      </button>
     </div>
     <nav class="nav">
       <template v-for="group in visibleNavGroups" :key="group.label">
@@ -20,14 +29,23 @@
           @click="router.push(item.route)"
         >
           <span class="nav-icon"><AppIcon :name="item.icon" /></span>
-          {{ item.label }}
+          <span class="nav-text">{{ item.label }}</span>
         </button>
       </template>
     </nav>
     <div class="foot">
-      <span class="dot"></span>
-      服务正常
-      <span style="margin-left: auto">MVP v0.1</span>
+      <button
+        class="theme-toggle"
+        type="button"
+        :aria-label="darkMode ? '切换至浅色模式' : '切换至深色模式'"
+        :title="darkMode ? '切换至浅色模式' : '切换至深色模式'"
+        @click="emit('toggle-theme')"
+      >
+        <AppIcon :name="darkMode ? 'sun' : 'moon'" />
+        <span class="theme-toggle-text">{{ darkMode ? '浅色模式' : '深色模式' }}</span>
+      </button>
+      <span class="foot-status"><span class="dot"></span><span class="foot-text">服务正常</span></span>
+      <span class="foot-version">MVP v0.1</span>
     </div>
   </aside>
 </template>
@@ -39,6 +57,12 @@ import { useAuthStore } from '@/stores/authStore'
 import { useLearnerStore } from '@/stores/learnerStore'
 import { useProfileGateStore } from '@/stores/profileGateStore'
 import AppIcon from '@/components/Shared/AppIcon.vue'
+
+defineProps<{ collapsed: boolean; darkMode: boolean }>()
+const emit = defineEmits<{
+  (event: 'toggle-collapse'): void
+  (event: 'toggle-theme'): void
+}>()
 
 const route = useRoute()
 const router = useRouter()

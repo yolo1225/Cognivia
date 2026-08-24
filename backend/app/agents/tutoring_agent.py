@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
+import time
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from pydantic import ValidationError
@@ -72,6 +76,109 @@ class OpenAICompatibleTutoringInterpreter:
         record_model_call(metadata, role="tutoring_model")
         return TutoringSemanticResult.model_validate(result)
 
+    def stream_interpret(
+        self,
+        request: InterpretFeedbackInput,
+        on_json_chunk: Callable[[str], None],
+    ) -> TutoringSemanticResult:
+        """Run the same semantic request once and forward its JSON fragments."""
+        started_at = time.perf_counter()
+        fragments: list[str] = []
+        try:
+            for chunk in self._gateway.stream_json(
+                model=self._model,
+                system_prompt=self._system_prompt,
+                payload={
+                    "feedback_request": request.model_dump(mode="json"),
+                    "resource_context": self._resource_context,
+                    "reply_requirement": (
+                        "candidate_reply 必须直接回答学习者问题，并严格依据 resource_context；"
+                        "不得只复述分类结论。"
+                    ),
+                },
+                fixture_factory=lambda: _fixture_semantics(request),
+            ):
+                fragments.append(chunk)
+                on_json_chunk(chunk)
+            result = TutoringSemanticResult.model_validate(json.loads("".join(fragments)))
+        except Exception:
+            raise
+        else:
+            record_model_call(
+                {
+                    "provider_mode": "live" if settings.openai_api_key else "fixture",
+                    "model_name": self._model or "fixture-model",
+                    "tokens_input": 0,
+                    "tokens_output": 0,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000),
+                },
+                role="tutoring_model",
+            )
+            return result
+
+
+class _StreamingCandidateReply:
+    """Incrementally extract the final JSON `candidate_reply` string."""
+
+    _CANDIDATE_FIELD = re.compile(r'"candidate_reply"\s*:\s*"')
+
+    def __init__(self) -> None:
+        self._before_candidate = ""
+        self._semantic: TutoringSemanticResult | None = None
+        self._closed = False
+        self._escaping = False
+        self._reading_unicode = False
+        self._unicode_digits: list[str] = []
+
+    @property
+    def semantic(self) -> TutoringSemanticResult | None:
+        return self._semantic
+
+    def feed(self, chunk: str) -> str:
+        if self._semantic is None:
+            self._before_candidate += chunk
+            marker = self._CANDIDATE_FIELD.search(self._before_candidate)
+            if marker is None:
+                return ""
+            prefix = self._before_candidate[: marker.start()].rstrip()
+            if prefix.endswith(","):
+                prefix = prefix[:-1]
+            self._semantic = TutoringSemanticResult.model_validate(json.loads(f"{prefix}}}"))
+            remainder = self._before_candidate[marker.end() :]
+            self._before_candidate = ""
+            return self._decode(remainder)
+        return self._decode(chunk)
+
+    def _decode(self, value: str) -> str:
+        if self._closed:
+            return ""
+        emitted: list[str] = []
+        escapes = {"\"": '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+        for char in value:
+            if self._reading_unicode:
+                self._unicode_digits.append(char)
+                if len(self._unicode_digits) == 4:
+                    emitted.append(chr(int("".join(self._unicode_digits), 16)))
+                    self._unicode_digits = []
+                    self._reading_unicode = False
+                    self._escaping = False
+                continue
+            if self._escaping:
+                if char == "u":
+                    self._reading_unicode = True
+                else:
+                    emitted.append(escapes.get(char, char))
+                    self._escaping = False
+                continue
+            if char == "\\":
+                self._escaping = True
+            elif char == '"':
+                self._closed = True
+                break
+            else:
+                emitted.append(char)
+        return "".join(emitted)
+
 
 class TutoringAgent:
     """V3 boundary: model semantics -> controlled policy -> contract-validated response."""
@@ -109,28 +216,90 @@ class TutoringAgent:
             raise TutoringAgentError("invalid_interpret_feedback_input") from exc
 
         semantic, semantic_status = self._interpret_safely(validated_request)
-        decision = decide_tutoring_action(validated_request, semantic)
-        reply = _select_reply(decision.reply_template, semantic, decision.use_candidate_reply)
+        return self._build_output(validated_request, semantic, semantic_status)
+
+    def stream_execute(
+        self,
+        request: InterpretFeedbackInput,
+        on_reply_delta: Callable[[str], None],
+    ) -> InterpretFeedbackOutput:
+        """Execute one model call while forwarding reply text before it ends."""
+        if not isinstance(request, InterpretFeedbackInput):
+            raise TutoringAgentError("invalid_interpret_feedback_input_type")
+        validated_request = InterpretFeedbackInput.model_validate(request.model_dump(mode="python"))
+        stream_interpret = getattr(self._interpreter, "stream_interpret", None)
+        if not callable(stream_interpret):
+            output = self.execute(validated_request)
+            on_reply_delta(output.reply)
+            return output
+
+        parser = _StreamingCandidateReply()
+        decision = None
+        static_reply_sent = False
+
+        def consume_json_chunk(chunk: str) -> None:
+            nonlocal decision, static_reply_sent
+            candidate_delta = parser.feed(chunk)
+            if parser.semantic is not None and decision is None:
+                # The parser has reached a quoted candidate_reply value, so
+                # policy may safely decide whether that value is eligible even
+                # though its complete text has not arrived yet.
+                streaming_semantic = parser.semantic.model_copy(
+                    update={"candidate_reply": "streaming"}
+                )
+                decision = decide_tutoring_action(validated_request, streaming_semantic)
+                if not decision.use_candidate_reply:
+                    on_reply_delta(decision.reply_template)
+                    static_reply_sent = True
+            if decision is not None and decision.use_candidate_reply and candidate_delta:
+                on_reply_delta(candidate_delta)
 
         try:
+            semantic = TutoringSemanticResult.model_validate(
+                stream_interpret(validated_request, consume_json_chunk)
+            )
+            semantic_status = "model"
+        except Exception as exc:
+            self._log_failure(validated_request, f"streaming_semantic_interpretation_failed:{type(exc).__name__}")
+            semantic = _safe_fallback_semantics(validated_request)
+            semantic_status = "fallback"
+
+        output = self._build_output(validated_request, semantic, semantic_status)
+        if decision is None or not decision.use_candidate_reply:
+            if not static_reply_sent:
+                on_reply_delta(output.reply)
+        elif output.reply != (semantic.candidate_reply or "").strip():
+            # The policy rejected the candidate after full validation. The
+            # completed event remains authoritative for the persisted answer.
+            on_reply_delta(output.reply)
+        return output
+
+    def _build_output(
+        self,
+        request: InterpretFeedbackInput,
+        semantic: TutoringSemanticResult,
+        semantic_status: str,
+    ) -> InterpretFeedbackOutput:
+        decision = decide_tutoring_action(request, semantic)
+        reply = _select_reply(decision.reply_template, semantic, decision.use_candidate_reply)
+        try:
             output = InterpretFeedbackOutput(
-                task_id=validated_request.task_id,
+                task_id=request.task_id,
                 feedback_intent=decision.feedback_intent,
                 recommended_action=decision.recommended_action,
                 reply=reply,
-                evidence=build_feedback_evidence(validated_request, semantic),
+                evidence=build_feedback_evidence(request, semantic),
                 needs_generation=decision.needs_generation,
                 decision_reason=decision.decision_reason,
             )
         except ValidationError as exc:
-            self._log_failure(validated_request, "invalid_interpret_feedback_output")
+            self._log_failure(request, "invalid_interpret_feedback_output")
             raise TutoringAgentError("invalid_interpret_feedback_output") from exc
-
         self._logger.info(
             "tutoring_completed task_id=%s resource_id=%s intent=%s action=%s "
             "needs_generation=%s evidence_count=%s semantic_status=%s confidence=%s",
             output.task_id,
-            validated_request.feedback.resource.resource_id,
+            request.feedback.resource.resource_id,
             output.feedback_intent,
             output.recommended_action,
             output.needs_generation,
