@@ -155,17 +155,27 @@ def _recalculate_package_quality(db, task: GenerationTask) -> None:
     selected = [latest[resource_id] for resource_id in resource_ids if resource_id in latest]
     if len(selected) != len(resource_ids):
         return
-    evaluated_count = sum(item.evaluated_claim_count for item in selected)
-    contradicted_count = sum(item.contradicted_claim_count for item in selected)
+    teaching_rows = [
+        (member, resource)
+        for member, resource in rows
+        if resource.resource_type in {
+            ResourceType.LECTURE.value,
+            ResourceType.PRACTICE_GUIDE.value,
+        }
+    ]
+    metric_rows = teaching_rows or rows
+    metric_reports = [latest[resource.id] for _member, resource in metric_rows]
+    evaluated_count = sum(item.evaluated_claim_count for item in metric_reports)
+    contradicted_count = sum(item.contradicted_claim_count for item in metric_reports)
     evidence_insufficient_count = sum(
-        item.evidence_insufficient_claim_count for item in selected
+        item.evidence_insufficient_claim_count for item in metric_reports
     )
-    unresolved_count = sum(item.unresolved_claim_count for item in selected)
+    unresolved_count = sum(item.unresolved_claim_count for item in metric_reports)
     claim_count = evaluated_count
-    hallucinated = sum(item.hallucinated_claim_count for item in selected)
+    hallucinated = sum(item.hallucinated_claim_count for item in metric_reports)
     target_ids = {
         knowledge_id
-        for item in selected
+        for item in metric_reports
         for knowledge_id in (item.target_knowledge_ids_json or [])
     }
     resource_targets = {
@@ -175,15 +185,22 @@ def _recalculate_package_quality(db, task: GenerationTask) -> None:
     primary_owners = primary_owner_by_knowledge(sorted(target_ids), resource_targets)
     covered_ids = {
         knowledge_id
-        for _member, resource in rows
+        for _member, resource in metric_rows
         for knowledge_id in (latest[resource.id].covered_knowledge_ids_json or [])
-        if primary_owners.get(knowledge_id) is ResourceType(resource.resource_type)
     } & target_ids
     target_count = len(target_ids)
     covered_count = len(covered_ids)
     hallucination_rate = round(100 * hallucinated / claim_count, 2) if claim_count else 0.0
+    difficulty_denominator = sum(
+        max(1, item.verifiable_claim_count) for item in metric_reports
+    )
     difficulty_score = round(
-        sum(item.difficulty_match_score for item in selected) / len(selected), 2
+        sum(
+            item.difficulty_match_score * max(1, item.verifiable_claim_count)
+            for item in metric_reports
+        )
+        / max(1, difficulty_denominator),
+        2,
     )
     coverage_score = round(100 * covered_count / target_count, 2) if target_count else 0.0
     task.package_coverage_json = {

@@ -62,6 +62,7 @@ export interface KnowledgeImportSummary {
   tokens_input?: number
   tokens_output?: number
   model_duration_ms?: number
+  empty_result_batches?: number
   elapsed_ms?: number
   eta_seconds?: number
   events?: ImportEvent[]
@@ -124,6 +125,14 @@ export interface GraphPreview { import_id: string; nodes: GraphPreviewNode[]; ed
 
 export async function getKnowledgeImport(importId: string) {
   const response = await apiClient.get<ApiResponse<KnowledgeImportSummary>>(`/knowledge/imports/${importId}`)
+  return response.data.data
+}
+
+export async function cancelKnowledgeImport(importId: string) {
+  const response = await apiClient.post<ApiResponse<KnowledgeImportSummary & { cancel_requested: boolean }>>(
+    `/knowledge/imports/${importId}/cancel`,
+    {},
+  )
   return response.data.data
 }
 

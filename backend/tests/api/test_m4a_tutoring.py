@@ -26,6 +26,11 @@ from app.models import (
     LearningResource,
 )
 from app.api.v1.generation_tasks import _semantic_events
+from app.services.learning_path_service import unit_node_id_for
+
+
+RAG_NODE_ID = unit_node_id_for(["rag_pipeline_overview"])
+NEXT_NODE_ID = unit_node_id_for(["distractor_knowledge"])
 
 
 def _session_factory() -> sessionmaker[Session]:
@@ -100,9 +105,13 @@ def _seed(db: Session) -> None:
             options_json=["正确", "错误"],
             answer_key_json={"correct_option": 0},
             difficulty=1,
+            status="active",
+            certification_status="certified",
+            certification_rule_version="question-cert-v1",
+            source_content_hash="sha256:" + "b" * 64,
         )
     )
-    for index in range(2):
+    for index in range(3):
         db.add(
             DiagnosticQuestion(
                 public_id=f"m4a_q_{index}",
@@ -113,6 +122,10 @@ def _seed(db: Session) -> None:
                 options_json=["正确", "错误"],
                 answer_key_json={"correct_option": 0},
                 difficulty=3,
+                status="active",
+                certification_status="certified",
+                certification_rule_version="question-cert-v1",
+                source_content_hash="sha256:" + "c" * 64,
             )
         )
     db.flush()
@@ -143,29 +156,38 @@ def _seed(db: Session) -> None:
                     {"name": "RAG 验证", "knowledge_ids": ["rag_pipeline_overview"]},
                     {"name": "后续节点", "knowledge_ids": ["distractor_knowledge"]},
                 ],
-                "current_node_id": "knowledge:rag_pipeline_overview",
+                "current_node_id": RAG_NODE_ID,
                 "node_states": {
-                    "knowledge:rag_pipeline_overview": {
-                        "path_node_id": "knowledge:rag_pipeline_overview",
-                        "knowledge_id": "rag_pipeline_overview",
+                    RAG_NODE_ID: {
+                        "path_node_id": RAG_NODE_ID,
+                        "knowledge_ids": ["rag_pipeline_overview"],
+                        "focus_knowledge_ids": [],
+                        "title": "RAG 验证",
                         "status": "current",
                         "path_order": 1,
-                        "prerequisite_node_ids": [],
+                        "prerequisite_knowledge_ids": [],
+                        "learning_objective": "掌握 RAG 验证",
+                        "recommendation_reason": "根据当前学习目标安排。",
                     },
-                    "knowledge:distractor_knowledge": {
-                        "path_node_id": "knowledge:distractor_knowledge",
-                        "knowledge_id": "distractor_knowledge",
+                    NEXT_NODE_ID: {
+                        "path_node_id": NEXT_NODE_ID,
+                        "knowledge_ids": ["distractor_knowledge"],
+                        "focus_knowledge_ids": [],
+                        "title": "后续节点",
                         "status": "locked",
                         "path_order": 2,
-                        "prerequisite_node_ids": ["knowledge:rag_pipeline_overview"],
+                        "prerequisite_knowledge_ids": ["rag_pipeline_overview"],
+                        "learning_objective": "掌握后续节点",
+                        "recommendation_reason": "根据前置关系安排。",
                     },
                 },
+                "path_version": "dynamic-units-v1",
             },
         )
     db.add(path)
     db.flush()
     task.learning_path_id = path.id
-    task.path_node_id = "knowledge:rag_pipeline_overview"
+    task.path_node_id = RAG_NODE_ID
     db.add(
         LearningResource(
             public_id="resource_m4a",
@@ -303,7 +325,7 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             json={"answer": 0},
         ).json()["data"]
         assert second_answer["decision"] == "confirmed_mastery"
-        assert second_answer["current_node_id"] == "knowledge:distractor_knowledge"
+        assert second_answer["current_node_id"] == NEXT_NODE_ID
         assert second_answer["task_id"] is None
         repeated = client.post(
             f"/api/v1/tutoring/sessions/{session_id}/assessments/{second_assessment['assessment_id']}/answers",
@@ -326,7 +348,7 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             )
             assert db.query(Feedback).count() == 2
             generated = db.query(GenerationTask).filter_by(public_id=resource_decision["task_id"]).one()
-            assert generated.path_node_id == "knowledge:distractor_knowledge"
+            assert generated.path_node_id == NEXT_NODE_ID
             assert generated.resource_knowledge_targets_json == {
                 "lecture": ["distractor_knowledge"],
                 "practice_guide": ["distractor_knowledge"],
@@ -334,6 +356,32 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             }
         assert calls == 2
         assert evidence_counts == [1, 1]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_manual_mastery_check_reports_when_current_node_has_no_choice_question() -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+        db.query(DiagnosticQuestion).filter_by(question_type="single_choice").delete()
+        db.commit()
+    app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
+    client = TestClient(app)
+    try:
+        session_id = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_m4a"}
+        ).json()["data"]["session_id"]
+        response = client.post(f"/api/v1/tutoring/sessions/{session_id}/mastery-check")
+        assert response.status_code == 409
+        assert response.json()["error"] == {
+            "code": "MASTERY_CHECK_QUESTION_UNAVAILABLE",
+            "message": "当前知识点缺少可判分的单选验证题，请联系管理员补题后重试。",
+            "details": None,
+        }
     finally:
         app.dependency_overrides.clear()
 
@@ -568,7 +616,7 @@ def test_support_hypothesis_wrong_answer_confirms_need_without_advancing(monkeyp
             json={"answer": 1},
         ).json()["data"]
         assert result["decision"] == "confirmed_support_need"
-        assert result["current_node_id"] == "knowledge:rag_pipeline_overview"
+        assert result["current_node_id"] == RAG_NODE_ID
         assert result["resource_recommendation"]["mode"] == "remedial"
         assert result["task_id"] is None
     finally:

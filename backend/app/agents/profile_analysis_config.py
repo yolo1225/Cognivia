@@ -13,6 +13,8 @@ from math import isclose
 from pathlib import Path
 from typing import Mapping
 
+from app.agents.runtime_limits import MAX_EVIDENCE_CHUNKS
+
 
 ABILITY_DIMENSIONS = (
     "theory",
@@ -217,9 +219,9 @@ def load_ai_app_dev_profile_v1() -> ProfileAnalysisConfig:
         minimum_effective_change=5,
         max_ability_change_per_update=10,
         max_weakness_level_change_per_update=1,
-        default_n_results=8,
-        multi_priority_remedial_n_results=10,
-        maximum_n_results=12,
+        default_n_results=12,
+        multi_priority_remedial_n_results=15,
+        maximum_n_results=MAX_EVIDENCE_CHUNKS,
         ability_weights=AI_APP_DEV_ABILITY_WEIGHTS,
         knowledge_catalog=catalog,
         mastery_baselines=MASTERY_BASELINES,
@@ -241,9 +243,9 @@ def load_ai_app_dev_profile_v2() -> ProfileAnalysisConfig:
         minimum_effective_change=5,
         max_ability_change_per_update=10,
         max_weakness_level_change_per_update=1,
-        default_n_results=8,
-        multi_priority_remedial_n_results=10,
-        maximum_n_results=12,
+        default_n_results=12,
+        multi_priority_remedial_n_results=15,
+        maximum_n_results=MAX_EVIDENCE_CHUNKS,
         ability_weights=AI_APP_DEV_ABILITY_WEIGHTS,
         knowledge_catalog=catalog,
         mastery_baselines=MASTERY_BASELINES,

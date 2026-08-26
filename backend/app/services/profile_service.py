@@ -18,6 +18,7 @@ from app.models import (
     LearningResource,
     GenerationTask,
 )
+from app.services.knowledge_extraction_service import normalize_knowledge_name
 
 RADAR_KEYS = ["theory", "practice", "problem_solving", "breadth", "learning_speed"]
 RESOURCE_TYPES = ["lecture", "practice_guide", "graded_quiz"]
@@ -31,12 +32,12 @@ def public_id(prefix: str) -> str:
 
 def clean_display_text(value: str) -> str:
     if not value or not any(marker in value for marker in MOJIBAKE_MARKERS):
-        return value
+        return normalize_knowledge_name(value)
     try:
         repaired = value.encode("latin1").decode("utf-8")
     except UnicodeError:
-        return value
-    return repaired if repaired else value
+        return normalize_knowledge_name(value)
+    return normalize_knowledge_name(repaired if repaired else value)
 
 
 def clean_display_payload(value: Any) -> Any:
@@ -395,6 +396,7 @@ def apply_feedback_profile_update(
         select(LearningResource)
         .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
         .where(GenerationTask.learner_id == profile.learner_id)
+        .where(GenerationTask.domain_code == profile.domain_code)
         .where(LearningResource.is_current.is_(True))
     ).scalars()
     for candidate in learner_resources:

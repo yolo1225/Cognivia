@@ -8,7 +8,7 @@
 
     <div ref="headerActions" class="header-actions">
       <div class="context notification-menu">
-        <button class="top-icon-button" type="button" title="查看消息" :aria-expanded="notificationOpen" aria-haspopup="dialog" @click="toggleNotifications">
+        <button class="top-icon-button" type="button" aria-label="查看消息" title="查看消息" :aria-expanded="notificationOpen" aria-haspopup="dialog" @click="toggleNotifications">
           <AppIcon name="bell" />
           <span v-if="unreadCount" class="notification-badge" aria-label="有未读消息"></span>
         </button>
@@ -28,20 +28,18 @@
       </div>
 
       <div class="context account-menu">
-        <button class="top-profile" type="button" :title="`${authStore.userId}，打开账户菜单`" :aria-expanded="menuOpen" aria-haspopup="menu" @click="menuOpen = !menuOpen">
+        <button class="top-profile" type="button" :title="`${authStore.userId}，打开账户菜单`" :aria-expanded="menuOpen" aria-haspopup="menu" @click="toggleAccountMenu">
           <span class="top-avatar">{{ authStore.userId.charAt(0) }}</span>
           <span class="profile-meta"><strong>{{ authStore.userId }}</strong><small>{{ authStore.role === 'admin' ? '管理员' : '学习者' }}</small></span>
-          <span class="profile-chevron" aria-hidden="true">⌄</span>
+          <span class="profile-chevron" :class="{ open: menuOpen }" aria-hidden="true">⌄</span>
         </button>
         <div v-if="menuOpen" class="account-dropdown" role="menu" @keydown.esc="menuOpen = false">
           <div class="account-summary">
             <strong>{{ authStore.userId }}</strong>
             <span>{{ authStore.role === 'admin' ? '管理员' : '学习者' }}</span>
           </div>
-          <button type="button" role="menuitem" class="menu-item" @click="goTo('/dashboard')">我的工作台</button>
-          <button v-if="authStore.role === 'learner'" type="button" role="menuitem" class="menu-item" @click="goTo('/report')">学习报告</button>
+          <button v-if="reportAvailable" type="button" role="menuitem" class="menu-item" @click="goTo('/report')">学习报告</button>
           <button v-else type="button" role="menuitem" class="menu-item" @click="goTo('/learners')">用户管理</button>
-          <button type="button" role="menuitem" class="menu-item" @click="openNotifications">消息中心</button>
           <div class="menu-divider"></div>
           <button type="button" role="menuitem" class="logout" @click="logout">退出登录</button>
         </div>
@@ -56,15 +54,21 @@ import { useRoute, useRouter } from 'vue-router'
 import AppIcon from '@/components/Shared/AppIcon.vue'
 import { type ToastType, useToast } from '@/composables/useToast'
 import { useAuthStore } from '@/stores/authStore'
+import { useProfileGateStore } from '@/stores/profileGateStore'
 
 const route = useRoute()
 const authStore = useAuthStore()
+const profileGate = useProfileGateStore()
 const router = useRouter()
 const menuOpen = ref(false)
 const notificationOpen = ref(false)
 const headerActions = ref<HTMLElement | null>(null)
 const { notifications, markAllNotificationsRead, clearNotifications } = useToast()
 const unreadCount = computed(() => notifications.value.filter(item => !item.read).length)
+const reportAvailable = computed(() => {
+  const learnerId = authStore.user?.learner_id
+  return authStore.role === 'learner' && learnerId === profileGate.learnerId && profileGate.ready
+})
 
 watch(() => authStore.user?.user_id, clearNotifications, { immediate: true })
 
@@ -89,15 +93,15 @@ function goTo(path: string) {
   void router.push(path)
 }
 
-function openNotifications() {
-  menuOpen.value = false
-  notificationOpen.value = true
-  markAllNotificationsRead()
-}
-
 function toggleNotifications() {
   notificationOpen.value = !notificationOpen.value
+  menuOpen.value = false
   if (notificationOpen.value) markAllNotificationsRead()
+}
+
+function toggleAccountMenu() {
+  menuOpen.value = !menuOpen.value
+  notificationOpen.value = false
 }
 
 function notificationIcon(type: ToastType) {
@@ -113,18 +117,7 @@ function notificationTime(createdAt: number) {
   return minutes < 1 ? '刚刚' : `${minutes} 分钟前`
 }
 
-const labels: Record<string, string> = {
-  '/dashboard': '首页',
-  '/resources': '学习资源',
-  '/report': '学习报告',
-  '/metrics': '任务记录',
-  '/learners': '用户管理',
-  '/domain-hub': '领域管理',
-  '/model-settings': '模型配置',
-  '/review': '人工复核',
-}
-
-const pageLabel = computed(() => labels[route.path] || '工作区')
+const pageLabel = computed(() => String(route.meta.title || '工作区'))
 </script>
 
 <style scoped>
@@ -139,8 +132,9 @@ const pageLabel = computed(() => labels[route.path] || '工作区')
 .profile-meta { display: grid; gap: 1px; min-width: 0; }
 .profile-meta strong { max-width: 112px; overflow: hidden; font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .profile-meta small { color: var(--muted); font-size: 10px; line-height: 1.35; }
-.profile-chevron { color: var(--muted); font-size: 16px; line-height: 1; transform: translateY(-2px); }
-.account-dropdown, .notification-dropdown { position: absolute; top: calc(100% + 12px); right: 0; z-index: 10; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 8px 14px rgb(22 35 55 / .12); }
+.profile-chevron { color: var(--muted); font-size: 16px; line-height: 1; transform: translateY(-2px); transition: transform var(--transition-fast); }
+.profile-chevron.open { transform: translateY(1px) rotate(180deg); }
+.account-dropdown, .notification-dropdown { position: absolute; top: calc(100% + 12px); right: 0; z-index: var(--z-dropdown); overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 8px 14px rgb(22 35 55 / .12); }
 .account-dropdown { width: 236px; }
 .notification-dropdown { width: min(368px, calc(100vw - 32px)); }
 .account-summary { display: grid; gap: 4px; padding: 16px; background: var(--soft); }

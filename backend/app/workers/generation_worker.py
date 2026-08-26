@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.checkpointer import MySQLLangGraphCheckpointer
 from app.agents.contracts import (
+    CONTRACT_VERSION,
     ConversationSummary,
     EvidenceRef,
     EvidenceType,
@@ -29,7 +31,6 @@ from app.agents.observability import collect_model_calls
 from app.agents.nodes import GRAPH_STATE, AgentRuntime, build_nodes
 from app.agents.prompt_registry import PROMPT_VERSION, node_prompt_hash
 from app.agents.review_agent import ReviewBatchCache
-from app.core.compatibility import AGENT_CONTRACT_VERSION
 from app.core.db import SessionLocal
 from app.models import (
     AgentMessageRecord,
@@ -49,13 +50,12 @@ from app.models import (
     TutoringSession,
 )
 from app.services.generation_service import persist_generated_resources
-from app.services.learning_path_service import (
-    node_id_for,
-    normalize_learning_path,
-)
+from app.services.learning_path_service import normalize_learning_path
 from app.services.profile_revision_service import persist_profile_revision
 from app.services.contract_mapping import profile_snapshot
 from app.services.node_generation_target_service import generation_basis_for_task
+
+logger = logging.getLogger(__name__)
 
 
 NodeFunc = Callable[[GRAPH_STATE], GRAPH_STATE]
@@ -260,20 +260,22 @@ def _initial_state(
     )
     basis = generation_basis_for_task(db, task)
     prerequisites_by_knowledge = {}
-    if basis and basis.get("core_knowledge"):
-        prerequisites_by_knowledge[
-            basis["core_knowledge"]["knowledge_id"]
-        ] = [
+    if basis:
+        prerequisite_ids = [
             item["knowledge_id"]
             for item in basis.get("prerequisite_knowledge") or []
         ]
+        prerequisites_by_knowledge = {
+            item["knowledge_id"]: list(prerequisite_ids)
+            for item in basis.get("core_knowledge") or []
+        }
     path_snapshot, current_path_node = _learning_path_snapshot(
         learning_path,
         active_profile,
         prerequisites_by_knowledge=prerequisites_by_knowledge,
     )
     state: GRAPH_STATE = {
-        "contract_version": AGENT_CONTRACT_VERSION,
+        "contract_version": CONTRACT_VERSION,
         "task_request": request,
         "current_profile": active_profile,
         "revision_plan": None,
@@ -365,26 +367,25 @@ def _learning_path_snapshot(
     average_ability = sum(ability_values) / len(ability_values)
     difficulty = max(1, min(5, round(average_ability / 20)))
     nodes: list[LearningPathNodeSnapshot] = []
-    seen_knowledge_ids: set[str] = set()
-    for stage in payload.get("stages") or []:
-        for knowledge_id in stage.get("knowledge_ids") or []:
-            knowledge_id = str(knowledge_id)
-            if knowledge_id in seen_knowledge_ids:
-                continue
-            seen_knowledge_ids.add(knowledge_id)
-            nodes.append(
-                LearningPathNodeSnapshot(
-                    path_node_id=node_id_for(knowledge_id),
-                    knowledge_id=knowledge_id,
-                    title=str(stage.get("name") or knowledge_id),
-                    path_order=len(nodes) + 1,
-                    target_difficulty=difficulty,
-                    learning_objective=str(stage.get("description") or f"掌握 {knowledge_id}"),
-                    prerequisite_knowledge_ids=list(
-                        (prerequisites_by_knowledge or {}).get(knowledge_id, [])
-                    ),
-                )
+    for state in (payload.get("node_states") or {}).values():
+        if not isinstance(state, dict):
+            continue
+        knowledge_ids = [str(value) for value in state.get("knowledge_ids") or []]
+        nodes.append(
+            LearningPathNodeSnapshot(
+                path_node_id=str(state["path_node_id"]),
+                knowledge_ids=knowledge_ids,
+                focus_knowledge_ids=list(state.get("focus_knowledge_ids") or []),
+                title=str(state.get("title") or "学习单元"),
+                path_order=int(state.get("path_order") or 1),
+                target_difficulty=difficulty,
+                learning_objective=str(state.get("learning_objective") or "掌握本单元知识"),
+                recommendation_reason=str(
+                    state.get("recommendation_reason") or "根据画像与知识关系规划。"
+                ),
+                prerequisite_knowledge_ids=list(state.get("prerequisite_knowledge_ids") or []),
             )
+        )
     current_node_id = payload.get("current_node_id")
     current = next((node for node in nodes if node.path_node_id == current_node_id), None)
     return (
@@ -664,19 +665,19 @@ def _observable_node(
                 "task_id": task.public_id,
                 "thread_id": task.public_id,
                 "step": step,
-                "contract_version": AGENT_CONTRACT_VERSION,
+                "contract_version": CONTRACT_VERSION,
             },
             output_summary_json=initial_output,
             prompt_version=PROMPT_VERSION,
             prompt_hash=node_prompt_hash(step),
-            contract_version=AGENT_CONTRACT_VERSION,
+            contract_version=CONTRACT_VERSION,
         )
         db.add(run)
         _message(
             db,
             task,
             "orchestrator_agent",
-            {"step": step, "status": "running", "contract_version": "agent-contract-v6"},
+            {"step": step, "status": "running", "contract_version": CONTRACT_VERSION},
             receiver=agent_name,
         )
         db.commit()
@@ -741,7 +742,7 @@ def _observable_node(
                     "step": step,
                     "status": "completed",
                     "output": output,
-                    "contract_version": "agent-contract-v6",
+                    "contract_version": CONTRACT_VERSION,
                 },
                 receiver=_next_receiver(step, patch),
                 message_type="result",
@@ -861,6 +862,20 @@ def recover_interrupted_generation_tasks() -> list[str]:
             checkpoint_payload = dict(checkpoint.state_json or {}) if checkpoint else {}
             recovery_count = int(checkpoint_payload.get("auto_recovery_count") or 0)
             has_native_checkpoint = bool(checkpoint_payload.get("native_checkpoint"))
+            latest_run = db.scalar(
+                select(AgentRun)
+                .where(AgentRun.generation_task_id == task.id)
+                .order_by(AgentRun.id.desc())
+            )
+            checkpoint_contract_version = str(
+                checkpoint_payload.get("contract_version")
+                or (latest_run.contract_version if latest_run is not None else "")
+                or ""
+            )
+            stale_contract_checkpoint = bool(
+                has_native_checkpoint
+                and checkpoint_contract_version != CONTRACT_VERSION
+            )
             running_runs = list(
                 db.scalars(
                     select(AgentRun)
@@ -881,14 +896,34 @@ def recover_interrupted_generation_tasks() -> list[str]:
                         "error": "ProcessInterrupted",
                         "failure_code": "persistence_interrupted",
                         "failed_step": (run.input_summary_json or {}).get("step"),
-                        "recoverable": has_native_checkpoint and recovery_count < 1,
+                        "recoverable": stale_contract_checkpoint
+                        or (has_native_checkpoint and recovery_count < 1),
                     }
                 )
                 run.status = "failed"
                 run.error_message = "persistence_interrupted"
                 run.output_summary_json = output
 
-            if has_native_checkpoint and recovery_count < 1:
+            if stale_contract_checkpoint:
+                db.delete(checkpoint)
+                task.status = "retry_pending"
+                task.decision = "pending"
+                task.progress = 0
+                task.failure_reason = ""
+                claimed.append(task.public_id)
+                _message(
+                    db,
+                    task,
+                    "generation_worker",
+                    {
+                        "task_id": task.public_id,
+                        "status": "checkpoint_contract_refresh",
+                        "previous_contract_version": checkpoint_contract_version,
+                        "contract_version": CONTRACT_VERSION,
+                    },
+                    message_type="event",
+                )
+            elif has_native_checkpoint and recovery_count < 1:
                 checkpoint_payload["auto_recovery_count"] = recovery_count + 1
                 checkpoint.state_json = checkpoint_payload
                 checkpoint.status = "recovery_scheduled"
@@ -1044,6 +1079,11 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
                 "resources": [_resource_summary(item) for item in resources],
             }
         except Exception as exc:
+            logger.exception(
+                "generation task failed before finalization task_id=%s error_type=%s",
+                task.public_id,
+                type(exc).__name__,
+            )
             task.status = task.decision = "failed"
             task.failure_reason = _failure_code(exc)
             _restore_refresh_impact(db, task)

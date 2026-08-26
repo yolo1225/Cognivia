@@ -2,8 +2,9 @@
   <section class="page resource-page">
     <PageHeader title="学习资源" description="根据诊断画像生成的个性化学习包：先读讲义、再实操、最后用分级测验检验掌握程度。">
       <template #actions>
-        <button class="btn" :disabled="loading" @click="loadResources">刷新</button>
-        <button class="btn" @click="openReport">学习画像</button>
+        <button type="button" class="btn" :disabled="loading" :aria-busy="loading" @click="loadResources">{{ loading ? '正在刷新' : '刷新资源' }}</button>
+        <button v-if="canExportPackage" type="button" class="btn primary" :disabled="exportingPackage" :aria-busy="exportingPackage" @click="packageExportDialog?.open()">{{ exportingPackage ? '正在导出' : '导出学习包' }}</button>
+        <button type="button" class="btn" @click="openReport">查看学习报告</button>
       </template>
     </PageHeader>
 
@@ -14,7 +15,7 @@
 
     <section v-if="generationBasis" class="generation-basis" aria-label="生成依据">
       <strong>生成依据</strong>
-      <span>核心知识点：{{ generationBasis.core_knowledge?.name || pathNodeTitle }}</span>
+      <span>单元知识点：{{ generationBasis.core_knowledge.map(item => item.name).join('、') || pathNodeTitle }}</span>
       <span>必要前置知识：{{ prerequisiteNames }}</span>
       <span>适配画像 V{{ generationBasis.profile_version }}</span>
     </section>
@@ -26,8 +27,13 @@
     </div>
 
     <div v-else-if="taskDetail?.status === 'failed'" class="error-state">
-      <strong>本次资源未达到发布标准</strong>
-      <p>{{ taskDetail.failure_reason || '自动修订达到上限，未达标资源不会向学习者发布。' }}</p>
+      <strong>{{ generationFailureTitle }}</strong>
+      <p>{{ generationFailureDescription }}</p>
+      <dl v-if="isContentPolicyFailure" class="failure-details">
+        <div v-if="failedResourceLabels"><dt>失败资源</dt><dd>{{ failedResourceLabels }}</dd></div>
+        <div v-if="failedFieldPaths"><dt>未通过字段</dt><dd>{{ failedFieldPaths }}</dd></div>
+        <div><dt>处理建议</dt><dd>补充与目标知识点相关的实操材料并重建索引，或使用系统的安全概念练习降级。</dd></div>
+      </dl>
       <QualityMetrics v-if="taskDetail.package_quality" :metrics="taskDetail.package_quality" />
       <button class="btn primary" :disabled="retrying" @click="retryTask">{{ retrying ? '重新生成中...' : '重新生成' }}</button>
     </div>
@@ -110,9 +116,22 @@
           </header>
 
           <QualityMetrics v-if="selected.quality_metrics" :metrics="selected.quality_metrics" show-details />
+          <InlineNotice
+            v-if="quizContent"
+            type="info"
+            title="正式认证题库组卷"
+            description="题目正确性与来源在入库阶段完成认证；本次审核检查学习单元匹配、难度、层级与知识覆盖。"
+          />
 
           <div class="reader-body">
-            <GradedQuizViewer v-if="quizContent" :key="quizContent.title" :content="quizContent" />
+            <GradedQuizViewer
+              v-if="quizContent"
+              :key="`${selected.resource_id}:${selected.version || 1}`"
+              :content="quizContent"
+              :learner-id="currentLearnerId"
+              :resource-id="selected.resource_id"
+              :resource-version="selected.version"
+            />
             <ResourceMarkdownViewer v-else-if="bodyContent" :content="bodyContent" collapsible :open-headings="2" @headings="onHeadings" />
           </div>
 
@@ -146,7 +165,18 @@
       </label>
       <template #footer>
         <button class="btn" @click="exportDialog?.close()">取消</button>
-        <button class="btn primary" @click="doExport">导出资源</button>
+        <button class="btn primary" :disabled="exportingResource" @click="doExport">{{ exportingResource ? '正在导出...' : '导出资源' }}</button>
+      </template>
+    </AppDialog>
+
+    <AppDialog ref="packageExportDialog" title="导出学习包" subtitle="讲义、实操指南和无答案测验将使用同一种格式打包为 ZIP。">
+      <label v-for="f in formats" :key="f.value" class="export-row">
+        <input type="radio" name="package-fmt" :value="f.value" v-model="packageExportFormat" />
+        <span><strong>{{ f.label }}</strong><small>{{ f.desc }}</small></span><span class="tag">统一格式</span>
+      </label>
+      <template #footer>
+        <button class="btn" :disabled="exportingPackage" @click="packageExportDialog?.close()">取消</button>
+        <button class="btn primary" :disabled="exportingPackage" @click="doExportPackage">{{ exportingPackage ? '正在打包...' : '下载 ZIP 学习包' }}</button>
       </template>
     </AppDialog>
 
@@ -194,11 +224,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { downloadResourceExport, listResources, exportResource, submitFeedback, type ResourceSummary } from '@/api/resources'
 import { resourceQualityStatusLabel } from '@/utils/resourceQualityStatus'
-import { dismissKnowledgeImpact, getCurrentLearningPackage, getLearningPackage, refreshAffectedResources, type LearningPackage } from '@/api/learningPackages'
+import { masteryCheckErrorMessage } from '@/utils/masteryCheckError'
+import { dismissKnowledgeImpact, exportLearningPackage, getCurrentLearningPackage, getLearningPackage, refreshAffectedResources, type LearningPackage, type LearningPackageExportFormat } from '@/api/learningPackages'
 import { getActiveGenerationTask, getGenerationTask, retryGenerationTask, type GenerationTaskDetail } from '@/api/generation'
 import { getLearnerProfile } from '@/api/learners'
 import { useDomainStore } from '@/stores/domainStore'
 import QualityMetrics from '@/components/ResourceViewer/QualityMetrics.vue'
+import InlineNotice from '@/components/Shared/InlineNotice.vue'
 import AppDialog from '@/components/Shared/AppDialog.vue'
 import AppDrawer from '@/components/Shared/AppDrawer.vue'
 import AppIcon from '@/components/Shared/AppIcon.vue'
@@ -223,6 +255,10 @@ const selectedIdx = ref(0)
 const headings = ref<HeadingItem[]>([])
 const exportFormat = ref('markdown')
 const exportDialog = ref<InstanceType<typeof AppDialog> | null>(null)
+const packageExportFormat = ref<LearningPackageExportFormat>('markdown')
+const packageExportDialog = ref<InstanceType<typeof AppDialog> | null>(null)
+const exportingResource = ref(false)
+const exportingPackage = ref(false)
 const errorMessage = ref('')
 const feedbackSubmitting = ref(false)
 const retrying = ref(false)
@@ -310,6 +346,16 @@ const canManageKnowledgeImpact = computed(() => Boolean(
   && knowledgeImpact.value?.status !== 'refreshing'
   && knowledgeImpact.value?.status !== 'resolved',
 ))
+const canExportPackage = computed(() => {
+  const packageData = currentPackage.value
+  if (!packageData || packageData.status !== 'completed') return false
+  const approvedTypes = new Set(
+    packageData.resources
+      .filter(resource => resource.review_status === 'passed')
+      .map(resource => resource.resource_type),
+  )
+  return ['lecture', 'practice_guide', 'graded_quiz'].every(type => approvedTypes.has(type))
+})
 const showKnowledgeChangedState = computed(() => hasStaleResources.value && !isShowingProgress.value)
 const generationStatusTitle = computed(() => {
   if (taskDetail.value?.decision === 'revision_required') return '正在自动修订资源'
@@ -322,6 +368,24 @@ const generationStatusDescription = computed(() => (
   taskDetail.value?.event_type === 'knowledge_refresh'
     ? '当前学习包仍可继续使用，受影响资源通过质量校验后将统一切换。'
     : '三类资源将在全部达到质量门槛后统一发布。'
+))
+const isContentPolicyFailure = computed(() => (
+  taskDetail.value?.failure_details?.failure_code === 'generated_content_policy_invalid'
+  || taskDetail.value?.failure_reason === 'generated_content_policy_invalid'
+))
+const generationFailureTitle = computed(() => (
+  isContentPolicyFailure.value ? '实训内容缺少可核对的知识库证据' : '本次资源未达到发布标准'
+))
+const generationFailureDescription = computed(() => (
+  isContentPolicyFailure.value
+    ? '系统未发布包含无依据命令、固定结果或排错结论的资源，讲义、实训指南和分级测验仍按完整包规则统一处理。'
+    : taskDetail.value?.failure_reason || '自动修订达到上限，未达标资源不会向学习者发布。'
+))
+const failedResourceLabels = computed(() => (
+  (taskDetail.value?.failure_details?.resource_types || []).map(typeLabel).join('、')
+))
+const failedFieldPaths = computed(() => (
+  (taskDetail.value?.failure_details?.field_paths || []).join('、')
 ))
 const packageQuality = computed(() => taskDetail.value?.package_quality || currentPackage.value?.package_quality || resources.value[0]?.package_quality || null)
 let taskTimer: number | null = null
@@ -447,7 +511,7 @@ async function requestTutorMasteryCheck() {
     await requestMasteryCheck(tutorSession.value.session_id)
     tutorSession.value = await getTutoringSession(tutorSession.value.session_id)
     scrollTutorToLatest()
-  } catch { showToast('暂时无法发起掌握检查，可能已有一项检查待完成。', 'info') }
+  } catch (error) { showToast(masteryCheckErrorMessage(error), 'info') }
   finally { masteryCheckLoading.value = false }
 }
 
@@ -614,20 +678,41 @@ async function sendFeedback(type: string) {
 
 async function doExport() {
   if (!selected.value) return
+  exportingResource.value = true
   try {
     const r = await exportResource(selected.value.resource_id, exportFormat.value as 'markdown' | 'pdf' | 'word')
-    const blob = await downloadResourceExport(r.download_url)
-    const blobUrl = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = blobUrl
-    anchor.download = r.file_name
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-    URL.revokeObjectURL(blobUrl)
+    await downloadExportFile(r.download_url, r.file_name)
     exportDialog.value?.close()
     showToast(`已下载：${r.file_name}`)
   } catch { showToast('导出失败') }
+  finally { exportingResource.value = false }
+}
+
+async function doExportPackage() {
+  if (!currentPackage.value || exportingPackage.value) return
+  exportingPackage.value = true
+  try {
+    const result = await exportLearningPackage(currentPackage.value.task_id, packageExportFormat.value)
+    await downloadExportFile(result.download_url, result.file_name)
+    packageExportDialog.value?.close()
+    showToast(`已下载学习包：${result.file_name}`)
+  } catch {
+    showToast('学习包导出失败，请确认三类资源均已完成审核。')
+  } finally {
+    exportingPackage.value = false
+  }
+}
+
+async function downloadExportFile(downloadUrl: string, fileName: string) {
+  const blob = await downloadResourceExport(downloadUrl)
+  const blobUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = blobUrl
+  anchor.download = fileName
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(blobUrl)
 }
 
 watch(
@@ -728,6 +813,10 @@ onUnmounted(clearTaskTimer)
 
 /* 生成中 */
 .generation-state { margin-bottom: 0; }
+.failure-details { display: grid; gap: 8px; margin: 14px 0; }
+.failure-details > div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px; }
+.failure-details dt { color: var(--muted); font-size: 12px; font-weight: 700; }
+.failure-details dd { margin: 0; color: var(--body); font-size: 12px; overflow-wrap: anywhere; }
 .progress-track { height: 8px; margin-top: 16px; overflow: hidden; border-radius: 4px; background: var(--soft); }
 .progress-track i { display: block; height: 100%; background: var(--blue); transition: width .25s ease; }
 

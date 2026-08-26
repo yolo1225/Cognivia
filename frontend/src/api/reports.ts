@@ -115,6 +115,7 @@ export interface LearningReport {
       ability_summary: string
     }
   }>
+  progress_comparison?: LearningProgressComparison
   next_actions: Array<{
     type: string
     label: string
@@ -126,4 +127,30 @@ export interface LearningReport {
 export function getLearningReport(learnerId: string, taskId?: string) {
   const params = taskId ? `?task_id=${encodeURIComponent(taskId)}` : ''
   return getData<LearningReport>(`/reports/learners/${learnerId}${params}`)
+}
+
+export interface LearningProgressComparison {
+  available: boolean
+  unavailable_reason?: string | null
+  period?: { started_at: string; updated_at: string }
+  baseline?: { profile_id: string; profile_version: number; radar: number[]; weak_knowledge_count: number }
+  current?: { profile_id: string; profile_version: number; radar: number[]; weak_knowledge_count: number }
+  ability_changes?: Array<{ key: string; label: string; before: number; after: number; delta: number }>
+  average_ability_delta?: number
+  knowledge_changes?: {
+    consolidated: KnowledgeProgressItem[]
+    improving: KnowledgeProgressItem[]
+    unchanged: KnowledgeProgressItem[]
+    new_weakness: KnowledgeProgressItem[]
+  }
+  path_progress?: { total: number; completed: number; current: number; locked: number; skipped: number; completion_rate: number | null }
+  mistake_consolidation?: { total: number; pending: number; in_progress: number; consolidated: number; verified: number; consolidation_rate: number | null }
+  timeline?: Array<{ type: string; title: string; occurred_at: string; profile_version: number | null; confidence: number; reason: string | null; evidence_refs: string[]; governance_status?: string; path_result?: Record<string, unknown> }>
+}
+
+export interface KnowledgeProgressItem {
+  knowledge_id: string
+  name: string
+  before_level?: number | null
+  after_level?: number | null
 }

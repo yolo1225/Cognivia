@@ -56,7 +56,7 @@ def test_profile_output_is_directly_consumable_by_v3_retrieval_contract() -> Non
         )
         assert retrieval_input.task_id == request.task_id, case_id
         assert retrieval_input.context.task_id == request.context.task_id, case_id
-        assert retrieval_input.context.contract_version == "agent-contract-v6", case_id
+        assert retrieval_input.context.contract_version == "agent-contract-v8", case_id
         assert retrieval_input.profile == output.profile, case_id
         assert retrieval_input.retrieval_plan == output.retrieval_plan, case_id
 

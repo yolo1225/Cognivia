@@ -64,7 +64,7 @@ def create_document(
         select(KnowledgeDocument).where(
             KnowledgeDocument.domain_code == domain_code,
             KnowledgeDocument.sha256 == digest,
-            KnowledgeDocument.status != "deleted",
+            KnowledgeDocument.status.not_in({"deleted", "withdrawn"}),
         )
     )
     if duplicate is not None:
@@ -164,13 +164,53 @@ def retry_document(db: Session, document: KnowledgeDocument) -> None:
 def delete_document(db: Session, document: KnowledgeDocument) -> dict[str, object]:
     if document.file_type == "seed_package":
         raise KnowledgeDocumentError("系统内置知识包不能删除")
-    if document.status in {
+    processing_statuses = {
         "queued", "parsing", "extracting", "graph_generation", "graph_review",
         "question_generation", "question_review", "question_repair", "validating",
         "staging", "indexing", "smoke_testing", "publishing",
-    }:
-        raise KnowledgeDocumentError("文件正在处理中，暂时不能删除")
-    from app.models import KnowledgeItemSource
+    }
+    if document.status in processing_statuses:
+        from app.models import KnowledgeImportBatch, KnowledgeImportRun
+
+        latest_run = db.scalar(
+            select(KnowledgeImportRun)
+            .where(KnowledgeImportRun.document_id == document.id)
+            .order_by(KnowledgeImportRun.id.desc())
+            .limit(1)
+        )
+        if latest_run is None or latest_run.status != "cancel_requested":
+            raise KnowledgeDocumentError("文件正在处理中，请先中断任务后再删除")
+        latest_run.status = "cancelled"
+        latest_run.current_step = "cancelled"
+        latest_run.error_code = "import_cancelled"
+        latest_run.error_summary = "导入已取消"
+        latest_run.lease_owner = None
+        latest_run.lease_expires_at = None
+        latest_run.finished_at = datetime.now(UTC)
+        for batch in db.scalars(
+            select(KnowledgeImportBatch).where(
+                KnowledgeImportBatch.run_id == latest_run.id,
+                KnowledgeImportBatch.status.in_(("pending", "running")),
+            )
+        ):
+            batch.status = "cancelled"
+            batch.error_code = "import_cancelled"
+            batch.error_summary = "导入已取消"
+            batch.lease_owner = None
+            batch.lease_expires_at = None
+        document.status = "cancelled"
+        document.error_summary = "导入已取消"
+        db.flush()
+    from app.models import (
+        AnswerRecord,
+        DiagnosticQuestion,
+        KnowledgeChunk,
+        KnowledgeImportBatch,
+        KnowledgeImportRun,
+        KnowledgeItemSource,
+        KnowledgeRelation,
+        PathNodeAssessment,
+    )
 
     sources = list(db.scalars(select(KnowledgeItemSource).where(
         KnowledgeItemSource.document_id == document.id,
@@ -178,12 +218,13 @@ def delete_document(db: Session, document: KnowledgeDocument) -> dict[str, objec
     )))
     item_ids = {source.knowledge_item_id for source in sources}
     items = list(db.scalars(select(KnowledgeItem).where(KnowledgeItem.id.in_(item_ids)))) if item_ids else []
-    db.execute(
-        delete(KnowledgeImportCandidate).where(KnowledgeImportCandidate.document_id == document.id)
-    )
-    orphaned: list[KnowledgeItem] = []
-    for source in sources:
-        source.status = "retracted"
+    db.execute(delete(KnowledgeImportCandidate).where(KnowledgeImportCandidate.document_id == document.id))
+    db.execute(delete(KnowledgeImportBatch).where(KnowledgeImportBatch.run_id.in_(
+        select(KnowledgeImportRun.id).where(KnowledgeImportRun.document_id == document.id)
+    )))
+    db.execute(delete(KnowledgeImportRun).where(KnowledgeImportRun.document_id == document.id))
+    shared_item_ids: set[int] = set()
+    exclusive_item_ids: set[int] = set()
     if items:
         mark_affected_content(
             db,
@@ -195,24 +236,44 @@ def delete_document(db: Session, document: KnowledgeDocument) -> dict[str, objec
             remaining = db.scalar(select(KnowledgeItemSource.id).where(
                 KnowledgeItemSource.knowledge_item_id == item.id,
                 KnowledgeItemSource.document_id != document.id,
-                KnowledgeItemSource.status == "published",
+                KnowledgeItemSource.status.in_(("staged", "published")),
             ))
-            if remaining is None:
-                item.status = "needs_attention"
-                item.needs_reembedding = True
-                orphaned.append(item)
+            (shared_item_ids if remaining is not None else exclusive_item_ids).add(item.id)
         db.flush()
-    # A withdrawal changes publication state but keeps the immutable source file
-    # available for evidence review and audit.
-    document.status = "withdrawn"
+    if exclusive_item_ids:
+        question_ids = set(db.scalars(select(DiagnosticQuestion.id).where(
+            DiagnosticQuestion.knowledge_item_id.in_(exclusive_item_ids)
+        )))
+        if question_ids:
+            db.execute(delete(PathNodeAssessment).where(PathNodeAssessment.question_id.in_(question_ids)))
+            db.execute(delete(AnswerRecord).where(AnswerRecord.question_id.in_(question_ids)))
+            db.execute(delete(DiagnosticQuestion).where(DiagnosticQuestion.id.in_(question_ids)))
+        db.execute(delete(KnowledgeRelation).where(
+            (KnowledgeRelation.source_item_id.in_(exclusive_item_ids))
+            | (KnowledgeRelation.target_item_id.in_(exclusive_item_ids))
+        ))
+        db.execute(delete(KnowledgeItem).where(KnowledgeItem.id.in_(exclusive_item_ids)))
+    if shared_item_ids:
+        db.execute(delete(KnowledgeItemSource).where(
+            KnowledgeItemSource.document_id == document.id,
+            KnowledgeItemSource.knowledge_item_id.in_(shared_item_ids),
+        ))
+    db.execute(delete(KnowledgeItemSource).where(KnowledgeItemSource.document_id == document.id))
+    db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
+    document.status = "deleted"
     document.deleted_at = datetime.now(UTC)
     document.error_summary = None
     db.commit()
+    stored_path = (KNOWLEDGE_STORAGE_ROOT / str(document.stored_path or "")).resolve()
+    root = KNOWLEDGE_STORAGE_ROOT.resolve()
+    if stored_path.is_file() and root in stored_path.parents:
+        stored_path.unlink()
     return {
         "document_id": document.public_id,
-        "status": "withdrawn",
+        "status": "deleted",
         "sources_retracted": len(sources),
-        "knowledge_needs_attention": len(orphaned),
+        "knowledge_deleted": len(exclusive_item_ids),
+        "knowledge_preserved_shared": len(shared_item_ids),
         "affected_knowledge": len(items),
     }
 

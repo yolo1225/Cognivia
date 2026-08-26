@@ -1,11 +1,14 @@
 from collections.abc import Generator
+from datetime import datetime
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.agents.contracts import (
+    CONTRACT_VERSION,
     FeedbackIntent,
     InterpretFeedbackOutput,
     RecommendedAction,
@@ -18,11 +21,13 @@ from app.models import (
     AgentMessageRecord,
     AgentRun,
     Domain,
+    DiagnosticQuestion,
     GenerationTask,
     GraphCheckpoint,
     Learner,
     LearnerProfile,
     LearningResource,
+    KnowledgeItem,
 )
 
 
@@ -101,6 +106,99 @@ def seed_resource(db: Session):
     return learner, profile, task, visible
 
 
+def test_question_bank_certification_filter_and_evidence_response() -> None:
+    testing_session = build_test_session()
+    with testing_session() as db:
+        item = KnowledgeItem(
+            public_id="knowledge_certified",
+            domain_code="ai_app_dev",
+            name="可信题目来源",
+            category="测试",
+            difficulty=2,
+            tags_json=[],
+            content_md="可信原文",
+            source_title="测试来源",
+            license_note="test",
+            status="published",
+        )
+        db.add(item)
+        db.flush()
+        common = {
+            "domain_code": "ai_app_dev",
+            "knowledge_item_id": item.id,
+            "question_type": "single_choice",
+            "stem": "哪项正确？",
+            "options_json": ["A", "B", "C", "D"],
+            "difficulty": 2,
+            "status": "active",
+        }
+        db.add_all(
+            [
+                DiagnosticQuestion(
+                    public_id="question_certified",
+                    answer_key_json={
+                        "correct_option": 0,
+                        "explanation": "由可信原文支持",
+                        "quiz_level": "foundation",
+                        "source_ref_ids": ["knowledge_certified::chunk::0"],
+                        "evidence_quotes": [
+                            {
+                                "source_ref_id": "knowledge_certified::chunk::0",
+                                "quote": "可信原文",
+                            }
+                        ],
+                    },
+                    certification_status="certified",
+                    certification_rule_version="question-cert-v1",
+                    certification_report_json={
+                        "deterministic_passed": True,
+                        "failed_fields": [],
+                    },
+                    source_content_hash="sha256:" + "a" * 64,
+                    certified_at=datetime(2026, 8, 26),
+                    **common,
+                ),
+                DiagnosticQuestion(
+                    public_id="question_stale",
+                    answer_key_json={
+                        "correct_option": 0,
+                        "explanation": "旧来源",
+                        "quiz_level": "foundation",
+                        "source_ref_ids": ["knowledge_certified::chunk::0"],
+                    },
+                    certification_status="stale",
+                    certification_report_json={
+                        "deterministic_passed": True,
+                        "failed_fields": ["source_content_hash"],
+                    },
+                    **common,
+                ),
+            ]
+        )
+        db.commit()
+    app.dependency_overrides[get_db] = override(testing_session)
+    client = TestClient(app)
+    try:
+        response = client.get(
+            "/api/v1/knowledge/questions",
+            params={
+                "domain_code": "ai_app_dev",
+                "certification_status": "certified",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["total"] == 1
+        question = data["items"][0]
+        assert question["question_id"] == "question_certified"
+        assert question["certification_status"] == "certified"
+        assert question["certification_rule_version"] == "question-cert-v1"
+        assert question["evidence_quotes"][0]["quote"] == "可信原文"
+        assert question["certification_summary"]["deterministic_passed"] is True
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None:
     testing_session = build_test_session()
     with testing_session() as db:
@@ -148,7 +246,7 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
             run = db.query(AgentRun).filter_by(agent_name="tutoring_agent").one()
             messages = db.query(AgentMessageRecord).filter_by(session_id=session_id).all()
             assert run.prompt_version == "v6"
-            assert run.contract_version == "agent-contract-v6"
+            assert run.contract_version == "agent-contract-v8"
             assert len(run.prompt_hash) == 64
             assert run.status == "completed"
             assert {item.message_type for item in messages} >= {"command", "result"}
@@ -347,6 +445,7 @@ def test_failed_generation_task_can_schedule_checkpoint_retry(monkeypatch) -> No
                     "recoverable": True,
                 },
                 error_message="review_model_call_failed",
+                contract_version=CONTRACT_VERSION,
             )
         )
         db.commit()
@@ -366,6 +465,159 @@ def test_failed_generation_task_can_schedule_checkpoint_retry(monkeypatch) -> No
             )
             assert task.status == "retry_pending"
             assert task.decision == "pending"
+            checkpoint = db.scalar(
+                select(GraphCheckpoint).where(GraphCheckpoint.task_id == "task_retryable")
+            )
+            assert checkpoint is not None
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    [
+        "graded_quiz_question_source_missing",
+        "graded_quiz_question_bank_insufficient",
+    ],
+)
+def test_question_source_failure_retry_discards_stale_retrieval_checkpoint(
+    monkeypatch, failure_code: str
+) -> None:
+    testing_session = build_test_session()
+    task_public_id = f"task_retry_fresh_{failure_code}"
+    with testing_session() as db:
+        learner, profile, _, _ = seed_resource(db)
+        task = GenerationTask(
+            public_id=task_public_id,
+            learner_id=learner.id,
+            profile_id=profile.id,
+            status="failed",
+            decision="failed",
+            progress=40,
+            resource_types_json=["lecture", "practice_guide", "graded_quiz"],
+            failure_reason=failure_code,
+        )
+        db.add(task)
+        db.flush()
+        db.add(
+            GraphCheckpoint(
+                task_id=task.public_id,
+                checkpoint_id="cp_stale_retrieval",
+                state_json={"native_checkpoint": True},
+                status="saved",
+            )
+        )
+        db.add(
+            AgentRun(
+                generation_task_id=task.id,
+                agent_name="content_generation_agent",
+                status="failed",
+                input_summary_json={"step": "generate_resource"},
+                output_summary_json={
+                    "step": "generate_resource",
+                    "failure_code": failure_code,
+                    "recoverable": True,
+                },
+                error_message=failure_code,
+            )
+        )
+        db.commit()
+
+    scheduled: list[str] = []
+    monkeypatch.setattr("app.api.v1.generation_tasks.run_generation_task", scheduled.append)
+    monkeypatch.setattr("app.api.v1.generation_tasks.require_candidate_rag", lambda _domain: {})
+    app.dependency_overrides[get_db] = override(testing_session)
+    try:
+        response = TestClient(app).post(
+            f"/api/v1/generation-tasks/{task_public_id}/retry"
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["status"] == "retry_pending"
+        assert scheduled == [task_public_id]
+        with testing_session() as db:
+            task = db.scalar(
+                select(GenerationTask).where(
+                    GenerationTask.public_id == task_public_id
+                )
+            )
+            checkpoint = db.scalar(
+                select(GraphCheckpoint).where(
+                    GraphCheckpoint.task_id == task_public_id
+                )
+            )
+            assert task.status == "retry_pending"
+            assert task.decision == "pending"
+            assert task.progress == 0
+            assert task.failure_reason == ""
+            assert checkpoint is None
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_retry_discards_checkpoint_from_previous_contract_version(monkeypatch) -> None:
+    testing_session = build_test_session()
+    with testing_session() as db:
+        learner, profile, _, _ = seed_resource(db)
+        task = GenerationTask(
+            public_id="task_retry_v7_checkpoint",
+            learner_id=learner.id,
+            profile_id=profile.id,
+            status="failed",
+            decision="failed",
+            progress=25,
+            resource_types_json=["lecture", "practice_guide", "graded_quiz"],
+            failure_reason="ValidationError",
+        )
+        db.add(task)
+        db.flush()
+        db.add(
+            GraphCheckpoint(
+                task_id=task.public_id,
+                checkpoint_id="cp_v7",
+                state_json={"native_checkpoint": True},
+                status="saved",
+            )
+        )
+        db.add(
+            AgentRun(
+                generation_task_id=task.id,
+                agent_name="knowledge_retrieval_agent",
+                status="failed",
+                input_summary_json={"step": "retrieve_knowledge"},
+                output_summary_json={
+                    "failure_code": "ValidationError",
+                    "recoverable": True,
+                },
+                error_message="ValidationError",
+                contract_version="agent-contract-v7",
+            )
+        )
+        db.commit()
+
+    scheduled: list[str] = []
+    monkeypatch.setattr("app.api.v1.generation_tasks.run_generation_task", scheduled.append)
+    monkeypatch.setattr("app.api.v1.generation_tasks.require_candidate_rag", lambda _domain: {})
+    app.dependency_overrides[get_db] = override(testing_session)
+    try:
+        response = TestClient(app).post(
+            "/api/v1/generation-tasks/task_retry_v7_checkpoint/retry"
+        )
+        assert response.status_code == 200
+        assert scheduled == ["task_retry_v7_checkpoint"]
+        with testing_session() as db:
+            task = db.scalar(
+                select(GenerationTask).where(
+                    GenerationTask.public_id == "task_retry_v7_checkpoint"
+                )
+            )
+            checkpoint = db.scalar(
+                select(GraphCheckpoint).where(
+                    GraphCheckpoint.task_id == "task_retry_v7_checkpoint"
+                )
+            )
+            assert task.status == "retry_pending"
+            assert task.progress == 0
+            assert checkpoint is None
     finally:
         app.dependency_overrides.clear()
 

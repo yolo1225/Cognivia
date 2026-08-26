@@ -14,14 +14,11 @@
             </option>
           </select></label
         >
-        <span class="schema-badge"
-          >Schema {{ selectedDomain?.domain_schema_version || "1.0" }}</span
-        >
-        <button class="btn" :disabled="loading" @click="loadDomain">
+        <button type="button" class="btn" :disabled="loading" :aria-busy="loading" @click="loadDomain">
           {{ loading ? "正在刷新" : "刷新数据" }}
         </button>
-        <button class="btn" @click="openDomainEditor()">新建领域</button>
-        <button v-if="selectedDomain" class="btn" @click="openDomainEditor(selectedDomain)">编辑领域</button>
+        <button type="button" class="btn" @click="openDomainEditor()">新建领域</button>
+        <button v-if="selectedDomain" type="button" class="btn" @click="openDomainEditor(selectedDomain)">编辑领域</button>
         <button
           v-if="selectedDomain?.status !== 'ready'"
           class="btn primary"
@@ -119,6 +116,27 @@
               >
             </div>
           </ReadinessList>
+          <div
+            v-if="validationResult?.evidence_coverage"
+            class="evidence-coverage"
+            :class="{ 'is-conceptual': practiceGenerationMode === 'safe_conceptual' }"
+          >
+            <div class="evidence-coverage-summary">
+              <div>
+                <strong>实训证据覆盖</strong>
+                <p>{{ practiceModeDescription }}</p>
+              </div>
+              <StatusBadge
+                :label="practiceGenerationMode === 'evidence_backed' ? '证据支撑模式' : '概念练习模式'"
+                :type="practiceGenerationMode === 'evidence_backed' ? 'ok' : 'wait'"
+              />
+            </div>
+            <div class="evidence-capability-list" aria-label="证据能力知识点数量">
+              <span v-for="item in evidenceCapabilityItems" :key="item.key">
+                {{ item.label }} <strong>{{ item.count }}</strong>
+              </span>
+            </div>
+          </div>
         </section>
         <section v-if="attentionItems.length" class="attention-strip">
           <div>
@@ -168,7 +186,7 @@
           <div>
             <h2>知识资产</h2>
             <p>
-              知识点用于诊断与检索，来源文档提供依据，关系图谱表达知识结构。
+              知识点提供依据，正式题库统一服务诊断与分级测验，关系图谱表达知识结构。
             </p>
           </div>
           <button
@@ -313,6 +331,38 @@
           </div>
         </div>
 
+        <div v-else-if="assetView === 'questions'" class="asset-body">
+          <div class="experimental-note">
+            <span>正式题库</span>
+            <p>题目按知识重要度配置密度并绑定精确来源；资源生成只抽取已认证正式题，不临时生成。</p>
+          </div>
+          <p class="knowledge-results" aria-live="polite">
+            已覆盖 {{ questionCoverage?.ready_items || 0 }} / {{ questionCoverage?.total_items || 0 }} 个知识点，
+            当前显示 {{ questionBank.length }} 道题，其中已认证 {{ certifiedQuestionCount }} 道
+          </p>
+          <div v-if="questionBank.length === 0" class="empty-view">
+            <strong>当前领域暂无正式题目</strong>
+            <p>请通过来源文档导入并完成题目审核发布。</p>
+          </div>
+          <div v-else class="table-wrap">
+            <table class="knowledge-table">
+              <thead><tr><th>主要知识点</th><th>层级</th><th>题型</th><th>题干</th><th>精确来源</th><th>认证</th><th>运营状态</th><th class="table-actions">操作</th></tr></thead>
+              <tbody>
+                <tr v-for="question in questionBank" :key="question.question_id">
+                  <td><strong>{{ question.knowledge_name }}</strong><small v-if="question.related_knowledge_ids.length">关联 {{ question.related_knowledge_ids.length }} 个知识点</small></td>
+                  <td>{{ quizLevelLabel(question.quiz_level) }}</td>
+                  <td>{{ question.question_type === 'single_choice' ? '单选题' : '简答题' }}</td>
+                  <td><span class="source-text" :title="question.stem">{{ question.stem }}</span></td>
+                  <td><span class="source-text" :title="question.source_quote || question.source_ref_ids.join('、')">{{ question.source_ref_ids.join('、') }}</span></td>
+                  <td><StatusBadge :label="certificationStatusLabel(question.certification_status)" :type="question.certification_status === 'certified' ? 'ok' : question.certification_status === 'rejected' ? 'error' : 'wait'" /><small v-if="question.certification_summary.failed_fields.length" class="document-error">{{ question.certification_summary.failed_fields.join('、') }}</small></td>
+                  <td><StatusBadge :label="question.status === 'active' ? '启用' : '已停用'" :type="question.status === 'active' ? 'ok' : 'wait'" /></td>
+                  <td class="table-actions"><button v-if="question.status === 'active'" class="btn text danger" :disabled="questionActionLoading === question.question_id" @click="disableBankQuestion(question)">停用</button><span v-else class="system-label">等待补槽</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
         <div v-else-if="assetView === 'documents'" class="asset-body">
           <div class="experimental-note">
             <span>结构化导入</span>
@@ -366,11 +416,15 @@
                     <span v-if="document.is_system" class="system-label"
                       >系统内置</span
                     ><button
-                      v-if="!document.is_system && document.status !== 'parsing'"
+                      v-if="!document.is_system"
                       class="btn text"
                       @click="openImportReview(document)"
-                    >复核候选</button><button
-                      v-else-if="document.status === 'failed'"
+                    >{{ isProcessing(document.status) ? "查看进度" : "查看任务" }}</button><button
+                      v-if="!document.is_system && isProcessing(document.status)"
+                      class="btn text danger"
+                      @click="cancelDocumentImport(document)"
+                    >中断</button><button
+                      v-if="!document.is_system && ['failed', 'cancelled', 'interrupted'].includes(document.status)"
                       class="btn text"
                       @click="retry(document)"
                     >
@@ -378,7 +432,7 @@
                     ><button
                       v-if="!document.is_system"
                       class="btn text danger"
-                      :disabled="isProcessing(document.status)"
+                      :disabled="isProcessing(document.status) && !isCancellationRequested(document)"
                       @click="requestRemove(document)"
                     >
                       删除
@@ -761,6 +815,9 @@
             · 已耗时 {{ Math.round(Number(importSummary.elapsed_ms || 0) / 1000) }} 秒
             <span v-if="importSummary.eta_seconds">· 预计剩余 {{ importSummary.eta_seconds }} 秒</span>
           </p>
+          <p v-if="importSummary.empty_result_batches" class="document-error">
+            题目生成空结果 {{ importSummary.empty_result_batches }} 批；请补充对应知识点材料后重新导入。
+          </p>
           <p v-if="importSummary.error_summary" class="document-error">{{ importSummary.error_summary }}</p>
         </article>
         <div class="metric-grid compact">
@@ -867,13 +924,17 @@ import {
 } from "@/api/domains";
 import {
   createKnowledgeItem,
+  disableQuestion,
   getRebuildIndexStatus,
   listKnowledgeItems,
+  listQuestionBank,
   listKnowledgeRelations,
   rebuildKnowledgeIndex,
   updateKnowledgeItem,
   type KnowledgeItem,
   type KnowledgeRelation,
+  type QuestionBankItem,
+  type QuestionBankResponse,
   type RebuildIndexStatus,
 } from "@/api/knowledge";
 import {
@@ -886,6 +947,7 @@ import {
 } from "@/api/knowledgeDocuments";
 import {
   confirmKnowledgeImport,
+  cancelKnowledgeImport,
   getKnowledgeImportGraph,
   getKnowledgeImportSummary,
   type GraphPreview,
@@ -903,7 +965,7 @@ import {
 } from "./domainHubState";
 
 type PaneId = "overview" | "assets" | "rules" | "operations";
-type AssetView = "items" | "documents" | "graph";
+type AssetView = "items" | "questions" | "documents" | "graph";
 const route = useRoute(),
   router = useRouter(),
   domainStore = useDomainStore(),
@@ -927,6 +989,8 @@ const domains = ref<DomainSummary[]>([]),
 const stats = ref<DomainStats | null>(null),
   documents = ref<KnowledgeDocumentItem[]>([]),
   knowledgeItems = ref<KnowledgeItem[]>([]),
+  questionBank = ref<QuestionBankItem[]>([]),
+  questionCoverage = ref<QuestionBankResponse["coverage"] | null>(null),
   relations = ref<KnowledgeRelation[]>([]);
 const loading = ref(false),
   graphLoading = ref(false),
@@ -935,6 +999,7 @@ const loading = ref(false),
   rebuilding = ref(false),
   validationResult = ref<DomainValidationResult | null>(null),
   rebuildStatus = ref<RebuildIndexStatus | null>(null);
+const questionActionLoading = ref("");
 const selectedKnowledgeId = ref<string | null>(null),
   highlightedKnowledgeId = ref<string | null>(null);
 const knowledgeRowRefs = new Map<string, HTMLElement>();
@@ -1076,8 +1141,29 @@ const overallReadinessClass = computed(() =>
 const attentionSummary = computed(() =>
   attentionItems.value.map((item) => item.label).join("、"),
 );
+const practiceGenerationMode = computed(
+  () => validationResult.value?.evidence_coverage?.practice_generation_mode,
+);
+const practiceModeDescription = computed(() =>
+  practiceGenerationMode.value === "evidence_backed"
+    ? "知识库包含可核对的预期结果证据，实训字段仍按切片逐项授权。"
+    : "当前缺少预期结果证据，实训指南将自动生成阅读、比较和观察练习，不生成固定输出、命令或排错结论。",
+);
+const evidenceCapabilityItems = computed(() => {
+  const counts = validationResult.value?.evidence_coverage?.capabilities;
+  if (!counts) return [];
+  return [
+    { key: "operation", label: "操作步骤", count: counts.operation || 0 },
+    { key: "command", label: "命令", count: counts.command || 0 },
+    { key: "code_example", label: "代码", count: counts.code_example || 0 },
+    { key: "expected_result", label: "预期结果", count: counts.expected_result || 0 },
+    { key: "error_handling", label: "排错", count: counts.error_handling || 0 },
+    { key: "version_boundary", label: "版本边界", count: counts.version_boundary || 0 },
+  ];
+});
 const assetViews = computed(() => [
   { id: "items" as const, label: "知识点", count: knowledgeItems.value.length },
+  { id: "questions" as const, label: "题库", count: questionBank.value.length },
   {
     id: "documents" as const,
     label: "来源文档",
@@ -1164,7 +1250,7 @@ function validPane(value: unknown): value is PaneId {
   return panes.some((pane) => pane.id === value);
 }
 function validAssetView(value: unknown): value is AssetView {
-  return ["items", "documents", "graph"].includes(String(value));
+  return ["items", "questions", "documents", "graph"].includes(String(value));
 }
 function updateRoute() {
   router.replace({
@@ -1380,11 +1466,12 @@ async function loadDomain() {
   domainStore.domains = domains.value;
   domainStore.setWorkspaceDomain(selectedCode.value);
   try {
-    const [s, d, r, i, validation] = await Promise.all([
+    const [s, d, r, i, q, validation] = await Promise.all([
       getDomainStats(selectedCode.value),
       listKnowledgeDocuments(selectedCode.value),
       listKnowledgeRelations(selectedCode.value),
       listKnowledgeItems(selectedCode.value, 500),
+      listQuestionBank(selectedCode.value),
       getDomainReadiness(selectedCode.value),
     ]);
     if (version !== loadVersion) return;
@@ -1392,6 +1479,8 @@ async function loadDomain() {
     documents.value = d.documents;
     relations.value = r;
     knowledgeItems.value = i.items;
+    questionBank.value = q.items;
+    questionCoverage.value = q.coverage;
     validationResult.value = validation;
     schedulePolling();
   } catch {
@@ -1575,6 +1664,39 @@ function confirmImport() {
     "知识导入已发布",
   );
 }
+function quizLevelLabel(level: QuestionBankItem["quiz_level"]) {
+  return { foundation: "基础", improvement: "提升", challenge: "挑战" }[level] || level;
+}
+const certifiedQuestionCount = computed(
+  () => questionBank.value.filter((item) => item.certification_status === "certified").length,
+);
+function certificationStatusLabel(status: QuestionBankItem["certification_status"]) {
+  return { pending: "待认证", certified: "已认证", rejected: "已拒绝", stale: "已失效" }[status];
+}
+async function disableBankQuestion(question: QuestionBankItem) {
+  const reason = window.prompt("请输入停用原因（停用后该知识点需要补齐对应槽位）", "题目质量不符合要求");
+  if (!reason?.trim()) return;
+  questionActionLoading.value = question.question_id;
+  try {
+    await disableQuestion(question.question_id, reason.trim());
+    showToast("题目已停用，该知识点已进入缺槽状态");
+    await loadDomain();
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "停用题目失败");
+  } finally {
+    questionActionLoading.value = "";
+  }
+}
+async function cancelDocumentImport(document: KnowledgeDocumentItem) {
+  try {
+    await cancelKnowledgeImport(document.document_id);
+    showToast("已请求中断导入，当前模型调用结束后停止");
+    await loadDocuments(true);
+    if (activeImportId.value === document.document_id) await loadImportReview();
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "导入中断失败");
+  }
+}
 function handleFileInput(event: Event) {
   uploadFiles(Array.from((event.target as HTMLInputElement).files || []));
 }
@@ -1715,6 +1837,7 @@ function isProcessing(status: KnowledgeDocumentStatus) {
     "graph_generation",
     "graph_review",
     "question_generation",
+    "question_certification",
     "question_review",
     "question_repair",
     "validating",
@@ -1722,7 +1845,11 @@ function isProcessing(status: KnowledgeDocumentStatus) {
     "indexing",
     "smoke_testing",
     "publishing",
+    "cancel_requested",
   ].includes(status);
+}
+function isCancellationRequested(document: KnowledgeDocumentItem) {
+  return document.error_summary?.includes("已请求中断") ?? false;
 }
 function documentStatusLabel(status: KnowledgeDocumentStatus) {
   return (
@@ -1734,6 +1861,7 @@ function documentStatusLabel(status: KnowledgeDocumentStatus) {
         graph_generation: "正在生成知识图谱",
         graph_review: "正在复核事实关系",
         question_generation: "正在生成诊断题",
+        question_certification: "正在认证正式题目",
         question_review: "正在复核诊断题",
         question_repair: "正在补充诊断题",
         validating: "正在校验",
@@ -1742,6 +1870,8 @@ function documentStatusLabel(status: KnowledgeDocumentStatus) {
         smoke_testing: "正在验证检索",
         ready_to_publish: "等待确认发布",
         publishing: "正在发布",
+        cancel_requested: "正在中断",
+        cancelled: "已中断",
         ready: "已就绪",
         needs_attention: "质量检查未通过",
         failed: "处理失败",
@@ -1818,7 +1948,6 @@ onBeforeUnmount(() => {
 .domain-select select {
   min-width: 190px;
 }
-.schema-badge,
 .readonly-badge {
   align-self: center;
   border: 1px solid var(--line);
@@ -1836,7 +1965,7 @@ onBeforeUnmount(() => {
   gap: 16px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--panel);
+  background: var(--soft);
   padding: 13px 16px;
 }
 .domain-identity {
@@ -1976,10 +2105,10 @@ onBeforeUnmount(() => {
   gap: 10px;
   align-items: center;
   padding: 15px 12px;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid var(--line);
 }
 .readiness-row:nth-child(odd) {
-  border-right: 1px solid #edf0f4;
+  border-right: 1px solid var(--line);
 }
 .readiness-icon {
   width: 27px;
@@ -2015,12 +2144,52 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 700;
 }
+.evidence-coverage {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  border-radius: 10px;
+  background: var(--green2);
+  padding: 14px;
+}
+.evidence-coverage.is-conceptual {
+  background: var(--amber2);
+}
+.evidence-coverage-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+.evidence-coverage-summary p {
+  max-width: 760px;
+  margin-top: 4px;
+  color: var(--body);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.evidence-capability-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.evidence-capability-list span {
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  padding: 5px 8px;
+  font-size: 11px;
+}
+.evidence-capability-list strong {
+  margin-left: 3px;
+  color: var(--ink);
+}
 .attention-strip {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  border: 1px solid #ecd4aa;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line));
   border-radius: 10px;
   background: var(--amber2);
   padding: 14px 16px;
@@ -2166,7 +2335,7 @@ onBeforeUnmount(() => {
 }
 .search-field:focus-within {
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgb(49 95 206/0.14);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent);
 }
 .search-field input {
   width: 100%;
@@ -2202,7 +2371,7 @@ onBeforeUnmount(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #d9dfe7;
+  background: var(--track);
 }
 .difficulty-dots i.on {
   background: var(--blue);
@@ -2265,7 +2434,7 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(180px, 0.45fr) 1fr;
   gap: 18px;
   padding: 18px 4px;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid var(--line);
 }
 .rule-block p {
   margin: 5px 0 0;
@@ -2311,7 +2480,7 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   gap: 20px;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid var(--line);
   padding-bottom: 8px;
   color: var(--body);
   font-size: 12px;
@@ -2397,7 +2566,7 @@ onBeforeUnmount(() => {
   gap: 12px;
   align-items: center;
   padding: 10px 0;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid var(--line);
   font-size: 12px;
 }
 .validation-issue {
@@ -2435,7 +2604,7 @@ onBeforeUnmount(() => {
 .page-skeleton i {
   height: 90px;
   border-radius: 11px;
-  background: linear-gradient(90deg, #eef1f5 25%, #f7f9fb 50%, #eef1f5 75%);
+  background: linear-gradient(90deg, var(--track) 25%, var(--soft) 50%, var(--track) 75%);
   background-size: 200% 100%;
   animation: skeleton 1.2s linear infinite;
 }
@@ -2500,7 +2669,7 @@ onBeforeUnmount(() => {
   place-items: center;
   min-height: 190px;
   margin-top: 14px;
-  border: 1px dashed #aebbd0;
+  border: 1px dashed var(--line);
   border-radius: 10px;
   background: var(--soft);
   padding: 20px;
@@ -2557,7 +2726,7 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 10px;
   padding: 14px;
-  border: 1px solid var(--line-color, #d9dee8);
+  border: 1px solid var(--line-color, var(--line));
   border-radius: 6px;
 }
 
@@ -2575,7 +2744,7 @@ onBeforeUnmount(() => {
 
 .candidate-source {
   margin: 0;
-  color: #667085;
+  color: var(--muted);
   font-size: 12px;
 }
 .delete-message {
@@ -2628,9 +2797,6 @@ onBeforeUnmount(() => {
   .domain-select select {
     min-width: 0;
     width: 100%;
-  }
-  .schema-badge {
-    display: none;
   }
   .domain-banner {
     align-items: flex-start;

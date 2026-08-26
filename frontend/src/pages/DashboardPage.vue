@@ -47,7 +47,7 @@
     <section v-if="report && pathNodes.length" class="home-route-card">
       <div class="home-route-head">
         <div><span class="section-kicker">当前学习路线</span><h2>已完成 {{ completedPathNodeCount }}/{{ pathNodes.length }} 个节点</h2><p>{{ currentPathNode ? '当前学习：' + currentPathNode.title + '；仅展示当前节点附近的学习安排。' : '当前路线已完成，可在学习报告查看完整记录。' }}</p></div>
-        <button class="btn" type="button" @click="openReport">查看完整报告</button>
+        <button class="btn" type="button" @click="openReport">查看学习报告</button>
       </div>
       <div class="home-route-steps">
         <article v-for="node in visiblePathNodes" :key="node.path_node_id" class="home-route-step" :class="'node-' + node.status">
@@ -74,6 +74,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useProfileGateStore } from '@/stores/profileGateStore'
 import { useDomainStore } from '@/stores/domainStore'
 import { getDashboardState } from './dashboardState'
+import { formatKnowledgeName } from '@/utils/knowledgeName'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -104,8 +105,15 @@ const visiblePathNodes = computed(() => {
   if (currentIndex < 0) return pathNodes.value.slice(0, 5)
   return pathNodes.value.slice(Math.max(0, currentIndex - 1), currentIndex + 4)
 })
-const primaryAction = computed(() => report.value?.next_actions?.[0] || null)
+const hasPublishedResources = computed(() => resources.value.some(resource => resource.review_status === 'passed'))
+const primaryAction = computed(() => {
+  const action = report.value?.next_actions?.[0] || null
+  return action?.type === 'feedback' && !hasPublishedResources.value
+    ? { type: 'generation', label: '生成个性化资源', description: '基于当前画像生成讲义、实操指南和分阶测试。', route: '/dashboard?intent=generate' }
+    : action
+})
 const feedbackState = computed(() => {
+  if (!hasPublishedResources.value) return null
   const action = report.value?.feedback_summary?.latest_action
   if (!action || action === 'no_change') return null
   return ({
@@ -170,7 +178,7 @@ async function handleNextAction(action: LearningReport['next_actions'][number]) 
   finally { creatingGeneration.value = false }
 }
 function resourceTypeLabel(type: string) { return ({ lecture: '讲义', practice_guide: '实操指南', graded_quiz: '测试题' } as Record<string, string>)[type] || type }
-function directionLabel(value: string) { return ({ llm_application: '大模型应用', prompt_engineering: 'Prompt 工程', rag_knowledge_base: 'RAG 知识库', agent_orchestration: 'Agent 编排' } as Record<string, string>)[value] || value }
+function directionLabel(value: string) { return ({ llm_application: '大模型应用', prompt_engineering: 'Prompt 工程', rag_knowledge_base: 'RAG 知识库', agent_orchestration: 'Agent 编排' } as Record<string, string>)[value] || (value.startsWith('direction_') ? '专项学习方向' : formatKnowledgeName(value)) }
 onMounted(loadDashboard)
 </script>
 
@@ -180,12 +188,12 @@ onMounted(loadDashboard)
 .domain-picker select { min-width: 180px; }
 .section-kicker { color: var(--blue); font-size: 12px; font-weight: 750; }
 .home-feedback-card,.home-route-card { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--panel); padding: 22px 24px; }
-.home-feedback-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-color: #d9e8df; background: linear-gradient(135deg, #f5fbf7, #fafdfb); }
+.home-feedback-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; border-color: #c8e4d7; background: var(--green2); }
 .home-feedback-card h2,.home-route-card h2 { margin: 5px 0 0; color: var(--ink); font-size: 19px; }
 .home-feedback-card p,.home-route-card p { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.65; }
 .home-route-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .home-route-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 18px; }
-.home-route-step { display: flex; align-items: flex-start; gap: 10px; border: 1px solid #edf1f6; border-radius: 10px; background: var(--soft); padding: 11px 12px; }
+.home-route-step { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); padding: 11px 12px; }
 .home-route-step > span { display: grid; width: 24px; height: 24px; flex-shrink: 0; place-items: center; border-radius: 50%; background: var(--track); color: var(--muted); font-size: 11px; font-weight: 750; }
 .home-route-step div { display: grid; min-width: 0; gap: 4px; }
 .home-route-step strong { color: var(--ink); font-size: 12px; line-height: 1.45; }
@@ -195,6 +203,9 @@ onMounted(loadDashboard)
 .home-route-step.node-completed { border-color: #cfe7d8; background: var(--green2); }
 .home-route-step.node-completed > span { background: var(--green); color: #fff; }
 .home-route-step.node-locked { opacity: .68; }
+:global(.app.theme-dark) .home-feedback-card { border-color: #34765f; background: var(--green2); }
+:global(.app.theme-dark) .home-route-step.node-current { border-color: #4b6fa9; }
+:global(.app.theme-dark) .home-route-step.node-completed { border-color: #34765f; }
 @media (max-width: 760px) { .home-feedback-card { align-items: flex-start; flex-direction: column; }.home-route-head { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 480px) { .home-feedback-card .btn { width: 100%; min-height: 44px; }.home-feedback-card,.home-route-card { padding: 20px; } }
 </style>

@@ -11,6 +11,7 @@ from app.agents.contracts import (
 )
 from app.models import KnowledgeItem, LearnerProfile
 from app.services.contract_mapping import profile_snapshot
+from app.services.knowledge_extraction_service import normalize_knowledge_name
 
 
 def _weak_state(items: list[WeakKnowledge], knowledge_id: str) -> WeakKnowledge | None:
@@ -126,7 +127,7 @@ def apply_confirmed_knowledge_semantics(
     }
     return normalized, {
         "knowledge_id": knowledge.public_id,
-        "knowledge_name": knowledge.name,
+        "knowledge_name": normalize_knowledge_name(knowledge.name),
         "before_state": before_weak.mastery_type.value if before_weak else "not_weak",
         "after_state": next_state,
         "before_weakness_level": before_weak.weakness_level if before_weak else None,

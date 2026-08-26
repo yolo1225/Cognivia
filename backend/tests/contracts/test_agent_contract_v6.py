@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents.contracts import (
+    AgentContractSchema,
     CONTRACT_VERSION,
     GenerationPackageQuality,
     ResourceQualityMetrics,
@@ -13,12 +14,26 @@ from app.agents.contracts import (
 from app.agents.graphs import build_learning_graph
 
 
-def test_v6_removes_manual_review_decisions_and_graph_node() -> None:
-    assert CONTRACT_VERSION == "agent-contract-v6"
+def test_v8_preserves_review_decisions_and_graph_topology() -> None:
+    assert CONTRACT_VERSION == "agent-contract-v8"
     assert "manual_review_required" not in {item.value for item in ReviewDecision}
     assert "manual_review_required" not in {item.value for item in TaskDecision}
     graph = build_learning_graph()
     assert "human_review_node" not in graph.get_graph().nodes
+
+
+def test_v8_expands_the_complete_evidence_pipeline_to_eighteen_chunks() -> None:
+    definitions = AgentContractSchema.model_json_schema()["$defs"]
+
+    assert definitions["RetrievalPlan"]["properties"]["n_results"]["maximum"] == 18
+    assert definitions["RetrieveKnowledgeOutput"]["properties"]["chunks"]["maxItems"] == 18
+    assert (
+        definitions["GenerateResourceInput"]["properties"]["retrieved_chunks"][
+            "maxItems"
+        ]
+        == 18
+    )
+    assert definitions["ReviewResourceInput"]["properties"]["evidence"]["maxItems"] == 18
 
 
 @pytest.mark.parametrize(

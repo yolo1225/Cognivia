@@ -18,6 +18,7 @@ from app.agents.contracts import (
     ProfileSnapshot,
     ProfileType,
     RecommendedAction,
+    ResourceType,
     RetrievalPlan,
     WeakKnowledge,
 )
@@ -382,12 +383,17 @@ def _build_retrieval_plan(
     else:
         strategy = GenerationStrategy.CONSOLIDATION
 
-    path_ids = [current_path_node.knowledge_id] if current_path_node is not None else []
-    priority_ids = (
-        list(dict.fromkeys([*path_ids, *requested_ids, *(item.knowledge_id for item in weak)]))[:20]
-        if needs_generation
-        else []
-    )
+    path_ids = list(current_path_node.knowledge_ids) if current_path_node is not None else []
+    if not needs_generation:
+        priority_ids = []
+    elif path_ids:
+        # A persisted route node is the generation boundary. Other profile
+        # weaknesses belong to future/local path adjustment, not this unit's RAG budget.
+        priority_ids = list(dict.fromkeys(path_ids))[:20]
+    else:
+        priority_ids = list(
+            dict.fromkeys([*requested_ids, *(item.knowledge_id for item in weak)])
+        )[:20]
     prerequisite_ids: list[str] = []
     for item in weak:
         if item.knowledge_id not in priority_ids:
@@ -428,16 +434,27 @@ def _build_retrieval_plan(
     )
     query_terms = list(dict.fromkeys(term for term in terms if term))[:30] or ["基础知识"]
     unique_resource_types = list(dict.fromkeys(resource_types))
-    planned_target_count = min(10, len([*priority_ids, *prerequisite_ids]))
+    quiz_source_reserve = (
+        6 if ResourceType.GRADED_QUIZ in unique_resource_types else 0
+    )
+    prerequisite_reserve = min(3, len(prerequisite_ids))
+    unit_context_reserve = 3 if len(priority_ids) > 1 else 1
+    planned_evidence_budget = (
+        len(priority_ids)
+        + quiz_source_reserve
+        + prerequisite_reserve
+        + unit_context_reserve
+    )
     if action in {RecommendedAction.REVIEW, RecommendedAction.REGENERATE}:
         n_results = config.maximum_n_results
     elif strategy is GenerationStrategy.REMEDIAL and len(priority_ids) > 1:
         n_results = config.multi_priority_remedial_n_results
     else:
         n_results = config.default_n_results
-    # GenerationRequirements owns at most ten task targets. Retrieval must be
-    # able to return evidence for that complete set before generation starts.
-    n_results = min(config.maximum_n_results, max(n_results, planned_target_count))
+    # V8 keeps the ordinary single-point path near the default budget while
+    # reserving room for a six-question formal quiz and a small amount of
+    # prerequisite/unit context on multi-knowledge nodes.
+    n_results = min(config.maximum_n_results, max(n_results, planned_evidence_budget))
     return RetrievalPlan(
         strategy=strategy,
         target_difficulty=difficulty,

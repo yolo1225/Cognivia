@@ -72,13 +72,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { createDiagnosticSession, getCurrentDiagnosticSession, getDiagnosticSession, retryDiagnosticSession, streamDiagnosticSession, submitDiagnosticSession, type DiagnosticResult, type DiagnosticSession, type DiagnosticSessionStatus } from '@/api/diagnostics'
 import { getLearnerProfile, updateInitialContext, type InitialContextPayload } from '@/api/learners'
 import { useAuthStore } from '@/stores/authStore'
 import { useDomainStore } from '@/stores/domainStore'
 import RadarChart from '@/components/Charts/RadarChart.vue'
+import { clearDiagnosticDraft, loadDiagnosticDraft, saveDiagnosticDraft } from '@/utils/diagnosticDraft'
 
 const props = defineProps<{ learnerId: string }>()
 defineEmits<{ complete: [] }>()
@@ -111,6 +112,14 @@ const resultStages = computed(() => result.value?.learning_path?.stages || [])
 function hasAnswer(index: number) { return String(answers.value[index] ?? '').trim() !== '' }
 function profileLabel(type: string) { return ({ beginner: '基础起步型画像', intermediate: '进阶提升型画像', advanced: '综合应用型画像', practice_oriented: '实操导向型画像' } as Record<string, string>)[type] || '个性化学习画像' }
 
+function restoreDiagnosticDraft() {
+  if (!session.value) return
+  const draft = loadDiagnosticDraft(props.learnerId, session.value.session_id, session.value.questions.length)
+  if (!draft) return
+  answers.value = draft.answers
+  currentIndex.value = draft.currentIndex
+}
+
 async function startDiagnostic() {
   if (!domainStore.readiness?.diagnostic_ready) {
     error.value = `当前领域尚未满足诊断条件：${domainStore.readiness?.runtime_reasons?.join('、') || '领域配置不可用'}`
@@ -135,6 +144,7 @@ function applyDiagnosticStatus(status: DiagnosticSessionStatus) {
   scoringProgress.value = status.progress
   if (status.status === 'scored' && status.result) {
     result.value = status.result
+    clearDiagnosticDraft(props.learnerId, status.session_id)
     scoringPending.value = false
     submitting.value = false
     step.value = 'result'
@@ -207,10 +217,15 @@ onMounted(async () => {
       }
       applyDiagnosticStatus(status)
       step.value = status.status === 'scored' ? 'result' : 'diagnostic'
+      restoreDiagnosticDraft()
       if (status.status === 'scoring') followScoring(status.session_id)
     }
   } catch { /* The form remains usable for a newly registered learner. */ }
 })
+watch([() => session.value?.session_id, answers, currentIndex], () => {
+  if (!session.value || result.value) return
+  saveDiagnosticDraft(props.learnerId, session.value.session_id, answers.value, currentIndex.value)
+}, { deep: true, flush: 'sync' })
 onBeforeUnmount(() => scoringEvents?.close())
 </script>
 

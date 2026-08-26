@@ -1,18 +1,17 @@
 <template>
   <section class="page">
-    <div class="head">
-      <div><h1>诊断训练</h1><p class="sub">完成 10 道领域题目，帮助系统识别当前能力基础与需要优先巩固的知识。</p></div>
-      <div class="actions">
-        <button class="btn primary" @click="startSession" :disabled="creatingSession || submitting">{{ creatingSession ? '创建中...' : session || result ? '重新开始训练' : '创建 10 题训练' }}</button>
-      </div>
-    </div>
+    <PageHeader title="诊断训练" description="完成 10 道领域题目，识别当前能力基础与需要优先巩固的知识。">
+      <template #actions>
+        <button type="button" class="btn primary" :disabled="creatingSession || submitting" @click="startSession">{{ creatingSession ? '正在创建' : session || result ? '重新开始训练' : '创建 10 题训练' }}</button>
+      </template>
+    </PageHeader>
 
     <!-- No Session -->
-    <div v-if="!session && !result" class="panel" style="text-align:center;padding:60px">
-      <div class="upload-icon" style="margin:auto">◎</div>
-      <strong style="display:block;margin-top:14px">尚未开始诊断训练</strong>
+    <div v-if="!session && !result" class="panel diagnostic-empty">
+      <div class="upload-icon">◎</div>
+      <strong>尚未开始诊断训练</strong>
       <p class="sub">系统将从 {{ domainStore.currentDomainName || domainCode }} 领域题库中抽取 10 道题，覆盖理论理解与实操场景。</p>
-      <button class="btn primary" style="margin-top:16px" @click="startSession" :disabled="creatingSession">{{ creatingSession ? '创建中...' : '开始诊断训练' }}</button>
+      <button type="button" class="btn primary" :disabled="creatingSession" @click="startSession">{{ creatingSession ? '正在创建' : '开始诊断训练' }}</button>
     </div>
 
     <!-- Test View -->
@@ -37,11 +36,11 @@
             <input type="radio" :name="'q'+currentIdx" :value="i" v-model="answers[currentIdx]" :disabled="submitting || scoringPending" />{{ String.fromCharCode(65+i) }}. {{ opt }}
           </label>
         </div>
-        <textarea v-else v-model="answers[currentIdx]" :disabled="submitting || scoringPending" aria-label="简答题答案" placeholder="请输入答案..." style="margin-top:14px;min-height:100px"></textarea>
-        <div class="actions" style="margin-top:22px;justify-content:flex-end">
-          <button class="btn" @click="currentIdx = Math.max(0, currentIdx-1)" :disabled="currentIdx===0">上一题</button>
-          <button v-if="!isLastQuestion" class="btn primary" @click="currentIdx++">下一题</button>
-          <button v-else class="btn primary" @click="submitAll" :disabled="submitting || (!allAnswered && !scoringPending)">{{ submitting ? '正在进行 AI 评分...' : scoringPending ? '重试 AI 评分' : allAnswered ? '提交诊断' : `还有 ${unansweredCount} 题未完成` }}</button>
+        <textarea v-else v-model="answers[currentIdx]" class="short-answer" :disabled="submitting || scoringPending" aria-label="简答题答案" placeholder="请输入答案"></textarea>
+        <div class="actions question-actions">
+          <button type="button" class="btn" :disabled="currentIdx===0" @click="currentIdx = Math.max(0, currentIdx-1)">上一题</button>
+          <button v-if="!isLastQuestion" type="button" class="btn primary" @click="currentIdx++">下一题</button>
+          <button v-else type="button" class="btn primary" :disabled="submitting || (!allAnswered && !scoringPending)" @click="submitAll">{{ submitting ? '正在进行 AI 评分' : scoringPending ? '重试 AI 评分' : allAnswered ? '提交诊断' : `还有 ${unansweredCount} 题未完成` }}</button>
         </div>
       </article>
     </div>
@@ -89,6 +88,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import {
   createDiagnosticSession,
+  getCurrentDiagnosticSession,
   getDiagnosticSession,
   retryDiagnosticSession,
   streamDiagnosticSession,
@@ -101,6 +101,8 @@ import { createGenerationTask } from '@/api/generation'
 import { useLearnerStore } from '@/stores/learnerStore'
 import { useDomainStore } from '@/stores/domainStore'
 import { getLearnerProfile } from '@/api/learners'
+import { clearDiagnosticDraft, loadDiagnosticDraft, saveDiagnosticDraft } from '@/utils/diagnosticDraft'
+import PageHeader from '@/components/Shared/PageHeader.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -116,7 +118,7 @@ const currentIdx = ref(0)
 const session = ref<DiagnosticSession | null>(null)
 const result = ref<DiagnosticResult | null>(null)
 const scoringPending = ref(false)
-const answers = ref<Record<number, string>>({})
+const answers = ref<Record<number, string | number>>({})
 let scoringEvents: EventSource | null = null
 
 const currentQuestion = computed(() => session.value?.questions[currentIdx.value] || null)
@@ -130,10 +132,23 @@ const learnerId = computed(() => routeLearnerId || learnerStore.selectedLearnerI
 const accuracyPercent = computed(() => result.value ? Math.round((result.value.correct_count / Math.max(1, result.value.question_count)) * 100) : 0)
 const shortAnswerResults = computed(() => result.value?.answer_results?.filter(item => item.question_type === 'short_answer') || [])
 
+function restoreDiagnosticDraft() {
+  if (!session.value || !learnerId.value) return
+  const draft = loadDiagnosticDraft(
+    learnerId.value,
+    session.value.session_id,
+    session.value.questions.length,
+  )
+  if (!draft) return
+  answers.value = draft.answers
+  currentIdx.value = draft.currentIndex
+}
+
 function applyDiagnosticStatus(status: DiagnosticSessionStatus) {
   if (status.questions?.length) session.value = status
   if (status.status === 'scored' && status.result) {
     result.value = status.result
+    if (learnerId.value) clearDiagnosticDraft(learnerId.value, status.session_id)
     scoringPending.value = false
     submitting.value = false
     showToast(`诊断完成，答对 ${status.result.correct_count}/${status.result.question_count} 题`)
@@ -176,6 +191,7 @@ async function startSession() {
     await router.replace({ query: { ...route.query, session_id: session.value.session_id } })
     result.value = null
     answers.value = {}
+    currentIdx.value = 0
     scoringPending.value = false
     showToast('已创建 10 题诊断测评')
   } catch { showToast('创建测评失败') }
@@ -226,13 +242,24 @@ onMounted(async () => {
   const profile = await getLearnerProfile(learnerId.value)
   await domainStore.initialize(profile.domain_code)
   const sessionId = String(route.query.session_id || '').trim()
-  if (!sessionId) return
   try {
-    const status = await getDiagnosticSession(sessionId, learnerId.value)
+    const status = sessionId
+      ? await getDiagnosticSession(sessionId, learnerId.value)
+      : await getCurrentDiagnosticSession(learnerId.value, profile.domain_code)
+    if (!status) return
+    if (!sessionId) {
+      await router.replace({ query: { ...route.query, session_id: status.session_id } })
+    }
     applyDiagnosticStatus(status)
-    if (status.status === 'scoring') followScoring(sessionId)
+    restoreDiagnosticDraft()
+    if (status.status === 'scoring') followScoring(status.session_id)
   } catch { await router.replace({ query: { ...route.query, session_id: undefined } }) }
 })
+
+watch([() => session.value?.session_id, answers, currentIdx], () => {
+  if (!session.value || !learnerId.value || result.value) return
+  saveDiagnosticDraft(learnerId.value, session.value.session_id, answers.value, currentIdx.value)
+}, { deep: true, flush: 'sync' })
 
 watch(() => domainStore.selectionVersion, () => {
   scoringEvents?.close()
@@ -247,6 +274,13 @@ onBeforeUnmount(() => scoringEvents?.close())
 </script>
 
 <style scoped>
+.diagnostic-empty { display: grid; justify-items: center; gap: 10px; padding: 48px 28px; text-align: center; }
+.diagnostic-empty .upload-icon { margin: auto; }
+.diagnostic-empty > strong { margin-top: 4px; }
+.diagnostic-empty .sub { max-width: 620px; margin-top: 0; }
+.diagnostic-empty .btn { margin-top: 8px; }
+.short-answer { width: 100%; min-height: 120px; margin-top: 14px; resize: vertical; }
+.question-actions { justify-content: flex-end; margin-top: 22px; }
 .completion-panel {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -291,6 +325,9 @@ onBeforeUnmount(() => scoringEvents?.close())
   .completion-stats, .completion-actions { grid-column: 1 / -1; }
 }
 @media (max-width: 480px) {
+  .diagnostic-empty { padding: 36px 20px; }
+  .question-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .question-actions .btn:last-child { grid-column: 2; }
   .completion-stats { grid-template-columns: 1fr; }
   .ai-results { grid-template-columns: 1fr; }
   .completion-actions { display: grid; }

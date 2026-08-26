@@ -236,8 +236,42 @@ def test_partial_refresh_composes_new_package_with_inherited_resource() -> None:
         assert refresh_task.package_coverage_json["primary_owner"] == {
             "knowledge_lecture": "lecture",
             "knowledge_practice_guide": "practice_guide",
-            "knowledge_graded_quiz": "graded_quiz",
         }
+        assert refresh_task.package_coverage_json["required_knowledge_ids"] == [
+            "knowledge_lecture",
+            "knowledge_practice_guide",
+        ]
+
+
+def test_package_quality_uses_teaching_resource_coverage_union() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        _learner, _profile, task, resources = _package_fixture(db)
+        reports = {
+            resource_type: db.scalar(
+                select(ReviewReport).where(ReviewReport.resource_id == resource.id)
+            )
+            for resource_type, resource in resources.items()
+        }
+        for report in reports.values():
+            report.target_knowledge_ids_json = ["k1", "k2", "k3"]
+        reports["lecture"].covered_knowledge_ids_json = ["k1", "k2"]
+        reports["practice_guide"].covered_knowledge_ids_json = ["k2", "k3"]
+        reports["graded_quiz"].covered_knowledge_ids_json = ["k1", "k2", "k3"]
+        db.flush()
+
+        _compose_published_package(db, task)
+        db.flush()
+
+        assert task.package_quality_json["core_knowledge_coverage"] == 100
+        assert task.package_quality_json["passed"] is True
+        assert task.package_coverage_json["covered_knowledge_ids"] == [
+            "k1",
+            "k2",
+            "k3",
+        ]
 
 
 def test_profile_feedback_task_composes_complete_package_from_new_profile() -> None:

@@ -24,6 +24,7 @@ from app.models.knowledge import (
 from app.models.learner import Learner, LearnerProfile, LearningPath
 from app.models.learning_adjustment import LearningAdjustmentProposal
 from app.models.model_config import ModelConfig
+from app.models.mistake_review import MistakeReviewAttempt, MistakeReviewItem, ResourceQuizAttempt
 from app.models.resource import (
     GenerationTask,
     KnowledgeUpdateImpact,
@@ -67,6 +68,9 @@ __all__ = [
     "LearningPackageResource",
     "LearningResource",
     "ModelConfig",
+    "MistakeReviewAttempt",
+    "MistakeReviewItem",
+    "ResourceQuizAttempt",
     "ReviewReport",
     "TutoringMessage",
     "TutoringSession",

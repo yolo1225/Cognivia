@@ -14,7 +14,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
-ResponseAdapter = Callable[[dict[str, Any]], dict[str, Any]]
+ResponseAdapter = Callable[[Any], dict[str, Any]]
 
 
 class ModelGatewayError(RuntimeError):

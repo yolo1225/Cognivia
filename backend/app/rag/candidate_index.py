@@ -15,6 +15,7 @@ from chromadb.errors import NotFoundError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.domain_evidence_policy import classify_evidence_capabilities
 from app.models import DiagnosticQuestion, KnowledgeImportCandidate, KnowledgeItem, KnowledgeRelation
 from app.rag.candidate_chunker import CHUNKER_VERSION, CandidateChunk, chunk_knowledge_item
 from app.rag.candidate_manifest import (
@@ -27,6 +28,12 @@ from app.rag.candidate_manifest import (
 from app.rag.embedding_provider import EmbeddingProvider
 from app.rag.database_manifest_store import DatabaseManifestStore
 from app.scripts.validate_rag_seed import source_data_version
+from app.services.question_source_binding_service import (
+    QuestionSourceBindingError,
+    candidate_source_locator,
+    validate_question_source_binding,
+)
+from app.services.question_certification_service import knowledge_item_content_hash
 
 
 logger = logging.getLogger(__name__)
@@ -57,6 +64,10 @@ def _item_payload(item: KnowledgeItem) -> dict[str, Any]:
         "source_url": item.source_url,
         "license_note": item.license_note,
     }
+
+
+def knowledge_item_source_content_hash(item: KnowledgeItem) -> str:
+    return knowledge_item_content_hash(item)
 
 
 def database_source_snapshot(db: Session, items: list[KnowledgeItem]) -> list[dict[str, Any]]:
@@ -148,11 +159,21 @@ def validate_knowledge_integrity(
             raise CandidateIndexError(
                 f"diagnostic question has no explanation: {question.public_id}"
             )
-        expected_locator = f"knowledge:{item.public_id}#chunk="
-        if not str(answer.get("source_locator") or "").startswith(expected_locator):
-            raise CandidateIndexError(
-                f"diagnostic question has no valid source locator: {question.public_id}"
+        if (
+            question.status != "active"
+            or question.certification_status != "certified"
+        ):
+            continue
+        try:
+            validate_question_source_binding(
+                item,
+                question,
+                chunks_by_id,
             )
+        except QuestionSourceBindingError as exc:
+            raise CandidateIndexError(
+                f"diagnostic question has invalid source binding: {question.public_id}"
+            ) from exc
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -203,7 +224,7 @@ class CandidateIndexBuilder:
 
     @staticmethod
     def _item_hash(item: KnowledgeItem) -> str:
-        return _canonical_hash(_item_payload(item))
+        return knowledge_item_source_content_hash(item)
 
     @staticmethod
     def _metadata_for(
@@ -223,7 +244,9 @@ class CandidateIndexBuilder:
             "category": item.category,
             "difficulty": item.difficulty,
             "tags": ",".join(item.tags_json or []),
-            "evidence_capabilities": ",".join(item.evidence_capabilities_json or []),
+            "evidence_capabilities": ",".join(
+                classify_evidence_capabilities(chunk.content)
+            ),
             "source_title": item.source_title,
             "source_url": item.source_url or "",
             "license_note": item.license_note,
@@ -231,11 +254,7 @@ class CandidateIndexBuilder:
             "chunk_count": chunk_count,
             "heading_path": json.dumps(chunk.heading_path, ensure_ascii=False),
             "content_checksum": hashlib.sha256(chunk.embedding_text.encode("utf-8")).hexdigest(),
-            "source_locator": (
-                f"document:{item.source_document_id}#chunk={chunk.chunk_index}"
-                if item.source_document_id
-                else f"knowledge:{item.public_id}#chunk={chunk.chunk_index}"
-            ),
+            "source_locator": candidate_source_locator(item, chunk),
             "item_content_hash": item_hash,
             "embedding_model": model,
             "embedding_dimensions": dimensions,

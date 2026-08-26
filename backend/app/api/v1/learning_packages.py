@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +18,7 @@ from app.services.learning_package_service import (
     package_member_rows,
     serialize_package,
 )
+from app.services.learning_package_export_service import export_learning_package
 from app.services.profile_service import public_id
 from app.workers.generation_worker import run_generation_task
 
@@ -46,6 +49,32 @@ def get_learning_package(
 ) -> ApiResponse:
     task = require_task(db, principal, task_id)
     return ok(serialize_package(db, task, include_resolved_impact=True))
+
+
+@router.post("/{task_id}/export", response_model=ApiResponse)
+def create_learning_package_export(
+    task_id: str,
+    payload: dict[str, Any] | None = None,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    task = require_task(db, principal, task_id)
+    try:
+        return ok(
+            export_learning_package(
+                db,
+                task,
+                str((payload or {}).get("format", "markdown")),
+            )
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = (
+            409
+            if detail.startswith("learning_package_")
+            else 422
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.post("/{task_id}/knowledge-impact/dismiss", response_model=ApiResponse)

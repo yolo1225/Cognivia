@@ -19,7 +19,9 @@ def _question(
         name=f"知识点 {index}",
         category=category,
         tags_json=["rag"] if practice else ["prompt"],
-        evidence_capabilities_json=["concept", "operation"] if practice else ["concept"],
+        evidence_capabilities_json=["concept", "operation", "expected_result"]
+        if practice
+        else ["concept"],
         content_md="content",
         source_title="source",
     )
@@ -85,6 +87,28 @@ def test_initial_diagnostic_has_required_type_and_scenario_distribution() -> Non
     assert sum(item.question_type == "single_choice" for item in selected) == 6
     assert sum(item.question_type == "short_answer" for item in selected) == 4
     assert sum("实操" in knowledge_rows[item.knowledge_item_id].category for item in selected) == 5
+
+
+def test_safe_conceptual_diagnostic_uses_six_choice_and_four_short_answer() -> None:
+    available: list[DiagnosticQuestion] = []
+    knowledge_rows: dict[int, KnowledgeItem] = {}
+    for question_type, count in (("single_choice", 6), ("short_answer", 4)):
+        for _ in range(count):
+            index = len(available) + 1
+            question, knowledge = _question(index, question_type, False)
+            available.append(question)
+            knowledge_rows[index] = knowledge
+
+    selected = _sample_diagnostic_questions(
+        available,
+        knowledge_rows,
+        ["prompt_engineering"],
+        10,
+    )
+
+    assert len(selected) == 10
+    assert sum(item.question_type == "single_choice" for item in selected) == 6
+    assert sum(item.question_type == "short_answer" for item in selected) == 4
 
 
 def test_context_snapshot_is_required_and_profile_readiness_requires_it() -> None:

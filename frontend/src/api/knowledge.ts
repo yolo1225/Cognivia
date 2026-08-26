@@ -23,6 +23,47 @@ export interface KnowledgeItemsResponse {
   mvp_target: number
 }
 
+export interface QuestionBankItem {
+  question_id: string
+  domain_code: string
+  knowledge_id: string
+  knowledge_name: string
+  related_knowledge_ids: string[]
+  question_slot: number | null
+  quiz_level: 'foundation' | 'improvement' | 'challenge'
+  question_type: 'single_choice' | 'short_answer'
+  stem: string
+  options: string[]
+  answer: number | string
+  explanation: string
+  source_ref_ids: string[]
+  source_quote: string | null
+  evidence_quotes: Array<{ source_ref_id: string; quote: string }>
+  difficulty: number
+  status: 'active' | 'disabled'
+  certification_status: 'pending' | 'certified' | 'rejected' | 'stale'
+  certification_rule_version: string | null
+  certified_at: string | null
+  certification_summary: {
+    deterministic_passed: boolean | null
+    failed_fields: string[]
+    source_content_hash: string | null
+  }
+  disabled_at: string | null
+  disabled_reason: string | null
+}
+
+export interface QuestionBankResponse {
+  domain_code: string
+  items: QuestionBankItem[]
+  total: number
+  coverage: {
+    total_items: number
+    ready_items: number
+    missing_knowledge_ids: string[]
+  }
+}
+
 export interface KnowledgeSearchMatch {
   id: string
   knowledge_id: string
@@ -142,6 +183,24 @@ export function listKnowledgeItems(domainCode: string, limit = 100) {
     limit: String(limit),
   })
   return getData<KnowledgeItemsResponse>(`/knowledge/items?${params.toString()}`)
+}
+
+export function listQuestionBank(
+  domainCode: string,
+  status?: 'active' | 'disabled',
+  certificationStatus?: QuestionBankItem['certification_status'],
+) {
+  const params = new URLSearchParams({ domain_code: domainCode, limit: '500' })
+  if (status) params.set('status', status)
+  if (certificationStatus) params.set('certification_status', certificationStatus)
+  return getData<QuestionBankResponse>(`/knowledge/questions?${params.toString()}`)
+}
+
+export function disableQuestion(questionId: string, reason: string) {
+  return postData<{ question: QuestionBankItem }>(
+    `/knowledge/questions/${encodeURIComponent(questionId)}/disable`,
+    { reason },
+  )
 }
 
 export async function listKnowledgeRelations(domainCode: string) {

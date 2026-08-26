@@ -8,6 +8,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   values: number[]
+  baselineValues?: number[]
 }>()
 
 const chartRef = ref<HTMLDivElement | null>(null)
@@ -17,7 +18,7 @@ function renderChart() {
   if (!chartRef.value) return
   chart ??= echarts.init(chartRef.value)
   chart.setOption({
-    color: ['#315fce'],
+    color: ['#315fce', '#7b8798'],
     tooltip: {
       trigger: 'item',
       backgroundColor: '#1b2737',
@@ -42,7 +43,10 @@ function renderChart() {
     series: [
       {
         type: 'radar',
-        data: [{ value: props.values, name: '当前画像' }],
+        data: [
+          { value: props.values, name: '当前画像', areaStyle: { color: 'rgba(49, 95, 206, 0.16)' }, lineStyle: { width: 2, color: '#315fce' }, itemStyle: { color: '#315fce', borderColor: '#fff', borderWidth: 1.5 } },
+          ...(props.baselineValues?.length ? [{ value: props.baselineValues, name: '首次诊断', areaStyle: { color: 'rgba(123, 135, 152, 0.03)' }, lineStyle: { width: 2, type: 'dashed' as const, color: '#7b8798' }, itemStyle: { color: '#7b8798' } }] : []),
+        ],
         areaStyle: {
           color: {
             type: 'linear',
@@ -70,7 +74,7 @@ onMounted(() => {
   renderChart()
   window.addEventListener('resize', resizeChart)
 })
-watch(() => props.values, renderChart)
+watch(() => [props.values, props.baselineValues], renderChart, { deep: true })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resizeChart)
   chart?.dispose()

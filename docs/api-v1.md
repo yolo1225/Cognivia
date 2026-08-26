@@ -1,5 +1,17 @@
 # API v1 契约
 
+## 错题巩固与学习效果对比
+
+- `GET /api/v1/mistake-review/summary`：返回当前领域待巩固、巩固中、已巩固及巩固率。
+- `GET /api/v1/mistake-review/items`：按来源、状态、知识点和难度分页查询。
+- `GET /api/v1/mistake-review/items/{item_id}`：返回错题摘要、关联资源和巩固记录。
+- `POST /api/v1/mistake-review/items/{item_id}/start`：从正式题库选择同知识点相似题。
+- `POST /api/v1/mistake-review/items/{item_id}/attempts/{attempt_id}/answer`：服务端评分并生成证据引用。
+- `POST/GET/PUT /api/v1/resources/{resource_id}/quiz-attempts...`：创建、恢复和同步分阶测试作答。
+- `GET /api/v1/reports/learners/{learner_id}`：新增 `progress_comparison`，比较首次正式诊断画像与当前画像，不包含主动复测或未经验证的成绩提升。
+
+所有接口继续使用 `schema_version/request_id/data|error` 外壳。未接受正式验证的项目不进入巩固率分母。
+
 所有 JSON 响应统一包含 `schema_version`、`request_id`、`data` 或 `error`、`timestamp`。生成任务的 `task_id` 同时作为 LangGraph `thread_id`，首次生成和反馈触发不更换 ID。
 
 ## 核心接口
@@ -18,6 +30,7 @@
 | POST | `/api/v1/resources/{id}/export` | 生成 Markdown/PDF 导出并返回哈希和审核信息 |
 | GET | `/api/v1/evaluations/summary?mode=live\|baseline` | 读取 live 或 baseline 评测结果，默认 live |
 | GET | `/api/v1/health/dependencies` | 数据库、Chroma、模型通道和真实演示就绪状态 |
+| GET | `/api/v1/domains/{domain_code}/readiness` | 返回领域门禁，并在非阻断的 `evidence_coverage` 中给出七类证据能力数量与实训生成模式 |
 | PATCH | `/api/v1/knowledge/items/{id}` | 修改知识点、关系并标记局部影响范围 |
 | POST | `/api/v1/knowledge/rebuild-index` | 同步增量重建待处理知识向量 |
 | POST | `/api/v1/diagnostics/sessions/{id}/submit` | 提交诊断；简答题返回 AI 分项评分、评语和不确定标记 |
@@ -34,6 +47,8 @@
 - 诊断成功响应的 `answer_results` 包含 `scoring_method`、`criteria`、`ai_comment`、`confidence`、`scoring_uncertain`、缺失点和事实错误。
 - 路径节点状态为 `locked | current | completed | skipped`；学习者本阶段不能主动跳过节点。
 - `verify` 不接受客户端分数；`complete` 必须提交 `evidence_ids`，服务端会重新验证学习者、领域、知识点和分数阈值。
+- 失败的生成任务在 `failure_details` 中返回 `failure_code`、`resource_types` 和 `field_paths`。`generated_content_policy_invalid` 表示具体字段在确定性安全降级后仍含无依据事实，三资源完整包不会部分发布。
+- `evidence_coverage.practice_generation_mode` 为 `evidence_backed | safe_conceptual`。该字段只用于告警和生成方式说明，不改变领域发布门槛。
 
 ## SSE 事件
 

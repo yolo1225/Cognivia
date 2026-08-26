@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION = "agent-contract-v6"
+CONTRACT_VERSION = "agent-contract-v8"
 QUALITY_RULE_VERSION = "quality-v6-20260818"
 
 
@@ -14,7 +14,7 @@ class ContractModel(BaseModel):
 
 
 class NodeContract(ContractModel):
-    contract_version: Literal["agent-contract-v6"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v8"] = CONTRACT_VERSION
     task_id: str = Field(min_length=1, max_length=64)
 
 
@@ -186,7 +186,7 @@ class MessagePayload(ContractModel):
 
 
 class AgentMessage(ContractModel):
-    contract_version: Literal["agent-contract-v6"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v8"] = CONTRACT_VERSION
     message_id: str = Field(default_factory=lambda: str(uuid4()))
     sender: AgentName
     receiver: AgentName
@@ -261,12 +261,20 @@ class ProfileSnapshot(ContractModel):
 
 class LearningPathNodeSnapshot(ContractModel):
     path_node_id: str = Field(min_length=1, max_length=64)
-    knowledge_id: str = Field(min_length=1, max_length=64)
+    knowledge_ids: list[str] = Field(min_length=1, max_length=6)
+    focus_knowledge_ids: list[str] = Field(default_factory=list, max_length=3)
     title: str = Field(min_length=1, max_length=255)
     path_order: int = Field(ge=1)
     target_difficulty: int = Field(ge=1, le=5)
     learning_objective: str = Field(min_length=1, max_length=500)
+    recommendation_reason: str = Field(min_length=1, max_length=500)
     prerequisite_knowledge_ids: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_focus_knowledge(self) -> "LearningPathNodeSnapshot":
+        if not set(self.focus_knowledge_ids).issubset(self.knowledge_ids):
+            raise ValueError("focus_knowledge_ids must be a subset of knowledge_ids")
+        return self
 
 
 class LearningPathSnapshot(ContractModel):
@@ -315,7 +323,7 @@ class TaskRequest(ContractModel):
 
 
 class TaskContext(TaskRequest):
-    contract_version: Literal["agent-contract-v6"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v8"] = CONTRACT_VERSION
 
 
 class ContextNodeContract(NodeContract):
@@ -353,7 +361,7 @@ class RetrievalPlan(ContractModel):
     priority_knowledge_ids: list[str] = Field(default_factory=list, max_length=20)
     prerequisite_knowledge_ids: list[str] = Field(default_factory=list, max_length=20)
     query_terms: list[str] = Field(min_length=1, max_length=30)
-    n_results: int = Field(default=8, ge=1, le=12)
+    n_results: int = Field(default=12, ge=1, le=18)
 
     @model_validator(mode="after")
     def validate_unique_values(self) -> "RetrievalPlan":
@@ -529,6 +537,7 @@ class RetrievedChunk(ContractModel):
 class RetrievedQuestion(ContractModel):
     question_id: str = Field(min_length=1, max_length=64)
     knowledge_id: str = Field(min_length=1, max_length=64)
+    related_knowledge_ids: list[str] = Field(default_factory=list, max_length=10)
     question_type: QuestionType
     stem: str = Field(min_length=1, max_length=3000)
     options: list[str] = Field(default_factory=list, max_length=10)
@@ -546,7 +555,7 @@ class RetrieveKnowledgeInput(ContextNodeContract):
 
 class RetrieveKnowledgeOutput(NodeContract):
     query_text: str = Field(min_length=1, max_length=2000)
-    chunks: list[RetrievedChunk] = Field(default_factory=list, max_length=12)
+    chunks: list[RetrievedChunk] = Field(default_factory=list, max_length=18)
     covered_knowledge_ids: list[str] = Field(default_factory=list, max_length=50)
     missing_knowledge_ids: list[str] = Field(default_factory=list, max_length=50)
     warnings: list[str] = Field(default_factory=list, max_length=20)
@@ -645,6 +654,7 @@ class QuizQuestion(ContractModel):
     correct_answer: str = Field(min_length=1, max_length=3000)
     explanation: str = Field(min_length=1, max_length=3000)
     knowledge_id: str = Field(min_length=1, max_length=64)
+    related_knowledge_ids: list[str] = Field(default_factory=list, max_length=10)
     difficulty: int = Field(ge=1, le=5)
     source_ref_ids: list[str] = Field(min_length=1, max_length=10)
     reference_question_ids: list[str] = Field(default_factory=list, max_length=10)
@@ -723,7 +733,7 @@ class GeneratedResourceArtifact(ContractModel):
 
 class GenerateResourceInput(ContextNodeContract):
     profile: ProfileSnapshot
-    retrieved_chunks: list[RetrievedChunk] = Field(min_length=1, max_length=12)
+    retrieved_chunks: list[RetrievedChunk] = Field(min_length=1, max_length=18)
     reference_questions: list[RetrievedQuestion] = Field(default_factory=list, max_length=30)
     current_path_node: LearningPathNodeSnapshot | None = None
     requirements: GenerationRequirements
@@ -1001,7 +1011,7 @@ class ReviewReport(ContractModel):
 class ReviewResourceInput(ContextNodeContract):
     resources: list[GeneratedResourceArtifact] = Field(min_length=1, max_length=3)
     requirements: GenerationRequirements
-    evidence: list[RetrievedChunk] = Field(min_length=1, max_length=12)
+    evidence: list[RetrievedChunk] = Field(min_length=1, max_length=18)
 
     @model_validator(mode="after")
     def validate_review_scope(self) -> "ReviewResourceInput":

@@ -2,6 +2,7 @@ from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -12,11 +13,12 @@ from app.models import (
     KnowledgeDocument,
     KnowledgeChunk,
     KnowledgeImportCandidate,
+    KnowledgeImportBatch,
     KnowledgeImportRun,
     KnowledgeItem,
     KnowledgeItemSource,
 )
-from app.services.knowledge_document_service import delete_document
+from app.services.knowledge_document_service import KnowledgeDocumentError, delete_document
 from app.services.knowledge_extraction_service import normalize_knowledge_name, replace_candidates
 from app.services.knowledge_import_publish_service import (
     KnowledgeImportPublishError,
@@ -30,6 +32,7 @@ from app.services.knowledge_parser_service import parse_document, replace_chunks
 from app.services.knowledge_model_import_service import (
     _adapt_question_output,
     _adapt_validation_decision,
+    _generate_question_records,
     _validate_candidate_batch,
     repair_curriculum_relations,
 )
@@ -201,14 +204,71 @@ def test_source_withdrawal_keeps_shared_item_and_evidence_file(tmp_path, monkeyp
     db.commit()
 
     first = delete_document(db, documents[0])
-    assert first["knowledge_needs_attention"] == 0
+    assert first["knowledge_preserved_shared"] == 1
     assert item.status == "published"
-    assert paths[0].exists()
+    assert not paths[0].exists()
 
     second = delete_document(db, documents[1])
-    assert second["knowledge_needs_attention"] == 1
-    assert item.status == "needs_attention"
-    assert paths[1].exists()
+    assert second["knowledge_deleted"] == 1
+    assert db.get(KnowledgeItem, item.id) is None
+    assert not paths[1].exists()
+
+
+def test_cancel_requested_processing_document_can_be_deleted(tmp_path, monkeypatch) -> None:
+    from app.services import knowledge_document_service
+
+    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
+    db = _session()
+    folder = tmp_path / "kdoc_cancelled"
+    folder.mkdir()
+    path = folder / "source.md"
+    path.write_text("待取消的导入", encoding="utf-8")
+    document = KnowledgeDocument(
+        public_id="kdoc_cancelled", domain_code="ai_app_dev",
+        original_name=path.name, stored_path="kdoc_cancelled/source.md",
+        file_type="markdown", mime_type="text/markdown",
+        size_bytes=path.stat().st_size, sha256="c" * 64,
+        status="question_generation", source_title="测试来源", license_note="test",
+        uploaded_by="tester",
+    )
+    db.add(document)
+    db.flush()
+    run = KnowledgeImportRun(
+        public_id="kir_cancelled", document_id=document.id, domain_code=document.domain_code,
+        current_step="question_generation", status="cancel_requested", input_version="v1",
+    )
+    db.add(run)
+    db.flush()
+    db.add(KnowledgeImportBatch(
+        run_id=run.id, step="question_generation", batch_key="batch-1",
+        input_hash="d" * 64, prompt_version="v1", status="running",
+    ))
+    db.commit()
+    run_id = run.id
+
+    result = delete_document(db, document)
+
+    assert result["status"] == "deleted"
+    assert db.scalar(select(KnowledgeImportRun).where(KnowledgeImportRun.id == run_id)) is None
+    assert not path.exists()
+
+
+def test_active_processing_document_still_requires_cancellation(tmp_path, monkeypatch) -> None:
+    from app.services import knowledge_document_service
+
+    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
+    db = _session()
+    document = _document(tmp_path)
+    db.add(document)
+    db.flush()
+    db.add(KnowledgeImportRun(
+        public_id="kir_running", document_id=document.id, domain_code=document.domain_code,
+        current_step="parsing", status="running", input_version="v1",
+    ))
+    db.commit()
+
+    with pytest.raises(KnowledgeDocumentError, match="请先中断任务"):
+        delete_document(db, document)
 
 
 def test_learning_directions_are_suggested_from_imported_categories_and_tags() -> None:
@@ -325,7 +385,9 @@ def test_question_adapter_normalizes_live_provider_aliases_and_nulls() -> None:
         "rubric": None,
         "analysis": None,
         "dimension": "mechanism",
-        "evidence_ids": [],
+        "evidence_quotes": [
+            {"source_ref_id": "ki_1::chunk::0", "quote": "作用一"}
+        ],
     }, {
         "knowledge_id": "knowledge-2",
         "type": "single-choice",
@@ -344,8 +406,28 @@ def test_question_adapter_normalizes_live_provider_aliases_and_nulls() -> None:
     assert len(adapted["questions"]) == 2
     assert adapted["questions"][0]["answer"] == "作用一；作用二"
     assert adapted["questions"][0]["rubric"] == ["作用一", "作用二"]
-    assert adapted["questions"][0]["evidence_span_ids"] == ["span_1"]
+    assert adapted["questions"][0]["evidence_quotes"] == [
+        {"source_ref_id": "ki_1::chunk::0", "quote": "作用一"}
+    ]
     assert adapted["questions"][1]["answer"] == 1
+
+
+def test_question_adapter_accepts_top_level_question_array() -> None:
+    adapted = _adapt_question_output([{
+        "knowledge_id": "knowledge-1",
+        "question_slot": 1,
+        "type": "single-choice",
+        "question": "哪项正确？",
+        "options": ["甲", "乙"],
+        "answer": 0,
+    }])
+
+    assert len(adapted["questions"]) == 1
+    assert adapted["questions"][0]["question_slot"] == 1
+
+
+def test_question_adapter_rejects_non_collection_payload_as_empty() -> None:
+    assert _adapt_question_output("invalid")["questions"] == []
 
 
 def test_curriculum_repair_connects_only_deficient_nodes_without_model_calls(
@@ -496,6 +578,85 @@ def test_import_batch_identity_reuses_same_input(tmp_path) -> None:
     assert first.id == second.id
 
 
+def test_question_generation_splits_each_knowledge_into_tier_pairs(
+    tmp_path, monkeypatch
+) -> None:
+    db = _session()
+    document = _document(tmp_path)
+    db.add(document)
+    db.flush()
+    run = KnowledgeImportRun(
+        public_id="run-question-pairs",
+        document_id=document.id,
+        domain_code=document.domain_code,
+        current_step="question_generation",
+        status="running",
+        input_version="sha256:" + "b" * 64,
+        artifact_manifest_json={},
+        step_state_json={},
+    )
+    knowledge = KnowledgeImportCandidate(
+        public_id="knowledge-pair-test",
+        document_id=document.id,
+        domain_code=document.domain_code,
+        candidate_type="knowledge_item",
+        payload_json={
+            "name": "向量检索",
+            "target_public_id": "ki_vector_retrieval",
+            "category": "RAG",
+            "difficulty": 2,
+            "tags": ["retrieval"],
+            "content": "向量检索根据查询向量与知识切片向量的相似度召回相关内容。",
+            "evidence_capabilities": [],
+            "source_title": "测试来源",
+            "source_url": None,
+            "license_note": "测试许可",
+        },
+        source_locator_json={},
+        confidence=0.9,
+        status="pending",
+        validation_errors_json=[],
+    )
+    db.add_all([run, knowledge])
+    db.flush()
+    payloads = []
+
+    def fake_execute(_batch_id, **kwargs):
+        payloads.append(kwargs["payload"])
+        return {"questions": []}
+
+    monkeypatch.setattr(
+        "app.services.knowledge_model_import_service.execute_json_batch", fake_execute
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge_model_import_service.run_parallel",
+        lambda jobs, max_workers: [job() for job in jobs],
+    )
+
+    _generate_question_records(
+        db,
+        run,
+        [knowledge],
+        step="question_generation",
+        missing_slots_by_knowledge={knowledge.public_id: [1, 2, 3, 4, 5, 6]},
+    )
+
+    assert [
+        payload["knowledge"][0]["required_question_slots"] for payload in payloads
+    ] == [[1], [2], [3], [4], [5], [6]]
+    assert all(len(payload["knowledge"][0]["source_chunks"]) == 1 for payload in payloads)
+    batch_keys = list(
+        db.scalars(
+            select(KnowledgeImportBatch.batch_key).where(
+                KnowledgeImportBatch.run_id == run.id
+            )
+        )
+    )
+    assert any("foundation" in key for key in batch_keys)
+    assert any("improvement" in key for key in batch_keys)
+    assert any("challenge" in key for key in batch_keys)
+
+
 def test_curriculum_graph_is_branching_and_covers_module_nodes() -> None:
     candidates = []
     for index in range(12):
@@ -558,6 +719,47 @@ def test_import_input_version_fits_persisted_column(tmp_path) -> None:
     assert version.startswith("sha256:")
     assert len(version) == 71
     assert column_length is not None and len(version) <= column_length
+
+
+def test_model_import_run_blocks_incomplete_formal_question_bank(tmp_path, monkeypatch) -> None:
+    from app.services import knowledge_document_service
+
+    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
+    db = _session()
+    document = _document(tmp_path)
+    db.add(document)
+    db.commit()
+    replace_candidates(db, document, parse_document(document))
+    db.add(
+        KnowledgeImportRun(
+            public_id="run-question-bank-incomplete",
+            document_id=document.id,
+            domain_code=document.domain_code,
+            current_step="validation",
+            status="running",
+            input_version="sha256:" + "b" * 64,
+            artifact_manifest_json={},
+            step_state_json={},
+        )
+    )
+    db.commit()
+
+    result = validate_import(db, document.id)
+
+    assert result["invalid"] >= 2
+    knowledge_candidates = list(
+        db.scalars(
+            select(KnowledgeImportCandidate).where(
+                KnowledgeImportCandidate.document_id == document.id,
+                KnowledgeImportCandidate.candidate_type == "knowledge_item",
+            )
+        )
+    )
+    assert all(
+            "正式题库必须至少包含1道以该知识点为主要归因的题目"
+            in "".join(item.validation_errors_json)
+        for item in knowledge_candidates
+    )
 
 
 def test_chunk_replacement_reuses_identical_evidence_on_retry(tmp_path, monkeypatch) -> None:

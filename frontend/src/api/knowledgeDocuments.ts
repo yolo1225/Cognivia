@@ -1,7 +1,7 @@
 import { apiClient } from './client'
 import type { ApiResponse } from '@/types/api'
 
-export type KnowledgeDocumentStatus = 'queued' | 'parsing' | 'extracting' | 'graph_generation' | 'graph_review' | 'question_generation' | 'question_review' | 'question_repair' | 'validating' | 'staging' | 'indexing' | 'smoke_testing' | 'ready_to_publish' | 'publishing' | 'ready' | 'needs_attention' | 'failed' | 'withdrawn'
+export type KnowledgeDocumentStatus = 'queued' | 'parsing' | 'extracting' | 'graph_generation' | 'graph_review' | 'question_generation' | 'question_certification' | 'question_review' | 'question_repair' | 'validating' | 'staging' | 'indexing' | 'smoke_testing' | 'ready_to_publish' | 'publishing' | 'ready' | 'needs_attention' | 'failed' | 'withdrawn' | 'cancel_requested' | 'cancelled'
 
 export interface KnowledgeDocumentItem {
   document_id: string

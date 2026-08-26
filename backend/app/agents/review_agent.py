@@ -35,11 +35,13 @@ from app.agents.contracts import (
     ReviewResourceInput,
     ReviewResourceOutput,
     ResourceType,
+    QuizLevel,
     RetrieveKnowledgeInput,
     RetrievedChunk,
     RetrievalPurpose,
 )
 from app.agents.domain_evidence_policy import get_domain_evidence_policy
+from app.agents.runtime_limits import MAX_EVIDENCE_CHUNKS
 from app.agents.claim_policy import (
     CLAIM_POLICY_VERSION,
     ClaimCategory,
@@ -47,7 +49,6 @@ from app.agents.claim_policy import (
     RiskLevel,
     classify_claim,
 )
-from app.agents.knowledge_coverage_policy import primary_owner_by_knowledge
 from app.agents.observability import record_model_call
 from app.agents.prompt_registry import get_prompt
 from app.agents.prompt_budget import bounded_text, estimate_tokens
@@ -77,41 +78,47 @@ def build_review_resource_output(
 ) -> ReviewResourceOutput:
     """Build package metrics from the final merged set of resource reports."""
     package_required = set(required_knowledge_ids)
-    primary_owners = primary_owner_by_knowledge(
-        required_knowledge_ids,
-        {report.resource_type: report.target_knowledge_ids for report in reports},
-    )
+    teaching_reports = [
+        report
+        for report in reports
+        if report.resource_type in {ResourceType.LECTURE, ResourceType.PRACTICE_GUIDE}
+    ]
+    coverage_reports = teaching_reports or reports
     package_covered = {
         knowledge_id
-        for report in reports
+        for report in coverage_reports
         for knowledge_id in report.covered_knowledge_ids
-        if primary_owners.get(knowledge_id) is report.resource_type
     } & package_required
-    evaluated_count = sum(report.quality_metrics.evaluated_claim_count for report in reports)
+    metric_reports = teaching_reports or reports
+    evaluated_count = sum(
+        report.quality_metrics.evaluated_claim_count for report in metric_reports
+    )
     contradicted_count = sum(
-        report.quality_metrics.contradicted_claim_count for report in reports
+        report.quality_metrics.contradicted_claim_count for report in metric_reports
     )
     evidence_insufficient_count = sum(
-        report.quality_metrics.evidence_insufficient_claim_count for report in reports
+        report.quality_metrics.evidence_insufficient_claim_count
+        for report in metric_reports
     )
     unresolved_count = sum(
-        report.quality_metrics.unresolved_claim_count for report in reports
+        report.quality_metrics.unresolved_claim_count for report in metric_reports
     )
     claim_count = evaluated_count
     hallucinated_count = sum(
-        report.quality_metrics.hallucinated_claim_count for report in reports
+        report.quality_metrics.hallucinated_claim_count for report in metric_reports
     )
-    # Competition coverage is package-wide and each target has one teaching
-    # owner. Quiz assessment overlap neither expands nor backfills coverage.
+    # Competition coverage is the union of teaching resources. A quiz validates
+    # learning but must not backfill missing lecture/practice instruction.
     target_count = len(package_required)
     covered_count = len(package_covered)
     difficulty_denominator = sum(
-        max(1, report.quality_metrics.verifiable_claim_count) for report in reports
+        max(1, report.quality_metrics.verifiable_claim_count)
+        for report in metric_reports
     )
     difficulty_weight = sum(
         report.quality_metrics.difficulty_match_score
         * max(1, report.quality_metrics.verifiable_claim_count)
-        for report in reports
+        for report in metric_reports
     )
     hallucination_rate = (
         0.0 if claim_count == 0 else 100.0 * hallucinated_count / claim_count
@@ -1439,6 +1446,167 @@ def _merge_batch_reviews(
     return _cross_validate(candidate, deterministic_review, request)
 
 
+def _review_certified_quiz(
+    resource: GeneratedResourceArtifact,
+    request: ReviewResourceInput,
+) -> ReviewReport:
+    """Validate formal-bank quiz suitability without re-certifying its answers."""
+    content = resource.structured_content
+    if not isinstance(content, GradedQuizContent):
+        raise ReviewError("graded_quiz_content_type_invalid")
+    target_ids = set(
+        request.requirements.resource_knowledge_targets.get(
+            ResourceType.GRADED_QUIZ, []
+        )
+    )
+    evidence_ids = {chunk.source.source_ref_id for chunk in request.evidence}
+    level_counts = {
+        level: sum(question.level is level for question in content.questions)
+        for level in QuizLevel
+    }
+    question_ids = [question.question_id for question in content.questions]
+    package_structure_valid = (
+        len(content.questions) == 6
+        and len(question_ids) == len(set(question_ids))
+        and all(count == 2 for count in level_counts.values())
+    )
+    checks: list[FactCheck] = []
+    covered_ids: set[str] = set()
+    invalid_paths: list[str] = []
+    for index, question in enumerate(content.questions):
+        question_coverage = {
+            question.knowledge_id,
+            *question.related_knowledge_ids,
+        } & target_ids
+        covered_ids.update(question_coverage)
+        valid = (
+            package_structure_valid
+            and bool(question.reference_question_ids)
+            and bool(question.source_ref_ids)
+            and set(question.source_ref_ids).issubset(evidence_ids)
+            and bool(question_coverage)
+            and abs(question.difficulty - request.requirements.target_difficulty) <= 2
+        )
+        field_path = f"questions[{index}]"
+        if not valid:
+            invalid_paths.append(field_path)
+        checks.append(
+            FactCheck(
+                claim_id=_claim_id(
+                    ResourceType.GRADED_QUIZ,
+                    field_path,
+                    question.question_id,
+                ),
+                field_path=field_path,
+                claim=f"正式认证题 {question.question_id} 满足当前学习单元组卷约束",
+                verdict=(
+                    EvidenceVerdict.SUPPORTED
+                    if valid
+                    else EvidenceVerdict.EVIDENCE_INSUFFICIENT
+                ),
+                source_ref_ids=list(question.source_ref_ids),
+                reason=(
+                    "正式认证题的知识点、层级、难度和来源满足本次组卷约束"
+                    if valid
+                    else "正式认证题未满足本次组卷的结构、范围、难度或来源约束"
+                ),
+            )
+        )
+    missing_ids = target_ids - covered_ids
+    if missing_ids and checks and all(check.determinable for check in checks):
+        checks[0] = FactCheck.model_validate(
+            {
+                **checks[0].model_dump(mode="python"),
+                "verdict": EvidenceVerdict.EVIDENCE_INSUFFICIENT,
+            }
+        )
+    passed = not invalid_paths and not missing_ids
+    coverage = 100.0 * len(covered_ids) / max(1, len(target_ids))
+    difficulty = 100.0 if passed else 80.0
+    scores = ReviewCriterionScores(
+        factual_accuracy=100.0,
+        source_traceability=100.0 if not invalid_paths else 80.0,
+        difficulty_match=difficulty,
+        core_knowledge_coverage=coverage,
+    )
+
+    def deterministic_channel(role: ReviewRole) -> ModelReview:
+        return ModelReview(
+            model_role=role,
+            model_name="deterministic-certified-question-validator",
+            scores=scores,
+            passed=passed,
+            fact_checks=checks,
+        )
+
+    issues: list[ReviewIssue] = []
+    if invalid_paths:
+        issues.append(
+            ReviewIssue(
+                code=ReviewIssueCode.STRUCTURAL_ERROR,
+                section=",".join(invalid_paths)[:255],
+                description="正式题未满足当前学习单元的确定性组卷约束",
+                suggested_revision="仅替换不满足结构、范围、难度或认证来源约束的正式题",
+            )
+        )
+    if missing_ids:
+        issues.append(
+            ReviewIssue(
+                code=ReviewIssueCode.MISSING_KNOWLEDGE,
+                section="graded_quiz",
+                knowledge_ids=sorted(missing_ids),
+                description="正式题未覆盖当前学习单元的全部目标知识点",
+                suggested_revision="从正式认证题库补充覆盖缺失知识点的题目",
+            )
+        )
+    supported_ids = [check.claim_id for check in checks if check.supported]
+    undetermined_ids = [check.claim_id for check in checks if not check.determinable]
+    return ReviewReport(
+        resource_type=ResourceType.GRADED_QUIZ,
+        primary_review=deterministic_channel("primary_review_model"),
+        secondary_review=deterministic_channel("secondary_review_model"),
+        final_scores=scores,
+        arbitration=ArbitrationResult(
+            required=False,
+            retrieval_performed=False,
+            disagreement_remains=False,
+        ),
+        issues=issues,
+        evidence_ref_ids=sorted(
+            {source_id for question in content.questions for source_id in question.source_ref_ids}
+        ),
+        decision=ReviewDecision.PASSED if passed else ReviewDecision.REVISION_REQUIRED,
+        passed=passed,
+        quality_metrics=ResourceQualityMetrics(
+            evaluated_claim_count=len(checks),
+            contradicted_claim_count=0,
+            evidence_insufficient_claim_count=len(undetermined_ids),
+            unresolved_claim_count=0,
+            verifiable_claim_count=len(checks),
+            hallucinated_claim_count=0,
+            hallucination_rate=0.0,
+            difficulty_match_score=difficulty,
+            covered_core_knowledge_count=len(covered_ids),
+            target_core_knowledge_count=len(target_ids),
+            core_knowledge_coverage=coverage,
+            passed=passed,
+            revision_count=(
+                request.requirements.revision_plan.revision_count
+                if request.requirements.revision_plan
+                else 0
+            ),
+        ),
+        target_knowledge_ids=sorted(target_ids),
+        covered_knowledge_ids=sorted(covered_ids),
+        missing_knowledge_ids=sorted(missing_ids),
+        claim_set_hash=hashlib.sha256(
+            "\n".join(check.claim_id or "" for check in checks).encode("utf-8")
+        ).hexdigest(),
+        supported_claim_ids=supported_ids,
+        undetermined_claim_ids=undetermined_ids,
+    )
+
+
 class ReviewValidationAgent:
     name = REVIEW_AGENT_NAME
     system_prompt = SYSTEM_PROMPT
@@ -1518,6 +1686,8 @@ class ReviewValidationAgent:
     def _review_resource(
         self, resource: GeneratedResourceArtifact, request: ReviewResourceInput
     ) -> ReviewReport:
+        if resource.resource_type is ResourceType.GRADED_QUIZ:
+            return _review_certified_quiz(resource, request)
         claims = extract_atomic_claims(resource, request)
         primary, secondary = self._review_pair(resource, request, recheck=False)
         disputed = _disputed_claim_ids(primary, secondary)
@@ -1556,7 +1726,8 @@ class ReviewValidationAgent:
             final_primary = _merge_recheck(primary, primary_recheck)
             final_secondary = _merge_recheck(secondary, secondary_recheck)
 
-        final_disputed = _disputed_claim_ids(final_primary, final_secondary)
+        canonical_claim_ids = {claim.claim_id for claim in claims}
+        final_disputed = _disputed_claim_ids(final_primary, final_secondary) & canonical_claim_ids
         disagreement_remains = bool(final_disputed)
         declared_ids = {source.source_ref_id for source in resource.source_refs}
         statuses = _resolved_claim_statuses(claims, final_primary, final_secondary, declared_ids)
@@ -1615,7 +1786,11 @@ class ReviewValidationAgent:
                 if chunk.source.source_ref_id not in declared_ids
             }
         )
-        evaluated_count = len(statuses)
+        # ``statuses`` intentionally excludes claims on which the two channels
+        # still disagree. Those claims were nevertheless evaluated and are
+        # reported separately as unresolved. Using only consensus statuses as
+        # the denominator can therefore produce impossible rates above 100%.
+        evaluated_count = len(canonical_claim_ids)
         evidence_insufficient_count = len(undetermined_ids)
         hallucinated_count = len(set(contradicted_ids) | set(final_disputed))
         difficulty_score = final_scores.difficulty_match
@@ -1981,7 +2156,7 @@ def _merge_evidence(
     merged: dict[str, RetrievedChunk] = {chunk.source.source_ref_id: chunk for chunk in original}
     for chunk in refreshed:
         merged[chunk.source.source_ref_id] = chunk
-    return list(merged.values())[:12]
+    return list(merged.values())[:MAX_EVIDENCE_CHUNKS]
 
 
 def _source_overlap(claim: str, evidence: list[RetrievedChunk]) -> float:

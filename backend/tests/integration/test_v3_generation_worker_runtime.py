@@ -16,7 +16,12 @@ from app.agents.contract_adapters import (
     review_resource_output_to_patch,
 )
 from app.agents.contract_examples import initial_generation_flow_example
-from app.agents.contracts import AbilityScores, FinalizeTaskOutput, TaskDecision
+from app.agents.contracts import (
+    CONTRACT_VERSION,
+    AbilityScores,
+    FinalizeTaskOutput,
+    TaskDecision,
+)
 from app.agents.generation_agent import GenerationError
 from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.models import (
@@ -52,14 +57,22 @@ def test_learning_path_snapshot_maps_average_ability_to_five_level_difficulty(
         public_id=f"path_difficulty_{ability_score}",
         learner_id=1,
         path_json={
-            "stages": [
-                {
-                    "name": "当前知识点",
-                    "description": "完成当前知识点",
+            "stages": [{"name": "当前单元", "knowledge_ids": ["knowledge_target"]}],
+            "node_states": {
+                "unit:knowledge_target": {
+                    "path_node_id": "unit:knowledge_target",
                     "knowledge_ids": ["knowledge_target"],
+                    "focus_knowledge_ids": ["knowledge_target"],
+                    "title": "当前单元",
+                    "path_order": 1,
+                    "status": "current",
+                    "learning_objective": "掌握当前单元",
+                    "recommendation_reason": "根据当前画像安排。",
+                    "prerequisite_knowledge_ids": [],
                 }
-            ],
-            "current_node_id": "knowledge:knowledge_target",
+            },
+            "current_node_id": "unit:knowledge_target",
+            "path_version": "dynamic-units-v1",
         },
     )
     profile = SimpleNamespace(
@@ -201,7 +214,7 @@ def test_v3_worker_persists_checkpoint_runs_messages_resources_and_review(
     assert len(runs) == 6 and all(run.status == "completed" for run in runs)
     assert len(messages) >= len(runs)
     assert all(
-        run.contract_version == "agent-contract-v6" and len(run.prompt_hash) == 64
+        run.contract_version == "agent-contract-v8" and len(run.prompt_hash) == 64
         for run in runs
     )
     result_receivers = [
@@ -505,6 +518,7 @@ def test_interrupted_task_is_claimed_for_one_startup_recovery(monkeypatch, tmp_p
                 status="running",
                 input_summary_json={"step": "review_resource"},
                 output_summary_json={"review_batch_cache": {"entries": []}},
+                contract_version=CONTRACT_VERSION,
             )
         )
         db.commit()
@@ -533,3 +547,69 @@ def test_interrupted_task_is_claimed_for_one_startup_recovery(monkeypatch, tmp_p
         )
         assert task.status == "failed"
         assert task.failure_reason == "checkpoint_recovery_exhausted"
+
+
+def test_startup_recovery_discards_old_contract_checkpoint(monkeypatch, tmp_path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'stale-contract-recovery.db'}")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    with sessions() as db:
+        learner = Learner(public_id="learner_stale_contract", target_domain="ai_app_dev")
+        db.add(learner)
+        db.flush()
+        profile = LearnerProfile(
+            public_id="profile_stale_contract",
+            learner_id=learner.id,
+            domain_code="ai_app_dev",
+            ability_profile_json={"profile_type": "beginner"},
+            weak_knowledge_json=[],
+        )
+        db.add(profile)
+        db.flush()
+        task = GenerationTask(
+            public_id="task_stale_contract",
+            learner_id=learner.id,
+            profile_id=profile.id,
+            status="running",
+            decision="pending",
+            progress=78,
+            resource_types_json=["lecture"],
+        )
+        db.add(task)
+        db.flush()
+        db.add(
+            GraphCheckpoint(
+                task_id=task.public_id,
+                checkpoint_id="checkpoint-v7",
+                state_json={"native_checkpoint": True},
+                status="saved",
+            )
+        )
+        db.add(
+            AgentRun(
+                generation_task_id=task.id,
+                agent_name="review_validation_agent",
+                status="running",
+                input_summary_json={"step": "review_resource"},
+                output_summary_json={},
+                contract_version="agent-contract-v7",
+            )
+        )
+        db.commit()
+
+    monkeypatch.setattr(generation_worker, "SessionLocal", sessions)
+
+    assert generation_worker.recover_interrupted_generation_tasks() == [
+        "task_stale_contract"
+    ]
+    with sessions() as db:
+        task = db.scalar(
+            select(GenerationTask).where(GenerationTask.public_id == "task_stale_contract")
+        )
+        checkpoint = db.scalar(
+            select(GraphCheckpoint).where(GraphCheckpoint.task_id == "task_stale_contract")
+        )
+        assert checkpoint is None
+        assert task.status == "retry_pending"
+        assert task.progress == 0
+        assert task.failure_reason == ""

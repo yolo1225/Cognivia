@@ -1,5 +1,6 @@
 <template>
   <div class="app" :class="{ 'sidebar-collapsed': sidebarCollapsed, 'theme-dark': darkMode }">
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
     <AppSidebar
       :collapsed="sidebarCollapsed"
       :dark-mode="darkMode"
@@ -8,7 +9,7 @@
     />
     <main class="main">
       <AppHeader />
-      <div class="content">
+      <div id="main-content" class="content" tabindex="-1">
         <router-view v-slot="{ Component, route }">
           <transition :name="transitionName" mode="out-in">
             <component :is="Component" :key="route.path" />
@@ -32,6 +33,7 @@ const transitionName = ref<'page-forward' | 'page-back'>('page-forward')
 const routeOrder = ['/dashboard', '/resources', '/report', '/metrics', '/learners', '/domain-hub', '/model-settings']
 const sidebarCollapsed = ref(readSidebarCollapsed())
 const darkMode = ref(readDarkMode())
+document.documentElement.classList.toggle('theme-dark', darkMode.value)
 
 function readSidebarCollapsed() {
   try {

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from urllib.parse import unquote
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -19,6 +19,7 @@ from app.services.knowledge_document_service import (
     serialize_document,
 )
 from app.services.knowledge_import_orchestrator import create_import_run, schedule_import
+from app.services import candidate_index_job
 
 router = APIRouter()
 
@@ -132,10 +133,20 @@ def retry_failed_document(
 
 
 @router.delete("/{document_id}", response_model=ApiResponse)
-def remove_document(document_id: str, db: Session = Depends(get_db)) -> ApiResponse:
+def remove_document(
+    document_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> ApiResponse:
     document = _get_document(db, document_id)
     try:
         result = delete_document(db, document)
     except KnowledgeDocumentError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    job = candidate_index_job.try_start(db, document.domain_code)
+    if job is not None:
+        background_tasks.add_task(candidate_index_job.run_rebuild, job.id, document.domain_code)
+        result["index_rebuild_job_id"] = job.id
+    else:
+        result["index_rebuild_pending"] = True
     return ok(result)

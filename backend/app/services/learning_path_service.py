@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import math
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -20,7 +23,12 @@ from app.models import (
     LearnerProfile,
     PathNodeAssessment,
 )
+from app.services.knowledge_extraction_service import normalize_knowledge_name
 from app.services.feedback_service import FeedbackSourceCompatibilityError, create_feedback_task
+from app.services.mistake_review_service import sync_existing_mistakes
+from app.services.question_certification_service import (
+    QUESTION_CERTIFICATION_RULE_VERSION,
+)
 
 DEFAULT_COMPLETION_CONDITION = {"type": "scored_quiz_score", "threshold": 0.8}
 
@@ -39,6 +47,29 @@ def _ordered_knowledge_ids(payload: dict[str, Any]) -> list[str]:
 
 def node_id_for(knowledge_id: str) -> str:
     return f"knowledge:{knowledge_id}"
+
+
+def unit_node_id_for(knowledge_ids: list[str]) -> str:
+    digest = hashlib.sha256("|".join(knowledge_ids).encode()).hexdigest()[:16]
+    return f"unit:{digest}"
+
+
+def _balanced_units(knowledge_ids: list[str]) -> list[list[str]]:
+    """Partition a topological sequence into stable 2-5 item learning units."""
+    if not knowledge_ids:
+        return []
+    target_count = min(7, max(4, math.ceil(len(knowledge_ids) / 3)))
+    target_count = min(target_count, len(knowledge_ids))
+    base, remainder = divmod(len(knowledge_ids), target_count)
+    sizes = [base + (1 if index < remainder else 0) for index in range(target_count)]
+    units: list[list[str]] = []
+    cursor = 0
+    for size in sizes:
+        units.append(knowledge_ids[cursor:cursor + min(6, size)])
+        cursor += size
+    if cursor < len(knowledge_ids):
+        units[-1].extend(knowledge_ids[cursor:])
+    return units
 
 
 def _state_order(states: dict[str, Any]) -> list[dict[str, Any]]:
@@ -282,11 +313,15 @@ def normalize_path_for_domain(
 ) -> dict[str, Any]:
     recommended_ids = _ordered_knowledge_ids(payload or {})
     previous_states = (previous_payload or {}).get("node_states") or {}
-    prior_ids = [
-        str(state.get("knowledge_id"))
+    prior_ids = list(dict.fromkeys(
+        str(knowledge_id)
         for state in previous_states.values()
-        if isinstance(state, dict) and state.get("knowledge_id")
-    ]
+        if isinstance(state, dict)
+        for knowledge_id in (
+            state.get("knowledge_ids") or [state.get("knowledge_id")]
+        )
+        if knowledge_id
+    ))
     if not recommended_ids and not prior_ids:
         return normalize_path_payload(payload, previous_payload=previous_payload)
     items = list(
@@ -312,11 +347,122 @@ def normalize_path_for_domain(
             prerequisites[public_by_id[relation.target_item_id]].add(
                 public_by_id[relation.source_item_id]
             )
-    return normalize_path_payload(
-        payload,
-        previous_payload=previous_payload,
+    completed_ids = list(dict.fromkeys(
+        str(knowledge_id)
+        for state in previous_states.values()
+        if isinstance(state, dict) and state.get("status") == "completed"
+        for knowledge_id in (
+            state.get("knowledge_ids") or [state.get("knowledge_id")]
+        )
+        if knowledge_id
+    ))
+    expanded_ids = list(completed_ids)
+    for knowledge_id in recommended_ids:
+        expanded_ids.extend(
+            _prerequisite_closure(
+                knowledge_id,
+                prerequisites_by_knowledge=prerequisites,
+                completed=set(completed_ids),
+            )
+        )
+        expanded_ids.append(knowledge_id)
+    expanded_ids = _stable_topological_order(
+        list(dict.fromkeys(expanded_ids)),
         prerequisites_by_knowledge=prerequisites,
     )
+    normalized_input = deepcopy(payload or {})
+    _set_primary_stage_knowledge_ids(normalized_input, expanded_ids)
+    normalized = normalize_path_payload(
+        normalized_input,
+        prerequisites_by_knowledge=prerequisites,
+    )
+    names_by_public_id = {item.public_id: normalize_knowledge_name(item.name) for item in items}
+    categories_by_public_id = {item.public_id: item.category for item in items}
+    ordered_ids = _ordered_knowledge_ids(normalized)
+    weak_ids = {
+        str(value)
+        for stage in normalized.get("stages") or []
+        if isinstance(stage, dict) and "薄弱" in str(stage.get("name") or "")
+        for value in stage.get("knowledge_ids") or []
+    }
+    prior_states = (previous_payload or {}).get("node_states") or {}
+    prior_by_members = {
+        tuple(state.get("knowledge_ids") or [state.get("knowledge_id")]): state
+        for state in prior_states.values()
+        if isinstance(state, dict)
+    }
+    unit_states: dict[str, dict[str, Any]] = {}
+    for index, member_ids in enumerate(_balanced_units(ordered_ids)):
+        node_id = unit_node_id_for(member_ids)
+        inherited = prior_by_members.get(tuple(member_ids), {})
+        focus_ids = [value for value in member_ids if value in weak_ids][:3]
+        categories = list(dict.fromkeys(
+            categories_by_public_id.get(value, "") for value in member_ids
+            if categories_by_public_id.get(value)
+        ))
+        member_names = [names_by_public_id.get(value, value) for value in member_ids]
+        title = categories[0] if len(categories) == 1 else "与".join(member_names[:2])
+        prerequisite_ids = sorted({
+            prerequisite
+            for value in member_ids
+            for prerequisite in prerequisites.get(value, set())
+            if prerequisite not in member_ids
+        })
+        completed = inherited.get("status") == "completed"
+        unit_states[node_id] = {
+            "path_node_id": node_id,
+            "knowledge_ids": member_ids,
+            "knowledge_items": [
+                {
+                    "knowledge_id": value,
+                    "name": names_by_public_id.get(value, value),
+                    "category": categories_by_public_id.get(value, ""),
+                }
+                for value in member_ids
+            ],
+            "focus_knowledge_ids": focus_ids,
+            "title": title,
+            "path_order": index + 1,
+            "status": "completed" if completed else "locked",
+            "completed_at": inherited.get("completed_at") if completed else None,
+            "completion_evidence_ids": list(
+                inherited.get("completion_evidence_ids") or []
+            ) if completed else [],
+            "completion_condition": dict(inherited.get("completion_condition") or {
+                "type": "unit_quiz_score",
+                "threshold": 0.8,
+                "focus_threshold": 0.6,
+                "question_count_min": 3,
+                "question_count_max": 5,
+            }),
+            "learning_objective": f"综合掌握{'、'.join(member_names)}",
+            "recommendation_reason": (
+                "包含当前诊断出的重点薄弱知识，并按前置关系组织学习。"
+                if focus_ids else "根据知识前置关系与学习目标组合为连续学习单元。"
+            ),
+            "prerequisite_knowledge_ids": prerequisite_ids,
+        }
+    current = next(
+        (state for state in unit_states.values() if state["status"] != "completed"), None
+    )
+    if current is not None:
+        current["status"] = "current"
+    normalized["node_states"] = unit_states
+    normalized["current_node_id"] = current["path_node_id"] if current else None
+    normalized["path_version"] = "dynamic-units-v1"
+    inserted_prerequisites = [
+        value
+        for value in expanded_ids
+        if value not in completed_ids and value not in recommended_ids
+    ]
+    if inserted_prerequisites:
+        normalized["revision_summary"] = {
+            "type": "prerequisite_inserted",
+            "message": "发现新的必要前置知识，路线已局部调整",
+            "inserted_knowledge_ids": inserted_prerequisites,
+            "current_node_id": normalized["current_node_id"],
+        }
+    return normalized
 
 
 def normalize_learning_path(path: LearningPath) -> dict[str, Any]:
@@ -356,13 +502,14 @@ def _eligible_evidence(
     node: dict[str, Any],
     requested_ids: list[str] | None,
 ) -> list[AnswerRecord]:
-    knowledge = db.scalar(
+    knowledge_ids = [str(value) for value in node.get("knowledge_ids") or []]
+    knowledge_rows = list(db.scalars(
         select(KnowledgeItem).where(
-            KnowledgeItem.public_id == node["knowledge_id"],
+            KnowledgeItem.public_id.in_(knowledge_ids),
             KnowledgeItem.domain_code == path.domain_code,
         )
-    )
-    if knowledge is None:
+    ))
+    if not knowledge_rows:
         return []
     records = list(
         db.scalars(
@@ -370,7 +517,7 @@ def _eligible_evidence(
             .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
             .where(
                 AnswerRecord.learner_id == learner.id,
-                AnswerRecord.knowledge_item_id == knowledge.id,
+                AnswerRecord.knowledge_item_id.in_([item.id for item in knowledge_rows]),
                 DiagnosticQuestion.domain_code == path.domain_code,
                 AnswerRecord.scoring_status == "scored",
             )
@@ -410,15 +557,69 @@ def _verify_node_evidence(
         node=node,
         requested_ids=evidence_ids,
     )
-    passing = [record for record in records if float(record.score) >= threshold]
+    records = records[: int(condition.get("question_count_max") or 5)]
+    focus_threshold = float(condition.get("focus_threshold") or 0.6)
+    minimum_count = int(condition.get("question_count_min") or 3)
+    average_score = (
+        sum(float(record.score) for record in records) / len(records) if records else 0.0
+    )
+    focus_ids = set(node.get("focus_knowledge_ids") or [])
+    questions_by_id = {
+        item.id: item
+        for item in db.scalars(
+            select(DiagnosticQuestion).where(
+                DiagnosticQuestion.id.in_([record.question_id for record in records])
+            )
+        )
+    }
+    primary_ids_by_item_id = {
+        item.id: item.public_id
+        for item in db.scalars(
+            select(KnowledgeItem).where(
+                KnowledgeItem.domain_code == path.domain_code,
+                KnowledgeItem.id.in_([record.knowledge_item_id for record in records]),
+            )
+        )
+    }
+    unit_ids = set(str(value) for value in node.get("knowledge_ids") or [])
+    focus_scores = {
+        public_id: [
+            float(record.score)
+            for record in records
+            if (
+                question := questions_by_id.get(record.question_id)
+            ) is not None
+            and public_id
+            in _question_unit_coverage(
+                question,
+                primary_knowledge_id=primary_ids_by_item_id.get(
+                    record.knowledge_item_id
+                ),
+                unit_knowledge_ids=unit_ids,
+            )
+        ]
+        for public_id in focus_ids
+    }
+    focus_passed = all(
+        scores and sum(scores) / len(scores) >= focus_threshold
+        for scores in focus_scores.values()
+    )
+    verified = len(records) >= minimum_count and average_score >= threshold and focus_passed
     return {
         "path_id": path.public_id,
         "node_id": node_id,
-        "verified": bool(passing),
-        "reason": "threshold_met" if passing else "verified_evidence_not_found",
+        "verified": verified,
+        "reason": "threshold_met" if verified else "unit_threshold_not_met",
         "threshold": threshold,
+        "focus_threshold": focus_threshold,
+        "question_count": len(records),
+        "average_score": average_score,
+        "focus_scores": {
+            key: sum(values) / len(values) if values else None
+            for key, values in focus_scores.items()
+        },
         "best_score": max((float(record.score) for record in records), default=None),
-        "evidence_ids": [f"answer_record:{record.id}" for record in passing],
+        "evidence_ids": [f"answer_record:{record.id}" for record in records] if verified else [],
         "node": node,
     }
 
@@ -532,6 +733,20 @@ def _serialize_assessment(assessment: PathNodeAssessment, question: DiagnosticQu
     }
 
 
+def _question_unit_coverage(
+    question: DiagnosticQuestion,
+    *,
+    primary_knowledge_id: str | None,
+    unit_knowledge_ids: set[str],
+) -> set[str]:
+    declared = {
+        str(value) for value in (question.related_knowledge_ids_json or []) if value
+    }
+    if primary_knowledge_id:
+        declared.add(primary_knowledge_id)
+    return declared & unit_knowledge_ids
+
+
 def start_path_node_assessment(
     db: Session, *, path_id: str, node_id: str, learner_public_id: str
 ) -> dict[str, Any]:
@@ -563,20 +778,26 @@ def start_path_node_assessment(
             result = _serialize_assessment(existing, question)
             result["path_id"] = path.public_id
             return result
-    knowledge = db.scalar(
+    knowledge_ids = [str(value) for value in node.get("knowledge_ids") or []]
+    knowledge_rows = list(db.scalars(
         select(KnowledgeItem).where(
-            KnowledgeItem.public_id == node.get("knowledge_id"),
+            KnowledgeItem.public_id.in_(knowledge_ids),
             KnowledgeItem.domain_code == path.domain_code,
         )
-    )
-    if knowledge is None:
+    ))
+    if not knowledge_rows:
         raise ValueError("learning_path_assessment_unavailable")
     questions = list(db.scalars(
         select(DiagnosticQuestion)
+        .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
         .where(
-            DiagnosticQuestion.knowledge_item_id == knowledge.id,
             DiagnosticQuestion.domain_code == path.domain_code,
+            KnowledgeItem.domain_code == path.domain_code,
             DiagnosticQuestion.question_type == "single_choice",
+            DiagnosticQuestion.status == "active",
+            DiagnosticQuestion.certification_status == "certified",
+            DiagnosticQuestion.certification_rule_version
+            == QUESTION_CERTIFICATION_RULE_VERSION,
         )
         .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.id)
     ))
@@ -587,7 +808,54 @@ def start_path_node_assessment(
         PathNodeAssessment.path_node_id == node_id,
         PathNodeAssessment.learner_id == learner.id,
     )))
-    question = next((item for item in questions if item.id not in attempted), questions[0])
+    public_id_by_item_id = {item.id: item.public_id for item in knowledge_rows}
+    unit_ids = set(knowledge_ids)
+    eligible = [
+        item
+        for item in questions
+        if _question_unit_coverage(
+            item,
+            primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
+            unit_knowledge_ids=unit_ids,
+        )
+    ]
+    attempted_questions = [item for item in eligible if item.id in attempted]
+    covered_before = {
+        knowledge_id
+        for item in attempted_questions
+        for knowledge_id in _question_unit_coverage(
+            item,
+            primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
+            unit_knowledge_ids=unit_ids,
+        )
+    }
+    focus_ids = set(node.get("focus_knowledge_ids") or []) & unit_ids
+    unattempted = [item for item in eligible if item.id not in attempted]
+    unattempted.sort(
+        key=lambda item: (
+            not bool(
+                _question_unit_coverage(
+                    item,
+                    primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
+                    unit_knowledge_ids=unit_ids,
+                )
+                & (focus_ids - covered_before)
+            ),
+            not bool(
+                _question_unit_coverage(
+                    item,
+                    primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
+                    unit_knowledge_ids=unit_ids,
+                )
+                - covered_before
+            ),
+            item.difficulty,
+            item.id,
+        )
+    )
+    question = unattempted[0] if unattempted else None
+    if question is None:
+        raise ValueError("learning_path_assessment_unavailable")
     assessment = PathNodeAssessment(
         public_id=f"pathval_{uuid4().hex[:12]}", learning_path_id=path.id,
         path_node_id=node_id, learner_id=learner.id, question_id=question.id,
@@ -719,20 +987,54 @@ def answer_path_node_assessment(
     db.add(record)
     db.flush()
     evidence_id = f"answer_record:{record.id}"
-    if passed:
-        _advance_path_node(db, path=path, node_id=node_id, evidence_ids=[evidence_id])
+    verification = _verify_node_evidence(
+        db,
+        path=path,
+        learner=learner,
+        node_id=node_id,
+        node=node,
+        evidence_ids=None,
+    )
+    unit_passed = bool(verification["verified"])
+    if unit_passed:
+        _advance_path_node(
+            db, path=path, node_id=node_id, evidence_ids=verification["evidence_ids"]
+        )
     result = {
         "assessment_id": assessment.public_id, "path_id": path.public_id, "node_id": node_id,
         "score": score, "threshold": threshold, "passed": passed, "evidence_id": evidence_id,
-        "completed_node_id": node_id if passed else None,
+        "unit_verification": verification,
+        "completed_node_id": node_id if unit_passed else None,
         "current_node_id": (path.path_json or {}).get("current_node_id"),
         "path_completed": path.status == "completed", "profile_adjustment_task_id": None,
     }
     assessment.answer_record_id = record.id
-    assessment.status, assessment.score, assessment.passed, assessment.result_json = "scored", score, passed, result
+    assessment.status, assessment.score, assessment.passed = "scored", score, passed
+    from app.models import MistakeReviewItem
+    from app.services.mistake_evidence_service import evaluate_mistake_evidence
+    from app.services.mistake_review_service import _recommended_resource
+
+    mistake_item = db.scalar(
+        select(MistakeReviewItem)
+        .where(
+            MistakeReviewItem.learner_id == learner.id,
+            MistakeReviewItem.domain_code == path.domain_code,
+            MistakeReviewItem.knowledge_item_id == question.knowledge_item_id,
+        )
+        .order_by(MistakeReviewItem.id.desc())
+    )
+    if mistake_item is not None:
+        result["mistake_evidence_governance"] = evaluate_mistake_evidence(
+            db,
+            learner=learner,
+            item=mistake_item,
+            record=record,
+            resource=_recommended_resource(db, mistake_item),
+        )
     task = None if passed else _maybe_create_remedial_task(db, path=path, learner=learner, node_id=node_id)
     if task is not None:
         result["profile_adjustment_task_id"] = task.public_id
-        assessment.result_json = result
+    assessment.result_json = dict(result)
+    sync_existing_mistakes(db, learner=learner, domain_code=path.domain_code)
     db.commit()
     return result, task

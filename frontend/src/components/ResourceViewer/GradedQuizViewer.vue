@@ -5,7 +5,7 @@
       <div class="quiz-progress">
         <div class="quiz-progress-meta">
           <span class="qp-level">{{ levelLabel(current.level) }}</span>
-          <span class="qp-count">{{ currentIndex + 1 }} / {{ orderedQuestions.length }}</span>
+          <span class="qp-count">{{ currentIndex + 1 }} / {{ orderedQuestions.length }}<small v-if="syncState === 'saving'">正在同步</small><small v-else-if="syncState === 'pending'" class="sync-warn">等待同步</small><small v-else-if="hasDraftScope">进度已保存</small></span>
         </div>
         <div class="quiz-progress-track">
           <span
@@ -63,16 +63,16 @@
             v-if="!isObjective(current) && !stateOf(current).selfMarked"
             type="button"
             class="btn text"
-            @click="stateOf(current).selfMarked = true"
-          >我答对了</button>
+            @click="markSelfChecked(current)"
+          >已完成自我检查</button>
         </div>
       </article>
 
       <!-- 底部导航 -->
       <div class="quiz-nav">
         <button type="button" class="btn ghost" :disabled="currentIndex === 0" @click="currentIndex -= 1">上一题</button>
-        <button v-if="!stateOf(current).checked" type="button" class="btn primary" :disabled="!canCheck(current)" @click="submitAnswer(current)">
-          {{ isObjective(current) ? '提交答案' : '查看参考答案' }}
+        <button v-if="!stateOf(current).checked" type="button" class="btn primary" :disabled="!canCheck(current) || syncState === 'saving'" @click="submitAnswer(current)">
+          {{ syncState === 'saving' ? '正在提交' : isObjective(current) ? '提交答案' : '查看参考答案' }}
         </button>
         <button v-else-if="currentIndex < orderedQuestions.length - 1" type="button" class="btn primary" @click="currentIndex += 1">下一题</button>
         <button v-else type="button" class="btn primary" @click="showSummary = true">查看成绩</button>
@@ -108,8 +108,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
-import type { GradedQuizContent, QuizLevel, QuizQuestion } from '@/api/resources'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { completeQuizAttempt, createQuizAttempt, saveQuizAnswer, type GradedQuizContent, type QuizLevel, type QuizQuestion } from '@/api/resources'
+import { loadGradedQuizDraft, saveGradedQuizDraft } from '@/utils/gradedQuizDraft'
 
 interface AnswerState {
   selected: string[]
@@ -121,6 +122,9 @@ interface AnswerState {
 
 const props = defineProps<{
   content: GradedQuizContent
+  learnerId?: string
+  resourceId?: string
+  resourceVersion?: number
 }>()
 
 const LEVEL_ORDER: QuizLevel[] = ['foundation', 'improvement', 'challenge']
@@ -132,10 +136,70 @@ const orderedQuestions = computed(() =>
 
 const currentIndex = ref(0)
 const showSummary = ref(false)
+const serverAttemptId = ref('')
+const syncState = ref<'ready' | 'saving' | 'pending'>('ready')
 const answers = reactive<Record<string, AnswerState>>({})
 for (const q of props.content.questions) {
   answers[q.question_id] = { selected: [], text: '', checked: false, correct: null, selfMarked: false }
 }
+
+const hasDraftScope = computed(() => Boolean(props.learnerId && props.resourceId))
+
+function restoreDraft() {
+  const draft = loadGradedQuizDraft(
+    props.learnerId || '',
+    props.resourceId || '',
+    props.resourceVersion,
+    props.content.questions.map(question => question.question_id),
+  )
+  if (!draft) return
+  for (const [questionId, state] of Object.entries(draft.answers)) {
+    if (answers[questionId]) Object.assign(answers[questionId], state)
+  }
+  currentIndex.value = draft.currentIndex
+  showSummary.value = draft.showSummary
+}
+
+function persistDraft() {
+  if (!hasDraftScope.value) return
+  saveGradedQuizDraft(props.learnerId || '', props.resourceId || '', props.resourceVersion, {
+    answers: Object.fromEntries(Object.entries(answers).map(([questionId, state]) => [questionId, {
+      selected: [...state.selected],
+      text: state.text,
+      checked: state.checked,
+      correct: state.correct,
+      selfMarked: state.selfMarked,
+    }])),
+    currentIndex: currentIndex.value,
+    showSummary: showSummary.value,
+  })
+}
+
+restoreDraft()
+watch([answers, currentIndex, showSummary], persistDraft, { deep: true })
+
+async function restoreServerAttempt() {
+  if (!hasDraftScope.value) return
+  try {
+    const attempt = await createQuizAttempt(props.resourceId || '', props.learnerId)
+    serverAttemptId.value = attempt.attempt_id
+    for (const [questionId, saved] of Object.entries(attempt.answers || {})) {
+      const state = answers[questionId]
+      const question = props.content.questions.find(item => item.question_id === questionId)
+      if (!state || !question) continue
+      const value = saved.answer
+      state.selected = Array.isArray(value) ? value.map(String) : isChoice(question) ? [String(value)] : []
+      state.text = Array.isArray(value) ? '' : String(value || '')
+      state.checked = saved.checked
+      state.correct = saved.correct
+      state.selfMarked = saved.self_checked
+    }
+    showSummary.value = attempt.status === 'completed'
+    syncState.value = 'ready'
+  } catch { syncState.value = 'pending' }
+}
+
+onMounted(restoreServerAttempt)
 
 const current = computed(() => orderedQuestions.value[currentIndex.value])
 const levelSegments = computed(() =>
@@ -209,11 +273,50 @@ function canCheck(q: QuizQuestion): boolean {
   return isChoice(q) ? state.selected.length > 0 : state.text.trim().length > 0
 }
 
-function submitAnswer(q: QuizQuestion): void {
+async function submitAnswer(q: QuizQuestion): Promise<void> {
   const state = stateOf(q)
-  state.checked = true
-  state.correct = judge(q, state)
+  const localVerdict = judge(q, state)
+  if (!hasDraftScope.value || !serverAttemptId.value) {
+    state.checked = true
+    state.correct = localVerdict
+    syncState.value = hasDraftScope.value ? 'pending' : 'ready'
+    return
+  }
+  syncState.value = 'saving'
+  try {
+    const result = await saveQuizAnswer(
+      props.resourceId || '', serverAttemptId.value, q.question_id,
+      isChoice(q) ? state.selected : state.text, props.learnerId,
+    )
+    state.checked = true
+    state.correct = result.correct
+    syncState.value = 'ready'
+  } catch {
+    state.checked = true
+    state.correct = localVerdict
+    syncState.value = 'pending'
+  }
 }
+
+async function markSelfChecked(q: QuizQuestion) {
+  const state = stateOf(q)
+  state.selfMarked = true
+  if (!serverAttemptId.value || !hasDraftScope.value) return
+  syncState.value = 'saving'
+  try {
+    await saveQuizAnswer(
+      props.resourceId || '', serverAttemptId.value, q.question_id, state.text, props.learnerId, true,
+    )
+    syncState.value = 'ready'
+  } catch { syncState.value = 'pending' }
+}
+
+watch(showSummary, async value => {
+  if (!value || !serverAttemptId.value || !hasDraftScope.value) return
+  try {
+    await completeQuizAttempt(props.resourceId || '', serverAttemptId.value, props.learnerId)
+  } catch { syncState.value = 'pending' }
+})
 
 function optionClass(q: QuizQuestion, opt: string): string {
   const state = stateOf(q)
@@ -270,7 +373,9 @@ function restart(): void {
 /* 进度 */
 .quiz-progress-meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .qp-level { color: var(--ink); font-size: 13px; font-weight: 700; }
-.qp-count { color: var(--muted); font-size: 12px; }
+.qp-count { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.qp-count small { color: var(--green); font-size: 11px; }
+.qp-count small.sync-warn { color: var(--amber); }
 .quiz-progress-track { display: flex; gap: 4px; }
 .qp-seg { flex: 1; height: 6px; border-radius: 999px; background: var(--track); transition: background .2s ease; }
 .qp-seg.done { background: var(--green); }

@@ -26,6 +26,8 @@ from app.agents.contracts import (
     RetrieveKnowledgeInput,
     RetrieveKnowledgeOutput,
     RetrievedChunk,
+    RetrievedQuestion,
+    QuestionType,
     RetrievalMatchType,
     ReviewDecision,
     SourceRef,
@@ -77,20 +79,61 @@ class FlowRetriever:
                 ),
                 used_for=request.purpose,
                 source=SourceRef(
-                    source_ref_id=f"{knowledge_id}::source::0",
+                    source_ref_id=f"{knowledge_id}::chunk::0",
                     knowledge_id=knowledge_id,
                     source_title=f"知识库条目 {knowledge_id}",
                     license_note="team-authored",
                 ),
+                source_locator=f"knowledge:{knowledge_id}#chunk=0",
             )
             for index, knowledge_id in enumerate(knowledge_ids)
         ]
+        reference_questions = []
+        for knowledge_id in knowledge_ids:
+            for slot in range(1, 7):
+                is_choice = slot % 2 == 1
+                reference_questions.append(
+                    RetrievedQuestion(
+                        question_id=f"formal-{knowledge_id}-{slot}",
+                        knowledge_id=knowledge_id,
+                        question_type=(
+                            QuestionType.SINGLE_CHOICE
+                            if is_choice
+                            else QuestionType.SHORT_ANSWER
+                        ),
+                        stem=f"{knowledge_id} 正式题库题目 {slot}",
+                        options=["正确项", "干扰项一", "干扰项二", "干扰项三"]
+                        if is_choice
+                        else [],
+                        answer_key={
+                            **(
+                                {"correct_option": 0}
+                                if is_choice
+                                else {"answer": "来源支持的答案", "rubric": ["要点一", "要点二"]}
+                            ),
+                            "explanation": "依据知识库材料作答。",
+                            "source_ref_ids": [f"{knowledge_id}::chunk::0"],
+                            "source_locator": f"knowledge:{knowledge_id}#chunk=0",
+                            "question_slot": slot,
+                            "quiz_level": (
+                                "foundation"
+                                if slot <= 2
+                                else "improvement"
+                                if slot <= 4
+                                else "challenge"
+                            ),
+                        },
+                        explanation="依据知识库材料作答。",
+                        difficulty=min(5, slot),
+                    )
+                )
         return RetrieveKnowledgeOutput(
             task_id=request.task_id,
             query_text=" ".join(request.retrieval_plan.query_terms),
             chunks=chunks,
             covered_knowledge_ids=knowledge_ids,
             missing_knowledge_ids=[],
+            reference_questions=reference_questions,
         )
 
 

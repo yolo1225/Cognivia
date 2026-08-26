@@ -40,6 +40,38 @@ def _export_content(resource: LearningResource, audience: str) -> str:
     )
 
 
+def build_markdown_export_content(resource: LearningResource, audience: str) -> str:
+    """Return the portable Markdown form shared by single-resource and package exports."""
+
+    content = _export_content(resource, audience)
+    return (
+        f"# {resource.title}\n\n{content}\n\n"
+        f"---\n资源版本：{resource.version}\n审核状态：{resource.review_status}\n"
+    )
+
+
+def write_resource_export(
+    path: Path,
+    resource: LearningResource,
+    export_format: str,
+    audience: str = "learner",
+) -> None:
+    """Write one resource in the requested format without registering a download."""
+
+    export_format = export_format.lower()
+    if export_format not in {"markdown", "pdf", "word"}:
+        raise ValueError("export_format must be markdown, pdf or word")
+    if audience not in {"learner", "teacher"}:
+        raise ValueError("audience must be learner or teacher")
+    content = _export_content(resource, audience)
+    if export_format == "markdown":
+        path.write_text(build_markdown_export_content(resource, audience), encoding="utf-8")
+    elif export_format == "pdf":
+        _write_pdf(path, resource, content)
+    else:
+        _write_docx(path, resource, content)
+
+
 # ---------------------------------------------------------------------------
 # Markdown -> blocks
 # ---------------------------------------------------------------------------
@@ -592,17 +624,7 @@ def export_resource(
     suffix = {"markdown": ".md", "pdf": ".pdf", "word": ".docx"}[export_format]
     export_id = f"exp_{uuid4().hex}"
     path = EXPORT_ROOT / _export_file_name(resource, audience, suffix)
-    content = _export_content(resource, audience)
-    if export_format == "markdown":
-        path.write_text(
-            f"# {resource.title}\n\n{content}\n\n"
-            f"---\n资源版本：{resource.version}\n审核状态：{resource.review_status}\n",
-            encoding="utf-8",
-        )
-    elif export_format == "pdf":
-        _write_pdf(path, resource, content)
-    else:
-        _write_docx(path, resource, content)
+    write_resource_export(path, resource, export_format, audience)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     report = db.scalar(
         select(ReviewReport)

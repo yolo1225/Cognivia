@@ -1,4 +1,4 @@
-import { apiClient, getData, postData } from './client'
+import { apiClient, getData, postData, putData } from './client'
 
 export type QuizLevel = 'foundation' | 'improvement' | 'challenge'
 export type QuestionType = 'single_choice' | 'multiple_choice' | 'short_answer' | 'coding'
@@ -12,6 +12,7 @@ export interface QuizQuestion {
   correct_answer: string
   explanation: string
   knowledge_id: string
+  related_knowledge_ids?: string[]
   difficulty: number
   source_ref_ids: string[]
   reference_question_ids?: string[]
@@ -107,6 +108,45 @@ export interface ResourceQualityMetrics {
   core_knowledge_coverage: number
   passed: boolean
   revision_count: number
+}
+
+export interface ResourceQuizAttempt {
+  attempt_id: string
+  resource_version: number
+  status: 'in_progress' | 'completed'
+  current_question_id?: string | null
+  answers: Record<string, {
+    answer: string | string[]
+    checked: boolean
+    correct: boolean | null
+    self_checked: boolean
+    synced_at?: string
+  }>
+  objective_correct: number
+  objective_total: number
+  completed_at?: string | null
+}
+
+export function createQuizAttempt(resourceId: string, learnerId?: string) {
+  return postData<ResourceQuizAttempt>(`/resources/${resourceId}/quiz-attempts`, { learner_id: learnerId })
+}
+
+export function saveQuizAnswer(
+  resourceId: string,
+  attemptId: string,
+  questionId: string,
+  answer: string | string[],
+  learnerId?: string,
+  selfChecked = false,
+) {
+  return putData<ResourceQuizAttempt & { question_id: string; correct: boolean | null; synced: boolean }>(
+    `/resources/${resourceId}/quiz-attempts/${attemptId}/answers/${encodeURIComponent(questionId)}`,
+    { learner_id: learnerId, answer, self_checked: selfChecked },
+  )
+}
+
+export function completeQuizAttempt(resourceId: string, attemptId: string, learnerId?: string) {
+  return postData<ResourceQuizAttempt>(`/resources/${resourceId}/quiz-attempts/${attemptId}/complete`, { learner_id: learnerId })
 }
 
 export function listResources(filters: { taskId?: string; learnerId?: string; domainCode?: string } = {}) {

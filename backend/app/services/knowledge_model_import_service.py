@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from functools import partial
+from collections import defaultdict
+from collections.abc import Callable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session, object_session
 
 from app.core.config import settings
 from app.models import KnowledgeDocument, KnowledgeImportCandidate, KnowledgeImportRun
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
+from app.rag.candidate_chunker import CHUNKER_VERSION, chunk_knowledge_item
 from app.services.knowledge_import_batch_service import (
     execute_json_batch,
     pack_by_tokens,
@@ -22,6 +27,10 @@ from app.services.llm_service import (
     ModelCallError,
     ModelOutputTruncatedError,
     gateway,
+)
+from app.services.question_certification_service import (
+    canonical_knowledge_content_hash,
+    certify_question_candidates,
 )
 
 
@@ -68,10 +77,19 @@ class RelationPairOutput(BaseModel):
     decisions: list[RelationPairDecision]
 
 
+class GeneratedEvidenceQuote(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_ref_id: str
+    quote: str
+
+
 class GeneratedQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     knowledge_id: str
+    question_slot: int = Field(ge=1, le=6)
+    quiz_level: Literal["foundation", "improvement", "challenge"]
     question_type: Literal["single_choice", "short_answer"]
     stem: str
     options: list[str] = []
@@ -79,7 +97,8 @@ class GeneratedQuestion(BaseModel):
     rubric: list[str]
     explanation: str
     diagnostic_dimension: Literal["概念理解", "机制与因果", "实操场景选择", "错误诊断与修复"]
-    evidence_span_ids: list[str]
+    evidence_quotes: list[GeneratedEvidenceQuote] = Field(min_length=1, max_length=3)
+    difficulty: int = Field(ge=1, le=5)
 
 
 class QuestionOutput(BaseModel):
@@ -124,9 +143,21 @@ def _adapt_pair_decisions(result: dict) -> dict:
     return {"decisions": decisions}
 
 
-def _adapt_question_output(result: dict) -> dict:
-    raw = result.get("questions") or result.get("items") or []
+def _adapt_question_output(result: object) -> dict:
+    """Normalize provider question payloads without assuming an object wrapper.
+
+    Some OpenAI-compatible providers return the requested array directly even
+    when the prompt asks for ``{"questions": [...]}``. Treat that as a valid
+    candidate payload and let the existing deterministic field validation apply.
+    """
+    if isinstance(result, list):
+        raw = result
+    elif isinstance(result, dict):
+        raw = result.get("questions") or result.get("items") or []
+    else:
+        raw = []
     questions = []
+    next_slot_by_knowledge: dict[str, int] = {}
     for value in raw:
         if not isinstance(value, dict):
             continue
@@ -164,6 +195,15 @@ def _adapt_question_output(result: dict) -> dict:
             "single_choice", "short_answer"
         }:
             continue
+        knowledge_id = str(knowledge_id)
+        fallback_slot = next_slot_by_knowledge.get(knowledge_id, 1)
+        try:
+            question_slot = int(item.get("question_slot") or item.get("slot") or fallback_slot)
+        except (TypeError, ValueError):
+            question_slot = fallback_slot
+        next_slot_by_knowledge[knowledge_id] = max(fallback_slot, question_slot) + 1
+        if not 1 <= question_slot <= 6:
+            continue
         if question_type == "short_answer" and not isinstance(answer, str):
             continue
         if question_type == "single_choice" and not isinstance(answer, int):
@@ -179,11 +219,27 @@ def _adapt_question_output(result: dict) -> dict:
         }.get(str(dimension), dimension)
         if dimension not in {"概念理解", "机制与因果", "实操场景选择", "错误诊断与修复"}:
             dimension = "概念理解"
+        quiz_level = str(item.get("quiz_level") or item.get("level") or "")
+        expected_level = (
+            "foundation" if question_slot <= 2
+            else "improvement" if question_slot <= 4
+            else "challenge"
+        )
+        if quiz_level not in {"foundation", "improvement", "challenge"}:
+            quiz_level = expected_level
+        try:
+            difficulty = int(item.get("difficulty") or 0)
+        except (TypeError, ValueError):
+            difficulty = 0
+        if not 1 <= difficulty <= 5:
+            difficulty = {"foundation": 1, "improvement": 3, "challenge": 5}[quiz_level]
         explanation = item.get("explanation") or item.get("analysis")
         if not explanation:
             explanation = str(answer or "依据给定来源摘录作答")
         questions.append({
-            "knowledge_id": str(knowledge_id),
+            "knowledge_id": knowledge_id,
+            "question_slot": question_slot,
+            "quiz_level": quiz_level,
             "question_type": question_type,
             "stem": str(stem),
             "options": options,
@@ -191,9 +247,30 @@ def _adapt_question_output(result: dict) -> dict:
             "rubric": rubric,
             "explanation": str(explanation),
             "diagnostic_dimension": dimension,
-            "evidence_span_ids": (
-                item.get("evidence_span_ids") or item.get("evidence_ids") or ["span_1"]
-            ),
+            "difficulty": difficulty,
+            "evidence_quotes": [
+                (
+                    {
+                        "source_ref_id": value.get("source_ref_id")
+                        or value.get("chunk_id")
+                        or value.get("source_id")
+                        or "",
+                        "quote": value.get("quote")
+                        or value.get("text")
+                        or value.get("evidence")
+                        or "",
+                    }
+                    if isinstance(value, dict)
+                    else {
+                        "source_ref_id": item.get("source_ref_id") or "",
+                        "quote": value,
+                    }
+                )
+                for value in (
+                    item.get("evidence_quotes")
+                    or ([item.get("evidence_quote")] if item.get("evidence_quote") else [])
+                )
+            ],
         })
     return {"questions": questions}
 
@@ -471,34 +548,122 @@ def _generate_question_records(
     knowledge: list[KnowledgeImportCandidate],
     *,
     step: str,
+    missing_slots_by_knowledge: dict[str, list[int]] | None = None,
+    existing_question_ids_by_knowledge: dict[str, list[str]] | None = None,
+    related_ids_by_knowledge: dict[str, list[str]] | None = None,
+    repair_fields_by_slot: dict[tuple[str, int], list[str]] | None = None,
 ) -> list[dict]:
-    source_records = []
+    source_records: list[tuple[str, str, int, dict]] = []
+    by_id = {item.public_id: item for item in knowledge}
+
+    def projected_chunks(candidate: KnowledgeImportCandidate) -> tuple[list, str]:
+        candidate_payload = candidate.payload_json or {}
+        target_id = str(candidate_payload.get("target_public_id") or "")
+        chunks = chunk_knowledge_item(
+            knowledge_id=target_id,
+            name=str(candidate_payload.get("name") or ""),
+            category=str(candidate_payload.get("category") or "未分类"),
+            difficulty=int(candidate_payload.get("difficulty") or 2),
+            tags=[str(value) for value in candidate_payload.get("tags") or []],
+            content_md=str(candidate_payload.get("content") or ""),
+        )
+        content_hash = canonical_knowledge_content_hash(
+            knowledge_id=target_id,
+            domain_code=candidate.domain_code,
+            name=str(candidate_payload.get("name") or ""),
+            category=str(candidate_payload.get("category") or "未分类"),
+            difficulty=int(candidate_payload.get("difficulty") or 2),
+            tags=[str(value) for value in candidate_payload.get("tags") or []],
+            evidence_capabilities=[
+                str(value)
+                for value in candidate_payload.get("evidence_capabilities") or []
+            ],
+            content=str(candidate_payload.get("content") or ""),
+            source_title=str(candidate_payload.get("source_title") or ""),
+            source_url=candidate_payload.get("source_url"),
+            license_note=str(candidate_payload.get("license_note") or ""),
+        )
+        return chunks, content_hash
+
+    projected = {
+        candidate.public_id: projected_chunks(candidate) for candidate in knowledge
+    }
     for item in knowledge:
+        required_slots = sorted(
+            (missing_slots_by_knowledge or {}).get(item.public_id, range(1, 7))
+        )
+        if not required_slots:
+            continue
         payload = item.payload_json or {}
-        source_records.append({
-            "knowledge_id": item.public_id,
-            "name": payload.get("name"),
-            "difficulty": int(payload.get("difficulty") or 2),
-            "evidence_capabilities": payload.get("evidence_capabilities") or [],
-            "evidence_spans": [{
-                "id": "span_1",
-                "text": str(payload.get("content") or "")[:700],
-            }],
-        })
-    batches = pack_by_tokens(source_records, max_records=6, envelope_tokens=1200)
-    prepared: list[tuple[int, list[dict]]] = []
+        for slot in required_slots:
+            tier = (
+                "foundation" if slot <= 2
+                else "improvement" if slot <= 4
+                else "challenge"
+            )
+            related_limit = 0 if tier == "foundation" else 1 if tier == "improvement" else 2
+            related_ids = [
+                candidate_id
+                for candidate_id in (related_ids_by_knowledge or {}).get(item.public_id, [])
+                if candidate_id in by_id
+            ][:related_limit]
+            source_candidate_ids = [item.public_id, *related_ids]
+            source_chunks: list[dict[str, object]] = []
+            for source_index, candidate_id in enumerate(source_candidate_ids):
+                source_candidate = by_id[candidate_id]
+                source_payload = source_candidate.payload_json or {}
+                chunks, source_content_hash = projected[candidate_id]
+                chunk = chunks[(slot - 1 + source_index) % len(chunks)]
+                source_chunks.append({
+                    "chunk_id": chunk.chunk_id,
+                    "chunk_index": chunk.chunk_index,
+                    "source_locator": (
+                        f"document:{source_candidate.document_id}#chunk={chunk.chunk_index}"
+                    ),
+                    "knowledge_id": str(source_payload.get("target_public_id") or ""),
+                    "knowledge_candidate_id": candidate_id,
+                    "content": chunk.content,
+                    "content_checksum": hashlib.sha256(
+                        chunk.embedding_text.encode("utf-8")
+                    ).hexdigest(),
+                    "source_content_hash": source_content_hash,
+                    "chunker_version": CHUNKER_VERSION,
+                })
+            source_records.append((item.public_id, tier, slot, {
+                "knowledge_id": item.public_id,
+                "name": payload.get("name"),
+                "difficulty": int(payload.get("difficulty") or 2),
+                "evidence_capabilities": payload.get("evidence_capabilities") or [],
+                "source_chunks": source_chunks,
+                "required_question_slots": [slot],
+                "existing_question_ids": (existing_question_ids_by_knowledge or {}).get(
+                    item.public_id, []
+                ),
+                "certification_failed_fields": (repair_fields_by_slot or {}).get(
+                    (item.public_id, slot), []
+                ),
+            }))
+    prepared: list[tuple[int, dict]] = []
     model_name = settings.primary_llm_model
-    for index, batch in enumerate(batches):
-        payload = {"knowledge": batch}
+    for knowledge_id, tier, slot, record in source_records:
+        payload = {"knowledge": [record]}
+        payload_hash = hashlib.sha256(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()[:10]
         model_batch = prepare_batch(
             db,
             run,
             step=step,
-            batch_key=f"questions_{index:04d}",
+            batch_key=f"questions_{knowledge_id}_{tier}_{slot}_{payload_hash}"[:128],
             payload=payload,
             model_name=model_name,
         )
-        prepared.append((model_batch.id, batch))
+        prepared.append((model_batch.id, record))
     db.commit()
     jobs = [
         partial(
@@ -506,27 +671,50 @@ def _generate_question_records(
             batch_id,
             model=model_name,
             system_prompt=(
-                "你是诊断题生成器。为每个 knowledge_id 恰好生成一道真正检验理解或应用的题，"
-                "不得考查标题记忆。只能使用 evidence_spans，不得补充外部事实。单选题必须有四个"
-                "同层次且仅一个正确的选项，answer 使用从0开始的索引；简答题必须有2到4个可执行评分点。"
-                "只有包含 operation 或 troubleshooting 证据能力时才能生成实操或排错题。"
+                "你是正式题库生成器。只生成每个 knowledge 记录中 required_question_slots 指定的题槽；"
+                "首轮请求时该字段为1到6，补题请求时只允许输出缺失题槽，禁止输出已有题槽。"
+                "为每个 knowledge_id 生成互不重复、可追溯的题，按"
+                "question_slot=1..6输出：1基础单选、2基础简答、3提升单选、4提升简答、"
+                "5挑战单选、6挑战简答；quiz_level依次为foundation、foundation、improvement、"
+                "improvement、challenge、challenge。不得考查标题记忆，只能使用 source_chunks，"
+                "不得补充外部事实。基础题只使用给定的主知识点 Chunk；提升题可综合1到2个给定 Chunk；"
+                "挑战题可综合1到3个给定 Chunk。每题必须返回 evidence_quotes，包含1到3个"
+                "{source_ref_id, quote}对象；quote 必须来自对应 source_ref_id 的 Chunk content，"
+                "且可在规范化空白后连续精确匹配，禁止跨 Chunk 拼接。单选题必须有四个同层次"
+                "且仅一个正确的选项，answer使用从0开始"
+                "的索引；简答题必须有2到4个可执行评分点。difficulty按1到5逐级设置。已有题目 ID 仅用于去重。只有包含"
+                "operation或troubleshooting证据能力时才能生成实操或排错题。"
+                "questions 数组的题槽集合必须与 required_question_slots 完全一致；即使证据只支持"
+                "概念题，也必须基于该证据生成对应层级的概念理解或机制题，禁止返回空数组或遗漏题槽。"
+                "若 certification_failed_fields 非空，必须只针对这些失败字段修正，同时保持题目仍由"
+                "当前 source_chunks 和精确引文支持。"
             ),
-            payload={"knowledge": batch},
+            payload={"knowledge": [record]},
             response_model=QuestionOutput,
             response_adapter=_adapt_question_output,
-            max_output_tokens=5000,
+            max_output_tokens=2800,
             role="generation",
+            expected_question_slots=list(record["required_question_slots"]),
         )
-        for batch_id, batch in prepared
+        for batch_id, record in prepared
     ]
     results = run_parallel(
         jobs, max_workers=settings.knowledge_import_generation_concurrency
     )
-    return [
-        question
-        for result in results if isinstance(result, dict)
-        for question in result.get("questions") or []
-    ]
+    output: list[dict] = []
+    for result, (_, _, _, record) in zip(results, source_records, strict=True):
+        if not isinstance(result, dict):
+            continue
+        source_chunks = [dict(value) for value in record["source_chunks"]]
+        for question in result.get("questions") or []:
+            output.append({**question, **{
+                "source_chunks": source_chunks,
+                "related_knowledge_candidate_ids": [
+                    str(value["knowledge_candidate_id"])
+                    for value in source_chunks[1:]
+                ],
+            }})
+    return output
 
 
 def _persist_questions(
@@ -537,20 +725,54 @@ def _persist_questions(
 ) -> list[KnowledgeImportCandidate]:
     by_id = {item.public_id: item for item in knowledge}
     created: list[KnowledgeImportCandidate] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, int]] = set()
+    existing_public_ids = set(
+        db.scalars(
+            select(KnowledgeImportCandidate.public_id).where(
+                KnowledgeImportCandidate.document_id == document.id,
+                KnowledgeImportCandidate.candidate_type == "diagnostic_question",
+            )
+        )
+    )
     for record in records:
         knowledge_id = str(record.get("knowledge_id") or "")
         item = by_id.get(knowledge_id)
-        if item is None or knowledge_id in seen:
+        try:
+            question_slot = int(record.get("question_slot") or 0)
+        except (TypeError, ValueError):
+            question_slot = 0
+        key = (knowledge_id, question_slot)
+        if item is None or not 1 <= question_slot <= 6 or key in seen:
             continue
         payload = item.payload_json or {}
-        spans = {"span_1": str(payload.get("content") or "")[:700]}
-        evidence_ids = [str(value) for value in record.get("evidence_span_ids") or []]
-        source_quote = next((spans[value] for value in evidence_ids if value in spans), "")
+        evidence_quotes = [
+            {
+                "source_ref_id": str(value.get("source_ref_id") or ""),
+                "quote": str(value.get("quote") or "").strip(),
+            }
+            for value in record.get("evidence_quotes") or []
+            if isinstance(value, dict) and str(value.get("quote") or "").strip()
+        ]
+        source_chunks = [dict(value) for value in record.get("source_chunks") or []]
+        source_ref_ids = [str(value.get("chunk_id") or "") for value in source_chunks]
+        source_hashes = {
+            str(value.get("chunk_id") or ""): str(value.get("source_content_hash") or "")
+            for value in source_chunks
+        }
+        aggregate_source_hash = "sha256:" + hashlib.sha256(
+            json.dumps(source_hashes, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
         question_type = str(record.get("question_type") or "")
+        expected_type = "single_choice" if question_slot % 2 else "short_answer"
         options = [str(value).strip() for value in record.get("options") or []]
         answer = record.get("answer")
-        if not source_quote or question_type not in {"single_choice", "short_answer"}:
+        rubric = [str(value).strip() for value in record.get("rubric") or [] if str(value).strip()]
+        explanation = str(record.get("explanation") or "").strip()
+        if (
+            not evidence_quotes
+            or question_type != expected_type
+            or not explanation
+        ):
             continue
         if question_type == "single_choice" and (
             len(options) != 4
@@ -559,31 +781,50 @@ def _persist_questions(
             or not 0 <= answer < 4
         ):
             continue
+        if question_type == "short_answer" and (
+            not isinstance(answer, str) or not answer.strip() or not 2 <= len(rubric) <= 8
+        ):
+            continue
         stable = hashlib.sha256(
-            f"{document.public_id}:diagnostic_question:{knowledge_id}".encode()
+            f"{document.public_id}:diagnostic_question:{knowledge_id}:{question_slot}".encode()
         ).hexdigest()[:16]
+        public_id = f"kic_{stable}"
+        if public_id in existing_public_ids:
+            continue
         candidate = KnowledgeImportCandidate(
-            public_id=f"kic_{stable}",
+            public_id=public_id,
             document_id=document.id,
             domain_code=document.domain_code,
             candidate_type="diagnostic_question",
             payload_json={
                 "knowledge_candidate_id": knowledge_id,
+                "question_slot": question_slot,
+                "quiz_level": record.get("quiz_level"),
                 "question_type": question_type,
                 "stem": str(record.get("stem") or "").strip(),
                 "options": options,
                 "answer": answer,
-                "rubric": [str(value).strip() for value in record.get("rubric") or []],
-                "explanation": str(record.get("explanation") or "").strip(),
-                "difficulty": int(payload.get("difficulty") or 2),
+                "rubric": rubric,
+                "explanation": explanation,
+                "difficulty": int(record.get("difficulty") or payload.get("difficulty") or 2),
                 "diagnostic_dimension": record.get("diagnostic_dimension"),
-                "source_quote": source_quote,
-                "evidence_span_ids": evidence_ids,
-                "generation_method": "model_grounded",
+                "source_quote": evidence_quotes[0]["quote"],
+                "evidence_quotes": evidence_quotes,
+                "source_ref_ids": source_ref_ids,
+                "source_chunks": source_chunks,
+                "source_content_hash": aggregate_source_hash,
+                "source_content_hashes": source_hashes,
+                "chunker_version": CHUNKER_VERSION,
+                "related_knowledge_candidate_ids": record.get(
+                    "related_knowledge_candidate_ids"
+                ) or [],
+                "certification_status": "pending",
+                "generation_method": "model_single_chunk_grounded",
             },
             source_locator_json={
-                "chunk_id": (payload.get("source_chunk_ids") or [None])[0],
-                "checksum": payload.get("after_checksum"),
+                "chunk_ids": source_ref_ids,
+                "locators": [value.get("source_locator") for value in source_chunks],
+                "checksum": aggregate_source_hash,
             },
             confidence=0.8,
             status="pending",
@@ -591,7 +832,8 @@ def _persist_questions(
         )
         db.add(candidate)
         created.append(candidate)
-        seen.add(knowledge_id)
+        seen.add(key)
+        existing_public_ids.add(public_id)
     db.flush()
     return created
 
@@ -601,52 +843,178 @@ def generate_model_questions(
     document: KnowledgeDocument,
     candidates: list[KnowledgeImportCandidate],
     run: KnowledgeImportRun,
+    *,
+    certification_started: Callable[[], None] | None = None,
 ) -> list[KnowledgeImportCandidate]:
     knowledge = [item for item in candidates if item.candidate_type == "knowledge_item"]
-    existing_questions = [
-        item for item in candidates if item.candidate_type == "diagnostic_question"
-    ]
-    for item in existing_questions:
-        db.delete(item)
+    generated: list[KnowledgeImportCandidate] = []
+    for item in list(candidates):
+        if item.candidate_type == "diagnostic_question":
+            db.delete(item)
+            candidates.remove(item)
     db.flush()
-
-    generated = _persist_questions(
-        db,
-        document,
+    degree = {item.public_id: 0 for item in knowledge}
+    related: dict[str, set[str]] = defaultdict(set)
+    for relation in candidates:
+        if relation.candidate_type != "knowledge_relation":
+            continue
+        relation_payload = relation.payload_json or {}
+        for key in ("source_candidate_id", "target_candidate_id"):
+            candidate_id = str(relation_payload.get(key) or "")
+            if candidate_id in degree:
+                degree[candidate_id] += 1
+        source_id = str(relation_payload.get("source_candidate_id") or "")
+        target_id = str(relation_payload.get("target_candidate_id") or "")
+        if source_id in degree and target_id in degree and source_id != target_id:
+            related[source_id].add(target_id)
+            related[target_id].add(source_id)
+    related_ids_by_knowledge = {
+        knowledge_id: sorted(values, key=lambda value: (-degree[value], value))
+        for knowledge_id, values in related.items()
+    }
+    ordered = sorted(
         knowledge,
-        _generate_question_records(db, run, knowledge, step="question_generation"),
+        key=lambda item: (-degree[item.public_id], item.public_id),
     )
-    accepted = validate_model_candidates(generated, run=run, step="question_review")
-    for item in list(generated):
+    target_total = max(60, len(knowledge))
+    target_slots: dict[str, set[int]] = {
+        item.public_id: {(index % 6) + 1}
+        for index, item in enumerate(ordered)
+    }
+    remaining = target_total - len(knowledge)
+    allocation_index = 0
+    while remaining > 0 and ordered:
+        item = ordered[allocation_index % len(ordered)]
+        slots = target_slots[item.public_id]
+        next_slot = next((slot for slot in range(1, 7) if slot not in slots), None)
+        if next_slot is not None:
+            slots.add(next_slot)
+            remaining -= 1
+        allocation_index += 1
+        if allocation_index > len(ordered) * 6:
+            break
+    existing_slots: dict[str, set[int]] = {}
+    existing_ids: dict[str, list[str]] = {}
+    for item in generated:
+        payload = item.payload_json or {}
+        knowledge_id = str(payload.get("knowledge_candidate_id") or "")
+        existing_slots.setdefault(knowledge_id, set()).add(
+            int(payload.get("question_slot") or 0)
+        )
+        existing_ids.setdefault(knowledge_id, []).append(item.public_id)
+    initial_missing = {
+        item.public_id: sorted(target_slots[item.public_id] - existing_slots.get(item.public_id, set()))
+        for item in knowledge
+    }
+    initial_records = _generate_question_records(
+        db,
+        run,
+        knowledge,
+        step="question_generation",
+        missing_slots_by_knowledge=initial_missing,
+        existing_question_ids_by_knowledge=existing_ids,
+        related_ids_by_knowledge=related_ids_by_knowledge,
+    )
+    # Persist and review only newly returned records. Empty batches are already
+    # marked failed by execute_json_batch and are intentionally not retried as a
+    # full six-question request.
+    initial_created = _persist_questions(db, document, knowledge, initial_records)
+    generated.extend(initial_created)
+    if certification_started is not None:
+        certification_started()
+    accepted, certification_failures = certify_question_candidates(
+        db, run, initial_created, round_number=0
+    )
+    repair_fields_by_slot: dict[tuple[str, int], list[str]] = {}
+    for item in list(initial_created):
         if item.public_id not in accepted:
+            payload = item.payload_json or {}
+            repair_fields_by_slot[
+                (
+                    str(payload.get("knowledge_candidate_id") or ""),
+                    int(payload.get("question_slot") or 0),
+                )
+            ] = certification_failures.get(item.public_id, [])
             db.delete(item)
             generated.remove(item)
     db.flush()
 
+    stalled_knowledge: set[str] = set()
     for repair_round in range(1, 3):
-        covered = {
-            str((item.payload_json or {}).get("knowledge_candidate_id"))
-            for item in generated
-        }
-        missing = [item for item in knowledge if item.public_id not in covered]
+        slots_by_knowledge: dict[str, set[int]] = {}
+        ids_by_knowledge: dict[str, list[str]] = {}
+        for item in generated:
+            payload = item.payload_json or {}
+            knowledge_id = str(payload.get("knowledge_candidate_id") or "")
+            slots_by_knowledge.setdefault(knowledge_id, set()).add(
+                int(payload.get("question_slot") or 0)
+            )
+            ids_by_knowledge.setdefault(knowledge_id, []).append(item.public_id)
+        missing = [
+            item
+            for item in knowledge
+            if item.public_id not in stalled_knowledge
+            and not target_slots[item.public_id].issubset(
+                slots_by_knowledge.get(item.public_id, set())
+            )
+        ]
         if not missing:
             break
+        missing_slots = {
+            item.public_id: sorted(
+                target_slots[item.public_id] - slots_by_knowledge.get(item.public_id, set())
+            )
+            for item in missing
+        }
         repaired = _persist_questions(
             db,
             document,
             missing,
             _generate_question_records(
-                db, run, missing, step=f"question_repair_{repair_round}"
+                db,
+                run,
+                missing,
+                step=f"question_repair_{repair_round}",
+                missing_slots_by_knowledge=missing_slots,
+                existing_question_ids_by_knowledge=ids_by_knowledge,
+                related_ids_by_knowledge=related_ids_by_knowledge,
+                repair_fields_by_slot=repair_fields_by_slot,
             ),
         )
-        accepted = validate_model_candidates(
-            repaired, run=run, step=f"question_repair_review_{repair_round}"
+        accepted, repair_failures = certify_question_candidates(
+            db, run, repaired, round_number=repair_round
         )
+        certification_failures.update(repair_failures)
         for item in repaired:
             if item.public_id in accepted:
                 generated.append(item)
             else:
+                payload = item.payload_json or {}
+                repair_fields_by_slot[
+                    (
+                        str(payload.get("knowledge_candidate_id") or ""),
+                        int(payload.get("question_slot") or 0),
+                    )
+                ] = repair_failures.get(item.public_id, [])
                 db.delete(item)
+        returned_ids = {
+            str((item.payload_json or {}).get("knowledge_candidate_id") or "")
+            for item in repaired
+            if item.public_id in accepted
+        }
+        stalled_knowledge.update(set(missing_slots) - returned_ids)
+    run.artifact_manifest_json = {
+        **(run.artifact_manifest_json or {}),
+        "question_certification": {
+            "rule_version": "question-cert-v1",
+            "certified_count": len(generated),
+            "rejected_count": len(certification_failures),
+            "failed_fields": {
+                question_id: fields
+                for question_id, fields in list(certification_failures.items())[:20]
+            },
+        },
+    }
     db.flush()
     return generated
 

@@ -27,10 +27,12 @@ from app.agents.review_agent import (
     _cross_validate,
     _decision_from_claims,
     _deterministic_coverage,
+    _merge_evidence,
     _review_decision,
     _reviews_disagree,
     _plan_review_batches,
     _project_claim_source_ids,
+    _review_certified_quiz,
     extract_atomic_claims,
 )
 from app.services.llm_service import ModelCallError, ModelOutputTruncatedError
@@ -39,6 +41,23 @@ from app.services.llm_service import ModelCallError, ModelOutputTruncatedError
 class DeterministicChannel:
     def review(self, *, deterministic_review, **_kwargs):
         return deterministic_review
+
+
+def test_arbitration_merge_keeps_full_v8_evidence_budget() -> None:
+    chunk = initial_generation_flow_example()["review_resource"]["input"].evidence[0]
+    evidence = [
+        chunk.model_copy(
+            update={
+                "chunk_id": f"chunk-{index}",
+                "source": chunk.source.model_copy(
+                    update={"source_ref_id": f"source-{index}"}
+                ),
+            }
+        )
+        for index in range(18)
+    ]
+
+    assert len(_merge_evidence(evidence[:12], evidence[12:])) == 18
 
 
 def test_resource_decision_defers_difficulty_and_coverage_to_package() -> None:
@@ -280,7 +299,7 @@ def test_v3_review_emits_dual_model_contract_report() -> None:
     output = ReviewValidationAgent(channel=DeterministicChannel()).execute(_input())
 
     report = output.reports[0]
-    assert output.contract_version == "agent-contract-v6"
+    assert output.contract_version == "agent-contract-v8"
     assert report.primary_review.model_role == "primary_review_model"
     assert report.secondary_review.model_role == "secondary_review_model"
     assert report.decision in {ReviewDecision.PASSED, ReviewDecision.REVISION_REQUIRED}
@@ -647,6 +666,21 @@ def test_v4_review_rechecks_and_requires_revision_for_persistent_conflict() -> N
     assert report.arbitration.secondary_recheck is not None
     assert report.arbitration.disagreement_remains
     assert report.decision == ReviewDecision.REVISION_REQUIRED
+    classified_count = sum(
+        len(values)
+        for values in (
+            report.supported_claim_ids,
+            report.contradicted_claim_ids,
+            report.undetermined_claim_ids,
+            report.unresolved_claim_ids,
+        )
+    )
+    assert report.quality_metrics.evaluated_claim_count == classified_count
+    assert report.quality_metrics.hallucinated_claim_count <= classified_count
+    assert report.quality_metrics.hallucination_rate == round(
+        100 * report.quality_metrics.hallucinated_claim_count / classified_count,
+        2,
+    )
 
 
 def test_v3_review_rejects_non_contract_input() -> None:
@@ -1543,13 +1577,34 @@ def test_package_quality_uses_weighted_counts_after_partial_revision() -> None:
         revision_count=1,
     )
 
-    assert output.package_quality.verifiable_claim_count == 61
+    assert output.package_quality.verifiable_claim_count == 55
     assert output.package_quality.hallucinated_claim_count == 12
-    assert output.package_quality.hallucination_rate == 19.67
+    assert output.package_quality.hallucination_rate == 21.82
     assert output.package_quality.difficulty_match_score == 100
     assert output.package_quality.revision_count == 1
     assert not output.package_quality.passed
     assert not output.package_passed
+
+
+def test_certified_quiz_uses_deterministic_suitability_review() -> None:
+    flow = initial_generation_flow_example()
+    request = flow["review_resource"]["input"]
+    quiz = next(
+        resource
+        for resource in request.resources
+        if resource.resource_type is ResourceType.GRADED_QUIZ
+    )
+    for question in quiz.structured_content.questions:
+        question.reference_question_ids = [question.question_id]
+
+    report = _review_certified_quiz(quiz, request)
+
+    assert report.passed
+    assert report.primary_review.model_name == "deterministic-certified-question-validator"
+    assert report.secondary_review.model_name == "deterministic-certified-question-validator"
+    assert not report.arbitration.required
+    assert report.quality_metrics.hallucination_rate == 0
+    assert all("correct_answer" not in (check.field_path or "") for check in report.primary_review.fact_checks)
 
 
 @pytest.mark.parametrize("resource_count", [1, 2, 3])
@@ -1603,6 +1658,39 @@ def test_quiz_assessment_cannot_backfill_primary_teaching_coverage() -> None:
     assert output.package_missing_knowledge_ids == [knowledge_id]
     assert output.package_quality.core_knowledge_coverage == 0
     assert not output.package_passed
+
+
+def test_teaching_coverage_uses_lecture_and_practice_union() -> None:
+    flow = initial_generation_flow_example()
+    lecture = flow["review_resource"]["output"].reports[0]
+    practice = flow["review_resource"]["output"].reports[1]
+    knowledge_ids = lecture.target_knowledge_ids[:1]
+    lecture = lecture.model_copy(
+        update={
+            "target_knowledge_ids": knowledge_ids,
+            "covered_knowledge_ids": knowledge_ids,
+            "missing_knowledge_ids": [],
+        }
+    )
+    practice = practice.model_copy(
+        update={
+            "target_knowledge_ids": knowledge_ids,
+            "covered_knowledge_ids": [],
+            "missing_knowledge_ids": knowledge_ids,
+        }
+    )
+
+    output = build_review_resource_output(
+        task_id="task_teaching_union",
+        reports=[lecture, practice],
+        expected_resource_types=[ResourceType.LECTURE, ResourceType.PRACTICE_GUIDE],
+        required_knowledge_ids=knowledge_ids,
+        revision_count=0,
+    )
+
+    assert output.package_covered_knowledge_ids == sorted(knowledge_ids)
+    assert output.package_missing_knowledge_ids == []
+    assert output.package_quality.core_knowledge_coverage == 100
 
 
 def test_package_quality_rejects_mismatched_requested_resource_set() -> None:

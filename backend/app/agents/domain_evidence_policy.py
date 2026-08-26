@@ -61,15 +61,23 @@ def normalize_evidence_capabilities(values: object) -> list[str]:
     return sorted(normalized)
 
 
+def classify_evidence_capabilities(content: str) -> list[str]:
+    """Derive the evidence vocabulary from the source text itself."""
+    return sorted(
+        capability.value
+        for capability in DomainEvidencePolicy(domain_code="").classify_content(content)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DomainEvidencePolicy:
     domain_code: str
     declared_by_knowledge: dict[str, frozenset[EvidenceCapability]] | None = None
 
     def classify(self, chunk: RetrievedChunk) -> frozenset[EvidenceCapability]:
-        declared = (self.declared_by_knowledge or {}).get(chunk.knowledge_id)
-        if declared:
-            return declared
+        # Claim-level validation is intentionally chunk-local. Knowledge-level
+        # declarations are an aggregate used for discovery and reporting; using
+        # them here would let one operational section authorize unrelated chunks.
         return self.classify_content(chunk.content)
 
     def classify_content(self, content: str) -> frozenset[EvidenceCapability]:

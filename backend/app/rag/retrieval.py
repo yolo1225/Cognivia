@@ -25,6 +25,7 @@ from app.agents.domain_evidence_policy import (
     get_domain_evidence_policy,
     normalize_evidence_capabilities,
 )
+from app.agents.runtime_limits import MAX_EVIDENCE_CHUNKS
 from app.models import DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.rag.candidate_manifest import (
     CandidateIndexManifest,
@@ -33,6 +34,14 @@ from app.rag.candidate_manifest import (
 )
 from app.rag.database_manifest_store import DatabaseManifestStore
 from app.rag.embedding_provider import EmbeddingProvider, EmbeddingProviderError
+from app.services.question_bank_service import (
+    is_question_bank_eligible,
+    quiz_revision_question_indexes,
+    select_graded_quiz_candidates,
+)
+from app.services.question_certification_service import (
+    QUESTION_CERTIFICATION_RULE_VERSION,
+)
 
 
 ALGORITHM_VERSION = "v3-candidate-retrieval-1.0"
@@ -41,6 +50,7 @@ ALGORITHM_VERSION = "v3-candidate-retrieval-1.0"
 # capability-aware ranking; truncating to the first three made valid practice
 # evidence disappear for longer knowledge items.
 MAX_EXPLICIT_CHUNKS = 12
+MAX_OUTPUT_CHUNKS = MAX_EVIDENCE_CHUNKS
 MAX_RELATION_CANDIDATES = 24
 MAX_RELATIONS_PER_SEED = 2
 MATCH_PRECEDENCE = {
@@ -231,6 +241,9 @@ class CandidateRetriever:
             candidates=candidates,
             explicit_ids=explicit_ids,
             warnings=warnings,
+            collection=collection,
+            manifest=manifest,
+            query_vector=query_vector,
         )
         return RetrieveKnowledgeOutput.model_validate(output.model_dump())
 
@@ -638,6 +651,9 @@ class CandidateRetriever:
         candidates: dict[str, CandidateRecord],
         explicit_ids: list[str],
         warnings: list[str],
+        collection: Any,
+        manifest: CandidateIndexManifest,
+        query_vector: list[float],
     ) -> RetrieveKnowledgeOutput:
         available = [
             record
@@ -675,6 +691,19 @@ class CandidateRetriever:
 
         def practice_evidence_score(record: CandidateRecord) -> int:
             if not practice_requested:
+                return 0
+            # Capability labels may prioritize explicit targets and their
+            # prerequisite/dependent/related neighborhood. A semantic-only
+            # record must earn selection by relevance, never merely by having
+            # richer operational labels from an unrelated topic.
+            if record.routes.isdisjoint(
+                {
+                    RetrievalMatchType.PRIORITY,
+                    RetrievalMatchType.PREREQUISITE,
+                    RetrievalMatchType.RELATED,
+                    RetrievalMatchType.DEPENDENT,
+                }
+            ):
                 return 0
             try:
                 heading_path = json.loads(_clean_text(record.metadata.get("heading_path")) or "[]")
@@ -770,6 +799,177 @@ class CandidateRetriever:
         append_ranked(allow_same_knowledge=True)
         covered = _ordered_unique(record.knowledge_id for record in selected)
         missing = [value for value in _ordered_unique(missing) if value not in set(covered)]
+        questions: list[tuple[DiagnosticQuestion, str]] = []
+        if ResourceType.GRADED_QUIZ in request.retrieval_plan.resource_types:
+            question_scope = list(explicit_ids)[:6] or covered
+            question_rows = list(
+                self.db.execute(
+                    select(DiagnosticQuestion, KnowledgeItem.public_id)
+                    .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
+                    .where(DiagnosticQuestion.domain_code == request.context.domain_code)
+                    .where(DiagnosticQuestion.status == "active")
+                    .where(DiagnosticQuestion.certification_status == "certified")
+                    .where(
+                        DiagnosticQuestion.certification_rule_version
+                        == QUESTION_CERTIFICATION_RULE_VERSION
+                    )
+                    .order_by(DiagnosticQuestion.id)
+                )
+            )
+            question_order = {
+                knowledge_id: index
+                for index, knowledge_id in enumerate(
+                    _ordered_unique([*explicit_ids, *covered])
+                )
+            }
+            eligible_questions = [
+                row
+                for row in question_rows
+                if is_question_bank_eligible(row[0])
+                and (
+                    row[1] in question_scope
+                    or set(row[0].related_knowledge_ids_json or []).intersection(
+                        question_scope
+                    )
+                )
+            ]
+            eligible_questions.sort(
+                key=lambda row: (
+                    question_order.get(row[1], len(question_order)),
+                    row[0].difficulty,
+                    row[0].id,
+                )
+            )
+            selection_kwargs = {
+                "knowledge_id": lambda row: row[1],
+                "related_knowledge_ids": lambda row: (
+                    row[0].related_knowledge_ids_json or []
+                ),
+                "quiz_level": lambda row: str(
+                    (row[0].answer_key_json or {}).get("quiz_level") or ""
+                ),
+                "question_id": lambda row: row[0].public_id,
+                "require_complete": False,
+            }
+            excluded_question_ids: set[str] = set()
+            questions = select_graded_quiz_candidates(
+                eligible_questions,
+                question_scope,
+                excluded_question_ids=excluded_question_ids,
+                **selection_kwargs,
+            )
+            rejected_indexes = quiz_revision_question_indexes(request.revision_plan)
+            if rejected_indexes:
+                for index in rejected_indexes:
+                    if 0 <= index < len(questions):
+                        excluded_question_ids.add(questions[index][0].public_id)
+                questions = select_graded_quiz_candidates(
+                    eligible_questions,
+                    question_scope,
+                    excluded_question_ids=excluded_question_ids,
+                    **selection_kwargs,
+                )
+        required_question_sources = list(
+            dict.fromkeys(
+                (
+                    str(source_ref_id),
+                    str(source_ref_id).split("::chunk::", 1)[0],
+                    str(
+                        ((question.answer_key_json or {}).get("source_locators") or {}).get(
+                            str(source_ref_id)
+                        )
+                        or ""
+                    ),
+                )
+                for question, _ in questions
+                for source_ref_id in (
+                    (question.answer_key_json or {}).get("source_ref_ids") or []
+                )
+            )
+        )
+        required_source_chunk_ids: set[str] = set()
+        priority_knowledge_ids = set(request.retrieval_plan.priority_knowledge_ids)
+        for source_ref_id, knowledge_id, source_locator in required_question_sources:
+            if not source_ref_id:
+                self._warn(warnings, f"quiz_source_ref_missing:{knowledge_id}")
+                continue
+            already_selected = next(
+                (
+                    record
+                    for record in selected
+                    if record.chunk_id == source_ref_id
+                    and record.knowledge_id == knowledge_id
+                ),
+                None,
+            )
+            if already_selected is not None:
+                required_source_chunk_ids.add(already_selected.chunk_id)
+                continue
+            exact_records = self._explicit_records(
+                collection,
+                manifest,
+                request.context.domain_code,
+                knowledge_id,
+                warnings,
+            )
+            if not exact_records:
+                continue
+            self._score_candidates(exact_records, query_vector, manifest, request, warnings)
+            chosen = next(
+                (record for record in exact_records if record.chunk_id == source_ref_id),
+                None,
+            )
+            if chosen is None:
+                self._warn(warnings, f"quiz_source_ref_missing:{knowledge_id}")
+                continue
+            if (
+                source_locator
+                and _clean_text(chosen.metadata.get("source_locator")) != source_locator
+            ):
+                self._warn(warnings, f"quiz_source_locator_mismatch:{knowledge_id}")
+                continue
+            if chosen.similarity is None or chosen.chunk_id in selected_ids:
+                continue
+            if len(selected) >= MAX_OUTPUT_CHUNKS:
+                knowledge_counts = {
+                    value: sum(
+                        1 for record in selected if record.knowledge_id == value
+                    )
+                    for value in {record.knowledge_id for record in selected}
+                }
+                replacement_index = next(
+                    (
+                        index
+                        for index in range(len(selected) - 1, -1, -1)
+                        if selected[index].chunk_id not in required_source_chunk_ids
+                        and (
+                            selected[index].knowledge_id not in priority_knowledge_ids
+                            or knowledge_counts[selected[index].knowledge_id] > 1
+                        )
+                    ),
+                    None,
+                )
+                if replacement_index is None:
+                    self._warn(warnings, "quiz_source_chunk_budget_exhausted")
+                    continue
+                removed = selected.pop(replacement_index)
+                selected_ids.remove(removed.chunk_id)
+            chosen.routes.add(RetrievalMatchType.PRIORITY)
+            selected.append(chosen)
+            selected_ids.add(chosen.chunk_id)
+            required_source_chunk_ids.add(chosen.chunk_id)
+        covered = _ordered_unique(record.knowledge_id for record in selected)
+        missing = _ordered_unique(
+            [*missing, *(value for value in explicit_order if value not in set(covered))]
+        )
+        questions = [
+            row
+            for row in questions
+            if {
+                str(value)
+                for value in (row[0].answer_key_json or {}).get("source_ref_ids") or []
+            }.issubset(selected_ids)
+        ]
         chunks = [
             RetrievedChunk(
                 chunk_id=record.chunk_id,
@@ -799,20 +999,11 @@ class CandidateRetriever:
             )
             for record in selected
         ]
-        questions = list(
-            self.db.execute(
-                select(DiagnosticQuestion, KnowledgeItem.public_id)
-                .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
-                .where(DiagnosticQuestion.domain_code == request.context.domain_code)
-                .where(KnowledgeItem.public_id.in_(covered))
-                .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.id)
-                .limit(30)
-            )
-        )
         reference_questions = [
             RetrievedQuestion(
                 question_id=question.public_id,
                 knowledge_id=knowledge_id,
+                related_knowledge_ids=list(question.related_knowledge_ids_json or []),
                 question_type=question.question_type,
                 stem=question.stem,
                 options=list(question.options_json or []),
@@ -822,7 +1013,10 @@ class CandidateRetriever:
             )
             for question, knowledge_id in questions
         ]
-        if not reference_questions:
+        if (
+            ResourceType.GRADED_QUIZ in request.retrieval_plan.resource_types
+            and not reference_questions
+        ):
             self._warn(warnings, "no_reference_questions_found")
         return RetrieveKnowledgeOutput(
             task_id=request.task_id,

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +19,12 @@ from app.models import (
     KnowledgeDocument,
     KnowledgeRelation,
 )
-from app.rag.candidate_chunker import chunk_knowledge_item
+from app.rag.candidate_chunker import CHUNKER_VERSION, chunk_knowledge_item
+from app.services.question_certification_service import (
+    QUESTION_CERTIFICATION_RULE_VERSION,
+    knowledge_item_content_hash,
+)
+from app.services.question_source_binding_service import resolve_question_source_binding
 
 
 SEED_DIR = Path("/app/data/seed")
@@ -197,8 +204,17 @@ def seed_diagnostic_questions(
     db: Session, knowledge_items: dict[str, KnowledgeItem]
 ) -> list[DiagnosticQuestion]:
     payloads = load_json("diagnostic_questions.json")
+    public_id_by_db_id = {item.id: item.public_id for item in knowledge_items.values()}
+    related_ids_by_knowledge = {public_id: set() for public_id in knowledge_items}
+    for relation in db.scalars(select(KnowledgeRelation)):
+        source_id = public_id_by_db_id.get(relation.source_item_id)
+        target_id = public_id_by_db_id.get(relation.target_item_id)
+        if source_id and target_id:
+            related_ids_by_knowledge[source_id].add(target_id)
+            related_ids_by_knowledge[target_id].add(source_id)
     questions: list[DiagnosticQuestion] = []
-    for payload in payloads:
+    quiz_levels = ("foundation", "improvement", "challenge")
+    for question_index, payload in enumerate(payloads):
         item = knowledge_items[payload["knowledge_id"]]
         options = payload.get("options", [])
         answer_key = dict(payload.get("answer_key", {}))
@@ -212,7 +228,44 @@ def seed_diagnostic_questions(
             "explanation",
             f"正确答案为“{correct_text}”，对应知识点“{item.name}”的核心要求。",
         )
-        answer_key.setdefault("source_locator", f"knowledge:{item.public_id}#chunk=0")
+        answer_key.setdefault("source_quote", item.content_md[:300])
+        answer_key.update(
+            resolve_question_source_binding(
+                item,
+                source_quote=answer_key["source_quote"],
+            )
+        )
+        source_ref_id = str(answer_key["source_ref_ids"][0])
+        source_hashes = {source_ref_id: knowledge_item_content_hash(item)}
+        aggregate_source_hash = "sha256:" + hashlib.sha256(
+            json.dumps(
+                source_hashes, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        answer_key.update(
+            {
+                "source_ref_ids": [source_ref_id],
+                "source_locators": {
+                    source_ref_id: str(answer_key.pop("source_locator"))
+                },
+                "source_content_hashes": source_hashes,
+                "evidence_quotes": [
+                    {
+                        "source_ref_id": source_ref_id,
+                        "quote": str(answer_key["source_quote"]),
+                    }
+                ],
+                "chunker_version": CHUNKER_VERSION,
+            }
+        )
+        quiz_level = quiz_levels[question_index % len(quiz_levels)]
+        answer_key.setdefault("quiz_level", quiz_level)
+        answer_key.setdefault(
+            "question_bank_purpose", "diagnosis_mastery_and_resource_quiz"
+        )
+        if payload["question_type"] == "short_answer":
+            rubric = [str(value).strip() for value in answer_key.get("rubric") or []]
+            answer_key.setdefault("answer", "；".join(rubric))
         question = upsert_by_field(
             db,
             DiagnosticQuestion,
@@ -222,11 +275,28 @@ def seed_diagnostic_questions(
                 "public_id": payload["question_id"],
                 "domain_code": payload.get("domain_code", item.domain_code),
                 "knowledge_item_id": item.id,
+                "related_knowledge_ids_json": (
+                    sorted(related_ids_by_knowledge[item.public_id])
+                    if quiz_level in {"improvement", "challenge"}
+                    else []
+                ),
                 "question_type": payload["question_type"],
                 "stem": payload["stem"],
                 "options_json": options,
                 "answer_key_json": answer_key,
                 "difficulty": payload.get("difficulty", item.difficulty),
+                "status": "active",
+                "certification_status": "certified",
+                "certification_rule_version": QUESTION_CERTIFICATION_RULE_VERSION,
+                "certification_report_json": {
+                    "rule_version": QUESTION_CERTIFICATION_RULE_VERSION,
+                    "deterministic_passed": True,
+                    "certification_method": "curated_seed_exact_evidence",
+                    "failed_fields": [],
+                    "source_content_hash": aggregate_source_hash,
+                },
+                "source_content_hash": aggregate_source_hash,
+                "certified_at": datetime.now(UTC).replace(tzinfo=None),
             },
         )
         questions.append(question)

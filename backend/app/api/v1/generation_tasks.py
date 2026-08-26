@@ -10,7 +10,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.contracts import CONTRACT_VERSION
 from app.core.db import SessionLocal, get_db
+from app.core.errors import api_error_response
 from app.core.security import Principal, get_current_user, principal_learner, require_admin, require_task
 from app.models import (
     AgentMessageRecord,
@@ -45,6 +47,7 @@ from app.services.profile_service import (
     profile_source,
     public_id,
 )
+from app.services.question_bank_service import question_bank_coverage
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.workers.generation_worker import run_generation_task
 
@@ -54,6 +57,14 @@ TRIGGER_TYPES = {"initial_generation", "resource_feedback"}
 EXECUTION_MODES = {"auto", "assisted"}
 TERMINAL_TASK_STATUSES = {"completed", "failed", "revision_required", "no_change", "rejected"}
 ACTIVE_TASK_STATUSES = {"pending", "retry_pending", "running"}
+FRESH_STATE_RETRY_FAILURES = {
+    # The failed generation node cannot repair missing upstream evidence by
+    # resuming itself. Re-run profile analysis and retrieval under the same
+    # public task/thread ID so newly indexed or newly retrieved sources enter
+    # the graph state before generation is attempted again.
+    "graded_quiz_question_source_missing",
+    "graded_quiz_question_bank_insufficient",
+}
 SENSITIVE_KEYS = {"content", "content_md", "draft_resources", "profile", "answers"}
 
 STEP_LABELS = {
@@ -186,7 +197,9 @@ def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
         "decision": task.decision,
         "failure_reason": task.failure_reason or None,
         "failure_details": {
+            "failure_code": failure_output.get("failure_code"),
             "failed_step": failure_output.get("failed_step"),
+            "resource_types": list(failure_output.get("resource_types") or [])[:10],
             "field_paths": list(failure_output.get("field_paths") or [])[:20],
             "recoverable": bool(failure_output.get("recoverable")),
         }
@@ -303,6 +316,25 @@ def create_generation_task(
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc).upper()) from exc
+    if "graded_quiz" in requested_types:
+        quiz_targets = list(
+            (basis.get("resource_knowledge_targets") or {}).get("graded_quiz") or []
+        )
+        coverage = question_bank_coverage(
+            db,
+            domain_code=domain_code,
+            knowledge_ids=quiz_targets,
+        )
+        if coverage["missing_knowledge_ids"]:
+            return api_error_response(
+                status_code=409,
+                code="GRADED_QUIZ_QUESTION_BANK_NOT_READY",
+                message="当前学习节点的正式题库尚不足以生成分级测验，请先补齐题库。",
+                details={
+                    "missing_knowledge_ids": coverage["missing_knowledge_ids"],
+                    "requirements": coverage["requirements"],
+                },
+            )
     bind_node_generation_targets(task, basis)
     db.add(task)
     db.commit()
@@ -444,7 +476,7 @@ def retry_generation_task(
     db: Session = Depends(get_db),
     principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
-    """Resume a recoverable failed node from its existing LangGraph checkpoint."""
+    """Resume a failed node, or restart upstream retrieval when evidence is stale."""
 
     task = require_task(db, principal, task_id)
     if task is None:
@@ -467,14 +499,29 @@ def retry_generation_task(
     recoverable = bool(
         latest_failure and (latest_failure.output_summary_json or {}).get("recoverable")
     )
+    failure_code = str(
+        ((latest_failure.output_summary_json or {}).get("failure_code") if latest_failure else "")
+        or task.failure_reason
+        or ""
+    )
     if (
         checkpoint is None
         or not (checkpoint.state_json or {}).get("native_checkpoint")
         or not recoverable
     ):
         raise HTTPException(status_code=409, detail="TASK_CHECKPOINT_NOT_RECOVERABLE")
+    stale_contract_checkpoint = bool(
+        latest_failure and latest_failure.contract_version != CONTRACT_VERSION
+    )
+    fresh_state_retry = (
+        failure_code in FRESH_STATE_RETRY_FAILURES or stale_contract_checkpoint
+    )
+    if fresh_state_retry:
+        db.delete(checkpoint)
+        task.progress = 0
     task.status = "retry_pending"
     task.decision = "pending"
+    task.failure_reason = ""
     db.commit()
     background_tasks.add_task(run_generation_task, task.public_id)
     return ok(_task_detail_summary(db, task))

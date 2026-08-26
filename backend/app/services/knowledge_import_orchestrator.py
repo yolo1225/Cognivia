@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from threading import Thread
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import object_session
 
 from app.core.config import settings
@@ -40,11 +40,29 @@ from app.services.knowledge_model_import_service import (
     validate_model_candidates,
 )
 from app.services.knowledge_graph_quality_service import evaluate_graph_quality
-from app.services.knowledge_import_batch_service import batch_progress
+from app.services.knowledge_import_batch_service import (
+    KnowledgeImportBatchCancelled,
+    batch_progress,
+)
 
 
 logger = logging.getLogger(__name__)
-TERMINAL_STATUSES = {"ready", "ready_to_publish", "needs_attention", "failed", "deleted"}
+TERMINAL_STATUSES = {
+    "ready", "ready_to_publish", "needs_attention", "failed", "cancel_requested",
+    "cancelled", "deleted",
+}
+
+
+class ImportCancelled(Exception):
+    """Cooperative cancellation: finish the current provider call, then stop."""
+
+
+def _raise_if_cancel_requested(db, run_id: str) -> None:
+    status = db.scalar(
+        select(KnowledgeImportRun.status).where(KnowledgeImportRun.public_id == run_id)
+    )
+    if status == "cancel_requested":
+        raise ImportCancelled("导入已按请求中断")
 
 
 def _input_version(document: KnowledgeDocument) -> str:
@@ -187,14 +205,21 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
         KnowledgeItem.domain_code == document.domain_code,
         KnowledgeItem.status == "staged",
     )))
-    existing_question_count = int(db.scalar(
-        select(func.count(DiagnosticQuestion.id)).where(
-            DiagnosticQuestion.domain_code == document.domain_code
+    existing_questions = list(db.scalars(
+        select(DiagnosticQuestion).where(
+            DiagnosticQuestion.domain_code == document.domain_code,
+            DiagnosticQuestion.status == "active",
+            DiagnosticQuestion.certification_status == "certified",
         )
-    ) or 0)
-    question_count = existing_question_count + sum(
-        item.candidate_type == "diagnostic_question" for item in candidates
-    )
+    ))
+    existing_question_count = len(existing_questions)
+    certified_question_candidates = [
+        item
+        for item in candidates
+        if item.candidate_type == "diagnostic_question"
+        and (item.payload_json or {}).get("certification_status") == "certified"
+    ]
+    question_count = existing_question_count + len(certified_question_candidates)
     item_tags = {item.public_id: set(item.tags_json or []) for item in published_items}
     candidate_tags, graph_edges = _candidate_graph_data(
         candidates, use_target_public_ids=True
@@ -234,7 +259,7 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
     covered_knowledge_ids = {
         str((item.payload_json or {}).get("knowledge_candidate_id"))
         for item in candidates
-        if item.candidate_type == "diagnostic_question"
+        if item in certified_question_candidates
         and (item.payload_json or {}).get("knowledge_candidate_id") in knowledge_candidate_ids
     }
     imported_knowledge_count = len(knowledge_candidate_ids)
@@ -246,7 +271,13 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
         if item.candidate_type in {"knowledge_item", "knowledge_relation", "diagnostic_question"}
     ]
     source_traceability = (
-        sum(bool((item.source_locator_json or {}).get("chunk_id")) for item in source_items)
+        sum(
+            bool(
+                (item.source_locator_json or {}).get("chunk_id")
+                or (item.source_locator_json or {}).get("chunk_ids")
+            )
+            for item in source_items
+        )
         / len(source_items)
         if source_items else 0.0
     )
@@ -274,6 +305,29 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
             "code": "SOURCE_TRACEABILITY_INCOMPLETE",
             "message": "存在无法定位来源的候选资产",
             "actual": round(source_traceability, 4),
+        })
+    question_types = {
+        str((item.payload_json or {}).get("question_type") or "")
+        for item in certified_question_candidates
+    } | {question.question_type for question in existing_questions}
+    quiz_levels = {
+        str((item.payload_json or {}).get("quiz_level") or "")
+        for item in certified_question_candidates
+    } | {
+        str((question.answer_key_json or {}).get("quiz_level") or "")
+        for question in existing_questions
+    }
+    if not {"single_choice", "short_answer"}.issubset(question_types):
+        checks["blocking_issues"].append({
+            "code": "QUESTION_TYPES_INCOMPLETE",
+            "message": "认证题库必须同时包含选择题和简答题",
+            "actual": sorted(question_types),
+        })
+    if not {"foundation", "improvement", "challenge"}.issubset(quiz_levels):
+        checks["blocking_issues"].append({
+            "code": "QUESTION_LEVELS_INCOMPLETE",
+            "message": "认证题库必须覆盖基础、提升和挑战三个层级",
+            "actual": sorted(quiz_levels),
         })
     checks["passed"] = bool(
         checks["knowledge_items"] >= minimum_items
@@ -498,6 +552,7 @@ def run_import(run_id: str) -> None:
         if document is None:
             return
         try:
+            _raise_if_cancel_requested(db, run_id)
             _step(db, run, document, "parsing")
             sections = parse_document(document)
             if not all(section.get("structured") for section in sections):
@@ -508,9 +563,11 @@ def run_import(run_id: str) -> None:
             db.commit()
 
             _step(db, run, document, "extracting")
+            _raise_if_cancel_requested(db, run_id)
             candidates = replace_candidates(db, document, sections)
             if settings.enable_knowledge_import_models:
                 _step(db, run, document, "graph_generation")
+                _raise_if_cancel_requested(db, run_id)
                 relation_candidates = generate_model_relations(
                     db, document, candidates, run=run
                 )
@@ -528,8 +585,15 @@ def run_import(run_id: str) -> None:
                         candidates.remove(candidate)
 
                 _step(db, run, document, "question_generation")
+                _raise_if_cancel_requested(db, run_id)
                 generated_questions = generate_model_questions(
-                    db, document, candidates, run
+                    db,
+                    document,
+                    candidates,
+                    run,
+                    certification_started=lambda: _step(
+                        db, run, document, "question_certification"
+                    ),
                 )
                 candidates = [
                     item for item in candidates
@@ -543,6 +607,7 @@ def run_import(run_id: str) -> None:
                 repair_rounds = 0
                 repair_quality: list[dict[str, object]] = []
                 while not quality["quality_gate_passed"] and repair_rounds < 2:
+                    _raise_if_cancel_requested(db, run_id)
                     repair_rounds += 1
                     _step(db, run, document, f"graph_repair_{repair_rounds}")
                     focus_ids = {
@@ -578,17 +643,20 @@ def run_import(run_id: str) -> None:
             _event(db, run, "completed", counts={"candidates": len(candidates)})
 
             _step(db, run, document, "validating")
+            _raise_if_cancel_requested(db, run_id)
             validation = validate_import(db, document.id)
             if validation["invalid"]:
                 raise ValueError(f"{validation['invalid']} 个候选未通过校验")
 
             _step(db, run, document, "staging")
+            _raise_if_cancel_requested(db, run_id)
             approve_candidates(db, document)
             staged = publish_approved(db, document)
             run.artifact_manifest_json = {**(run.artifact_manifest_json or {}), "staged": staged}
             db.commit()
 
             _step(db, run, document, "indexing")
+            _raise_if_cancel_requested(db, run_id)
             job = candidate_index_job.try_start(
                 db, document.domain_code, source_document_id=document.id
             )
@@ -644,6 +712,23 @@ def run_import(run_id: str) -> None:
             run.finished_at = datetime.now(UTC)
             db.commit()
             _event(db, run, run.status, counts=readiness)
+        except (ImportCancelled, KnowledgeImportBatchCancelled) as exc:
+            db.rollback()
+            run = db.scalar(select(KnowledgeImportRun).where(KnowledgeImportRun.public_id == run_id))
+            document = db.get(KnowledgeDocument, run.document_id) if run else None
+            if run:
+                run.status = "cancelled"
+                run.current_step = "cancelled"
+                run.error_code = "import_cancelled"
+                run.error_summary = str(exc)
+                run.lease_owner = None
+                run.lease_expires_at = None
+                run.finished_at = datetime.now(UTC)
+                if document:
+                    document.status = "cancelled"
+                    document.error_summary = str(exc)
+                db.commit()
+                _event(db, run, "cancelled", error_summary=run.error_summary)
         except Exception as exc:
             db.rollback()
             run = db.scalar(select(KnowledgeImportRun).where(KnowledgeImportRun.public_id == run_id))
@@ -671,17 +756,27 @@ def recover_interrupted_imports() -> list[str]:
     now = datetime.now(UTC)
     with SessionLocal() as db:
         runs = list(db.scalars(select(KnowledgeImportRun).where(
-            KnowledgeImportRun.status == "running"
+            KnowledgeImportRun.status.in_(("running", "cancel_requested"))
         )))
         recovered = []
+        resumable = []
         for run in runs:
             if run.lease_expires_at is None or run.lease_expires_at <= now:
-                run.status = "interrupted"
+                run.status = (
+                    "cancelled" if run.status == "cancel_requested" else "interrupted"
+                )
                 run.lease_owner = None
                 run.lease_expires_at = None
+                document = db.get(KnowledgeDocument, run.document_id)
+                if document is not None:
+                    document.status = run.status
+                    if run.status == "cancelled":
+                        document.error_summary = "导入已取消"
                 recovered.append(run.public_id)
+                if run.status == "interrupted":
+                    resumable.append(run.public_id)
         db.commit()
-    for run_id in recovered:
+    for run_id in resumable:
         schedule_import(run_id)
     return recovered
 

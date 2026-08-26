@@ -14,6 +14,9 @@ from app.agents.profile_analysis_config import (
 )
 from app.models import DiagnosticQuestion, Domain, KnowledgeItem, KnowledgeRelation
 from app.rag.readiness import candidate_rag_status
+from app.services.question_certification_service import (
+    QUESTION_CERTIFICATION_RULE_VERSION,
+)
 
 
 DIAGNOSTIC_DISTRIBUTION = {
@@ -22,6 +25,24 @@ DIAGNOSTIC_DISTRIBUTION = {
     ("short_answer", False): 2,
     ("short_answer", True): 2,
 }
+SAFE_CONCEPTUAL_DIAGNOSTIC_DISTRIBUTION = {
+    "single_choice": 6,
+    "short_answer": 4,
+}
+
+
+def practice_generation_mode_for_items(items: list[KnowledgeItem]) -> str:
+    """Return the domain-level practice mode without inventing evidence labels."""
+    capabilities = {
+        str(capability)
+        for item in items
+        for capability in (item.evidence_capabilities_json or [])
+    }
+    return (
+        "evidence_backed"
+        if {"operation", "expected_result"}.issubset(capabilities)
+        else "safe_conceptual"
+    )
 
 
 class DomainRuntimeError(ValueError):
@@ -44,6 +65,7 @@ class DomainRuntime:
     knowledge_ids: tuple[str, ...]
     relation_count: int
     diagnostic_question_count: int
+    practice_generation_mode: str
     learning_directions: tuple[LearningDirection, ...]
     profile_config: ProfileAnalysisConfig | None
     profile_ready: bool
@@ -65,6 +87,7 @@ class DomainRuntime:
             "reasons": list(self.reasons),
             "knowledge_item_count": len(self.knowledge_ids),
             "diagnostic_question_count": self.diagnostic_question_count,
+            "practice_generation_mode": self.practice_generation_mode,
             "relation_count": self.relation_count,
             "rag": self.rag,
         }
@@ -213,6 +236,12 @@ def load_domain_runtime(db: Session, domain_code: str) -> DomainRuntime:
             select(func.count())
             .select_from(DiagnosticQuestion)
             .where(DiagnosticQuestion.domain_code == domain_code)
+            .where(DiagnosticQuestion.status == "active")
+            .where(DiagnosticQuestion.certification_status == "certified")
+            .where(
+                DiagnosticQuestion.certification_rule_version
+                == QUESTION_CERTIFICATION_RULE_VERSION
+            )
         )
         or 0
     )
@@ -222,6 +251,10 @@ def load_domain_runtime(db: Session, domain_code: str) -> DomainRuntime:
             .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
             .where(
                 DiagnosticQuestion.domain_code == domain_code,
+                DiagnosticQuestion.status == "active",
+                DiagnosticQuestion.certification_status == "certified",
+                DiagnosticQuestion.certification_rule_version
+                == QUESTION_CERTIFICATION_RULE_VERSION,
                 KnowledgeItem.domain_code == domain_code,
                 KnowledgeItem.status == "published",
             )
@@ -229,16 +262,31 @@ def load_domain_runtime(db: Session, domain_code: str) -> DomainRuntime:
     )
     if len(valid_questions) != total_questions:
         reasons.append("diagnostic_cross_domain_or_unpublished_knowledge")
-    buckets = {key: 0 for key in DIAGNOSTIC_DISTRIBUTION}
-    for question, item in valid_questions:
-        key = (question.question_type, "operation" in (item.evidence_capabilities_json or []))
-        if key in buckets:
-            buckets[key] += 1
-    missing_buckets = [
-        f"{question_type}:{'operation' if operation else 'theory'}"
-        for (question_type, operation), required in DIAGNOSTIC_DISTRIBUTION.items()
-        if buckets[(question_type, operation)] < required
-    ]
+    practice_generation_mode = practice_generation_mode_for_items(items)
+    if practice_generation_mode == "evidence_backed":
+        buckets = {key: 0 for key in DIAGNOSTIC_DISTRIBUTION}
+        for question, item in valid_questions:
+            key = (
+                question.question_type,
+                "operation" in (item.evidence_capabilities_json or []),
+            )
+            if key in buckets:
+                buckets[key] += 1
+        missing_buckets = [
+            f"{question_type}:{'operation' if operation else 'theory'}"
+            for (question_type, operation), required in DIAGNOSTIC_DISTRIBUTION.items()
+            if buckets[(question_type, operation)] < required
+        ]
+    else:
+        type_counts = {question_type: 0 for question_type in SAFE_CONCEPTUAL_DIAGNOSTIC_DISTRIBUTION}
+        for question, _item in valid_questions:
+            if question.question_type in type_counts:
+                type_counts[question.question_type] += 1
+        missing_buckets = [
+            f"{question_type}:overall"
+            for question_type, required in SAFE_CONCEPTUAL_DIAGNOSTIC_DISTRIBUTION.items()
+            if type_counts[question_type] < required
+        ]
     if missing_buckets:
         reasons.append(f"diagnostic_distribution_insufficient:{','.join(missing_buckets)}")
 
@@ -255,6 +303,7 @@ def load_domain_runtime(db: Session, domain_code: str) -> DomainRuntime:
         knowledge_ids=tuple(item.public_id for item in items),
         relation_count=len(relations),
         diagnostic_question_count=total_questions,
+        practice_generation_mode=practice_generation_mode,
         learning_directions=_learning_directions(domain),
         profile_config=profile_config,
         profile_ready=profile_ready,

@@ -7,7 +7,7 @@ retrieval clients live in ``AgentRuntime`` and are captured by node closures.
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from threading import RLock
 
@@ -34,6 +34,7 @@ from app.agents.contracts import (
     GenerationRequirements,
     KnowledgeAssessment,
     ResourceType,
+    RetrievedChunk,
     RetrieveKnowledgeOutput,
     ReviewResourceInput,
 )
@@ -41,6 +42,7 @@ from app.agents.state import AgentGraphState
 from app.agents.generation_agent import ContentGenerationAgent
 from app.agents.claim_policy import RiskLevel
 from app.agents.domain_evidence_policy import register_domain_evidence_capabilities
+from app.agents.runtime_limits import MAX_EVIDENCE_CHUNKS
 from app.agents.orchestrator_agent import (
     DETERMINISTIC_CONVERGENCE_MARKER,
     OrchestratorAgent,
@@ -55,6 +57,7 @@ from app.agents.review_agent import (
     build_review_resource_output,
     extract_atomic_claims,
 )
+from app.services.question_bank_service import selected_graded_quiz_source_ref_ids
 from app.agents.tutoring_agent import TutoringAgent
 
 
@@ -80,9 +83,9 @@ def _structural_profile_config() -> ProfileAnalysisConfig:
         minimum_effective_change=5,
         max_ability_change_per_update=10,
         max_weakness_level_change_per_update=1,
-        default_n_results=8,
-        multi_priority_remedial_n_results=10,
-        maximum_n_results=12,
+        default_n_results=12,
+        multi_priority_remedial_n_results=15,
+        maximum_n_results=MAX_EVIDENCE_CHUNKS,
         ability_weights={},
         knowledge_catalog={},
         mastery_baselines=MASTERY_BASELINES,
@@ -174,7 +177,17 @@ def _partial_generation_input(
 ) -> GenerateResourceInput:
     requirements = _partial_requirements(node_input.requirements, resource_types)
     target_ids = set(requirements.required_knowledge_ids)
-    chunks = [chunk for chunk in node_input.retrieved_chunks if chunk.knowledge_id in target_ids]
+    partial_input = node_input.model_copy(update={"requirements": requirements})
+    quiz_source_ids = (
+        set(selected_graded_quiz_source_ref_ids(partial_input))
+        if ResourceType.GRADED_QUIZ in resource_types
+        else set()
+    )
+    chunks = [
+        chunk
+        for chunk in node_input.retrieved_chunks
+        if chunk.knowledge_id in target_ids or chunk.source.source_ref_id in quiz_source_ids
+    ]
     source_ids = [chunk.source.source_ref_id for chunk in chunks]
     requirements = requirements.model_copy(update={"source_whitelist": source_ids})
     return node_input.model_copy(update={"retrieved_chunks": chunks, "requirements": requirements})
@@ -204,6 +217,86 @@ def _partial_review_input(
         resources=resources,
         requirements=requirements,
         evidence=evidence,
+    )
+
+
+def _merge_revision_retrieval(
+    *,
+    previous: RetrieveKnowledgeOutput,
+    fresh: RetrieveKnowledgeOutput,
+    generated: GenerateResourceOutput | None,
+    active_types: set[ResourceType],
+) -> RetrieveKnowledgeOutput:
+    """Merge revision evidence without invalidating inherited resources.
+
+    A partial revision publishes one package containing both revised and inherited
+    artifacts.  Sources cited by inherited artifacts therefore remain part of the
+    task-scoped evidence set even when the fresh retrieval ranking changes.
+    """
+    resources = generated.resources if generated is not None else []
+    inherited_source_ids = {
+        source.source_ref_id
+        for resource in resources
+        if resource.resource_type not in active_types
+        for source in resource.source_refs
+    }
+    active_source_ids = {
+        source.source_ref_id
+        for resource in resources
+        if resource.resource_type in active_types
+        for source in resource.source_refs
+    }
+    previous_by_source = {
+        chunk.source.source_ref_id: chunk for chunk in previous.chunks
+    }
+
+    # Inherited citations are immutable in this round and must be retained. Fresh
+    # evidence comes next for the resources being revised; their old evidence is a
+    # fallback only. Remaining previous chunks provide stable context when capacity
+    # permits. Every accepted source still originated from a task retrieval round.
+    ordered: list[RetrievedChunk] = []
+    seen: set[str] = set()
+
+    def extend(chunks: Iterable[RetrievedChunk]) -> None:
+        for chunk in chunks:
+            source_id = chunk.source.source_ref_id
+            if source_id in seen or len(ordered) >= MAX_EVIDENCE_CHUNKS:
+                continue
+            ordered.append(chunk)
+            seen.add(source_id)
+
+    missing_inherited = inherited_source_ids - previous_by_source.keys()
+    if missing_inherited:
+        raise ValueError("inherited resource sources are missing from prior retrieval")
+    extend(previous_by_source[source_id] for source_id in inherited_source_ids)
+    extend(fresh.chunks)
+    extend(
+        previous_by_source[source_id]
+        for source_id in active_source_ids
+        if source_id in previous_by_source
+    )
+    extend(previous.chunks)
+
+    if not inherited_source_ids.issubset(seen):
+        raise ValueError("inherited resource sources exceed revision evidence capacity")
+    covered = list(
+        dict.fromkeys(
+            [
+                *fresh.covered_knowledge_ids,
+                *(chunk.knowledge_id for chunk in ordered),
+            ]
+        )
+    )
+    return RetrieveKnowledgeOutput(
+        task_id=fresh.task_id,
+        query_text=fresh.query_text,
+        chunks=ordered,
+        covered_knowledge_ids=covered,
+        missing_knowledge_ids=[
+            item for item in fresh.missing_knowledge_ids if item not in covered
+        ],
+        warnings=list(dict.fromkeys([*fresh.warnings, *previous.warnings])),
+        reference_questions=fresh.reference_questions or previous.reference_questions,
     )
 
 
@@ -341,36 +434,11 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
         if revision_plan is not None and previous is not None:
             generated = state.get("generate_resource")
             active_types = set(revision_plan.resource_types)
-            cited_source_ids = {
-                source.source_ref_id
-                for resource in (generated.resources if generated is not None else [])
-                if resource.resource_type in active_types
-                for source in resource.source_refs
-            }
-            chunks = [
-                chunk for chunk in previous.chunks if chunk.source.source_ref_id in cited_source_ids
-            ]
-            known = {chunk.source.source_ref_id for chunk in chunks}
-            chunks.extend(
-                chunk for chunk in fresh.chunks if chunk.source.source_ref_id not in known
-            )
-            known = {chunk.source.source_ref_id for chunk in chunks}
-            chunks.extend(
-                chunk for chunk in previous.chunks if chunk.source.source_ref_id not in known
-            )
-            chunks = chunks[:12]
-            covered = list(
-                dict.fromkeys([*fresh.covered_knowledge_ids, *previous.covered_knowledge_ids])
-            )
-            fresh = RetrieveKnowledgeOutput(
-                task_id=fresh.task_id,
-                query_text=fresh.query_text,
-                chunks=chunks,
-                covered_knowledge_ids=covered,
-                missing_knowledge_ids=[
-                    item for item in fresh.missing_knowledge_ids if item not in covered
-                ],
-                warnings=list(dict.fromkeys([*fresh.warnings, *previous.warnings])),
+            fresh = _merge_revision_retrieval(
+                previous=previous,
+                fresh=fresh,
+                generated=generated,
+                active_types=active_types,
             )
         return retrieve_knowledge_output_to_patch(fresh)
 

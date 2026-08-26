@@ -40,7 +40,11 @@ from app.models import (
 from app.services.contract_mapping import profile_snapshot
 from app.services.domain_runtime_service import load_domain_runtime
 from app.services.feedback_service import create_feedback_task
-from app.services.learning_path_service import _advance_path_node, normalize_learning_path
+from app.services.learning_path_service import (
+    _advance_path_node,
+    _question_unit_coverage,
+    normalize_learning_path,
+)
 from app.services.profile_revision_service import persist_profile_revision
 from app.services.profile_semantics_service import apply_confirmed_knowledge_semantics
 from app.services.node_generation_target_service import (
@@ -48,6 +52,9 @@ from app.services.node_generation_target_service import (
     resolve_node_generation_basis,
 )
 from app.services.profile_service import public_id
+from app.services.question_certification_service import (
+    QUESTION_CERTIFICATION_RULE_VERSION,
+)
 
 
 OPEN_PROPOSAL_STATUSES = {"collecting", "pending_validation"}
@@ -193,13 +200,14 @@ def _assessment_for_proposal(
     path: LearningPath,
     node: dict[str, Any],
 ) -> dict[str, Any]:
-    knowledge = db.scalar(
+    knowledge_ids = [str(value) for value in node.get("knowledge_ids") or []]
+    knowledge_rows = list(db.scalars(
         select(KnowledgeItem).where(
-            KnowledgeItem.public_id == node.get("knowledge_id"),
+            KnowledgeItem.public_id.in_(knowledge_ids),
             KnowledgeItem.domain_code == path.domain_code,
         )
-    )
-    if knowledge is None:
+    ))
+    if not knowledge_rows:
         raise ValueError("learning_adjustment_assessment_unavailable")
     attempted = set(
         db.scalars(
@@ -212,17 +220,54 @@ def _assessment_for_proposal(
     questions = list(
         db.scalars(
             select(DiagnosticQuestion)
+            .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
             .where(
-                DiagnosticQuestion.knowledge_item_id == knowledge.id,
                 DiagnosticQuestion.domain_code == path.domain_code,
+                KnowledgeItem.domain_code == path.domain_code,
                 DiagnosticQuestion.question_type == "single_choice",
+                DiagnosticQuestion.status == "active",
+                DiagnosticQuestion.certification_status == "certified",
+                DiagnosticQuestion.certification_rule_version
+                == QUESTION_CERTIFICATION_RULE_VERSION,
             )
             .order_by(DiagnosticQuestion.difficulty.desc(), DiagnosticQuestion.id)
         )
     )
     if not questions:
         raise ValueError("learning_adjustment_assessment_unavailable")
-    question = next((item for item in questions if item.id not in attempted), questions[0])
+    unit_ids = set(knowledge_ids)
+    public_id_by_item_id = {item.id: item.public_id for item in knowledge_rows}
+    eligible = [
+        item
+        for item in questions
+        if _question_unit_coverage(
+            item,
+            primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
+            unit_knowledge_ids=unit_ids,
+        )
+    ]
+    if not eligible:
+        raise ValueError("learning_adjustment_assessment_unavailable")
+    focus_ids = set(node.get("focus_knowledge_ids") or []) & unit_ids
+    eligible.sort(
+        key=lambda item: (
+            item.id in attempted,
+            not bool(
+                _question_unit_coverage(
+                    item,
+                    primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
+                    unit_knowledge_ids=unit_ids,
+                )
+                & focus_ids
+            ),
+            -item.difficulty,
+            item.id,
+        )
+    )
+    question = eligible[0]
+    knowledge = next(
+        (item for item in knowledge_rows if item.id == question.knowledge_item_id), None
+    )
     assessment = PathNodeAssessment(
         public_id=public_id("pathval"),
         learning_path_id=path.id,
@@ -537,11 +582,16 @@ def _path_snapshots(
     nodes = [
         LearningPathNodeSnapshot(
             path_node_id=str(node["path_node_id"]),
-            knowledge_id=str(node["knowledge_id"]),
-            title=str(node.get("title") or node["knowledge_id"]),
+            knowledge_ids=list(node.get("knowledge_ids") or []),
+            focus_knowledge_ids=list(node.get("focus_knowledge_ids") or []),
+            title=str(node.get("title") or "学习单元"),
             path_order=int(node.get("path_order") or 1),
             target_difficulty=difficulty,
-            learning_objective=f"掌握 {node.get('title') or node['knowledge_id']}",
+            learning_objective=str(node.get("learning_objective") or "掌握本单元知识"),
+            recommendation_reason=str(
+                node.get("recommendation_reason") or "根据画像与知识关系规划。"
+            ),
+            prerequisite_knowledge_ids=list(node.get("prerequisite_knowledge_ids") or []),
         )
         for node in (payload.get("node_states") or {}).values()
         if isinstance(node, dict)
@@ -565,30 +615,43 @@ def _analyze_profile(
     feedback: Feedback,
     record: AnswerRecord,
     question: DiagnosticQuestion,
+    evidence_records: list[AnswerRecord] | None = None,
 ) -> tuple[LearnerProfile, LearningPath | None, Any, dict[str, Any]]:
     evidence_id = f"answer_record:{record.id}"
     knowledge = db.get(KnowledgeItem, question.knowledge_item_id)
     learner = db.get(Learner, proposal.learner_id)
     if knowledge is None or learner is None:
         raise ValueError("learning_adjustment_knowledge_missing")
-    evidence = EvidenceRef(
-        evidence_id=evidence_id,
-        evidence_type=EvidenceType.SCORED_QUIZ,
-        summary="导学微验证已由服务端评分",
-        knowledge_id=knowledge.public_id,
-        source_ref_id=question.public_id,
-        confidence=0.9,
-        confirmed=True,
-    )
-    assessment = KnowledgeAssessment(
-        assessment_id=proposal.public_id,
-        evidence_id=evidence_id,
-        knowledge_id=knowledge.public_id,
-        score=float(record.score),
-        difficulty=question.difficulty,
-        attempted=True,
-        confidence=0.9,
-    )
+    formal_records = evidence_records or [record]
+    evidences: list[EvidenceRef] = []
+    assessments: list[KnowledgeAssessment] = []
+    for index, formal_record in enumerate(formal_records):
+        formal_question = db.get(DiagnosticQuestion, formal_record.question_id)
+        if formal_question is None:
+            raise ValueError("learning_adjustment_question_missing")
+        formal_evidence_id = f"answer_record:{formal_record.id}"
+        evidences.append(
+            EvidenceRef(
+                evidence_id=formal_evidence_id,
+                evidence_type=EvidenceType.SCORED_QUIZ,
+                summary="正式验证已由服务端评分",
+                knowledge_id=knowledge.public_id,
+                source_ref_id=formal_question.public_id,
+                confidence=float(formal_record.confidence or 0.0),
+                confirmed=True,
+            )
+        )
+        assessments.append(
+            KnowledgeAssessment(
+                assessment_id=f"{proposal.public_id}:{index + 1}",
+                evidence_id=formal_evidence_id,
+                knowledge_id=knowledge.public_id,
+                score=float(formal_record.score),
+                difficulty=formal_question.difficulty,
+                attempted=True,
+                confidence=float(formal_record.confidence or 0.0),
+            )
+        )
     path_snapshot, current_node = _path_snapshots(path, profile)
     context = TaskContext(
         task_id=proposal.public_id,
@@ -641,13 +704,13 @@ def _analyze_profile(
                 current_profile=profile_snapshot(profile),
                 learning_path=path_snapshot,
                 current_path_node=current_node,
-                feedback_evidence=[evidence],
+                feedback_evidence=evidences,
                 recommended_action=(
                     RecommendedAction.CHALLENGE
                     if proposal.hypothesis_type == "mastery_up"
                     else RecommendedAction.EXPLAIN
                 ),
-                knowledge_assessments=[assessment],
+                knowledge_assessments=assessments,
             )
         )
     calls = collector.snapshot()

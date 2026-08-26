@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.agents.domain_evidence_policy import classify_evidence_capabilities
 from app.models import KnowledgeDocument, KnowledgeImportCandidate, KnowledgeItem
 
 
@@ -80,8 +81,8 @@ def replace_candidates(
         action = "create" if existing is None else (
             "skip" if before_checksum == section["checksum"] else "update"
         )
-        lower = section["text"].lower()
-        practical = any(token in lower for token in ("代码", "步骤", "命令", "配置", "调试", "error"))
+        evidence_capabilities = classify_evidence_capabilities(section["text"])
+        practical = "operation" in evidence_capabilities
         weights = (
             {"theory": 0.15, "practice": 0.45, "problem_solving": 0.25, "knowledge_breadth": 0.15, "learning_speed": 0.0}
             if practical else DEFAULT_WEIGHTS
@@ -108,7 +109,7 @@ def replace_candidates(
                 "difficulty": int(metadata.get("difficulty") or 2),
                 "tags": metadata.get("tags") or ["document-import"],
                 "ability_weights": weights,
-                "evidence_capabilities": ["operation" if practical else "definition"],
+                "evidence_capabilities": evidence_capabilities,
                 "source_quote": section["text"][:300],
                 "source_title": metadata.get("source_title") or document.source_title,
                 "source_url": metadata.get("source_url"),

@@ -19,8 +19,9 @@ from app.models import (
     KnowledgeItemSource,
     KnowledgeRelation,
 )
-from app.agents.domain_evidence_policy import normalize_evidence_capabilities
+from app.agents.domain_evidence_policy import classify_evidence_capabilities
 from app.rag.candidate_index import CandidateIndexBuilder
+from app.rag.candidate_index import knowledge_item_source_content_hash
 from app.rag.candidate_manifest import (
     CandidateIndexManifest,
     CandidateManifestStore,
@@ -29,6 +30,16 @@ from app.rag.database_manifest_store import DatabaseManifestStore
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.rag.vector_store import VectorStore
 from app.services.domain_api_service import default_ability_weights
+from app.services.question_source_binding_service import (
+    bind_domain_question_sources,
+    candidate_chunks_for_item,
+    candidate_source_locator,
+)
+from app.services.question_certification_service import (
+    QUESTION_CERTIFICATION_RULE_VERSION,
+    mark_question_certifications_stale,
+    normalize_evidence_text,
+)
 
 
 class KnowledgeImportPublishError(ValueError):
@@ -106,8 +117,8 @@ def activate_import_candidate(
             target.category = str(payload.get("category") or "未分类")[:64]
             target.difficulty = int(payload["difficulty"])
             target.tags_json = payload.get("tags") or []
-            target.evidence_capabilities_json = normalize_evidence_capabilities(
-                payload.get("evidence_capabilities")
+            target.evidence_capabilities_json = classify_evidence_capabilities(
+                str(payload.get("content") or "")
             )
             target.content_md = payload["content"]
             target.source_title = str(payload.get("source_title") or document.source_title)[:255]
@@ -122,6 +133,11 @@ def activate_import_candidate(
         item for item in candidates if item.candidate_type == "diagnostic_question"
     ]
     mapped_item_ids = {item.id for item in knowledge_map.values()}
+    mark_question_certifications_stale(
+        db,
+        domain_code=document.domain_code,
+        knowledge_ids={item.public_id for item in knowledge_map.values()},
+    )
     if relation_candidates and mapped_item_ids:
         db.execute(
             delete(KnowledgeRelation).where(
@@ -142,8 +158,10 @@ def activate_import_candidate(
             item = item_by_id[question.knowledge_item_id]
             is_same_import = answer_key.get("import_document_id") == document.public_id
             is_legacy_import = answer_key.get("source_ref_ids") == [item.public_id]
-            if is_same_import or is_legacy_import:
-                db.delete(question)
+            if (is_same_import or is_legacy_import) and question.status == "active":
+                question.status = "disabled"
+                question.disabled_at = datetime.now(UTC).replace(tzinfo=None)
+                question.disabled_reason = "superseded_by_import"
         db.flush()
     for candidate in candidates:
         payload = candidate.payload_json or {}
@@ -170,14 +188,96 @@ def activate_import_candidate(
             item = knowledge_map.get(payload.get("knowledge_candidate_id"))
             if item is None:
                 continue
+            if (
+                payload.get("certification_status") != "certified"
+                or payload.get("certification_rule_version")
+                != QUESTION_CERTIFICATION_RULE_VERSION
+            ):
+                raise KnowledgeImportPublishError(
+                    f"题目尚未通过正式认证：{candidate.public_id}"
+                )
             question_type = payload.get("question_type", "short_answer")
             options = payload.get("options") or []
             answer = payload["answer"]
+            source_chunks = [dict(value) for value in payload.get("source_chunks") or []]
+            related_candidate_ids = [
+                str(value)
+                for value in payload.get("related_knowledge_candidate_ids") or []
+            ]
+            source_items = [
+                item,
+                *[
+                    knowledge_map[value]
+                    for value in related_candidate_ids
+                    if value in knowledge_map
+                ],
+            ]
+            source_item_by_public_id = {value.public_id: value for value in source_items}
+            exact_sources: dict[str, dict[str, object]] = {}
+            for source in source_chunks:
+                source_item = source_item_by_public_id.get(
+                    str(source.get("knowledge_id") or "")
+                )
+                if source_item is None:
+                    raise KnowledgeImportPublishError(
+                        f"题目引用了未声明的关联知识点：{candidate.public_id}"
+                    )
+                chunks = {
+                    value.chunk_id: value for value in candidate_chunks_for_item(source_item)
+                }
+                source_ref_id = str(source.get("chunk_id") or "")
+                chunk = chunks.get(source_ref_id)
+                if (
+                    chunk is None
+                    or source.get("source_locator")
+                    != candidate_source_locator(source_item, chunk)
+                    or source.get("source_content_hash")
+                    != knowledge_item_source_content_hash(source_item)
+                ):
+                    raise KnowledgeImportPublishError(
+                        f"题目精确来源已变化：{candidate.public_id}"
+                    )
+                exact_sources[source_ref_id] = {
+                    "source_ref_id": source_ref_id,
+                    "source_locator": source.get("source_locator"),
+                    "knowledge_id": source_item.public_id,
+                    "source_content_hash": source.get("source_content_hash"),
+                    "content": chunk.content,
+                }
+            evidence_quotes = [
+                dict(value)
+                for value in payload.get("evidence_quotes") or []
+                if isinstance(value, dict)
+            ]
+            for evidence in evidence_quotes:
+                source = exact_sources.get(str(evidence.get("source_ref_id") or ""))
+                if (
+                    source is None
+                    or normalize_evidence_text(evidence.get("quote"))
+                    not in normalize_evidence_text(source.get("content"))
+                ):
+                    raise KnowledgeImportPublishError(
+                        f"题目精确引文无法定位：{candidate.public_id}"
+                    )
+            source_ref_ids = list(exact_sources)
             answer_key = {
                 ("correct_option" if question_type == "single_choice" else "answer"): answer,
                 "explanation": payload.get("explanation", ""),
-                "source_locator": f"knowledge:{item.public_id}#chunk=0",
-                "source_ref_ids": [item.public_id],
+                "question_slot": payload.get("question_slot"),
+                "quiz_level": payload.get("quiz_level"),
+                "question_bank_purpose": "diagnosis_mastery_and_resource_quiz",
+                "source_ref_ids": source_ref_ids,
+                "source_locators": {
+                    source_ref_id: exact_sources[source_ref_id]["source_locator"]
+                    for source_ref_id in source_ref_ids
+                },
+                "source_content_hashes": {
+                    source_ref_id: exact_sources[source_ref_id]["source_content_hash"]
+                    for source_ref_id in source_ref_ids
+                },
+                "evidence_quotes": evidence_quotes,
+                "chunker_version": payload.get("chunker_version"),
+                "source_quote": payload.get("source_quote", ""),
                 "import_document_id": document.public_id,
                 "import_candidate_id": candidate.public_id,
             }
@@ -185,9 +285,25 @@ def activate_import_candidate(
                 answer_key["rubric"] = payload.get("rubric") or []
             db.add(DiagnosticQuestion(
                 public_id=f"dq_{uuid4().hex[:12]}", domain_code=document.domain_code,
-                knowledge_item_id=item.id, question_type=question_type, stem=payload["stem"],
+                knowledge_item_id=item.id,
+                related_knowledge_ids_json=[
+                    knowledge_map[candidate_id].public_id
+                    for candidate_id in payload.get("related_knowledge_candidate_ids") or []
+                    if candidate_id in knowledge_map and candidate_id != payload.get("knowledge_candidate_id")
+                ],
+                question_type=question_type, stem=payload["stem"],
                 options_json=options, answer_key_json=answer_key,
                 difficulty=int(payload.get("difficulty", 2)),
+                status="active",
+                certification_status="certified",
+                certification_rule_version=QUESTION_CERTIFICATION_RULE_VERSION,
+                certification_report_json=payload.get("certification_report") or {},
+                source_content_hash=str(payload.get("source_content_hash") or ""),
+                certified_at=(
+                    datetime.fromisoformat(str(payload["certified_at"]))
+                    if payload.get("certified_at")
+                    else datetime.now(UTC).replace(tzinfo=None)
+                ),
             ))
     for item in items:
         item.status = "published"
@@ -357,8 +473,8 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
             category=str(payload.get("category") or "未分类")[:64],
             difficulty=int(payload["difficulty"]),
             tags_json=payload.get("tags") or [],
-            evidence_capabilities_json=normalize_evidence_capabilities(
-                payload.get("evidence_capabilities")
+            evidence_capabilities_json=classify_evidence_capabilities(
+                str(payload.get("content") or "")
             ),
             content_md=payload["content"],
             source_title=str(payload.get("source_title") or document.source_title)[:255],
@@ -404,31 +520,17 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
 
 
 def ensure_import_source_locators(db: Session, document: KnowledgeDocument) -> int:
-    """Backfill traceability for imports materialized before the M1 locator fix."""
+    """Bind imported questions to their deterministic final Candidate chunks."""
     items = list(
         db.scalars(select(KnowledgeItem).where(KnowledgeItem.source_document_id == document.id))
     )
-    by_id = {item.id: item for item in items}
-    if not by_id:
+    if not items:
         return 0
-    changed = 0
-    questions = list(
-        db.scalars(
-            select(DiagnosticQuestion).where(DiagnosticQuestion.knowledge_item_id.in_(by_id))
-        )
+    return bind_domain_question_sources(
+        db,
+        domain_code=document.domain_code,
+        items=items,
     )
-    for question in questions:
-        item = by_id[question.knowledge_item_id]
-        answer = dict(question.answer_key_json or {})
-        expected = f"knowledge:{item.public_id}#chunk=0"
-        if answer.get("source_locator") != expected:
-            answer["source_locator"] = expected
-            answer["source_ref_ids"] = [item.public_id]
-            question.answer_key_json = answer
-            changed += 1
-    if changed:
-        db.flush()
-    return changed
 
 
 def _smoke_context(

@@ -14,12 +14,20 @@ from app.models import (
 from app.services.learning_path_service import (
     answer_path_node_assessment,
     complete_path_node,
-    node_id_for,
+    node_id_for as atomic_node_id_for,
+    unit_node_id_for,
     normalize_path_payload,
     normalize_path_for_domain,
     start_path_node_assessment,
     verify_path_node,
 )
+
+
+def _unit_id(knowledge_id: str) -> str:
+    return unit_node_id_for([knowledge_id])
+
+
+node_id_for = _unit_id
 
 
 def _db() -> Session:
@@ -36,31 +44,31 @@ def test_old_path_is_upgraded_and_refresh_inherits_completion() -> None:
     old = normalize_path_payload(
         {"stages": [{"name": "基础", "knowledge_ids": ["k1", "k2"]}]}
     )
-    assert old["current_node_id"] == node_id_for("k1")
-    old["node_states"][node_id_for("k1")]["status"] = "completed"
-    old["node_states"][node_id_for("k1")]["completion_evidence_ids"] = ["answer_record:1"]
+    assert old["current_node_id"] == atomic_node_id_for("k1")
+    old["node_states"][atomic_node_id_for("k1")]["status"] = "completed"
+    old["node_states"][atomic_node_id_for("k1")]["completion_evidence_ids"] = ["answer_record:1"]
     refreshed = normalize_path_payload(
         {"stages": [{"name": "新路径", "knowledge_ids": ["k1", "k3"]}]},
         previous_payload=old,
     )
-    assert refreshed["node_states"][node_id_for("k1")]["status"] == "completed"
-    assert refreshed["node_states"][node_id_for("k3")]["status"] == "current"
-    assert node_id_for("k2") in refreshed["retired_node_states"]
+    assert refreshed["node_states"][atomic_node_id_for("k1")]["status"] == "completed"
+    assert refreshed["node_states"][atomic_node_id_for("k3")]["status"] == "current"
+    assert atomic_node_id_for("k2") in refreshed["retired_node_states"]
 
 
 def test_profile_revision_keeps_completed_prefix_and_current_order() -> None:
     previous = normalize_path_payload(
         {"stages": [{"name": "old", "knowledge_ids": ["k1", "k2", "k3"]}]}
     )
-    previous["node_states"][node_id_for("k1")].update(
+    previous["node_states"][atomic_node_id_for("k1")].update(
         {
             "status": "completed",
             "completed_at": "2026-08-23T00:00:00+00:00",
             "completion_evidence_ids": ["answer_record:1"],
         }
     )
-    previous["node_states"][node_id_for("k2")]["status"] = "current"
-    previous["node_states"][node_id_for("k3")]["status"] = "locked"
+    previous["node_states"][atomic_node_id_for("k2")]["status"] = "current"
+    previous["node_states"][atomic_node_id_for("k3")]["status"] = "locked"
 
     revised = normalize_path_payload(
         {"stages": [{"name": "new", "knowledge_ids": ["k3", "k2"]}]},
@@ -80,10 +88,10 @@ def test_removed_completed_knowledge_remains_visible_in_mainline() -> None:
     previous = normalize_path_payload(
         {"stages": [{"name": "old", "knowledge_ids": ["mastered", "next"]}]}
     )
-    previous["node_states"][node_id_for("mastered")].update(
+    previous["node_states"][atomic_node_id_for("mastered")].update(
         {"status": "completed", "completion_evidence_ids": ["answer_record:2"]}
     )
-    previous["node_states"][node_id_for("next")]["status"] = "current"
+    previous["node_states"][atomic_node_id_for("next")]["status"] = "current"
 
     revised = normalize_path_payload(
         {"stages": [{"name": "new", "knowledge_ids": ["next"]}]},
@@ -92,8 +100,8 @@ def test_removed_completed_knowledge_remains_visible_in_mainline() -> None:
     )
 
     assert revised["stages"][0]["knowledge_ids"] == ["mastered", "next"]
-    assert node_id_for("mastered") not in revised["retired_node_states"]
-    assert revised["current_node_id"] == node_id_for("next")
+    assert atomic_node_id_for("mastered") not in revised["retired_node_states"]
+    assert revised["current_node_id"] == atomic_node_id_for("next")
 
 
 def test_new_current_prerequisite_is_inserted_and_becomes_current() -> None:
@@ -160,8 +168,8 @@ def test_future_nodes_preserve_relative_order_and_retire_removed_nodes() -> None
             ]
         }
     )
-    previous["node_states"][node_id_for("done")]["status"] = "completed"
-    previous["node_states"][node_id_for("current")]["status"] = "current"
+    previous["node_states"][atomic_node_id_for("done")]["status"] = "completed"
+    previous["node_states"][atomic_node_id_for("current")]["status"] = "current"
 
     revised = normalize_path_payload(
         {"stages": [{"name": "new", "knowledge_ids": ["new", "keep", "current"]}]},
@@ -180,7 +188,7 @@ def test_future_nodes_preserve_relative_order_and_retire_removed_nodes() -> None
         "keep",
         "new",
     ]
-    assert node_id_for("remove") in revised["retired_node_states"]
+    assert atomic_node_id_for("remove") in revised["retired_node_states"]
 
 
 def test_verified_server_evidence_completes_and_unlocks_next_node() -> None:
@@ -209,6 +217,10 @@ def test_verified_server_evidence_completes_and_unlocks_next_node() -> None:
         options_json=[],
         answer_key_json={},
         difficulty=2,
+        status="active",
+        certification_status="certified",
+        certification_rule_version="question-cert-v1",
+        source_content_hash="sha256:" + "1" * 64,
     )
     db.add(question)
     db.flush()
@@ -229,19 +241,29 @@ def test_verified_server_evidence_completes_and_unlocks_next_node() -> None:
     )
     db.add_all([record, path])
     db.commit()
+    path.path_json = normalize_path_for_domain(
+        db, domain_code="ai_app_dev", payload=path.path_json
+    )
+    path.path_json["node_states"][_unit_id("k1")]["completion_condition"][
+        "question_count_min"
+    ] = 1
+    path.path_json["node_states"][_unit_id("k1")]["completion_condition"][
+        "threshold"
+    ] = 0.5
+    db.commit()
     evidence_id = f"answer_record:{record.id}"
 
     verified = verify_path_node(
         db,
         path_id=path.public_id,
-        node_id=node_id_for("k1"),
+        node_id=_unit_id("k1"),
         learner_public_id=learner.public_id,
     )
     assert verified["verified"] is True
     completed = complete_path_node(
         db,
         path_id=path.public_id,
-        node_id=node_id_for("k1"),
+        node_id=_unit_id("k1"),
         learner_public_id=learner.public_id,
         evidence_ids=[evidence_id],
     )
@@ -249,7 +271,7 @@ def test_verified_server_evidence_completes_and_unlocks_next_node() -> None:
     repeated = complete_path_node(
         db,
         path_id=path.public_id,
-        node_id=node_id_for("k1"),
+        node_id=_unit_id("k1"),
         learner_public_id=learner.public_id,
         evidence_ids=[evidence_id],
     )
@@ -298,6 +320,10 @@ def test_prerequisites_keep_nodes_locked_and_choose_first_successor() -> None:
         options_json=["A"],
         answer_key_json={"correct_option": 0},
         difficulty=2,
+        status="active",
+        certification_status="certified",
+        certification_rule_version="question-cert-v1",
+        source_content_hash="sha256:" + "2" * 64,
     )
     db.add(question)
     db.flush()
@@ -318,6 +344,13 @@ def test_prerequisites_keep_nodes_locked_and_choose_first_successor() -> None:
     )
     db.add_all([record, path])
     db.commit()
+    path.path_json = normalize_path_for_domain(
+        db, domain_code="ai_app_dev", payload=path.path_json
+    )
+    path.path_json["node_states"][_unit_id("k1")]["completion_condition"][
+        "question_count_min"
+    ] = 1
+    db.commit()
 
     initial = normalize_path_for_domain(
         db,
@@ -331,7 +364,7 @@ def test_prerequisites_keep_nodes_locked_and_choose_first_successor() -> None:
     completed = complete_path_node(
         db,
         path_id=path.public_id,
-        node_id=node_id_for("k1"),
+        node_id=_unit_id("k1"),
         learner_public_id=learner.public_id,
         evidence_ids=[f"answer_record:{record.id}"],
     )["path"]
@@ -407,17 +440,21 @@ def test_node_assessment_scores_idempotently_and_advances_only_on_pass() -> None
     ]
     db.add_all([learner, first, second])
     db.flush()
-    db.add(
-        DiagnosticQuestion(
-            public_id="q_assessment",
+    db.add_all(
+        [DiagnosticQuestion(
+            public_id=f"q_assessment_{index}",
             domain_code="ai_app_dev",
             knowledge_item_id=first.id,
             question_type="single_choice",
-            stem="验证题",
+            stem=f"验证题 {index}",
             options_json=["错误", "正确"],
             answer_key_json={"correct_option": 1},
             difficulty=2,
-        )
+            status="active",
+            certification_status="certified",
+            certification_rule_version="question-cert-v1",
+            source_content_hash="sha256:" + "3" * 64,
+        ) for index in range(2)]
     )
     path = LearningPath(
         public_id="path_assessment",
@@ -427,17 +464,27 @@ def test_node_assessment_scores_idempotently_and_advances_only_on_pass() -> None
     )
     db.add(path)
     db.commit()
+    path.path_json = normalize_path_for_domain(
+        db, domain_code="ai_app_dev", payload=path.path_json
+    )
+    path.path_json["node_states"][_unit_id("k1")]["completion_condition"][
+        "question_count_min"
+    ] = 1
+    path.path_json["node_states"][_unit_id("k1")]["completion_condition"][
+        "threshold"
+    ] = 0.5
+    db.commit()
 
     first_assessment = start_path_node_assessment(
         db,
         path_id=path.public_id,
-        node_id=node_id_for("k1"),
+        node_id=_unit_id("k1"),
         learner_public_id=learner.public_id,
     )
     failed, remedial_task = answer_path_node_assessment(
         db,
         path_id=path.public_id,
-        node_id=node_id_for("k1"),
+        node_id=_unit_id("k1"),
         assessment_id=first_assessment["assessment_id"],
         learner_public_id=learner.public_id,
         answer=0,
@@ -449,13 +496,13 @@ def test_node_assessment_scores_idempotently_and_advances_only_on_pass() -> None
     second_assessment = start_path_node_assessment(
         db,
         path_id=path.public_id,
-        node_id=node_id_for("k1"),
+        node_id=_unit_id("k1"),
         learner_public_id=learner.public_id,
     )
     passed, remedial_task = answer_path_node_assessment(
         db,
         path_id=path.public_id,
-        node_id=node_id_for("k1"),
+        node_id=_unit_id("k1"),
         assessment_id=second_assessment["assessment_id"],
         learner_public_id=learner.public_id,
         answer=1,
@@ -463,7 +510,7 @@ def test_node_assessment_scores_idempotently_and_advances_only_on_pass() -> None
     repeated, repeated_task = answer_path_node_assessment(
         db,
         path_id=path.public_id,
-        node_id=node_id_for("k1"),
+        node_id=_unit_id("k1"),
         assessment_id=second_assessment["assessment_id"],
         learner_public_id=learner.public_id,
         answer=0,

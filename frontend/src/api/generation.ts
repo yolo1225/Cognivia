@@ -6,7 +6,8 @@ export interface GenerationBasis {
   path_node_id: string
   path_node_title?: string | null
   path_node_order?: number | null
-  core_knowledge: { knowledge_id: string; name: string } | null
+  core_knowledge: Array<{ knowledge_id: string; name: string }>
+  focus_knowledge_ids?: string[]
   prerequisite_knowledge: Array<{ knowledge_id: string; name: string }>
   profile_id: string
   profile_version: number
@@ -75,6 +76,13 @@ export interface GenerationTaskDetail {
   decision: string
   package_quality?: ResourceQualityMetrics | null
   failure_reason?: string | null
+  failure_details?: {
+    failure_code?: string | null
+    failed_step?: string | null
+    resource_types?: string[]
+    field_paths?: string[]
+    recoverable: boolean
+  } | null
   package_coverage?: {
     required_knowledge_ids?: string[]
     covered_knowledge_ids?: string[]

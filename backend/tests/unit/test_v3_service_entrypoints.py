@@ -21,6 +21,14 @@ from app.models import (
 from app.services.diagnostic_service import create_diagnostic_session, submit_diagnostic_session
 
 
+@pytest.fixture(autouse=True)
+def ready_candidate_rag(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.domain_runtime_service.candidate_rag_status",
+        lambda domain_code: {"ready": True, "domain_code": domain_code},
+    )
+
+
 def build_test_session() -> sessionmaker[Session]:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -29,6 +37,16 @@ def build_test_session() -> sessionmaker[Session]:
     )
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+
+def certified_question(**values) -> DiagnosticQuestion:
+    return DiagnosticQuestion(
+        status="active",
+        certification_status="certified",
+        certification_rule_version="question-cert-v1",
+        source_content_hash="sha256:" + "a" * 64,
+        **values,
+    )
 
 
 def seed_diagnostic_fixture(
@@ -96,7 +114,7 @@ def seed_diagnostic_fixture(
             relation_type="prerequisite",
         )
     )
-    choice = DiagnosticQuestion(
+    choice = certified_question(
         public_id="q_choice",
         domain_code="ai_app_dev",
         knowledge_item_id=rag.id,
@@ -106,7 +124,7 @@ def seed_diagnostic_fixture(
         answer_key_json={"correct_option": 1},
         difficulty=3,
     )
-    short = DiagnosticQuestion(
+    short = certified_question(
         public_id="q_short",
         domain_code="ai_app_dev",
         knowledge_item_id=embedding.id,
@@ -120,7 +138,7 @@ def seed_diagnostic_fixture(
     db.flush()
     for index in range(3):
         db.add(
-            DiagnosticQuestion(
+            certified_question(
                 public_id=f"q_seed_concept_choice_{index}",
                 domain_code="ai_app_dev",
                 knowledge_item_id=embedding.id,
@@ -133,7 +151,7 @@ def seed_diagnostic_fixture(
         )
     for index in range(2):
         db.add(
-            DiagnosticQuestion(
+            certified_question(
                 public_id=f"q_seed_practice_choice_{index}",
                 domain_code="ai_app_dev",
                 knowledge_item_id=rag.id,
@@ -145,7 +163,7 @@ def seed_diagnostic_fixture(
             )
         )
     db.add(
-        DiagnosticQuestion(
+        certified_question(
             public_id="q_seed_concept_short",
             domain_code="ai_app_dev",
             knowledge_item_id=embedding.id,
@@ -158,7 +176,7 @@ def seed_diagnostic_fixture(
     )
     for index in range(2):
         db.add(
-            DiagnosticQuestion(
+            certified_question(
                 public_id=f"q_seed_practice_short_{index}",
                 domain_code="ai_app_dev",
                 knowledge_item_id=rag.id,
@@ -215,7 +233,7 @@ def test_create_diagnostic_session_rejects_non_standard_question_count(monkeypat
     testing_session = build_test_session()
     with testing_session() as db:
         learner, choice, _ = seed_diagnostic_fixture(db)
-        extra = DiagnosticQuestion(
+        extra = certified_question(
             public_id="q_extra",
             domain_code="ai_app_dev",
             knowledge_item_id=choice.knowledge_item_id,
@@ -254,7 +272,7 @@ def test_create_diagnostic_session_stratifies_ten_questions_as_eight_and_two() -
         learner, choice, short = seed_diagnostic_fixture(db)
         for index in range(9):
             db.add(
-                DiagnosticQuestion(
+                certified_question(
                     public_id=f"q_choice_{index}",
                     domain_code="ai_app_dev",
                     knowledge_item_id=choice.knowledge_item_id,
@@ -267,7 +285,7 @@ def test_create_diagnostic_session_stratifies_ten_questions_as_eight_and_two() -
             )
         for index in range(2):
             db.add(
-                DiagnosticQuestion(
+                certified_question(
                     public_id=f"q_short_{index}",
                     domain_code="ai_app_dev",
                     knowledge_item_id=short.knowledge_item_id,
@@ -323,7 +341,7 @@ def test_diagnostic_entrypoint_persists_v3_profile_path_and_safe_observability()
     assert result["score"] == 100
     assert result["agent_run_id"] == run.id
     assert run.prompt_version == "v6"
-    assert run.contract_version == "agent-contract-v6"
+    assert run.contract_version == "agent-contract-v8"
     assert len(run.prompt_hash) == 64
     assert run.status == "completed"
     assert run.input_summary_json["question_count"] == 10

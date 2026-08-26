@@ -20,13 +20,13 @@
       </div>
 
       <div class="intro-copy">
-        <p class="intro-eyebrow">个性化 · 多智能体 · 可解释</p>
+        <p class="intro-context">人工智能应用开发实训</p>
         <h1 id="product-title">让每一次学习，<br />都有可追溯的下一步。</h1>
         <p class="intro-summary">从诊断、知识检索到资源审核与反馈调整，为学习者生成可解释的实训路径。</p>
         <div class="intro-features">
-          <div class="feature"><span class="feature-num">01</span><span>个性化诊断，生成你的能力画像</span></div>
-          <div class="feature"><span class="feature-num">02</span><span>多智能体协同，检索 · 生成 · 审核分工</span></div>
-          <div class="feature"><span class="feature-num">03</span><span>反馈闭环，每次反馈都驱动内容更新</span></div>
+          <div class="feature"><span class="feature-mark" aria-hidden="true">✓</span><span>完成诊断后生成能力画像</span></div>
+          <div class="feature"><span class="feature-mark" aria-hidden="true">✓</span><span>检索、生成与审核分别留存记录</span></div>
+          <div class="feature"><span class="feature-mark" aria-hidden="true">✓</span><span>学习反馈用于调整资源和后续路线</span></div>
         </div>
       </div>
 
@@ -181,13 +181,13 @@ async function submit() {
 .brand-text small { color: #93a9d6; font-size: 11px; letter-spacing: .04em; }
 
 .intro-copy { position: relative; z-index: 1; max-width: 620px; margin: auto 0; padding: 48px 0; }
-.intro-eyebrow { margin: 0 0 16px; color: #8fb1ff; font-size: 13px; font-weight: 700; letter-spacing: .14em; }
+.intro-context { margin: 0 0 16px; color: #a9c2fa; font-size: 13px; font-weight: 700; }
 .intro-copy h1 { max-width: 590px; margin: 0; font-size: clamp(34px, 3.9vw, 56px); line-height: 1.16; letter-spacing: -.03em; text-wrap: balance; }
 .intro-summary { max-width: 500px; margin: 22px 0 0; color: #c3d0e9; font-size: 15px; line-height: 1.8; }
 
 .intro-features { display: grid; margin-top: 34px; border-top: 1px solid rgb(143 177 255 / .16); }
 .feature { display: flex; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid rgb(143 177 255 / .12); color: #dbe5f7; font-size: 13.5px; }
-.feature-num { width: 32px; height: 32px; flex-shrink: 0; display: grid; place-items: center; border: 1px solid rgb(143 177 255 / .35); border-radius: 9px; color: #8fb1ff; font-size: 11px; font-weight: 700; background: rgb(125 167 255 / .1); }
+.feature-mark { width: 28px; height: 28px; flex-shrink: 0; display: grid; place-items: center; border-radius: 8px; color: #b9cdf8; font-size: 12px; font-weight: 800; background: rgb(125 167 255 / .14); }
 
 .intro-foot { position: relative; z-index: 1; display: grid; gap: 14px; }
 .loop-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

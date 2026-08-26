@@ -109,6 +109,17 @@ def get_import(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
     )
 
 
+@router.post("/{import_id}/cancel", response_model=ApiResponse)
+def cancel_import(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
+    run, document = _run(db, import_id)
+    if run.status in {"ready", "ready_to_publish", "needs_attention", "failed", "cancelled", "deleted"}:
+        raise HTTPException(status_code=409, detail="当前导入已结束，无法中断")
+    run.status = "cancel_requested"
+    run.error_code = "import_cancel_requested"
+    run.error_summary = "已请求中断，正在等待当前模型调用结束"
+    document.error_summary = run.error_summary
+    db.commit()
+    return ok({**serialize_run(run), "cancel_requested": True})
 @router.get("/{import_id}/summary", response_model=ApiResponse)
 def import_summary(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
     run, document = _run(db, import_id)

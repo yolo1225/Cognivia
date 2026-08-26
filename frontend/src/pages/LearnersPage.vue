@@ -4,7 +4,7 @@
       <template #actions>
         <span v-if="lastLoadedAt" class="last-updated"
           >更新于 {{ lastLoadedAt }}</span
-        ><button class="btn" :disabled="loading" @click="loadAll">
+        ><button type="button" class="btn" :disabled="loading" :aria-busy="loading" @click="loadAll">
           {{ loading ? "正在刷新" : "刷新列表" }}
         </button>
       </template>
@@ -718,6 +718,11 @@ onUnmounted(() => {
   color: var(--muted);
   font-size: 12px;
 }
+/* 保持原有四项指标布局，仅统一管理侧边框与浅色底面。 */
+.users-page :deep(.metric-strip) {
+  border-color: var(--line);
+  background: var(--soft);
+}
 .account-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -792,7 +797,7 @@ onUnmounted(() => {
 }
 .search-field:focus-within {
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgb(49 95 206/0.14);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent);
 }
 .search-field input {
   width: 100%;
@@ -860,7 +865,7 @@ onUnmounted(() => {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #b6c0cd;
+  background: var(--muted);
 }
 .profile-link-state.linked {
   color: var(--body);
@@ -900,7 +905,7 @@ onUnmounted(() => {
   font-weight: 650;
 }
 .more-button:hover {
-  border-color: #a9bad1;
+  border-color: var(--body);
   background: var(--soft);
 }
 .menu-popover {
@@ -968,13 +973,13 @@ onUnmounted(() => {
   gap: 28px;
   align-items: center;
   min-height: 60px;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid var(--line);
 }
 .skeleton-row i,
 .profile-loading i {
   height: 12px;
   border-radius: 5px;
-  background: linear-gradient(90deg, #eef1f5 25%, #f7f9fb 50%, #eef1f5 75%);
+  background: linear-gradient(90deg, var(--track) 25%, var(--soft) 50%, var(--track) 75%);
   background-size: 200% 100%;
   animation: skeleton 1.2s linear infinite;
 }
@@ -1114,7 +1119,7 @@ onUnmounted(() => {
 }
 .weak-list > div {
   padding: 11px 0;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid var(--line);
 }
 .weak-list strong,
 .weak-list span {
@@ -1213,7 +1218,7 @@ onUnmounted(() => {
 .reset-form input:focus {
   border-color: var(--blue);
   outline: 0;
-  box-shadow: 0 0 0 3px rgb(49 95 206/0.16);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 24%, transparent);
 }
 .reset-hint {
   margin: 0;

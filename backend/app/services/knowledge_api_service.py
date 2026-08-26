@@ -17,6 +17,7 @@ from app.services.knowledge_update_service import (
     related_knowledge_ids,
     replace_item_relations,
 )
+from app.services.question_certification_service import mark_question_certifications_stale
 
 
 def serialize_knowledge_item(item: KnowledgeItem) -> dict[str, Any]:
@@ -100,6 +101,11 @@ class KnowledgeApiService:
         item.needs_reembedding = True
         self.db.flush()
         affected_ids.update(related_knowledge_ids(self.db, item))
+        mark_question_certifications_stale(
+            self.db,
+            domain_code=item.domain_code,
+            knowledge_ids={item.public_id},
+        )
         impact = mark_affected_content(self.db, domain_code=item.domain_code, affected_knowledge_ids=affected_ids, reason="knowledge_item_updated")
         return self._write_result(item, affected_ids, impact)
 

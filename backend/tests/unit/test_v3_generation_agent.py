@@ -12,6 +12,8 @@ from app.agents.contracts import (
     GradedQuizContent,
     LectureContent,
     PracticeGuideContent,
+    QuestionType,
+    RetrievedQuestion,
     ResourceType,
     RevisionPlan,
 )
@@ -21,9 +23,7 @@ from app.agents.generation_agent import (
     GenerationError,
     RevisionFieldPatch,
     RevisionPatchResponse,
-    _apply_quiz_blueprint_fallback,
     _apply_revision_patches,
-    _audited_quiz_slot_violations,
     _sanitize_revision_patches,
     _stabilize_lecture_summary,
     _generation_payload,
@@ -42,12 +42,50 @@ from app.agents.generation_agent import (
     _strip_audited_claims_after_repairs,
 )
 from app.agents.observability import collect_model_calls
+from app.agents.nodes import _merge_revision_retrieval, _partial_generation_input
 from app.agents.domain_evidence_policy import (
     EvidenceCapability,
     get_domain_evidence_policy,
     normalize_evidence_capabilities,
 )
 from app.services.llm_service import ModelResponseError
+from app.services.question_bank_service import (
+    QuestionBankError,
+    _eligible_question_values,
+    _select_reference_questions,
+    build_graded_quiz_from_question_bank,
+)
+
+
+def test_partial_revision_retains_sources_cited_by_unchanged_resources() -> None:
+    flow = initial_generation_flow_example()
+    previous = flow["retrieve_knowledge"]["output"]
+    generated = flow["generate_resource"]["output"]
+    fresh = previous.model_copy(
+        update={
+            "chunks": [previous.chunks[0]],
+            "covered_knowledge_ids": [previous.chunks[0].knowledge_id],
+        }
+    )
+    inherited_source_ids = {
+        source.source_ref_id
+        for resource in generated.resources
+        if resource.resource_type is not ResourceType.GRADED_QUIZ
+        for source in resource.source_refs
+    }
+
+    merged = _merge_revision_retrieval(
+        previous=previous,
+        fresh=fresh,
+        generated=generated,
+        active_types={ResourceType.GRADED_QUIZ},
+    )
+
+    merged_source_ids = {chunk.source.source_ref_id for chunk in merged.chunks}
+    assert inherited_source_ids.issubset(merged_source_ids)
+    assert {chunk.source.source_ref_id for chunk in fresh.chunks}.issubset(
+        merged_source_ids
+    )
 
 
 class StubGenerator:
@@ -230,25 +268,9 @@ class InvalidLocalStructureGenerator:
         return {"difficulty": 2}
 
 
-class QuizSlotRepairGenerator:
-    repair_calls = 0
-
-    def generate(self, request, resource_type, allowed_sources):
-        response = _fixture_response(request, resource_type, allowed_sources)
-        if resource_type != ResourceType.GRADED_QUIZ:
-            return response
-        content = response.structured_content.model_copy(deep=True)
-        assert isinstance(content, GradedQuizContent)
-        questions = list(content.questions)
-        questions[0] = questions[0].model_copy(update={"knowledge_id": "wrong-knowledge"})
-        return response.model_copy(
-            update={"structured_content": content.model_copy(update={"questions": questions})}
-        )
-
-    def repair_quiz(self, request, allowed_sources, _candidate, _violations):
-        self.repair_calls += 1
-        return _fixture_response(request, ResourceType.GRADED_QUIZ, allowed_sources)
-
+class QuizGeneratorMustNotRun:
+    def generate(self, _request, _resource_type, _allowed_sources):
+        raise AssertionError("正式题库组卷不得调用生成模型")
 
 def _input() -> GenerateResourceInput:
     request = initial_generation_flow_example()["generate_resource"]["input"]
@@ -268,12 +290,231 @@ def _input() -> GenerateResourceInput:
     return request.model_copy(update={"requirements": requirements})
 
 
+def _with_formal_question_bank(request: GenerateResourceInput) -> GenerateResourceInput:
+    target_ids = request.requirements.resource_knowledge_targets.get(
+        ResourceType.GRADED_QUIZ, []
+    )
+    questions = []
+    for knowledge_id in target_ids:
+        source_locator = next(
+            chunk.source_locator
+            for chunk in request.retrieved_chunks
+            if chunk.knowledge_id == knowledge_id
+        )
+        for slot in range(1, 7):
+            is_choice = slot % 2 == 1
+            questions.append(
+                RetrievedQuestion(
+                    question_id=f"formal_{knowledge_id}_{slot}",
+                    knowledge_id=knowledge_id,
+                    question_type=(
+                        QuestionType.SINGLE_CHOICE
+                        if is_choice
+                        else QuestionType.SHORT_ANSWER
+                    ),
+                    stem=f"正式题库题目 {slot}",
+                    options=["正确项", "干扰项一", "干扰项二", "干扰项三"]
+                    if is_choice
+                    else [],
+                    answer_key={
+                        **(
+                            {"correct_option": 0}
+                            if is_choice
+                            else {"answer": "来源支持的答案", "rubric": ["评分点一", "评分点二"]}
+                        ),
+                        "explanation": "依据当前知识点来源材料判定。",
+                        "source_ref_ids": [
+                            next(
+                                chunk.source.source_ref_id
+                                for chunk in request.retrieved_chunks
+                                if chunk.knowledge_id == knowledge_id
+                                and chunk.source_locator == source_locator
+                            )
+                        ],
+                        "source_locator": source_locator,
+                        "question_slot": slot,
+                        "quiz_level": (
+                            "foundation"
+                            if slot <= 2
+                            else "improvement"
+                            if slot <= 4
+                            else "challenge"
+                        ),
+                    },
+                    explanation="依据当前知识点来源材料判定。",
+                    difficulty=min(5, max(1, slot)),
+                )
+            )
+    return request.model_copy(update={"reference_questions": questions})
+
+
+def test_formal_question_bank_requires_all_six_typed_level_slots() -> None:
+    request = initial_generation_flow_example()["generate_resource"]["input"]
+    request = _with_formal_question_bank(request)
+    incomplete = request.model_copy(update={"reference_questions": request.reference_questions[:-1]})
+
+    with pytest.raises(QuestionBankError, match="graded_quiz_question_bank_insufficient"):
+        _select_reference_questions(incomplete)
+
+
+def test_formal_short_answer_accepts_detailed_source_backed_rubric() -> None:
+    answer_key = {
+        "answer": "来源支持的完整答案",
+        "explanation": "来源支持的解析",
+        "source_ref_ids": ["knowledge::chunk::0"],
+        "quiz_level": "challenge",
+        "rubric": [f"评分点 {index}" for index in range(8)],
+    }
+
+    assert _eligible_question_values("short_answer", [], answer_key)
+    assert not _eligible_question_values(
+        "short_answer", [], {**answer_key, "rubric": [*answer_key["rubric"], "评分点 9"]}
+    )
+
+
+def test_formal_question_bank_does_not_mix_unrelated_knowledge() -> None:
+    request = initial_generation_flow_example()["generate_resource"]["input"]
+    request = _with_formal_question_bank(request)
+    unrelated = request.reference_questions[0].model_copy(
+        update={"question_id": "foreign-question", "knowledge_id": "FOREIGN-K001"}
+    )
+    selected = _select_reference_questions(
+        request.model_copy(update={"reference_questions": [*request.reference_questions, unrelated]})
+    )
+
+    assert all(question.knowledge_id != "FOREIGN-K001" for _, _, question in selected)
+
+
+def test_formal_question_with_declared_locator_cannot_fall_back_to_other_chunk() -> None:
+    request = _with_formal_question_bank(
+        initial_generation_flow_example()["generate_resource"]["input"]
+    )
+    first = request.reference_questions[0].model_copy(
+        update={
+            "answer_key": {
+                **request.reference_questions[0].answer_key,
+                "source_locator": "missing-exact-locator",
+            }
+        }
+    )
+    request = request.model_copy(
+        update={"reference_questions": [first, *request.reference_questions[1:]]}
+    )
+
+    with pytest.raises(QuestionBankError, match="graded_quiz_question_source_missing"):
+        build_graded_quiz_from_question_bank(
+            request,
+            [chunk.source for chunk in request.retrieved_chunks],
+        )
+
+
+def test_quiz_only_revision_preserves_selected_related_question_source() -> None:
+    request = _with_formal_question_bank(
+        initial_generation_flow_example()["generate_resource"]["input"]
+    )
+    target_id = request.requirements.resource_knowledge_targets[ResourceType.GRADED_QUIZ][0]
+    target_chunk = next(
+        chunk for chunk in request.retrieved_chunks if chunk.knowledge_id == target_id
+    )
+    related_source_id = "RELATED-K001::chunk::0"
+    related_locator = "document:related-question-source#chunk=0"
+    related_chunk = target_chunk.model_copy(
+        update={
+            "knowledge_id": "RELATED-K001",
+            "source_locator": related_locator,
+            "source": target_chunk.source.model_copy(
+                update={"source_ref_id": related_source_id}
+            ),
+        }
+    )
+    questions = [
+        question.model_copy(
+            update={
+                "knowledge_id": "RELATED-K001",
+                "related_knowledge_ids": [target_id],
+                "answer_key": {
+                    **question.answer_key,
+                    "source_ref_ids": [related_source_id],
+                    "source_locator": related_locator,
+                },
+            }
+        )
+        if question.knowledge_id == target_id
+        else question
+        for question in request.reference_questions
+    ]
+    request = request.model_copy(
+        update={
+            "retrieved_chunks": [*request.retrieved_chunks, related_chunk],
+            "reference_questions": questions,
+        }
+    )
+
+    partial = _partial_generation_input(request, [ResourceType.GRADED_QUIZ])
+
+    assert related_source_id in partial.requirements.source_whitelist
+    content = build_graded_quiz_from_question_bank(
+        partial, [chunk.source for chunk in partial.retrieved_chunks]
+    )
+    assert len(content.questions) == 6
+    assert any(question.knowledge_id == "RELATED-K001" for question in content.questions)
+
+
+def test_formal_quiz_revision_replaces_rejected_question_without_model_generation() -> None:
+    request = _with_formal_question_bank(
+        initial_generation_flow_example()["generate_resource"]["input"]
+    )
+    request = _partial_generation_input(request, [ResourceType.GRADED_QUIZ])
+    replacement = request.reference_questions[2].model_copy(
+        update={
+            "question_id": "formal_replacement_improvement",
+            "stem": "正式题库替代提升题",
+        }
+    )
+    request = request.model_copy(
+        update={"reference_questions": [*request.reference_questions, replacement]}
+    )
+    agent = ContentGenerationAgent(
+        generator=QuizGeneratorMustNotRun(), renderer=render_resource_markdown
+    )
+    previous = agent.execute(request).resources[0]
+    previous_content = previous.structured_content
+    assert isinstance(previous_content, GradedQuizContent)
+    rejected_id = previous_content.questions[2].question_id
+    revision_plan = RevisionPlan(
+        revision_count=1,
+        resource_types=[ResourceType.GRADED_QUIZ],
+        field_paths_by_resource={
+            ResourceType.GRADED_QUIZ: ["questions[2].prompt"]
+        },
+    )
+    revised_request = request.model_copy(
+        update={
+            "requirements": request.requirements.model_copy(
+                update={"revision_plan": revision_plan}
+            )
+        }
+    )
+
+    revised = agent.revise(revised_request, [previous]).resources[0].structured_content
+
+    assert isinstance(revised, GradedQuizContent)
+    assert len(revised.questions) == 6
+    assert rejected_id not in {question.question_id for question in revised.questions}
+    assert {question.level.value for question in revised.questions} == {
+        "foundation",
+        "improvement",
+        "challenge",
+    }
+    assert all(question.reference_question_ids for question in revised.questions)
+
+
 def test_v3_generation_emits_contract_artifact_and_deterministic_markdown() -> None:
     output = ContentGenerationAgent(
         generator=StubGenerator(), renderer=render_resource_markdown
     ).execute(_input())
 
-    assert output.contract_version == "agent-contract-v6"
+    assert output.contract_version == "agent-contract-v8"
     assert output.task_id == _input().task_id
     assert [item.resource_type for item in output.resources] == [ResourceType.LECTURE]
     artifact = output.resources[0]
@@ -450,6 +691,7 @@ def test_quiz_content_policy_removes_internal_source_ids_from_all_fact_fields() 
             ),
         }
     )
+    request = _with_formal_question_bank(request)
     sources = [chunk.source for chunk in request.retrieved_chunks]
     content = _fixture_response(request, ResourceType.GRADED_QUIZ, sources).structured_content
     content = content.model_copy(deep=True)
@@ -487,6 +729,7 @@ def test_quiz_content_policy_drops_absence_based_distractor_reasoning() -> None:
             ),
         }
     )
+    request = _with_formal_question_bank(request)
     sources = [chunk.source for chunk in request.retrieved_chunks]
     content = _fixture_response(request, ResourceType.GRADED_QUIZ, sources).structured_content
     content = content.model_copy(deep=True)
@@ -524,8 +767,8 @@ def test_generation_deterministically_downgrades_unsupported_practice_fields() -
     assert isinstance(content, PracticeGuideContent)
     assert generator.repair_calls == 1
     assert content.environment_requirements == ["准备练习所需的材料与受控环境。"]
-    assert content.steps[0].instruction == "阅读并梳理引用材料中明确描述的处理流程。"
-    assert content.steps[0].expected_result == "记录实际结果并与引用材料中的描述进行核对。"
+    assert content.steps[0].instruction == "阅读、比较并分析引用材料中的概念说明。"
+    assert content.steps[0].expected_result == "记录实际结果，并与引用材料中的描述进行核对。"
     assert content.steps[0].code_or_command is None
     assert content.steps[0].troubleshooting is None
     assert content.acceptance_criteria[0] == "形成学习记录并标注所依据的材料。"
@@ -744,11 +987,11 @@ def test_unrepaired_second_practice_step_converges_without_task_failure() -> Non
     content = output.resources[0].structured_content
     assert isinstance(content, PracticeGuideContent)
     assert generator.repair_calls == 1
-    assert content.steps[1].instruction == "整理差异"
+    assert content.steps[1].instruction == "阅读、比较并分析引用材料中的概念说明。"
     assert not _content_policy_violations(content)
 
 
-def test_explicit_cross_domain_capabilities_override_unstructured_prose() -> None:
+def test_knowledge_level_capabilities_cannot_authorize_unstructured_chunk() -> None:
     request = _input()
     chunk = request.retrieved_chunks[0].model_copy(
         update={"knowledge_id": "marine_valve", "content": "Calibrate the valve against the reference card."}
@@ -771,10 +1014,13 @@ def test_explicit_cross_domain_capabilities_override_unstructured_prose() -> Non
         ]
     }
 
-    assert not _evidence_depth_violations(content, request, [source], declared)
+    violations = _evidence_depth_violations(content, request, [source], declared)
+
+    assert any(item["code"] == "operation_evidence_missing" for item in violations)
+    assert any(item["code"] == "expected_result_evidence_missing" for item in violations)
 
 
-def test_declared_concept_capability_cannot_be_promoted_by_body_keywords() -> None:
+def test_chunk_body_can_prove_capabilities_despite_stale_item_aggregate() -> None:
     request = _input()
     chunk = request.retrieved_chunks[0].model_copy(
         update={"content": "操作步骤：执行命令。预期结果：返回成功状态。"}
@@ -794,7 +1040,44 @@ def test_declared_concept_capability_cannot_be_promoted_by_body_keywords() -> No
         {chunk.knowledge_id: ["concept"]},
     )
 
-    assert any(item["code"] == "operation_evidence_missing" for item in violations)
+    assert not any(item["code"] == "operation_evidence_missing" for item in violations)
+
+
+def test_concept_only_four_step_guide_safely_downgrades_every_step() -> None:
+    request = _input()
+    chunk = request.retrieved_chunks[0].model_copy(
+        update={"content": "概念说明：比较不同材料中的定义、范围与关系。"}
+    )
+    request = request.model_copy(update={"retrieved_chunks": [chunk]})
+    source = chunk.source
+    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
+    content = response.structured_content.model_copy(deep=True)
+    assert isinstance(content, PracticeGuideContent)
+    prototype = content.steps[0]
+    content.steps = [
+        prototype.model_copy(
+            update={
+                "order": index,
+                "instruction": f"执行第 {index} 个固定操作。",
+                "code_or_command": f"tool run --step {index}",
+                "expected_result": f"固定输出 success-{index}",
+                "troubleshooting": "失败时重启服务。",
+            }
+        )
+        for index in range(1, 5)
+    ]
+
+    violations = _evidence_depth_violations(content, request, [source])
+    downgraded = _apply_practice_evidence_fallback(content, violations)
+
+    assert not _evidence_depth_violations(downgraded, request, [source])
+    assert all(
+        step.instruction == "阅读、比较并分析引用材料中的概念说明。"
+        and step.code_or_command is None
+        and step.expected_result == "记录实际结果，并与引用材料中的描述进行核对。"
+        and step.troubleshooting is None
+        for step in downgraded.steps
+    )
 
 
 def test_capability_normalization_accepts_only_canonical_domain_neutral_values() -> None:
@@ -813,137 +1096,6 @@ def test_capability_normalization_accepts_only_canonical_domain_neutral_values()
             }
         )
     }
-
-def test_quiz_blueprint_rejects_revision_placeholders_and_unrelated_answers() -> None:
-    request = _input()
-    targets = list(request.requirements.required_knowledge_ids)
-    request = request.model_copy(
-        update={
-            "context": request.context.model_copy(
-                update={"requested_resource_types": [ResourceType.GRADED_QUIZ]}
-            ),
-            "requirements": request.requirements.model_copy(
-                update={
-                    "resource_types": [ResourceType.GRADED_QUIZ],
-                    "resource_knowledge_targets": {ResourceType.GRADED_QUIZ: targets},
-                }
-            ),
-        }
-    )
-    allowed_sources = [chunk.source for chunk in request.retrieved_chunks]
-    response = _fixture_response(request, ResourceType.GRADED_QUIZ, allowed_sources)
-    content = response.structured_content.model_copy(deep=True)
-    content.questions[0].prompt = "请根据引用材料完成该题并核对答案。"
-    content.questions[0].correct_answer = "与所有选项无关的答案"
-
-    violations = _quiz_blueprint_violations(
-        content,
-        _quiz_blueprint(request, allowed_sources),
-    )
-
-    assert {item["field"] for item in violations if item["question_id"] == "Q1"} >= {
-        "assessment_content",
-        "correct_answer",
-    }
-
-
-def test_audited_quiz_claim_rebuilds_the_entire_question_from_evidence() -> None:
-    request = _input()
-    targets = list(request.requirements.required_knowledge_ids)
-    request = request.model_copy(
-        update={
-            "context": request.context.model_copy(
-                update={"requested_resource_types": [ResourceType.GRADED_QUIZ]}
-            ),
-            "requirements": request.requirements.model_copy(
-                update={
-                    "resource_types": [ResourceType.GRADED_QUIZ],
-                    "resource_knowledge_targets": {ResourceType.GRADED_QUIZ: targets},
-                }
-            ),
-        }
-    )
-    sources = [chunk.source for chunk in request.retrieved_chunks]
-    content = _fixture_response(
-        request, ResourceType.GRADED_QUIZ, sources
-    ).structured_content
-    content = content.model_copy(deep=True)
-    content.questions[0].correct_answer = "材料未说明的额外因果结论"
-
-    violations = _audited_quiz_slot_violations(
-        content,
-        {"questions[0].correct_answer": ["材料未说明的额外因果结论"]},
-    )
-    rebuilt = _apply_quiz_blueprint_fallback(
-        content,
-        violations,
-        _quiz_blueprint(request, sources),
-        request,
-    )
-
-    assert violations == [{"question_id": "Q1", "field": "assessment_content"}]
-    assert rebuilt.questions[0].correct_answer != "材料未说明的额外因果结论"
-    assert not _quiz_blueprint_violations(
-        rebuilt,
-        _quiz_blueprint(request, sources),
-        request,
-    )
-
-
-def test_quiz_blueprint_rejects_cross_target_content_and_falls_back_to_target_evidence() -> None:
-    request = _input()
-    first_chunk = request.retrieved_chunks[0]
-    first_body = first_chunk.content
-    first_chunk = first_chunk.model_copy(
-        update={
-            "content": (
-                "知识点：不应成为题目答案的元数据\n"
-                "分类：测试分类\n"
-                "难度：3\n"
-                "标签：测试\n"
-                "标题：测试标题\n\n"
-                f"{first_body}"
-            )
-        }
-    )
-    request = request.model_copy(
-        update={"retrieved_chunks": [first_chunk, *request.retrieved_chunks[1:]]}
-    )
-    targets = [chunk.knowledge_id for chunk in request.retrieved_chunks]
-    request = request.model_copy(
-        update={
-            "context": request.context.model_copy(
-                update={"requested_resource_types": [ResourceType.GRADED_QUIZ]}
-            ),
-            "requirements": request.requirements.model_copy(
-                update={
-                    "resource_types": [ResourceType.GRADED_QUIZ],
-                    "resource_knowledge_targets": {ResourceType.GRADED_QUIZ: targets},
-                }
-            ),
-        }
-    )
-    sources = [chunk.source for chunk in request.retrieved_chunks]
-    blueprint = _quiz_blueprint(request, sources)
-    content = _fixture_response(request, ResourceType.GRADED_QUIZ, sources).structured_content
-    content = content.model_copy(deep=True)
-    content.questions[0].prompt = "文本向量如何用于语义相似度召回？"
-    content.questions[0].correct_answer = "文本向量映射语义"
-    content.questions[0].explanation = request.retrieved_chunks[1].content
-
-    violations = _quiz_blueprint_violations(content, blueprint, request)
-    fallback = _apply_quiz_blueprint_fallback(content, violations, blueprint, request)
-
-    assert any(
-        item["question_id"] == "Q1" and item["field"] == "knowledge_alignment"
-        for item in violations
-    )
-    assert fallback.questions[0].knowledge_id == blueprint[0]["knowledge_id"]
-    assert first_body.split("。", 1)[0] in fallback.questions[0].explanation
-    assert "不应成为题目答案的元数据" not in fallback.questions[0].correct_answer
-    assert "测试分类" not in fallback.questions[0].explanation
-    assert not _quiz_blueprint_violations(fallback, blueprint, request)
-
 
 def test_environment_fact_without_operation_evidence_is_rewritten_as_preparation() -> None:
     request = _input()
@@ -1446,7 +1598,9 @@ def test_v3_generation_fixture_supports_all_resource_types() -> None:
         required_knowledge_ids=request.requirements.required_knowledge_ids,
         source_whitelist=request.requirements.source_whitelist,
     )
-    expanded = request.model_copy(update={"context": context, "requirements": requirements})
+    expanded = _with_formal_question_bank(
+        request.model_copy(update={"context": context, "requirements": requirements})
+    )
 
     output = ContentGenerationAgent(renderer=render_resource_markdown).execute(expanded)
 
@@ -1517,6 +1671,7 @@ def test_generation_payload_uses_a_resource_specific_schema() -> None:
             )
         }
     )
+    quiz_request = _with_formal_question_bank(quiz_request)
     quiz_schema = _generation_payload(quiz_request, ResourceType.GRADED_QUIZ, sources)[
         "output_schema"
     ]
@@ -1542,6 +1697,7 @@ def test_quiz_blueprint_detects_slot_drift() -> None:
         }
     )
     quiz_request = request.model_copy(update={"requirements": requirements})
+    quiz_request = _with_formal_question_bank(quiz_request)
     sources = [chunk.source for chunk in quiz_request.retrieved_chunks]
     response = _fixture_response(quiz_request, ResourceType.GRADED_QUIZ, sources)
     assert isinstance(response.structured_content, GradedQuizContent)
@@ -1593,7 +1749,7 @@ def test_local_structure_failure_reports_precise_field_paths() -> None:
     assert captured.value.field_paths == ["structured_content"]
 
 
-def test_quiz_slot_repair_only_replaces_invalid_question() -> None:
+def test_quiz_is_assembled_from_formal_question_bank_without_model_repair() -> None:
     request = _input()
     requirements = request.requirements.model_copy(
         update={
@@ -1603,22 +1759,23 @@ def test_quiz_slot_repair_only_replaces_invalid_question() -> None:
             },
         }
     )
-    repair_generator = QuizSlotRepairGenerator()
+    repair_generator = QuizGeneratorMustNotRun()
     context = request.context.model_copy(update={"resource_types": [ResourceType.GRADED_QUIZ]})
+    bank_request = _with_formal_question_bank(
+        request.model_copy(update={"context": context, "requirements": requirements})
+    )
     output = ContentGenerationAgent(
         generator=repair_generator, renderer=render_resource_markdown
-    ).execute(request.model_copy(update={"context": context, "requirements": requirements}))
+    ).execute(bank_request)
 
     quiz = output.resources[0].structured_content
     assert isinstance(quiz, GradedQuizContent)
-    assert repair_generator.repair_calls == 1
     assert [question.question_id for question in quiz.questions] == [
-        "Q1",
-        "Q2",
-        "Q3",
-        "Q4",
-        "Q5",
-        "Q6",
+        f"formal_{request.requirements.required_knowledge_ids[0]}_{slot}"
+        for slot in range(1, 7)
+    ]
+    assert [question.prompt for question in quiz.questions] == [
+        f"正式题库题目 {slot}" for slot in range(1, 7)
     ]
     assert {question.level.value for question in quiz.questions} == {
         "foundation",

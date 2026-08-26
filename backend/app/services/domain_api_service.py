@@ -14,8 +14,20 @@ from app.models import (
     KnowledgeItem,
     KnowledgeRelation,
 )
+from app.agents.domain_evidence_policy import (
+    EvidenceCapability,
+    normalize_evidence_capabilities,
+)
 from app.rag.readiness import candidate_rag_status
-from app.services.domain_runtime_service import DomainRuntimeError, load_domain_runtime
+from app.services.domain_runtime_service import (
+    DomainRuntimeError,
+    load_domain_runtime,
+    practice_generation_mode_for_items,
+)
+from app.services.question_bank_service import question_bank_coverage
+from app.services.question_certification_service import (
+    QUESTION_CERTIFICATION_RULE_VERSION,
+)
 
 
 DOMAIN_STATUSES = {"draft", "preparing", "ready", "disabled"}
@@ -215,6 +227,10 @@ class DomainApiService:
                     .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
                     .where(
                         DiagnosticQuestion.domain_code == domain_code,
+                        DiagnosticQuestion.status == "active",
+                        DiagnosticQuestion.certification_status == "certified",
+                        DiagnosticQuestion.certification_rule_version
+                        == QUESTION_CERTIFICATION_RULE_VERSION,
                         KnowledgeItem.domain_code == domain_code,
                         KnowledgeItem.status == "published",
                     )
@@ -228,6 +244,22 @@ class DomainApiService:
             for item in items
         )
         missing_sources = sum(not str(item.source_title or "").strip() for item in items)
+        evidence_counts = {capability.value: 0 for capability in EvidenceCapability}
+        for item in items:
+            for capability in normalize_evidence_capabilities(
+                item.evidence_capabilities_json
+            ):
+                evidence_counts[capability] += 1
+        evidence_coverage = {
+            "total_items": len(items),
+            "capabilities": evidence_counts,
+            "practice_generation_mode": practice_generation_mode_for_items(items),
+        }
+        quiz_question_bank = question_bank_coverage(
+            self.db,
+            domain_code=domain_code,
+            knowledge_ids=[item.public_id for item in items],
+        )
         directions = list((domain.config_json or {}).get("learning_directions") or [])
         rag = candidate_rag_status(domain_code)
         latest_job = self.db.scalar(
@@ -256,6 +288,27 @@ class DomainApiService:
                 policy["minimum_diagnostic_questions"],
                 ">=",
                 "可用诊断题",
+            ),
+            (
+                "quiz_question_bank_coverage",
+                int(quiz_question_bank["ready_items"]),
+                len(items),
+                "==",
+                "分级测验正式题库覆盖",
+            ),
+            (
+                "quiz_question_types",
+                len((quiz_question_bank["distribution"] or {})["question_types"]),
+                2,
+                ">=",
+                "正式题库题型覆盖",
+            ),
+            (
+                "quiz_difficulty_levels",
+                len((quiz_question_bank["distribution"] or {})["quiz_levels"]),
+                3,
+                ">=",
+                "正式题库分级覆盖",
             ),
             ("learning_directions", len(directions), 1, ">=", "学习方向"),
             ("missing_ability_weights", missing_weights, 0, "==", "缺失能力权重"),
@@ -343,6 +396,8 @@ class DomainApiService:
             "rag_ready": bool(runtime.get("rag_ready")),
             "generation_ready": bool(runtime.get("generation_ready")),
             "runtime_reasons": list(runtime.get("reasons") or []),
+            "evidence_coverage": evidence_coverage,
+            "question_bank_coverage": quiz_question_bank,
         }
 
     def validate(self, domain_code: str) -> dict[str, Any]:

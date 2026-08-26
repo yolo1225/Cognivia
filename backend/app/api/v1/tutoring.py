@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.db import get_db
+from app.core.errors import api_error_response
 from app.core.security import Principal, get_current_user, principal_learner, require_resource, require_tutoring
 from app.models import Learner, TutoringMessage, TutoringSession
 from app.schemas.common import ApiResponse, ok
@@ -273,7 +274,26 @@ def request_tutoring_mastery_check(
     try:
         assessment = request_mastery_assessment(db, session=session, profile=profile)
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        error_code = str(exc)
+        messages = {
+            "learning_adjustment_already_pending": (
+                "MASTERY_CHECK_PENDING",
+                "已有掌握检查待完成，请先完成当前验证题。",
+            ),
+            "learning_adjustment_assessment_unavailable": (
+                "MASTERY_CHECK_QUESTION_UNAVAILABLE",
+                "当前知识点缺少可判分的单选验证题，请联系管理员补题后重试。",
+            ),
+            "learning_adjustment_context_stale": (
+                "MASTERY_CHECK_CONTEXT_STALE",
+                "当前学习资源与学习路线已更新，请刷新页面后重新发起掌握检查。",
+            ),
+        }
+        code, message = messages.get(
+            error_code,
+            ("MASTERY_CHECK_UNAVAILABLE", "暂时无法发起掌握检查，请刷新页面后重试。"),
+        )
+        return api_error_response(status_code=409, code=code, message=message)
     db.commit()
     return ok(assessment)
 

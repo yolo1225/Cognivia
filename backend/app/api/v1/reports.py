@@ -15,8 +15,12 @@ from app.services.profile_service import (
     profile_source,
     serialize_profile_detail,
 )
-from app.services.report_service import build_metric_summary, refresh_learning_path
-from app.services.learning_path_service import serialize_learning_path
+from app.services.report_service import (
+    build_learning_progress_comparison,
+    build_metric_summary,
+    refresh_learning_path,
+)
+from app.services.learning_path_service import normalize_path_for_domain, serialize_learning_path
 from app.services.learning_adjustment_service import (
     pending_resource_proposals,
     recent_profile_changes,
@@ -155,6 +159,10 @@ def get_learning_report(
         db, learner, task.domain_code if task_id and task is not None else learner.target_domain
     )
     path = latest_path_for_profile(db, profile) if profile is not None else None
+    if path is not None:
+        path.path_json = normalize_path_for_domain(
+            db, domain_code=path.domain_code, payload=path.path_json or {}, previous_payload=path.path_json or {}
+        )
     original_path_payload = dict(path.path_json or {}) if path is not None else None
     detail = serialize_profile_detail(db, learner, profile, path=path)
     path_refresh_performed = False
@@ -197,12 +205,14 @@ def get_learning_report(
     stages = learning_path.get("stages", []) if isinstance(learning_path, dict) else []
     path_needs_refresh = bool(path.needs_refresh) if path else False
 
+    active_domain_code = profile.domain_code if profile else learner.target_domain
     resource_rows = list(
         db.execute(
             select(LearningResource, GenerationTask)
             .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
             .where(
                 GenerationTask.learner_id == learner.id,
+                GenerationTask.domain_code == active_domain_code,
                 LearningResource.is_current.is_(True),
                 LearningResource.review_status == "passed",
             )
@@ -217,7 +227,7 @@ def get_learning_report(
             select(ReviewReport)
             .join(LearningResource, LearningResource.id == ReviewReport.resource_id)
             .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
-            .where(GenerationTask.learner_id == learner.id)
+            .where(GenerationTask.learner_id == learner.id, GenerationTask.domain_code == active_domain_code)
             .order_by(ReviewReport.id.desc())
         )
     )
@@ -225,7 +235,9 @@ def get_learning_report(
         db.execute(
             select(Feedback, LearningResource)
             .join(LearningResource, LearningResource.id == Feedback.resource_id)
+            .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
             .where(Feedback.learner_id == learner.id)
+            .where(GenerationTask.domain_code == active_domain_code)
             .order_by(Feedback.id.desc())
         )
     )
@@ -260,7 +272,7 @@ def get_learning_report(
     return ok(
         {
             "learner_id": learner.public_id,
-            "domain_code": profile.domain_code if profile else learner.target_domain,
+            "domain_code": active_domain_code,
             "profile_id": detail.get("profile_id"),
             "profile_type": detail.get("profile_type"),
             "profile_source": profile_source(profile) if profile else None,
@@ -317,6 +329,9 @@ def get_learning_report(
             },
             "learning_adjustments": adjustment_proposals,
             "profile_changes": profile_changes,
+            "progress_comparison": build_learning_progress_comparison(
+                db, learner=learner, current_profile=profile, path=path
+            ),
             "next_actions": _next_actions(
                 has_profile=has_profile,
                 resources=resources,

@@ -38,6 +38,17 @@ export interface LearningPackage {
   created_at?: string | null
 }
 
+export type LearningPackageExportFormat = 'markdown' | 'pdf' | 'word'
+
+export interface LearningPackageExport {
+  package_id: string
+  format: LearningPackageExportFormat
+  file_name: string
+  file_hash: string
+  resource_count: number
+  download_url: string
+}
+
 export function getCurrentLearningPackage(domainCode: string, learnerId?: string) {
   const params = new URLSearchParams({ domain_code: domainCode })
   if (learnerId) params.set('learner_id', learnerId)
@@ -46,6 +57,13 @@ export function getCurrentLearningPackage(domainCode: string, learnerId?: string
 
 export function getLearningPackage(taskId: string) {
   return getData<LearningPackage>(`/learning-packages/${encodeURIComponent(taskId)}`)
+}
+
+export function exportLearningPackage(taskId: string, format: LearningPackageExportFormat) {
+  return postData<LearningPackageExport>(
+    `/learning-packages/${encodeURIComponent(taskId)}/export`,
+    { format },
+  )
 }
 
 export function dismissKnowledgeImpact(taskId: string) {

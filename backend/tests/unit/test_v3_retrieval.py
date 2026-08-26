@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -9,7 +10,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.agents.contracts import RetrieveKnowledgeInput
-from app.models import Base, KnowledgeItem, KnowledgeRelation
+from app.agents.retrieval_agent import KnowledgeRetrievalAgent
+from app.models import Base, DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.rag.candidate_manifest import (
     DISTANCE_METRIC,
     MANIFEST_SCHEMA_VERSION,
@@ -23,7 +25,42 @@ from app.rag.retrieval import (
     RetrievalError,
     _record_capabilities,
 )
+from app.rag.database_manifest_store import DatabaseManifestStore
 from app.agents.domain_evidence_policy import EvidenceCapability
+
+
+def test_production_retrieval_reads_the_database_active_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runtime retrieval must use the same active-index pointer as readiness."""
+    from app.agents import retrieval_agent
+
+    captured: dict[str, Any] = {}
+
+    class SpyRetriever:
+        def __init__(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(retrieval_agent, "CandidateRetriever", SpyRetriever)
+    monkeypatch.setattr(retrieval_agent, "SessionLocal", lambda: object())
+    monkeypatch.setattr(retrieval_agent, "VectorStore", lambda: SimpleNamespace(client=object()))
+    monkeypatch.setattr(
+        retrieval_agent,
+        "Settings",
+        lambda: SimpleNamespace(
+            openai_api_base="https://example.com/v1",
+            openai_api_key="test-key",
+            embedding_model="test-embedding",
+            llm_timeout_seconds=15,
+        ),
+    )
+    monkeypatch.setattr(
+        retrieval_agent,
+        "OpenAICompatibleEmbeddingProvider",
+        lambda **_kwargs: object(),
+    )
+
+    KnowledgeRetrievalAgent.production()
+
+    assert isinstance(captured["manifest_store"], DatabaseManifestStore)
 
 
 def test_indexed_capabilities_override_domain_text_heuristics() -> None:
@@ -334,6 +371,49 @@ def test_practice_retrieval_keeps_late_operational_explicit_chunk(tmp_path: Path
     assert not any("practice_operation_evidence_missing" in item for item in result.warnings)
 
 
+def test_practice_supplement_prefers_related_evidence_over_unrelated_labels(
+    tmp_path: Path,
+) -> None:
+    sessions = _session()
+    target = _record("target", 0, [1.0, 0.0, 0.0])
+    related = _record("related-practice", 0, [0.6, 0.0, 0.0])
+    related["document"] = "## 操作步骤\n1. 执行以下检查。"
+    unrelated = _record("unrelated-practice", 0, [0.99, 0.0, 0.0])
+    unrelated["document"] = (
+        "## 操作步骤\n1. 执行以下命令。\n```bash\npython tool.py\n```\n"
+        "预期结果：显示成功。\n失败时检查配置。"
+    )
+    records = [target, related, unrelated]
+    with sessions() as db:
+        target_item, related_item, unrelated_item = [
+            _item(value)
+            for value in ("target", "related-practice", "unrelated-practice")
+        ]
+        db.add_all([target_item, related_item, unrelated_item])
+        db.flush()
+        db.add(
+            KnowledgeRelation(
+                source_item_id=target_item.id,
+                target_item_id=related_item.id,
+                relation_type="related",
+            )
+        )
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        result = retriever.execute(
+            _input(
+                priority=["target"],
+                n_results=2,
+                resource_types=["practice_guide"],
+            )
+        )
+
+    assert [chunk.knowledge_id for chunk in result.chunks] == [
+        "target",
+        "related-practice",
+    ]
+
+
 def _retriever(
     tmp_path: Path, db, records, *, mode="full", vector=None
 ) -> tuple[CandidateRetriever, FakeProvider]:
@@ -426,6 +506,331 @@ def test_v3_retrieval_keeps_revision_query_and_reports_explicit_budget(tmp_path:
     assert "explicit_plan_exceeds_output_budget" in result.warnings
 
 
+def test_related_question_appends_exact_primary_knowledge_source(tmp_path: Path) -> None:
+    sessions = _session()
+    target_ids = ["target-a", "target-b", "target-c"]
+    primary_id = "question-primary"
+    records = [
+        _record("target-a", 0, [1.0, 0.0, 0.0]),
+        _record("target-b", 0, [0.9, 0.1, 0.0]),
+        _record("target-c", 0, [0.8, 0.2, 0.0]),
+        _record(primary_id, 0, [0.2, 0.8, 0.0]),
+        _record(primary_id, 1, [0.1, 0.9, 0.0]),
+    ]
+    exact_source_locator = f"{primary_id}::chunk::1"
+    records[-1]["metadata"]["source_locator"] = exact_source_locator
+
+    with sessions() as db:
+        items = {public_id: _item(public_id) for public_id in [*target_ids, primary_id]}
+        db.add_all(items.values())
+        db.flush()
+        db.add(
+            DiagnosticQuestion(
+                public_id="related-question",
+                domain_code="ai_app_dev",
+                knowledge_item_id=items[primary_id].id,
+                related_knowledge_ids_json=["target-a"],
+                question_type="single_choice",
+                stem="哪一项描述正确？",
+                options_json=["正确选项", "错误选项一", "错误选项二", "错误选项三"],
+                answer_key_json={
+                    "correct_option": 0,
+                    "explanation": "解析来自题目主知识点的精确来源。",
+                    "source_ref_ids": [exact_source_locator],
+                    "quiz_level": "improvement",
+                    "source_locators": {exact_source_locator: exact_source_locator},
+                },
+                difficulty=2,
+                status="active",
+                certification_status="certified",
+                certification_rule_version="question-cert-v1",
+                source_content_hash="sha256:" + "f" * 64,
+            )
+        )
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        result = retriever.execute(
+            _input(
+                priority=target_ids,
+                n_results=3,
+                resource_types=["graded_quiz"],
+            )
+        )
+
+    assert [question.question_id for question in result.reference_questions] == [
+        "related-question"
+    ]
+    assert result.reference_questions[0].knowledge_id == primary_id
+    assert result.reference_questions[0].related_knowledge_ids == ["target-a"]
+    assert [chunk.chunk_id for chunk in result.chunks] == [
+        "target-a::chunk::0",
+        "target-b::chunk::0",
+        "target-c::chunk::0",
+        exact_source_locator,
+    ]
+    assert primary_id in result.covered_knowledge_ids
+
+
+def test_lecture_only_retrieval_does_not_include_question_bank_sources(
+    tmp_path: Path,
+) -> None:
+    sessions = _session()
+    records = [
+        _record("lecture-target", 0, [1.0, 0.0, 0.0]),
+        _record("question-primary", 0, [0.2, 0.8, 0.0]),
+    ]
+    with sessions() as db:
+        target = _item("lecture-target")
+        primary = _item("question-primary")
+        db.add_all([target, primary])
+        db.flush()
+        db.add(
+            DiagnosticQuestion(
+                public_id="lecture-unrelated-question",
+                domain_code="ai_app_dev",
+                knowledge_item_id=primary.id,
+                related_knowledge_ids_json=["lecture-target"],
+                question_type="single_choice",
+                stem="不应进入讲义检索的题目",
+                options_json=["A", "B", "C", "D"],
+                answer_key_json={
+                    "correct_option": 0,
+                    "explanation": "可信解析。",
+                    "source_ref_ids": ["question-primary::chunk::0"],
+                    "quiz_level": "foundation",
+                    "source_locators": {
+                        "question-primary::chunk::0": "question-primary::chunk::0"
+                    },
+                },
+                difficulty=1,
+                status="active",
+                certification_status="certified",
+                certification_rule_version="question-cert-v1",
+                source_content_hash="sha256:" + "b" * 64,
+            )
+        )
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        result = retriever.execute(
+            _input(priority=["lecture-target"], n_results=1, resource_types=["lecture"])
+        )
+
+    assert result.reference_questions == []
+    assert [chunk.knowledge_id for chunk in result.chunks] == ["lecture-target"]
+
+
+def test_two_questions_on_same_primary_knowledge_keep_both_exact_locators(
+    tmp_path: Path,
+) -> None:
+    sessions = _session()
+    records = [
+        _record("target", 0, [1.0, 0.0, 0.0]),
+        _record("shared-primary", 0, [0.3, 0.7, 0.0]),
+        _record("shared-primary", 1, [0.2, 0.8, 0.0]),
+    ]
+    for record in records:
+        record["metadata"]["source_locator"] = record["id"]
+    with sessions() as db:
+        target = _item("target")
+        primary = _item("shared-primary")
+        db.add_all([target, primary])
+        db.flush()
+        for index in range(2):
+            db.add(
+                DiagnosticQuestion(
+                    public_id=f"shared-primary-question-{index}",
+                    domain_code="ai_app_dev",
+                    knowledge_item_id=primary.id,
+                    related_knowledge_ids_json=["target"],
+                    question_type="single_choice",
+                    stem=f"共享主知识点题目 {index}",
+                    options_json=["A", "B", "C", "D"],
+                    answer_key_json={
+                        "correct_option": 0,
+                        "explanation": "可信解析。",
+                        "source_ref_ids": [f"shared-primary::chunk::{index}"],
+                        "quiz_level": "improvement",
+                        "source_locators": {
+                            f"shared-primary::chunk::{index}": f"shared-primary::chunk::{index}"
+                        },
+                    },
+                    difficulty=2,
+                    status="active",
+                    certification_status="certified",
+                    certification_rule_version="question-cert-v1",
+                    source_content_hash="sha256:" + "a" * 64,
+                )
+            )
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        result = retriever.execute(
+            _input(priority=["target"], n_results=1, resource_types=["graded_quiz"])
+        )
+
+    assert len(result.reference_questions) == 2
+    assert {
+        chunk.source_locator
+        for chunk in result.chunks
+        if chunk.knowledge_id == "shared-primary"
+    } == {"shared-primary::chunk::0", "shared-primary::chunk::1"}
+
+
+def test_quiz_source_supplements_expand_within_v8_chunk_budget(tmp_path: Path) -> None:
+    sessions = _session()
+    target_ids = ["target-a", "target-b", "target-c"]
+    related_primary_ids = ["related-primary-a", "related-primary-b", "related-primary-c"]
+    semantic_ids = [f"semantic-{index}" for index in range(9)]
+    all_ids = [*target_ids, *related_primary_ids, *semantic_ids]
+    records = [
+        *[
+            _record(public_id, 0, [1.0 - index * 0.01, 0.0, 0.0])
+            for index, public_id in enumerate(target_ids)
+        ],
+        *[
+            _record(public_id, 0, [0.8 - index * 0.01, 0.0, 0.0])
+            for index, public_id in enumerate(semantic_ids)
+        ],
+        *[
+            _record(public_id, 0, [0.2 - index * 0.01, 0.0, 0.0])
+            for index, public_id in enumerate(related_primary_ids)
+        ],
+    ]
+    for record in records:
+        record["metadata"]["source_locator"] = record["id"]
+
+    question_specs = [
+        ("question-foundation-a", "target-a", [], "foundation"),
+        ("question-foundation-b", "target-b", [], "foundation"),
+        ("question-improvement-a", "related-primary-a", ["target-a"], "improvement"),
+        ("question-improvement-b", "related-primary-b", ["target-b"], "improvement"),
+        ("question-challenge-a", "related-primary-c", ["target-c"], "challenge"),
+        ("question-challenge-b", "target-c", [], "challenge"),
+    ]
+    with sessions() as db:
+        items = {public_id: _item(public_id) for public_id in all_ids}
+        db.add_all(items.values())
+        db.flush()
+        for question_id, primary_id, related_ids, quiz_level in question_specs:
+            db.add(
+                DiagnosticQuestion(
+                    public_id=question_id,
+                    domain_code="ai_app_dev",
+                    knowledge_item_id=items[primary_id].id,
+                    related_knowledge_ids_json=related_ids,
+                    question_type="single_choice",
+                    stem=f"{question_id} 的正确答案是什么？",
+                    options_json=["A", "B", "C", "D"],
+                    answer_key_json={
+                        "correct_option": 0,
+                        "explanation": "可信解析。",
+                        "source_ref_ids": [f"{primary_id}::chunk::0"],
+                        "quiz_level": quiz_level,
+                        "source_locators": {
+                            f"{primary_id}::chunk::0": f"{primary_id}::chunk::0"
+                        },
+                    },
+                    difficulty=2,
+                    status="active",
+                    certification_status="certified",
+                    certification_rule_version="question-cert-v1",
+                    source_content_hash="sha256:" + "d" * 64,
+                )
+            )
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        result = retriever.execute(
+            _input(
+                priority=target_ids,
+                n_results=12,
+                resource_types=["lecture", "practice_guide", "graded_quiz"],
+            )
+        )
+
+    assert len(result.reference_questions) == 6
+    assert len(result.chunks) == 15
+    chunk_knowledge_ids = {chunk.knowledge_id for chunk in result.chunks}
+    assert {
+        question.knowledge_id for question in result.reference_questions
+    } <= chunk_knowledge_ids
+    assert set(target_ids) <= chunk_knowledge_ids
+
+
+def test_six_knowledge_unit_and_six_external_quiz_sources_fit_chunk_budget(
+    tmp_path: Path,
+) -> None:
+    sessions = _session()
+    target_ids = [f"target-{index}" for index in range(6)]
+    question_primary_ids = [f"question-primary-{index}" for index in range(6)]
+    filler_ids = [f"semantic-filler-{index}" for index in range(6)]
+    records = [
+        *[
+            _record(public_id, 0, [1.0 - index * 0.01, 0.0, 0.0])
+            for index, public_id in enumerate(target_ids)
+        ],
+        *[
+            _record(public_id, 0, [0.8 - index * 0.01, 0.0, 0.0])
+            for index, public_id in enumerate(filler_ids)
+        ],
+        *[
+            _record(public_id, 0, [0.2 - index * 0.01, 0.0, 0.0])
+            for index, public_id in enumerate(question_primary_ids)
+        ],
+    ]
+    for record in records:
+        record["metadata"]["source_locator"] = record["id"]
+
+    quiz_levels = ["foundation", "foundation", "improvement", "improvement", "challenge", "challenge"]
+    all_ids = [*target_ids, *question_primary_ids, *filler_ids]
+    with sessions() as db:
+        items = {public_id: _item(public_id) for public_id in all_ids}
+        db.add_all(items.values())
+        db.flush()
+        for index, (primary_id, quiz_level) in enumerate(
+            zip(question_primary_ids, quiz_levels, strict=True)
+        ):
+            db.add(
+                DiagnosticQuestion(
+                    public_id=f"six-point-question-{index}",
+                    domain_code="ai_app_dev",
+                    knowledge_item_id=items[primary_id].id,
+                    related_knowledge_ids_json=[target_ids[index]],
+                    question_type="single_choice",
+                    stem=f"第 {index + 1} 道可信题目的正确答案是什么？",
+                    options_json=["A", "B", "C", "D"],
+                    answer_key_json={
+                        "correct_option": 0,
+                        "explanation": "可信解析。",
+                        "source_ref_ids": [f"{primary_id}::chunk::0"],
+                        "quiz_level": quiz_level,
+                        "source_locators": {
+                            f"{primary_id}::chunk::0": f"{primary_id}::chunk::0"
+                        },
+                    },
+                    difficulty=2,
+                    status="active",
+                    certification_status="certified",
+                    certification_rule_version="question-cert-v1",
+                    source_content_hash="sha256:" + "e" * 64,
+                )
+            )
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        result = retriever.execute(
+            _input(
+                priority=target_ids,
+                n_results=12,
+                resource_types=["lecture", "practice_guide", "graded_quiz"],
+            )
+        )
+
+    chunk_knowledge_ids = {chunk.knowledge_id for chunk in result.chunks}
+    assert len(result.chunks) == 18
+    assert len(result.reference_questions) == 6
+    assert set(target_ids) <= chunk_knowledge_ids
+    assert set(question_primary_ids) <= chunk_knowledge_ids
+    assert set(filler_ids) <= chunk_knowledge_ids
+
+
 def test_v3_retrieval_excludes_missing_source_and_validates_collection_metadata(
     tmp_path: Path,
 ) -> None:
@@ -464,8 +869,8 @@ def test_v3_retrieval_ablation_modes_do_not_change_contract_shape(tmp_path: Path
             retriever, _ = _retriever(tmp_path / mode, db, records, mode=mode)
             result = retriever.execute(_input(priority=["priority"]))
             assert result.task_id == "task-v3-1"
-            assert len(result.chunks) <= 12
-    assert result.model_dump()["contract_version"] == "agent-contract-v6"
+            assert len(result.chunks) <= 18
+    assert result.model_dump()["contract_version"] == "agent-contract-v8"
 
 
 def test_v3_retrieval_rejects_cross_domain_chunk(tmp_path: Path) -> None:

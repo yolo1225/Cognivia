@@ -64,6 +64,31 @@ export interface DomainValidationResult {
   rag_ready: boolean;
   generation_ready: boolean;
   runtime_reasons?: string[];
+  evidence_coverage?: {
+    total_items: number;
+    capabilities: Record<
+      | "concept"
+      | "operation"
+      | "command"
+      | "code_example"
+      | "expected_result"
+      | "error_handling"
+      | "version_boundary",
+      number
+    >;
+    practice_generation_mode: "evidence_backed" | "safe_conceptual";
+  };
+  question_bank_coverage?: {
+    total_items: number;
+    ready_items: number;
+    ready_knowledge_ids: string[];
+    missing_knowledge_ids: string[];
+    requirements: {
+      total: number;
+      single_choice: number;
+      short_answer: number;
+    };
+  };
   status?: string;
   policy?: Record<string, number>;
   checks?: Array<{
