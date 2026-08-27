@@ -7,6 +7,11 @@
 -> 双模型审核 -> 自动局部修订 -> 原子发布 -> 反馈更新
 ```
 
+当前实现还覆盖：首次三步建档、异步诊断评分、前置关系学习路径、资源内测验、错题巩固、
+学习效果对比、导学评估、学习调整提案，以及文档驱动的领域知识导入、图谱预览与一次确认发布。
+活动 Agent 契约为 `agent-contract-v9`；运行时仅使用已发布领域的 active Candidate index 和
+`active + certified` 正式题库。
+
 ## Docker 启动
 
 ```powershell
@@ -38,3 +43,11 @@ docker compose exec backend python -m app.scripts.evaluate_rag --split developme
 ```
 
 `evaluate_rag` 只评测 active candidate index，真实评测会发送查询文本至配置的 embedding 服务。人工复核、mock embedding、旧 hash 检索和 V1/V2 运行链已移除。
+
+## 文档入口
+
+- [当前迭代计划](docs/current-iteration-plan.md)：当前交付顺序与已完成证据。
+- [工程规范](docs/project-conventions.md)：开发、契约、测试与隐私约束。
+- [API v1](docs/api-v1.md)：当前接口、认证与 SSE 说明。
+- [部署说明](docs/deployment.md)：Docker 演示环境、健康检查与验证。
+- [Agent Contract V9](docs/agent-contract-v9.md)：活动 Agent 契约；V8 及更早版本仅作历史参考。

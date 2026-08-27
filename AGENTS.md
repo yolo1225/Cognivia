@@ -30,10 +30,12 @@ If the documents conflict:
 
 ## Current Delivery Strategy
 
-The project has already completed a first-pass frontend demonstration loop. The current iteration strategy is:
+The project has completed the first-pass frontend demonstration loop and the production learning loop.
+The current iteration strategy is:
 
 ```text
-frontend demo loop stability -> backend real capability fill-in -> reproducible evaluation -> demo packaging
+frontend demo loop stability -> domain knowledge automatic import and graph construction
+-> reproducible evaluation -> demo packaging
 ```
 
 Do not revert to a backend-only sequence that leaves the product flow invisible. New work should strengthen the visible competition demo while progressively replacing demo/rule-based backend logic with real implementations.
@@ -57,9 +59,11 @@ First-version delivery must prioritize:
   - `lecture`
   - `practice_guide`
   - `graded_quiz`
-- Agent workflow visualization
+- Traceable Agent workflow records and SSE status events (the learner-facing pages show business
+  results; internal Agent traces remain available to authorized task APIs and offline evaluation)
 - Learning profile/report visualization
-- Knowledge management with manual import and index rebuild status
+- Knowledge management with document-driven batch import, graph preview, candidate-index rebuild
+  and publish status
 - Feedback-triggered correction, remedial explanation, or challenge task
 - 50 evaluation cases and reproducible `test_script`
 
@@ -67,10 +71,10 @@ First-version delivery must prioritize:
 
 Do not spend first-version effort on these unless explicitly requested:
 
-- Full JWT account lifecycle, registration, password recovery, or enterprise permission workflows
+- Enterprise permission workflows, password recovery, MFA, or third-party identity integration
 - `/api/v2` or complex long-term API compatibility governance
 - `domain_versions`, `knowledge_item_versions`, `resource_versions` as mandatory tables
-- Redis session cache
+- Redis-based general cache or distributed task queue beyond the existing refresh-session/runtime use
 - Neo4j graph database
 - WebSocket if SSE is enough
 - Full online evaluation dashboard or human review workbench
@@ -82,7 +86,7 @@ These may be mentioned as future extensions, but must not block the MVP loop.
 
 Use the stack defined by the design document:
 
-- Frontend: Vue 3, TypeScript, Vite, Element Plus, ECharts, Vue Flow, Pinia, Axios
+- Frontend: Vue 3, TypeScript, Vite, project-native Vue/CSS components, ECharts, Vue Flow, Pinia, Axios
 - Backend: FastAPI, Python 3.12, SQLAlchemy, Alembic
 - Agent orchestration: LangGraph `StateGraph`
 - Relational database: MySQL 8
@@ -128,11 +132,11 @@ finalize_task -> END                  when decision in [completed, no_change, fa
 finalize_task -> retrieve_knowledge   when decision = revision_required and revision_count < 2
 ```
 
-`build_learning_graph()` is the only top-level graph builder. Initial generation and
-feedback-triggered adjustment reuse the same `generation_tasks.public_id` as the public
-`task_id` and LangGraph `thread_id`. Natural-language feedback enters through a tutoring
-session. Quick tags, ratings, and selected-text reports are supporting evidence only and
-must not directly overwrite a learner profile.
+`build_learning_graph()` is the only top-level graph builder. Each generation event uses its own
+`generation_tasks.public_id` as the public `task_id` and LangGraph `thread_id`; feedback and
+knowledge-refresh tasks retain `source_task_id`/`source_feedback_id` links to the source package.
+Natural-language feedback enters through a tutoring session. Quick tags, ratings, and selected-text
+reports are supporting evidence only and must not directly overwrite a learner profile.
 
 ## Agent Contract Governance
 
@@ -143,13 +147,13 @@ development agents implementing concrete Agents must treat these files as read-o
 - `backend/app/agents/state.py`
 - `backend/app/agents/contract_adapters.py`
 - `backend/tests/contracts/`
-- `docs/agent-contract-v8.md`
-- `docs/contracts/v8/`
+- `docs/agent-contract-v9.md`
+- `docs/contracts/v9/`
 
-The V8 source of truth is `docs/agent-contract-v8.md` together with the executable Pydantic
-models and generated JSON Schema. V7 and earlier documents and Schema are historical compatibility
+The V9 source of truth is `docs/agent-contract-v9.md` together with the executable Pydantic
+models and generated JSON Schema. V8 and earlier documents and Schema are historical compatibility
 artifacts only and must not be used for new runs. All Agent implementations import only from
-`app.agents.contracts` and `app.agents.state`. V1-V7 contracts, State and Agent implementations
+`app.agents.contracts` and `app.agents.state`. V1-V8 contracts, State and Agent implementations
 have been retired and must not be reintroduced into the active runtime.
 
 Concrete Agent developers must not change contract fields, enums, required/optional rules,
@@ -230,7 +234,9 @@ Use JSON fields when they reduce unnecessary table sprawl and do not hide critic
 
 Use `/api/v1`.
 
-MVP auth should use demo accounts and roles. Formal JWT login may be added later, but it should not delay core delivery.
+The current MVP uses learner/admin accounts, bcrypt passwords, JWT HttpOnly cookies, CSRF headers
+and Redis refresh sessions. Keep the existing ownership checks; do not expand this into a full
+enterprise identity lifecycle unless explicitly requested.
 
 Every API response should include:
 
@@ -250,14 +256,16 @@ Core pages:
 
 - demo workspace
 - learner profile and diagnosis
-- Agent collaboration workspace
+- internal Agent run/trace APIs and SSE events; learner-facing pages present task, resource,
+  review and learning-path results rather than raw Agent payloads
 - learning resources
 - learning report
 - knowledge management
 - domain configuration
 - metric summary panel
 
-Use Vue Flow for agent status visualization. Use ECharts for radar charts, heatmaps, graph views, and learning path visualization.
+Use Vue Flow only when an authorized operational view needs workflow visualization. Use ECharts for
+radar charts, heatmaps, graph views, and learning path visualization.
 
 Keep the interface professional, compact, and demo-friendly.
 
