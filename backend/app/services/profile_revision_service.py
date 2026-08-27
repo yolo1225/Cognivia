@@ -23,6 +23,7 @@ def persist_profile_revision(
     original: LearnerProfile,
     analysis: AnalyzeProfileOutput,
     trigger_feedback_id: int | None,
+    internal_profile_updates: dict | None = None,
 ) -> tuple[LearnerProfile, LearningPath | None]:
     if not analysis.profile_update_required:
         return original, None
@@ -36,6 +37,7 @@ def persist_profile_revision(
     ability_payload = {
         **dict(original.ability_profile_json or {}),
         **ability_profile_payload(snapshot),
+        **dict(internal_profile_updates or {}),
     }
     next_profile = LearnerProfile(
         public_id=public_id("profile"),

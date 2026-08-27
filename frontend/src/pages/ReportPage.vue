@@ -3,13 +3,13 @@
     <PageHeader title="学习报告" description="能力画像、学习资源与推荐路径，一份报告看清当前水平和下一步学习安排。">
       <template #actions>
         <span class="learner-tag">学习者 {{ learnerId || '-' }}</span>
-        <button type="button" class="btn" :disabled="loading" :aria-busy="loading" @click="loadReport">{{ loading ? '正在刷新' : '刷新报告' }}</button>
+        <button type="button" class="btn" :disabled="loading" :aria-busy="loading" @click="() => loadReport()">{{ loading ? '正在刷新' : '刷新报告' }}</button>
       </template>
     </PageHeader>
 
     <PageState v-if="loading" type="loading" title="正在加载学习报告" />
 
-    <div v-else-if="errorMessage" class="error-state"><strong>报告加载失败</strong><p>{{ errorMessage }}</p><button class="btn" @click="loadReport">重新加载</button></div>
+    <div v-else-if="errorMessage" class="error-state"><strong>报告加载失败</strong><p>{{ errorMessage }}</p><button class="btn" @click="() => loadReport()">重新加载</button></div>
 
     <div v-else-if="!report" class="card empty-state">
       <div class="empty-icon"><AppIcon name="report" /></div>
@@ -29,6 +29,13 @@
             <span v-for="d in directionList" :key="d" class="hero-tag">{{ d }}</span>
             <span class="hero-tag">{{ contextSnapshot.education_level || '未填写' }} · {{ contextSnapshot.major || '未填写专业' }}</span>
             <span v-if="contextSnapshot.experience_years != null" class="hero-tag">{{ contextSnapshot.experience_years }} 年经验</span>
+          </div>
+          <div class="profile-summary">
+            <span>画像 {{ profileVersionLabel }} · {{ formatDate(profileUpdatedAt) }} 更新</span>
+            <span>正式证据置信度 {{ Math.round(Number(report.profile_confidence || 0) * 100) }}%</span>
+            <span>{{ pendingDimensionText }}</span>
+            <span>当前节点：{{ currentNodeTitle }}</span>
+            <span>下一步：{{ nextActionText }}</span>
           </div>
         </div>
         <div class="hero-stats">
@@ -50,8 +57,8 @@
             <div class="radar-wrap"><RadarChart :values="abilityValues" :baseline-values="baselineAbilityValues" :indicators="abilityLabels" /></div>
             <div class="ability-list">
               <div v-for="item in abilityRows" :key="item.label" class="ability-row">
-                <div class="ability-meta"><span>{{ item.label }}</span><strong>{{ item.value }} <small v-if="item.delta != null" :class="deltaTone(item.delta)">{{ signed(item.delta) }}</small></strong></div>
-                <div class="ability-track"><i :style="{ width: `${item.value}%` }"></i></div>
+                <div class="ability-meta"><span>{{ item.label }}</span><strong>{{ item.unassessed ? '待评估' : item.value }} <small v-if="!item.unassessed && item.delta != null" :class="deltaTone(item.delta)">{{ signed(item.delta) }}</small></strong></div>
+                <div class="ability-track" :class="{ pending: item.unassessed }"><i :style="{ width: item.unassessed ? '0%' : `${item.value}%` }"></i></div>
               </div>
             </div>
           </div>
@@ -67,8 +74,15 @@
         </div>
         <div v-if="report.learning_path?.revision_summary" class="path-revision-summary"><strong>路线已调整</strong><p>{{ report.learning_path.revision_summary.message }}，请先完成新的当前节点。</p></div>
         <div v-for="proposal in report.learning_adjustments || []" :key="proposal.proposal_id" class="adjustment-summary">
-          <div><strong>画像与路线已更新</strong><p>{{ proposal.decision === 'confirmed_mastery' ? '已确认掌握并推进到下一节点。' : '已确认需要补强，当前节点保持不变。' }}</p></div>
-          <div class="path-actions"><button class="btn primary" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'generate')">生成新资源</button><button class="btn" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'skip')">暂不生成</button></div>
+          <div><strong>{{ adjustmentTitle(proposal) }}</strong><p>{{ adjustmentDescription(proposal) }}</p></div>
+          <div class="path-actions">
+            <template v-if="proposal.status === 'resource_pending'">
+              <button class="btn primary" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'generate')">生成下一节点学习包</button>
+              <button class="btn" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'skip')">暂不生成</button>
+            </template>
+            <button v-else-if="proposal.recovery_available" class="btn primary" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'generate')">重新生成下一节点学习包</button>
+            <button v-else-if="proposal.generation_task?.task_id" class="btn" @click="router.push({ path: '/resources', query: { task_id: proposal.generation_task?.task_id, ...(learnerId ? { learner_id: learnerId } : {}) } })">{{ adjustmentTaskAction(proposal) }}</button>
+          </div>
         </div>
         <div v-if="pathNodes.length" class="path-h">
           <div v-for="(node, index) in pathNodes" :key="node.path_node_id" class="path-h-step" :class="`node-${node.status}`">
@@ -100,6 +114,7 @@
         <div class="knowledge-toolbar">
           <div class="knowledge-tabs" role="tablist" aria-label="知识掌握视图">
             <button type="button" role="tab" :aria-selected="knowledgeView === 'weak'" :class="{ active: knowledgeView === 'weak' }" @click="knowledgeView = 'weak'">当前待加强 <span>{{ sortedWeakKnowledge.length }}</span></button>
+            <button type="button" role="tab" :aria-selected="knowledgeView === 'all'" :class="{ active: knowledgeView === 'all' }" @click="knowledgeView = 'all'">全部知识状态 <span>{{ report.knowledge_states?.length || 0 }}</span></button>
             <button type="button" role="tab" :aria-selected="knowledgeView === 'changes'" :class="{ active: knowledgeView === 'changes' }" @click="knowledgeView = 'changes'">画像变化 <span>{{ knowledgeChangeTotal }}</span></button>
           </div>
           <span v-if="progress?.mistake_consolidation" class="consolidation-note">错题验证通过 {{ progress.mistake_consolidation.consolidated ?? 0 }} 道</span>
@@ -113,16 +128,26 @@
           <div v-else class="weak-empty"><span aria-hidden="true">✓</span><div><strong>当前没有已确认的薄弱知识点</strong><p>后续证据会持续更新这一结果。</p></div></div>
           <button v-if="sortedWeakKnowledge.length > 6" type="button" class="knowledge-more" @click="showAllWeakKnowledge = !showAllWeakKnowledge">{{ showAllWeakKnowledge ? '收起其余项目' : `查看其余 ${sortedWeakKnowledge.length - 6} 项` }}</button>
         </div>
-        <div v-else class="knowledge-panel" role="tabpanel">
+        <div v-else-if="knowledgeView === 'changes'" class="knowledge-panel" role="tabpanel">
           <div v-if="knowledgeChangeTotal" class="change-columns">
             <section v-for="group in knowledgeGroups" :key="group.key" class="change-column" :class="`group-${group.key}`">
               <header><strong>{{ group.label }}</strong><span>{{ group.items.length }}</span></header>
-              <ul><li v-for="item in group.items.slice(0, 4)" :key="item.knowledge_id"><span>{{ item.name }}</span><small v-if="item.before_level != null">{{ item.before_level }} → {{ item.after_level }}</small></li></ul>
+              <ul><li v-for="item in group.items.slice(0, 4)" :key="item.knowledge_id"><span>{{ item.name }}</span><small>{{ knowledgeChangeDetail(item) }}</small></li></ul>
               <small v-if="group.items.length > 4" class="more-count">还有 {{ group.items.length - 4 }} 项</small>
               <p v-if="!group.items.length">暂无变化</p>
             </section>
           </div>
           <div v-else class="knowledge-empty">尚无经正式证据确认的知识状态变化。</div>
+        </div>
+        <div v-else class="knowledge-panel" role="tabpanel">
+          <p class="section-note">已评估 {{ report.assessment_coverage?.assessed_count || 0 }} / {{ report.assessment_coverage?.knowledge_total || 0 }} 个知识点<span v-if="report.knowledge_state_derived_legacy">（历史画像兼容视图）</span></p>
+          <div v-if="report.knowledge_states?.length" class="weak-grid-compact">
+            <article v-for="item in report.knowledge_states" :key="item.knowledge_id" class="weak-row">
+              <div><strong>{{ item.name }}</strong><small>{{ item.category }}</small></div>
+              <span class="severity-badge">{{ knowledgeStateLabel(item.status) }} · {{ Math.round(item.mastery_score * 100) }}%</span>
+            </article>
+          </div>
+          <div v-else class="knowledge-empty">历史画像暂无可用的逐知识点证据。</div>
         </div>
       </section>
 
@@ -137,21 +162,16 @@
           </div>
           <div class="change-main">
             <strong>{{ change.profile_change_summary.knowledge_name }}</strong>
-            <p>{{ knowledgeStateLabel(change.profile_change_summary.before_state) }} → {{ knowledgeStateLabel(change.profile_change_summary.after_state) }}</p>
+            <p>{{ profileChangeLabel(change) }}</p>
             <small v-if="change.profile_change_summary.removed_from_weak_knowledge">已从薄弱知识点移除</small>
             <small v-if="change.profile_change_summary.removed_from_blind_spots">已从知识盲点移除</small>
           </div>
           <div class="change-route">
             <span>{{ change.profile_change_summary.ability_summary }}</span>
-            <small v-if="change.profile_change_summary.completed_node_id">已完成当前节点，路线推进至 {{ nodeTitle(change.profile_change_summary.current_node_id) }}</small>
+            <small v-if="change.profile_change_summary.completed_node_id">已完成节点 {{ nodeTitle(change.profile_change_summary.completed_node_id) }}，已解锁 {{ nodeTitle(change.profile_change_summary.current_node_id) }}；{{ adjustmentPackageImpact(change) }}</small>
             <small v-else>路线保持在当前节点</small>
           </div>
         </article>
-      </section>
-
-      <section v-if="learningHistory.length" class="card evidence-timeline">
-        <div class="card-head"><div><h2>学习历程</h2><p class="section-note">记录诊断、导学反馈、掌握验证、路径推进与反馈驱动资源任务</p></div></div>
-          <ol><li v-for="event in learningHistory" :key="event.event_id"><time>{{ formatDate(event.occurred_at) }}</time><div><strong>{{ event.title }}</strong><p>{{ event.reason || '已记录本次学习事件。' }}</p><small><template v-if="event.profile_version != null">画像 V{{ event.profile_version }}</template><template v-if="event.path_node_id"> · {{ nodeTitle(event.path_node_id) }}</template><template v-if="event.evidence_refs?.length"> · {{ formatEvidenceRefs(event.evidence_refs) }}</template></small></div></li></ol>
       </section>
 
       <!-- 最近资源 -->
@@ -182,9 +202,11 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getLearningReport, type LearningReport } from '@/api/reports'
 import type { LearningPathNode } from '@/api/learningPaths'
-import { decideLearningAdjustmentResource } from '@/api/learningAdjustments'
+import { decideLearningAdjustmentResource, type LearningAdjustmentSummary } from '@/api/learningAdjustments'
+import type { KnowledgeProgressItem } from '@/api/reports'
 import { useToast } from '@/composables/useToast'
 import { resourceQualityStatusLabel, resourceQualityStatusTone } from '@/utils/resourceQualityStatus'
+import { generationFailureCopy } from '@/utils/generationFailure'
 import { createGenerationTask } from '@/api/generation'
 import RadarChart from '@/components/Charts/RadarChart.vue'
 import AppIcon from '@/components/Shared/AppIcon.vue'
@@ -212,10 +234,17 @@ const loading = ref(false)
 const errorMessage = ref('')
 const creatingGeneration = ref(false)
 const adjustmentSubmitting = ref('')
-const knowledgeView = ref<'weak' | 'changes'>('weak')
+const knowledgeView = ref<'weak' | 'all' | 'changes'>('weak')
 const showAllWeakKnowledge = ref(false)
+let reportRefreshTimer: number | null = null
 
-const abilityLabels = ['理论掌握', '实操应用', '场景解决']
+const abilityDimensions = [
+  { key: 'theory', label: '理论掌握' },
+  { key: 'practice', label: '实操应用' },
+  { key: 'problem_solving', label: '场景解决' },
+  { key: 'knowledge_breadth', label: '知识广度' },
+  { key: 'learning_speed', label: '学习速度' },
+] as const
 const DIRECTION_LABELS: Record<string, string> = {
   llm_application: '大模型应用开发',
   prompt_engineering: 'Prompt 工程',
@@ -224,14 +253,20 @@ const DIRECTION_LABELS: Record<string, string> = {
 }
 
 const progress = computed(() => report.value?.progress_comparison)
-const learningHistory = computed(() => report.value?.learning_history || [])
-const abilityValues = computed(() => (report.value?.radar || []).slice(0, 3))
-const baselineAbilityValues = computed(() => progress.value?.baseline?.radar?.slice(0, 3))
+const radarDimensions = computed(() => abilityDimensions
+  .map((dimension, index) => ({ ...dimension, index }))
+  .filter(dimension => !dimensionIsUnassessed(dimension.key)))
+const abilityLabels = computed(() => radarDimensions.value.map(dimension => dimension.label))
+const abilityValues = computed(() => radarDimensions.value.map(dimension => Number(report.value?.radar?.[dimension.index] || 0)))
+const baselineAbilityValues = computed(() => progress.value?.baseline?.radar
+  ? radarDimensions.value.map(dimension => Number(progress.value?.baseline?.radar?.[dimension.index] || 0))
+  : undefined)
 const evidenceProfile = computed<Record<string, any>>(() => report.value?.ability_profile?.evidence_profile || {})
-const abilityRows = computed(() => abilityLabels.map((label, index) => ({
-  label,
+const abilityRows = computed(() => abilityDimensions.map((dimension, index) => ({
+  label: dimension.label,
   value: Math.max(0, Math.min(100, Number(report.value?.radar?.[index] || 0))),
   delta: progress.value?.ability_changes?.[index]?.delta,
+  unassessed: dimensionIsUnassessed(dimension.key),
 })))
 const sortedWeakKnowledge = computed(() => [...(report.value?.weak_knowledge || [])].sort((a, b) => b.weakness_level - a.weakness_level))
 const displayedWeakKnowledge = computed(() => showAllWeakKnowledge.value ? sortedWeakKnowledge.value : sortedWeakKnowledge.value.slice(0, 6))
@@ -249,13 +284,33 @@ const diagnosticCorrectCount = computed(() => Number(report.value?.diagnostic_su
 const diagnosticAnswerCount = computed(() => Number(report.value?.diagnostic_summary?.answer_count || 0))
 const resourceTotal = computed(() => report.value?.resource_summary?.total || 0)
 const pathNodes = computed<LearningPathNode[]>(() => report.value?.learning_path?.nodes || [])
-function formatEvidenceRefs(refs: unknown[]) { return `已记录 ${refs.length} 条正式证据` }
 const profileChanges = computed(() => report.value?.profile_changes || [])
+const profileVersionLabel = computed(() => progress.value?.current?.profile_version ? `V${progress.value.current.profile_version}` : '版本待确认')
+const profileUpdatedAt = computed(() => progress.value?.period?.updated_at)
+const currentNodeTitle = computed(() => pathNodes.value.find(node => node.status === 'current')?.title || '学习路线已完成')
+const pendingDimensionText = computed(() => {
+  const pending = abilityDimensions.filter(dimension => dimensionIsUnassessed(dimension.key)).map(dimension => dimension.label)
+  return pending.length ? `待评估：${pending.join('、')}` : '五维能力均已有正式评估'
+})
+const nextActionText = computed(() => {
+  const proposal = (report.value?.learning_adjustments || [])[0]
+  if (proposal?.status === 'resource_pending') return '确认生成下一节点学习包'
+  if (proposal?.recovery_available) return '重新生成下一节点学习包'
+  if (proposal?.generation_task?.status === 'failed') return '重新生成下一节点学习包'
+  if (proposal?.generation_task?.status && proposal.generation_task.status !== 'completed') return '等待学习包生成完成'
+  return pathNodes.value.some(node => node.status === 'current') ? '继续当前节点学习' : '查看学习成果'
+})
+const hasActiveAdjustmentGeneration = computed(() => (report.value?.learning_adjustments || []).some(
+  proposal => ['pending', 'retry_pending', 'running', 'revision_required'].includes(
+    proposal.generation_task?.status || '',
+  ),
+))
 const knowledgeGroups = computed(() => {
   const changes = progress.value?.knowledge_changes
   return [
     { key: 'consolidated', label: '确认掌握', items: changes?.consolidated || [] },
     { key: 'improving', label: '正在提升', items: changes?.improving || [] },
+    { key: 'new_evidence', label: '新增正式证据 · 初步掌握', items: changes?.new_evidence || [] },
     { key: 'new_weakness', label: '新增待加强', items: changes?.new_weakness || [] },
   ]
 })
@@ -265,7 +320,6 @@ function signed(value?: number | null) { const number = Number(value || 0); retu
 function deltaTone(value?: number | null) { return Number(value || 0) > 0 ? 'delta-up' : Number(value || 0) < 0 ? 'delta-down' : 'delta-flat' }
 function percentOrEmpty(value?: number | null) { return value == null ? '暂无' : `${Math.round(value)}%` }
 function formatDate(value?: string | null) { return value ? new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric' }).format(new Date(value)) : '待确认' }
-function governanceLabel(status: string) { return ({ pending: '等待独立证据', conflicted: '证据冲突', consumed: '已被画像消费', no_change: '画像保持不变', rejected: '证据未采用' } as Record<string, string>)[status] || status }
 
 function pathStatusLabel(status: LearningPathNode['status']) {
   return ({ locked: '未解锁', current: '当前学习', completed: '已完成', skipped: '已跳过' } as const)[status]
@@ -273,12 +327,66 @@ function pathStatusLabel(status: LearningPathNode['status']) {
 
 function knowledgeStateLabel(state: string) {
   return ({
+    unassessed: '未评估',
     unmastered: '未掌握',
     confused: '易混淆',
     partial_mastery: '部分掌握',
     known: '已掌握',
     not_weak: '非薄弱项',
   } as Record<string, string>)[state] || state
+}
+
+function knowledgeChangeDetail(item: KnowledgeProgressItem) {
+  const evidence = item.after_evidence_count != null ? `${item.after_evidence_count} 条正式证据` : ''
+  if (item.before_status || item.after_status) {
+    return `${knowledgeStateLabel(item.before_status || 'unassessed')} → ${knowledgeStateLabel(item.after_status || 'unassessed')} ${evidence}`.trim()
+  }
+  return item.before_level != null ? `${item.before_level} → ${item.after_level}` : evidence || '状态已更新'
+}
+
+function adjustmentTitle(proposal: LearningAdjustmentSummary) {
+  if (proposal.recovery_available) return '下一节点学习包未完成'
+  if (proposal.status === 'resource_pending') return proposal.decision === 'confirmed_mastery' ? '掌握已验证，等待生成下一节点学习包' : '画像与路线已更新，等待生成资源'
+  if (proposal.generation_task?.status === 'failed') return '下一节点学习包生成失败'
+  if (proposal.generation_task?.status === 'completed') return '下一节点学习包已完成'
+  return '下一节点学习包正在生成'
+}
+
+function adjustmentDescription(proposal: LearningAdjustmentSummary) {
+  const node = nodeTitle(proposal.resource_recommendation.path_node_id)
+  const targetTypes = proposal.resource_recommendation.resource_types.map(type => ({ lecture: '讲义', practice_guide: '实操指南', graded_quiz: '分阶测试' } as Record<string, string>)[type] || type).join('、')
+  if (proposal.recovery_available) return `此前任务没有产出完整资源，已保留原始记录。可重新为「${node}」生成 ${targetTypes}。`
+  if (proposal.status === 'resource_pending') return `已推进到「${node}」，确认后将生成 ${targetTypes} 并进入双模型审核。`
+  if (proposal.generation_task?.status === 'failed') return generationFailureCopy(proposal.generation_task.failure_reason).description
+  if (proposal.generation_task?.status === 'completed') return `已通过审核并产出 ${proposal.generation_task.published_resource_types.length} 类资源。`
+  return `正在为「${node}」生成 ${targetTypes}。`
+}
+
+function adjustmentTaskAction(proposal: LearningAdjustmentSummary) {
+  return proposal.generation_task?.status === 'completed' ? '查看下一节点资源' : '查看生成进度'
+}
+
+function profileChangeLabel(change: NonNullable<LearningReport['profile_changes']>[number]) {
+  const summary = change.profile_change_summary
+  const target = knowledgeStateLabel(summary.after_state)
+  if (summary.before_state === 'unassessed' && summary.after_state === 'partial_mastery') {
+    return `新增正式证据 · 初步掌握（${target}）`
+  }
+  return `${knowledgeStateLabel(summary.before_state)} → ${target}`
+}
+
+function adjustmentPackageImpact(change: NonNullable<LearningReport['profile_changes']>[number]) {
+  const task = change.generation_task
+  if (!task) return '下一节点学习包待确认'
+  if (task.status === 'failed' || task.decision === 'no_change') return '下一节点学习包待重新生成'
+  if (task.status !== 'completed') return '下一节点学习包生成中'
+  return '下一节点学习包已完成'
+}
+
+function dimensionIsUnassessed(dimension: typeof abilityDimensions[number]['key']) {
+  const status = report.value?.dimension_status?.[dimension]
+  if (status === 'unassessed' || status === 'insufficient_evidence' || status === 'insufficient_longitudinal_evidence') return true
+  return dimension === 'learning_speed' && status !== 'assessed'
 }
 
 function nodeTitle(nodeId?: string | null) {
@@ -356,30 +464,60 @@ function severityLevel(level: number) {
   return 'low'
 }
 
-async function loadReport() {
+function clearReportRefreshTimer() {
+  if (reportRefreshTimer !== null) window.clearTimeout(reportRefreshTimer)
+  reportRefreshTimer = null
+}
+
+function scheduleReportRefresh() {
+  clearReportRefreshTimer()
+  if (!hasActiveAdjustmentGeneration.value) return
+  reportRefreshTimer = window.setTimeout(() => {
+    void loadReport(true)
+  }, 2000)
+}
+
+async function loadReport(silent = false) {
   if (!learnerId.value) {
+    clearReportRefreshTimer()
     report.value = null
     errorMessage.value = '当前账号未关联有效学习者，请重新登录或联系管理员。'
     return
   }
-  loading.value = true
-  errorMessage.value = ''
+  if (!silent) {
+    loading.value = true
+    errorMessage.value = ''
+  }
   try {
     const data = await getLearningReport(learnerId.value, taskId.value || undefined)
     report.value = data.profile_ready ? data : null
     if (report.value?.domain_code) await domainStore.initialize(report.value.domain_code)
-  } catch { report.value = null; errorMessage.value = '无法读取学习报告，请确认后端服务可用。' }
-  finally { loading.value = false }
+    scheduleReportRefresh()
+  } catch {
+    if (!silent) {
+      report.value = null
+      errorMessage.value = '无法读取学习报告，请确认后端服务可用。'
+    }
+  } finally {
+    if (!silent) loading.value = false
+  }
+}
+
+function refreshOnFocus() {
+  void loadReport()
 }
 
 watch(() => [route.query.learner_id, route.query.task_id], () => {
-  loadReport()
+  void loadReport()
 })
 onMounted(() => {
-  loadReport()
-  window.addEventListener('focus', loadReport)
+  void loadReport()
+  window.addEventListener('focus', refreshOnFocus)
 })
-onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
+onBeforeUnmount(() => {
+  clearReportRefreshTimer()
+  window.removeEventListener('focus', refreshOnFocus)
+})
 </script>
 
 <style scoped>
@@ -408,6 +546,7 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
 .hero-id p { margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.7; }
 .hero-tags { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 14px; }
 .hero-tag { border: 1px solid #dbe4f0; border-radius: 999px; background: rgb(255 255 255 / .7); color: var(--body); padding: 5px 11px; font-size: 12px; }
+.profile-summary { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; color: var(--body); font-size: 11px; }.profile-summary span { border-left: 1px solid #dbe4f0; padding-left: 7px; }.profile-summary span:first-child { border-left: 0; padding-left: 0; }
 .hero-stats { display: grid; grid-template-columns: repeat(2, minmax(96px, 1fr)); gap: 8px; flex: 0 0 252px; }
 .hero-stats .stat { min-width: 0; display: grid; gap: 4px; border: 1px solid rgb(255 255 255 / .8); border-radius: 10px; background: rgb(255 255 255 / .75); padding: 13px 14px; text-align: center; }
 .hero-stats strong { color: var(--ink); font-size: 24px; line-height: 1; }
@@ -428,9 +567,8 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
 .knowledge-more { width: 100%; min-height: 32px; margin-top: 8px; border: 0; border-radius: 7px; background: var(--soft); color: var(--blue); font-size: 11px; font-weight: 680; }.knowledge-more:hover { background: var(--blue2); }
 .change-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .change-column { min-width: 0; border-radius: 9px; background: var(--soft); padding: 12px; }.change-column header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }.change-column header strong { font-size: 12px; }.change-column header span { color: var(--muted); font-size: 11px; }.change-column ul { display: grid; gap: 4px; margin: 9px 0 0; padding: 0; list-style: none; }.change-column li { display: flex; justify-content: space-between; gap: 7px; color: var(--body); font-size: 11px; }.change-column li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.change-column li small,.more-count,.change-column > p { flex-shrink: 0; color: var(--muted); font-size: 10px; }.more-count { display: block; margin-top: 6px; }.change-column > p { margin-top: 9px; }
-.change-column.group-consolidated header strong { color: var(--green); }.change-column.group-improving header strong { color: var(--blue); }.change-column.group-new_weakness header strong { color: var(--red); }
+.change-column.group-consolidated header strong { color: var(--green); }.change-column.group-improving header strong,.change-column.group-new_evidence header strong { color: var(--blue); }.change-column.group-new_weakness header strong { color: var(--red); }
 .knowledge-empty { display: grid; min-height: 128px; place-items: center; color: var(--muted); font-size: 12px; text-align: center; }
-.evidence-timeline ol { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }.evidence-timeline li { display: grid; grid-template-columns: 108px 18px minmax(0, 1fr); gap: 10px; padding: 0 0 18px; }.evidence-timeline li::before { content: ''; grid-column: 2; grid-row: 1; width: 10px; height: 10px; margin-top: 5px; border: 3px solid var(--blue); border-radius: 50%; background: var(--panel); }.evidence-timeline li:not(:last-child)::after { content: ''; grid-column: 2; grid-row: 1; width: 1px; height: calc(100% + 8px); margin: 15px 0 0 5px; background: var(--line); }.evidence-timeline time { grid-column: 1; grid-row: 1; color: var(--muted); font-size: 11px; }.evidence-timeline li > div { grid-column: 3; grid-row: 1; min-width: 0; }.evidence-timeline strong { font-size: 13px; }.evidence-timeline p { margin-top: 3px; color: var(--body); font-size: 12px; }.evidence-timeline small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 
 /* 两列网格 */
 .report-grid { display: grid; grid-template-columns: 1fr; gap: 20px; align-items: start; }
@@ -444,6 +582,7 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
 .ability-meta strong { color: var(--ink); font-size: 14px; }
 .ability-track { height: 8px; margin-top: 7px; border-radius: 999px; background: var(--track); overflow: hidden; }
 .ability-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #6a8bc0, var(--blue)); }
+.ability-track.pending { background: repeating-linear-gradient(135deg, var(--track), var(--track) 6px, var(--panel) 6px, var(--panel) 12px); }
 
 /* 画像变化 */
 .profile-change-section { display: grid; gap: 0; }
@@ -517,7 +656,6 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
   .knowledge-toolbar { align-items: flex-start; flex-direction: column-reverse; gap: 2px; }
   .knowledge-tabs { width: 100%; gap: 10px; }.knowledge-tabs button { flex: 1; justify-content: center; }
   .weak-grid-compact { grid-template-columns: 1fr; }
-  .evidence-timeline li { grid-template-columns: 74px 14px minmax(0, 1fr); gap: 7px; }
 }
 .ability-evidence { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 16px; border-top: 1px solid var(--line); padding-top: 13px; }
 .ability-evidence span { border-radius: 999px; background: var(--soft); color: var(--muted); padding: 5px 9px; font-size: 10px; }

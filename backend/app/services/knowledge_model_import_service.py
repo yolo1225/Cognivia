@@ -46,12 +46,27 @@ class ExtractedKnowledge(BaseModel):
     tags: list[str]
     content: str
     prerequisites: list[str] = []
+    ability_weights: dict[str, float]
+    ability_weight_confidence: float = Field(ge=0, le=1)
 
 
 class ExtractionOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     knowledge: ExtractedKnowledge
+
+
+class AbilityWeightDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ability_weights: dict[str, float]
+    confidence: float = Field(ge=0, le=1)
+
+
+class AbilityWeightOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    result: AbilityWeightDecision
 
 
 class ValidationDecision(BaseModel):
@@ -280,6 +295,8 @@ def enrich_unstructured_sections(sections: list[dict]) -> list[dict]:
             system_prompt=(
                 "你是领域知识抽取器。只能依据输入原文抽取一个主要知识点，不补充外部事实。"
                 "name 使用清晰中文名称，content 保留来源可支持的完整说明。"
+                "同时输出 theory、practice、problem_solving、knowledge_breadth、learning_speed "
+                "五维权重；前四维之和必须为1，learning_speed必须为0，并给出置信度。"
             ),
             payload={"heading_path": section["heading_path"], "content": section["text"]},
             response_model=ExtractionOutput,
@@ -296,9 +313,58 @@ def enrich_unstructured_sections(sections: list[dict]) -> list[dict]:
             "difficulty": knowledge["difficulty"],
             "tags": knowledge["tags"],
             "prerequisites": knowledge.get("prerequisites") or [],
+            "ability_weights": knowledge.get("ability_weights"),
+            "ability_weight_source": "model",
+            "ability_weight_confidence": knowledge.get("ability_weight_confidence", 0.0),
         }
         enriched.append(section)
     return enriched
+
+
+def complete_candidate_ability_weights(
+    candidates: list[KnowledgeImportCandidate],
+) -> None:
+    """Fill only missing weights; explicit package data always wins."""
+    from app.services.ability_weight_service import normalize_ability_weights
+
+    for candidate in candidates:
+        if candidate.candidate_type != "knowledge_item":
+            continue
+        payload = dict(candidate.payload_json or {})
+        if normalize_ability_weights(payload.get("ability_weights")) is not None:
+            continue
+        try:
+            result, _ = gateway.complete_json(
+                model=settings.primary_llm_model,
+                system_prompt=(
+                    "你是跨领域教学能力映射器。只根据给定知识内容判断学习证据主要支持的能力。"
+                    "输出 theory、practice、problem_solving、knowledge_breadth、learning_speed 五个权重。"
+                    "前四项非负且之和必须为1，learning_speed必须为0。不得使用领域外知识。"
+                ),
+                payload={
+                    "name": payload.get("name"),
+                    "category": payload.get("category"),
+                    "difficulty": payload.get("difficulty"),
+                    "evidence_capabilities": payload.get("evidence_capabilities") or [],
+                    "content": str(payload.get("content") or "")[:5000],
+                },
+                response_model=AbilityWeightOutput,
+                max_output_tokens=600,
+            )
+            decision = result["result"]
+            weights = normalize_ability_weights(decision.get("ability_weights"))
+            if weights is None:
+                continue
+            payload["ability_weights"] = weights
+            payload["ability_weight_source"] = "model"
+            payload["ability_weight_confidence"] = float(decision.get("confidence") or 0.0)
+            candidate.payload_json = payload
+        except (ModelCallError, ModelOutputTruncatedError, ValueError, KeyError, TypeError):
+            logger.warning(
+                "knowledge ability weight generation failed",
+                extra={"candidate_id": candidate.public_id},
+                exc_info=True,
+            )
 
 
 def _persist_relation_records(

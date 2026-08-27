@@ -39,7 +39,7 @@ from app.agents.contracts import (
     ReviewResourceInput,
 )
 from app.agents.state import AgentGraphState
-from app.agents.generation_agent import ContentGenerationAgent
+from app.agents.generation_agent import ContentGenerationAgent, GenerationError
 from app.agents.claim_policy import RiskLevel
 from app.agents.domain_evidence_policy import register_domain_evidence_capabilities
 from app.agents.runtime_limits import MAX_EVIDENCE_CHUNKS
@@ -52,6 +52,7 @@ from app.agents.profile_analysis_config import MASTERY_BASELINES, ProfileAnalysi
 from app.agents.retrieval_agent import KnowledgeRetrievalAgent
 from app.agents.review_agent import (
     ReviewBatchCache,
+    ReviewError,
     ReviewValidationAgent,
     TaskScopedArbitrationRetriever,
     build_review_resource_output,
@@ -486,6 +487,28 @@ def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
                     for item in node_input.requirements.resource_types
                 ],
             )
+        if revision_plan is not None:
+            candidate_state = dict(state)
+            candidate_state["generate_resource"] = output
+            review_input = build_review_resource_input(candidate_state)
+            review_input = review_input.model_copy(
+                update={
+                    "requirements": review_input.requirements.model_copy(
+                        update={"revision_plan": revision_plan}
+                    )
+                }
+            )
+            for resource in output.resources:
+                if resource.resource_type is not ResourceType.PRACTICE_GUIDE:
+                    continue
+                try:
+                    extract_atomic_claims(resource, review_input)
+                except ReviewError as exc:
+                    if str(exc) != "review_claim_set_empty":
+                        raise
+                    raise GenerationError(
+                        "revision_claim_set_empty_after_repair"
+                    ) from exc
         return generate_resource_output_to_patch(node_input, output)
 
     def review_resource(state: AgentGraphState) -> AgentGraphState:

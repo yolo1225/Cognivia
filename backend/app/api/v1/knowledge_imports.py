@@ -28,6 +28,7 @@ from app.services.knowledge_import_publish_service import (
     smoke_import_index,
 )
 from app.services.knowledge_import_validation_service import validate_import
+from app.services.ability_weight_service import normalize_ability_weights
 from app.services.knowledge_import_orchestrator import resolve_run, serialize_run
 
 router = APIRouter()
@@ -168,6 +169,9 @@ def import_summary(import_id: str, db: Session = Depends(get_db)) -> ApiResponse
         "cycle_count": readiness.get("cycle_count", 0),
         "unresolved_relation_conflicts": readiness.get("unresolved_relation_conflicts", 0),
         "question_knowledge_coverage": readiness.get("question_knowledge_coverage", 0),
+        "ability_weights_ready": readiness.get("ability_weights_ready", 0),
+        "ability_weights_missing": readiness.get("ability_weights_missing", 0),
+        "ability_weight_blocking_ids": readiness.get("ability_weight_blocking_ids", []),
         "retrieval_hit_rate": retrieval_hit_rate,
         "repair_rounds": artifacts.get("repair_rounds", 0),
         "quality_gate_passed": readiness.get("quality_gate_passed", False),
@@ -300,7 +304,14 @@ def patch_candidate(
     if candidate.status in {"approved", "published"}:
         raise HTTPException(status_code=409, detail="已批准或发布的候选不可修改")
     if payload.payload is not None:
-        candidate.payload_json = payload.payload
+        next_payload = dict(payload.payload)
+        if candidate.candidate_type == "knowledge_item":
+            next_weights = normalize_ability_weights(next_payload.get("ability_weights"))
+            if next_weights is not None:
+                next_payload["ability_weights"] = next_weights
+                next_payload["ability_weight_source"] = "admin"
+                next_payload["ability_weight_confidence"] = 1.0
+        candidate.payload_json = next_payload
     if payload.status is not None:
         candidate.status = payload.status
     candidate.validation_errors_json = []

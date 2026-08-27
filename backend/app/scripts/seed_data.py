@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agents.profile_analysis_config import AI_APP_DEV_ABILITY_WEIGHTS, MASTERY_BASELINES
+from app.agents.profile_analysis_config import MASTERY_BASELINES
 from app.core.db import SessionLocal
 from app.models import (
     DiagnosticQuestion,
@@ -24,7 +24,10 @@ from app.services.question_certification_service import (
     QUESTION_CERTIFICATION_RULE_VERSION,
     knowledge_item_content_hash,
 )
-from app.services.question_source_binding_service import resolve_question_source_binding
+from app.services.question_source_binding_service import (
+    candidate_chunks_for_item,
+    resolve_question_source_binding,
+)
 
 
 SEED_DIR = Path("/app/data/seed")
@@ -200,7 +203,7 @@ def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
             "source_url": payload.get("source_url"),
             "license_note": payload.get("license_note", "team-authored"),
             "source_document_id": seed_document.id,
-            "ability_weights_json": AI_APP_DEV_ABILITY_WEIGHTS[public_id],
+            "ability_weights_json": payload["ability_weights"],
             "status": "published",
         }
         item = db.scalar(select(KnowledgeItem).where(KnowledgeItem.public_id == public_id))
@@ -272,12 +275,22 @@ def seed_diagnostic_questions(
             f"正确答案为“{correct_text}”，对应知识点“{item.name}”的核心要求。",
         )
         answer_key.setdefault("source_quote", item.content_md[:300])
-        answer_key.update(
-            resolve_question_source_binding(
-                item,
-                source_quote=answer_key["source_quote"],
-            )
+        source_chunks = candidate_chunks_for_item(item)
+        source_binding = resolve_question_source_binding(
+            item,
+            source_quote=answer_key["source_quote"],
+            chunks=source_chunks,
         )
+        bound_chunk = next(
+            chunk
+            for chunk in source_chunks
+            if chunk.chunk_id == source_binding["source_ref_ids"][0]
+        )
+        source_quote = str(answer_key["source_quote"])
+        if source_quote not in bound_chunk.content:
+            source_quote = bound_chunk.content[:300]
+        answer_key["source_quote"] = source_quote
+        answer_key.update(source_binding)
         source_ref_id = str(answer_key["source_ref_ids"][0])
         source_hashes = {source_ref_id: knowledge_item_content_hash(item)}
         aggregate_source_hash = "sha256:" + hashlib.sha256(

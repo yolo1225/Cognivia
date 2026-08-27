@@ -2,7 +2,7 @@
   "schema_version": "rag-evaluation-1.0",
   "split": "acceptance",
   "domain_code": "ai_app_dev",
-  "source_data_version": "sha256:a02334aa3f59325c21cfa48ecb58cf36b3e4056f5fffea01f890943c8508e5ba",
+  "source_data_version": "sha256:945e074f791339085f672815a1a5b008b883a9f3cdad2cfc5aec569012eb0b00",
   "cases": [
     {
       "case_id": "RAG-ACC-001",

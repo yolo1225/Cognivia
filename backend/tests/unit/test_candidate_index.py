@@ -21,7 +21,7 @@ from app.scripts.validate_rag_seed import source_data_version
 
 
 EXPECTED_SOURCE_VERSION = (
-    "sha256:a02334aa3f59325c21cfa48ecb58cf36b3e4056f5fffea01f890943c8508e5ba"
+    "sha256:945e074f791339085f672815a1a5b008b883a9f3cdad2cfc5aec569012eb0b00"
 )
 
 

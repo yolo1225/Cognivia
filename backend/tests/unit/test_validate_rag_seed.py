@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models import Base, DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.scripts.seed_data import seed_diagnostic_questions, seed_knowledge_items
+from app.services.question_source_binding_service import bind_domain_question_sources
 from app.scripts.validate_rag_seed import (
     RETIRED_KNOWLEDGE_IDS,
     SeedValidationError,
@@ -72,6 +73,12 @@ def test_validated_seed_loads_through_existing_database_seed_path() -> None:
         assert db.scalar(select(func.count()).select_from(KnowledgeItem)) == 50
         assert db.scalar(select(func.count()).select_from(KnowledgeRelation)) == 81
         assert db.scalar(select(func.count()).select_from(DiagnosticQuestion)) == 64
+        assert bind_domain_question_sources(db, domain_code="ai_app_dev") == 0
+        assert db.scalar(
+            select(func.count())
+            .select_from(DiagnosticQuestion)
+            .where(DiagnosticQuestion.certification_status == "certified")
+        ) == 64
 
 
 @pytest.mark.parametrize(

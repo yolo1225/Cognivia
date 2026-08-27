@@ -56,7 +56,13 @@ def _session():
 def _document(tmp_path: Path) -> KnowledgeDocument:
     path = tmp_path / "guide.md"
     path.write_text(
-        "# RAG 基础\n\n检索增强生成需要可靠来源。\n\n## 检索\n\n向量检索返回相关知识切片。",
+        "# RAG 基础\n\n"
+        "- **knowledge_id:** `rag.basic`\n"
+        "- **ability_weights:** `{\"theory\":0.45,\"practice\":0.15,\"problem_solving\":0.15,\"knowledge_breadth\":0.25,\"learning_speed\":0}`\n\n"
+        "检索增强生成需要可靠来源。\n\n## 检索\n\n"
+        "- **knowledge_id:** `rag.retrieval`\n"
+        "- **ability_weights:** `{\"theory\":0.25,\"practice\":0.35,\"problem_solving\":0.25,\"knowledge_breadth\":0.15,\"learning_speed\":0}`\n\n"
+        "向量检索返回相关知识切片。",
         encoding="utf-8",
     )
     return KnowledgeDocument(

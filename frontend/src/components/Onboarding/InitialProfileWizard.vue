@@ -64,7 +64,7 @@
       <div class="result-grid"><div><span>诊断总得分</span><strong>{{ result.score.toFixed(0) }}%</strong></div><div><span>薄弱知识点</span><strong>{{ result.weak_knowledge.length }} 项</strong></div><div><span>学习路线</span><strong>已生成</strong></div></div>
       <div class="result-evidence"><div><span>先验背景</span><strong>{{ form.education_level }} · {{ form.major }} · {{ form.experience_years }} 年经验</strong><small>用于学习方向、案例语境和资源表达方式。</small></div><div><span>诊断测评</span><strong>选择题与简答题总得分 {{ result.score.toFixed(0) }}%</strong><small>{{ result.correct_count }}/{{ result.question_count }} 题完全答对；简答题部分得分计入总分。</small></div></div>
       <div class="result-radar"><RadarChart :values="radarValues" :indicators="abilityLabels" /></div>
-      <div class="result-evidence-note"><strong>画像证据</strong><span>诊断题得分 85%</span><span>学习背景先验 15%</span><span>{{ result.question_count }} 道题 · {{ evidenceProfile.assessed_knowledge_count || result.question_count }} 个知识点</span><small>首次建档暂不判断学习速度；后续通过路径测验、错题巩固和学习行为持续更新。</small></div>
+      <div class="result-evidence-note"><strong>画像证据</strong><span>诊断题得分 85%</span><span>学习背景先验 15%</span><span>{{ result.question_count }} 道题 · {{ evidenceProfile.assessed_knowledge_count || result.question_count }} 个知识点</span><small>知识广度依据本轮知识点覆盖计算；学习速度需后续通过路径测验、错题巩固和学习行为持续评估。</small></div>
       <div class="result-weak"><strong>优先关注</strong><span v-for="item in result.weak_knowledge.slice(0, 3)" :key="item.knowledge_id">{{ item.name }}</span></div>
       <div v-if="resultPathNodes.length" class="result-route"><strong>真实知识节点路线</strong><ol><li v-for="node in resultPathNodes" :key="node.path_node_id"><span>{{ node.title }}<em>{{ node.status === 'current' ? '当前' : '后续' }}</em></span><small>{{ node.knowledge_items?.map(item => item.name).join('、') || node.learning_objective }}；{{ node.recommendation_reason }}</small></li></ol></div>
       <footer class="wizard-actions"><button class="btn primary" type="button" @click="$emit('complete')">进入首页</button></footer>
@@ -107,8 +107,16 @@ const directions = computed(() => {
 })
 const currentQuestion = computed(() => session.value?.questions[currentIndex.value] || null)
 const answeredCount = computed(() => session.value?.questions.filter((_, index) => hasAnswer(index)).length || 0)
-const abilityLabels = ['理论掌握', '实操应用', '场景解决']
-const radarValues = computed(() => ['theory', 'practice', 'problem_solving'].map((key) => Number(result.value?.ability_profile?.[key] || 0)))
+const abilityLabels = ['理论掌握', '实操应用', '场景解决', '知识广度']
+const radarValues = computed(() => {
+  const ability = result.value?.ability_profile || {}
+  return [
+    Number(ability.theory || 0),
+    Number(ability.practice || 0),
+    Number(ability.problem_solving || 0),
+    Number(ability.knowledge_breadth ?? ability.breadth ?? 0),
+  ]
+})
 const evidenceProfile = computed<Record<string, any>>(() => (result.value?.ability_profile?.evidence_profile as Record<string, any>) || {})
 const resultPathNodes = computed(() => [...(result.value?.learning_path?.nodes || [])].sort((a, b) => Number(a.path_order || 0) - Number(b.path_order || 0)))
 

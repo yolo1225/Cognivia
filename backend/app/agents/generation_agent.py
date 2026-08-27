@@ -623,7 +623,6 @@ class ContentGenerationAgent:
                         changed_paths,
                         sorted(set(after_fingerprints) - set(changed_paths)),
                     )
-                    response = _ground_practice_revision_fallbacks(response, validated)
                 whitelist = {source.source_ref_id for source in allowed_sources}
                 for attempt in range(MAX_SOURCE_REPAIR_ATTEMPTS + 1):
                     if response.structured_content.resource_type != resource_type.value:
@@ -868,6 +867,33 @@ class ContentGenerationAgent:
                         allowed_sources,
                         self._evidence_capabilities_by_knowledge,
                     )
+
+                if (
+                    previous_candidate is not None
+                    and resource_type is ResourceType.PRACTICE_GUIDE
+                ):
+                    response = _ground_practice_revision_fallbacks(
+                        response,
+                        validated,
+                        self._evidence_capabilities_by_knowledge,
+                    )
+                    response = _enforce_final_content_policy(
+                        response,
+                        validated,
+                        allowed_sources,
+                        self._evidence_capabilities_by_knowledge,
+                    )
+                    if not _practice_has_auditable_claim(
+                        response.structured_content,
+                        validated,
+                        self._evidence_capabilities_by_knowledge,
+                    ):
+                        raise GenerationError(
+                            "revision_claim_set_empty_after_repair",
+                            field_paths=_practice_fact_field_paths(
+                                response.structured_content
+                            ),
+                        )
 
                 covered_final = _covered_knowledge_ids(
                     response.structured_content, validated, resource_type
@@ -1246,12 +1272,6 @@ def _apply_revision_patches(
         if (normalized := _normalize_revision_path(path, resource_type)) is not None
     }
     payload = original.structured_content.model_dump(mode="python")
-    safe_baseline = original.structured_content.model_dump(mode="python")
-    _remove_residual_audited_claims(
-        safe_baseline,
-        resource_type,
-        audited_claims or {},
-    )
     seen: set[str] = set()
     for patch in proposed.patches:
         normalized = _normalize_revision_path(patch.path, resource_type)
@@ -1274,12 +1294,6 @@ def _apply_revision_patches(
                 raise GenerationError("patch_validation_failed")
         _write_path(payload, tokens, patch.value)
     _remove_residual_audited_claims(payload, resource_type, audited_claims or {})
-    _stabilize_practice_revision_fields(
-        payload,
-        safe_baseline,
-        resource_type,
-        audited_claims or {},
-    )
     try:
         content = type(original.structured_content).model_validate(payload)
     except ValidationError as exc:
@@ -1361,12 +1375,6 @@ def _merge_revision_candidate(
     if proposed.structured_content.resource_type != resource_type.value:
         return original
     original_payload = original.structured_content.model_dump(mode="python")
-    safe_baseline = original.structured_content.model_dump(mode="python")
-    _remove_residual_audited_claims(
-        safe_baseline,
-        resource_type,
-        audited_claims or {},
-    )
     proposed_payload = proposed.structured_content.model_dump(mode="python")
     merged_payload = original.structured_content.model_dump(mode="python")
     normalized_paths = list(
@@ -1392,12 +1400,6 @@ def _merge_revision_candidate(
         _write_path(merged_payload, tokens, new_value)
     _remove_residual_audited_claims(
         merged_payload,
-        resource_type,
-        audited_claims or {},
-    )
-    _stabilize_practice_revision_fields(
-        merged_payload,
-        safe_baseline,
         resource_type,
         audited_claims or {},
     )
@@ -1460,36 +1462,6 @@ def _strip_audited_claims_after_repairs(
     return response.model_copy(update={"structured_content": content})
 
 
-def _stabilize_practice_revision_fields(
-    payload: dict[str, object],
-    safe_baseline: dict[str, object],
-    resource_type: ResourceType,
-    audited_claims: dict[str, list[str]],
-) -> None:
-    """Keep supported prose while preventing rejected practice claims from being replaced.
-
-    Once review rejects a factual practice-guide field, the deterministic baseline
-    removes that exact claim and falls back to a non-factual learner action if nothing
-    remains. Reusing the cleaned value for every affected practice field prevents the
-    revision model from replacing one unsupported operational assertion with an
-    equivalent or stronger assertion on the next review round.
-    """
-    if resource_type is not ResourceType.PRACTICE_GUIDE:
-        return
-    stable_paths = {
-        parent
-        for field_path in audited_claims
-        if (parent := _normalize_revision_path(field_path, resource_type)) is not None
-    }
-    for path in stable_paths:
-        tokens = _path_tokens(path)
-        try:
-            value = _read_path(safe_baseline, tokens)
-            _write_path(payload, tokens, value)
-        except (IndexError, KeyError, TypeError):
-            continue
-
-
 def _audited_claim_body(path: str, claim: str) -> str:
     markers = {
         ".code_or_command": "以下代码或命令应能完成该步骤：\n",
@@ -1529,46 +1501,189 @@ def _revision_fallback_text(path: str) -> str:
 def _ground_practice_revision_fallbacks(
     response: GeneratedContentResponse,
     request: GenerateResourceInput,
+    evidence_capabilities_by_knowledge: dict[str, list[str]] | None = None,
 ) -> GeneratedContentResponse:
-    """Replace claim-free practice placeholders with literal cited evidence.
-
-    A rejected operational assertion may leave an instruction containing only the
-    non-factual safety placeholder.  Such a guide has no auditable claim and used to
-    abort the following review node.  Copying the already-whitelisted evidence body
-    keeps the revision conservative while ensuring the dual reviewers still receive
-    a factual statement to verify.
-    """
+    """Ground a claim-free revised guide without depending on placeholder wording."""
     content = response.structured_content
     if not isinstance(content, PracticeGuideContent):
         return response
-    placeholder = _revision_fallback_text("steps[0].instruction")
+    if _practice_has_auditable_claim(
+        content,
+        request,
+        evidence_capabilities_by_knowledge,
+    ):
+        return response
+
     chunks_by_source = {
         chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks
     }
-    changed = False
-    steps = []
-    for step in content.steps:
-        instruction = step.instruction
-        if instruction.strip() == placeholder:
-            chunk = next(
-                (
-                    chunks_by_source[source_id]
-                    for source_id in step.source_ref_ids
-                    if source_id in chunks_by_source
-                ),
-                None,
-            )
-            if chunk is not None:
-                grounded = _candidate_evidence_body(chunk.content).strip()
-                if grounded:
-                    instruction = grounded[:6000]
-                    changed = True
-        steps.append(step.model_copy(update={"instruction": instruction}))
-    if not changed:
-        return response
-    return response.model_copy(
-        update={"structured_content": content.model_copy(update={"steps": steps})}
+    policy = get_domain_evidence_policy(
+        request.context.domain_code,
+        evidence_capabilities_by_knowledge,
     )
+
+    def grounded_value(field_group: str, source_ids: list[str]) -> str | None:
+        for source_id in source_ids:
+            chunk = chunks_by_source.get(source_id)
+            if chunk is None:
+                continue
+            capabilities = {item.value for item in policy.classify(chunk)}
+            for candidate in _evidence_anchor_candidates(chunk.content):
+                decision = classify_claim(
+                    field_group,
+                    candidate,
+                    evidence_capabilities=capabilities,
+                )
+                if (
+                    decision.review_disposition is ReviewDisposition.DUAL_REVIEW
+                    and capability_violation_for_claim(
+                        field_group,
+                        candidate,
+                        capabilities,
+                    )
+                    is None
+                ):
+                    return candidate
+        return None
+
+    steps = list(content.steps)
+    for index, step in enumerate(steps):
+        for field_group in ("instruction", "expected_result", "troubleshooting"):
+            candidate = grounded_value(field_group, step.source_ref_ids)
+            if candidate is None:
+                continue
+            steps[index] = step.model_copy(update={field_group: candidate})
+            grounded = content.model_copy(update={"steps": steps})
+            return response.model_copy(update={"structured_content": grounded})
+
+    return response
+
+
+def _evidence_anchor_candidates(content: str) -> list[str]:
+    body = _candidate_evidence_body(content).strip()
+    if not body:
+        return []
+    candidates = [
+        item.strip()
+        for item in re.findall(r"[^。！？!?；;\n]+[。！？!?；;]?", body)
+        if len(item.strip()) >= 8
+    ]
+    if not candidates:
+        candidates = [body]
+    return list(dict.fromkeys(item[:6000] for item in candidates))
+
+
+def _practice_fact_fields(
+    content: PracticeGuideContent,
+    request: GenerateResourceInput,
+) -> list[tuple[str, str, str, list[str]]]:
+    all_source_ids = [
+        chunk.source.source_ref_id
+        for chunk in request.retrieved_chunks
+        if chunk.source.source_ref_id in request.requirements.source_whitelist
+    ]
+    fields: list[tuple[str, str, str, list[str]]] = []
+    fields.extend(
+        (
+            "environment_requirement",
+            f"environment_requirements[{index}]",
+            value,
+            all_source_ids,
+        )
+        for index, value in enumerate(content.environment_requirements)
+    )
+    for index, step in enumerate(content.steps):
+        for field_group, value in (
+            ("instruction", step.instruction),
+            ("code_or_command", step.code_or_command),
+            ("expected_result", step.expected_result),
+            ("troubleshooting", step.troubleshooting),
+        ):
+            if value:
+                fields.append(
+                    (
+                        field_group,
+                        f"steps[{index}].{field_group}",
+                        value,
+                        step.source_ref_ids,
+                    )
+                )
+    fields.extend(
+        (
+            "acceptance_criterion",
+            f"acceptance_criteria[{index}]",
+            value,
+            all_source_ids,
+        )
+        for index, value in enumerate(content.acceptance_criteria)
+    )
+    return fields
+
+
+def _practice_fact_field_paths(content: StructuredResourceContent) -> list[str]:
+    if not isinstance(content, PracticeGuideContent):
+        return []
+    paths = [
+        *(f"environment_requirements[{index}]" for index in range(len(content.environment_requirements))),
+        *(
+            f"steps[{index}].{field_group}"
+            for index, step in enumerate(content.steps)
+            for field_group, value in (
+                ("instruction", step.instruction),
+                ("code_or_command", step.code_or_command),
+                ("expected_result", step.expected_result),
+                ("troubleshooting", step.troubleshooting),
+            )
+            if value
+        ),
+        *(f"acceptance_criteria[{index}]" for index in range(len(content.acceptance_criteria))),
+    ]
+    return list(paths)[:20]
+
+
+def _practice_has_auditable_claim(
+    content: StructuredResourceContent,
+    request: GenerateResourceInput,
+    evidence_capabilities_by_knowledge: dict[str, list[str]] | None = None,
+) -> bool:
+    if not isinstance(content, PracticeGuideContent):
+        return True
+    chunks_by_source = {
+        chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks
+    }
+    policy = get_domain_evidence_policy(
+        request.context.domain_code,
+        evidence_capabilities_by_knowledge,
+    )
+    for field_group, _path, value, source_ids in _practice_fact_fields(content, request):
+        capabilities = {
+            capability.value
+            for source_id in source_ids
+            if source_id in chunks_by_source
+            for capability in policy.classify(chunks_by_source[source_id])
+        }
+        candidates = (
+            [value]
+            if field_group in {"expected_result", "code_or_command"}
+            else _evidence_anchor_candidates(value)
+        )
+        for candidate in candidates:
+            decision = classify_claim(
+                field_group,
+                candidate,
+                evidence_capabilities=capabilities,
+            )
+            if (
+                decision.review_disposition is ReviewDisposition.DUAL_REVIEW
+                and capability_violation_for_claim(
+                    field_group,
+                    candidate,
+                    capabilities,
+                )
+                is None
+            ):
+                return True
+    return False
 
 
 def _revision_field_fingerprints(

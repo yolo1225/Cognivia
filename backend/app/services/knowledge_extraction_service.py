@@ -11,14 +11,6 @@ from app.agents.domain_evidence_policy import classify_evidence_capabilities
 from app.models import KnowledgeDocument, KnowledgeImportCandidate, KnowledgeItem
 
 
-DEFAULT_WEIGHTS = {
-    "theory": 0.3,
-    "practice": 0.25,
-    "problem_solving": 0.2,
-    "knowledge_breadth": 0.25,
-    "learning_speed": 0.0,
-}
-
 SOURCE_KNOWLEDGE_PREFIX = re.compile(
     r"^.*?\([a-z][a-z0-9_-]*\)\s*[/／]\s*\d+\s*[.．、:-]?\s*",
     re.IGNORECASE,
@@ -82,11 +74,7 @@ def replace_candidates(
             "skip" if before_checksum == section["checksum"] else "update"
         )
         evidence_capabilities = classify_evidence_capabilities(section["text"])
-        practical = "operation" in evidence_capabilities
-        weights = (
-            {"theory": 0.15, "practice": 0.45, "problem_solving": 0.25, "knowledge_breadth": 0.15, "learning_speed": 0.0}
-            if practical else DEFAULT_WEIGHTS
-        )
+        explicit_weights = metadata.get("ability_weights")
         locator = {
             key: section.get(key) for key in ("heading_path", "page_start", "page_end", "checksum")
         }
@@ -108,7 +96,9 @@ def replace_candidates(
                 "content": section["text"],
                 "difficulty": int(metadata.get("difficulty") or 2),
                 "tags": metadata.get("tags") or ["document-import"],
-                "ability_weights": weights,
+                "ability_weights": explicit_weights,
+                "ability_weight_source": "explicit" if explicit_weights else "missing",
+                "ability_weight_confidence": 1.0 if explicit_weights else 0.0,
                 "evidence_capabilities": evidence_capabilities,
                 "source_quote": section["text"][:300],
                 "source_title": metadata.get("source_title") or document.source_title,

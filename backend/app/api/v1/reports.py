@@ -6,7 +6,17 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import Principal, assert_learner_access, get_current_user, require_task
-from app.models import Feedback, GenerationTask, Learner, LearningResource, ReviewReport
+from app.agents.contracts import EvidenceRef, EvidenceType, KnowledgeAssessment
+from app.models import (
+    AnswerRecord,
+    DiagnosticQuestion,
+    Feedback,
+    GenerationTask,
+    KnowledgeItem,
+    Learner,
+    LearningResource,
+    ReviewReport,
+)
 from app.schemas.common import ApiResponse, ok
 from app.services.profile_service import (
     is_initial_profile_ready,
@@ -16,7 +26,7 @@ from app.services.profile_service import (
     serialize_profile_detail,
 )
 from app.services.report_service import (
-    build_learning_history,
+    build_learning_journey,
     build_learning_progress_comparison,
     refresh_learning_path,
 )
@@ -24,6 +34,12 @@ from app.services.learning_path_service import normalize_path_for_domain, serial
 from app.services.learning_adjustment_service import (
     pending_resource_proposals,
     recent_profile_changes,
+)
+from app.services.domain_runtime_service import DomainRuntimeError, load_domain_runtime
+from app.services.profile_knowledge_state_service import (
+    STATE_KEY,
+    build_knowledge_state,
+    public_knowledge_state,
 )
 
 router = APIRouter()
@@ -82,6 +98,61 @@ def _serialize_resource(resource: LearningResource, task: GenerationTask | None)
         "generation_decision": task.decision if task else None,
         "generated_at": _iso(resource.created_at),
     }
+
+
+def _legacy_knowledge_profile(db: Session, *, learner: Learner, domain_code: str) -> dict[str, Any]:
+    """Build a read-only compatibility view without mutating historical profiles."""
+    try:
+        runtime = load_domain_runtime(db, domain_code)
+    except DomainRuntimeError:
+        return public_knowledge_state(None)
+    if runtime.profile_config is None:
+        return public_knowledge_state(None)
+    rows = list(
+        db.execute(
+            select(AnswerRecord, DiagnosticQuestion, KnowledgeItem)
+            .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+            .join(KnowledgeItem, KnowledgeItem.id == AnswerRecord.knowledge_item_id)
+            .where(
+                AnswerRecord.learner_id == learner.id,
+                AnswerRecord.scoring_status == "scored",
+                KnowledgeItem.domain_code == domain_code,
+            )
+        )
+    )
+    evidence: list[EvidenceRef] = []
+    assessments: list[KnowledgeAssessment] = []
+    excluded: set[str] = set()
+    for record, question, knowledge in rows:
+        evidence_id = f"answer_record:{record.id}"
+        confidence = float(record.confidence or 0.0)
+        attempted = bool((record.answer_summary_json or {}).get("attempted", True))
+        evidence.append(EvidenceRef(
+            evidence_id=evidence_id,
+            evidence_type=EvidenceType.SCORED_QUIZ,
+            summary="历史正式评分记录兼容投影",
+            knowledge_id=knowledge.public_id,
+            confidence=confidence,
+            confirmed=True,
+        ))
+        assessments.append(KnowledgeAssessment(
+            assessment_id=f"legacy:{record.id}",
+            evidence_id=evidence_id,
+            knowledge_id=knowledge.public_id,
+            score=float(record.score) if attempted else None,
+            difficulty=question.difficulty,
+            attempted=attempted,
+            confidence=confidence,
+        ))
+        if record.scoring_uncertain:
+            excluded.add(evidence_id)
+    state = build_knowledge_state(
+        config=runtime.profile_config,
+        evidence=evidence,
+        assessments=assessments,
+        excluded_evidence_ids=excluded,
+    )
+    return public_knowledge_state(state, derived_legacy=True)
 
 
 def _next_actions(
@@ -268,6 +339,18 @@ def get_learning_report(
         learner_id=learner.id,
         domain_code=profile.domain_code if profile else learner.target_domain,
     )
+    internal_ability = dict(profile.ability_profile_json or {}) if profile else {}
+    knowledge_profile = (
+        public_knowledge_state(internal_ability.get(STATE_KEY))
+        if internal_ability.get(STATE_KEY)
+        else _legacy_knowledge_profile(db, learner=learner, domain_code=active_domain_code)
+    )
+    public_ability = {
+        key: value
+        for key, value in internal_ability.items()
+        if key not in {STATE_KEY}
+    }
+
 
     return ok(
         {
@@ -283,10 +366,17 @@ def get_learning_report(
             "direction_tags": detail.get("direction_tags", []),
             "context_snapshot": detail.get("context_snapshot", {}),
             "radar": detail.get("radar", [0, 0, 0, 0, 0]),
+            "ability_profile": public_ability,
             "path": [stage.get("name", "") for stage in stages],
             "path_detail": stages,
             "learning_path": learning_path,
             "weak_knowledge": detail.get("weak_knowledge", []),
+            "knowledge_states": knowledge_profile["knowledge_states"],
+            "knowledge_status_counts": knowledge_profile["status_counts"],
+            "assessment_coverage": knowledge_profile["coverage"],
+            "knowledge_state_derived_legacy": knowledge_profile["derived_legacy"],
+            "dimension_status": dict(internal_ability.get("dimension_status") or {}),
+            "profile_confidence": profile.confidence if profile else 0.0,
             "diagnostic_summary": diagnostic_summary,
             "loop_status": {
                 "diagnosis": "completed" if has_diagnosis else "pending",
@@ -327,9 +417,6 @@ def get_learning_report(
             "progress_comparison": build_learning_progress_comparison(
                 db, learner=learner, current_profile=profile, path=path
             ),
-            "learning_history": build_learning_history(
-                db, learner=learner, domain_code=active_domain_code
-            ),
             "next_actions": _next_actions(
                 has_profile=has_profile,
                 resources=resources,
@@ -337,4 +424,25 @@ def get_learning_report(
                 path_needs_refresh=path_needs_refresh,
             ),
         }
+    )
+
+
+@router.get("/learners/{learner_id}/learning-journey", response_model=ApiResponse)
+def get_learning_journey(
+    learner_id: str,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    if principal.role == "admin" and principal.learner_id != learner_id:
+        raise HTTPException(403, "管理员直访只能查看自己的学习历程")
+    assert_learner_access(principal, learner_id)
+    learner = db.scalar(select(Learner).where(Learner.public_id == learner_id))
+    if learner is None:
+        raise HTTPException(status_code=404, detail=f"Learner not found: {learner_id}")
+    return ok(
+        build_learning_journey(
+            db,
+            learner=learner,
+            domain_code=learner.target_domain,
+        )
     )

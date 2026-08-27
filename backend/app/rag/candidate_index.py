@@ -59,6 +59,7 @@ def _item_payload(item: KnowledgeItem) -> dict[str, Any]:
         "difficulty": item.difficulty,
         "tags": list(item.tags_json or []),
         "evidence_capabilities": list(item.evidence_capabilities_json or []),
+        "ability_weights": dict(item.ability_weights_json or {}),
         "content": item.content_md,
         "source_title": item.source_title,
         "source_url": item.source_url,

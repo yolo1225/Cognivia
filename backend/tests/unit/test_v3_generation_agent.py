@@ -1136,7 +1136,7 @@ def test_environment_fact_without_operation_evidence_is_rewritten_as_preparation
     )
 
 
-def test_practice_revision_reuses_cleaned_baseline_for_nonfactual_containers() -> None:
+def test_practice_revision_keeps_valid_field_patches_instead_of_cleaned_baseline() -> None:
     request = _input()
     source = request.retrieved_chunks[0].source
     original = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
@@ -1169,11 +1169,11 @@ def test_practice_revision_reuses_cleaned_baseline_for_nonfactual_containers() -
 
     content = revised.structured_content
     assert isinstance(content, PracticeGuideContent)
-    assert content.environment_requirements[0] == "练习前请确认所需材料与受控环境已经准备妥当。"
-    assert content.steps[0].expected_result == "记录实际结果，并与引用材料中的描述进行核对。"
+    assert content.environment_requirements[0] == "网络连通性支持访问目标接口"
+    assert content.steps[0].expected_result == "运行后自动输出成功日志"
 
 
-def test_practice_revision_cannot_replace_rejected_instruction_with_equivalent_claim() -> None:
+def test_practice_revision_preserves_replacement_for_followup_review() -> None:
     request = _input()
     source = request.retrieved_chunks[0].source
     original = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
@@ -1199,17 +1199,38 @@ def test_practice_revision_cannot_replace_rejected_instruction_with_equivalent_c
 
     assert isinstance(revised.structured_content, PracticeGuideContent)
     assert revised.structured_content.steps[0].instruction == (
-        "阅读引用材料，整理其中明确描述的处理流程。"
+        "仅当状态码为 2xx 且内容类型为 JSON 时才解析响应体"
     )
 
 
 def test_practice_revision_claim_free_instruction_is_grounded_in_cited_evidence() -> None:
     request = _input()
+    chunk = request.retrieved_chunks[0].model_copy(
+        update={
+            "content": (
+                "操作步骤：发送请求后读取响应状态码和响应体。\n"
+                "预期结果：记录实际返回的状态码和响应结构。"
+            )
+        }
+    )
+    request = request.model_copy(update={"retrieved_chunks": [chunk]})
     source = request.retrieved_chunks[0].source
     response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
     content = response.structured_content.model_copy(deep=True)
     assert isinstance(content, PracticeGuideContent)
-    content.steps[0].instruction = "阅读引用材料，整理其中明确描述的处理流程。"
+    content.environment_requirements = ["练习前请确认所需材料与受控环境已经准备妥当。"]
+    content.acceptance_criteria = ["完成练习后，提交学习记录并标注核对依据。"]
+    content.steps = [
+        step.model_copy(
+            update={
+                "instruction": "阅读引用材料，整理其中明确描述的处理流程。",
+                "code_or_command": None,
+                "expected_result": "记录实际结果，并与引用材料中的描述进行核对。",
+                "troubleshooting": None,
+            }
+        )
+        for step in content.steps
+    ]
 
     grounded = _ground_practice_revision_fallbacks(
         response.model_copy(update={"structured_content": content}), request
@@ -1217,7 +1238,8 @@ def test_practice_revision_claim_free_instruction_is_grounded_in_cited_evidence(
 
     assert isinstance(grounded.structured_content, PracticeGuideContent)
     assert grounded.structured_content.steps[0].instruction != content.steps[0].instruction
-    assert request.retrieved_chunks[0].content in grounded.structured_content.steps[0].instruction
+    assert "发送请求后读取响应状态码和响应体" in grounded.structured_content.steps[0].instruction
+    assert grounded.structured_content.steps[1:] == content.steps[1:]
 
 
 @pytest.mark.parametrize(
@@ -1435,6 +1457,150 @@ def test_deterministic_convergence_removes_atomic_claim_without_model_call() -> 
     assert isinstance(revised, LectureContent)
     assert revised.core_concepts[0].explanation == "保留已有知识说明"
     assert collector.snapshot() == []
+
+
+def test_claim_free_practice_convergence_adds_one_grounded_anchor_only() -> None:
+    request = _input()
+    chunk = request.retrieved_chunks[0].model_copy(
+        update={
+            "content": (
+                "操作步骤：发送请求后读取响应状态码和响应体。\n"
+                "预期结果：记录实际返回的状态码和响应结构。"
+            )
+        }
+    )
+    source = chunk.source
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "required_knowledge_ids": [source.knowledge_id],
+            "resource_knowledge_targets": {
+                ResourceType.PRACTICE_GUIDE: [source.knowledge_id]
+            },
+            "source_whitelist": [source.source_ref_id],
+            "revision_plan": RevisionPlan(
+                revision_count=2,
+                resource_types=[ResourceType.PRACTICE_GUIDE],
+                field_paths_by_resource={
+                    ResourceType.PRACTICE_GUIDE: ["environment_requirements[0][0]"]
+                },
+                required_changes=["[deterministic_convergence_v1]"],
+            ),
+        }
+    )
+    context = request.context.model_copy(
+        update={"resource_types": [ResourceType.PRACTICE_GUIDE]}
+    )
+    request = request.model_copy(
+        update={
+            "context": context,
+            "requirements": requirements,
+            "retrieved_chunks": [chunk],
+        }
+    )
+    candidate = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
+    content = candidate.structured_content.model_copy(deep=True)
+    assert isinstance(content, PracticeGuideContent)
+    content.environment_requirements = ["练习前请确认所需材料与受控环境已经准备妥当。"]
+    content.acceptance_criteria = ["完成练习后，提交学习记录并标注核对依据。"]
+    content.steps = [
+        step.model_copy(
+            update={
+                "instruction": "阅读引用材料，整理其中明确描述的处理流程。",
+                "code_or_command": None,
+                "expected_result": "记录实际结果，并与引用材料中的描述进行核对。",
+                "troubleshooting": None,
+            }
+        )
+        for step in content.steps
+    ]
+    previous = GeneratedResourceArtifact(
+        resource_type=ResourceType.PRACTICE_GUIDE,
+        structured_content=content,
+        content_md="上一轮候选资源",
+        difficulty=candidate.difficulty,
+        source_refs=[source],
+        knowledge_coverage={source.knowledge_id: [source.source_ref_id]},
+    )
+
+    output = ContentGenerationAgent(
+        generator=object(), renderer=render_resource_markdown
+    ).converge(request, [previous], {})
+
+    revised = output.resources[0].structured_content
+    assert isinstance(revised, PracticeGuideContent)
+    assert "发送请求后读取响应状态码和响应体" in revised.steps[0].instruction
+    assert revised.environment_requirements == content.environment_requirements
+    assert revised.acceptance_criteria == content.acceptance_criteria
+    assert revised.steps[1:] == content.steps[1:]
+
+
+def test_claim_free_practice_revision_fails_at_generation_without_groundable_evidence() -> None:
+    request = _input()
+    chunk = request.retrieved_chunks[0].model_copy(
+        update={"content": "概念说明：比较不同材料中的定义、范围与关系。"}
+    )
+    source = chunk.source
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "required_knowledge_ids": [source.knowledge_id],
+            "resource_knowledge_targets": {
+                ResourceType.PRACTICE_GUIDE: [source.knowledge_id]
+            },
+            "source_whitelist": [source.source_ref_id],
+            "revision_plan": RevisionPlan(
+                revision_count=2,
+                resource_types=[ResourceType.PRACTICE_GUIDE],
+                field_paths_by_resource={
+                    ResourceType.PRACTICE_GUIDE: ["environment_requirements[0][0]"]
+                },
+                required_changes=["[deterministic_convergence_v1]"],
+            ),
+        }
+    )
+    context = request.context.model_copy(
+        update={"resource_types": [ResourceType.PRACTICE_GUIDE]}
+    )
+    request = request.model_copy(
+        update={
+            "context": context,
+            "requirements": requirements,
+            "retrieved_chunks": [chunk],
+        }
+    )
+    candidate = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
+    content = candidate.structured_content.model_copy(deep=True)
+    assert isinstance(content, PracticeGuideContent)
+    content.environment_requirements = ["练习前请确认所需材料与受控环境已经准备妥当。"]
+    content.acceptance_criteria = ["完成练习后，提交学习记录并标注核对依据。"]
+    content.steps = [
+        step.model_copy(
+            update={
+                "instruction": "阅读、比较并分析引用材料中的概念说明。",
+                "code_or_command": None,
+                "expected_result": "记录实际结果，并与引用材料中的描述进行核对。",
+                "troubleshooting": None,
+            }
+        )
+        for step in content.steps
+    ]
+    previous = GeneratedResourceArtifact(
+        resource_type=ResourceType.PRACTICE_GUIDE,
+        structured_content=content,
+        content_md="上一轮候选资源",
+        difficulty=candidate.difficulty,
+        source_refs=[source],
+        knowledge_coverage={source.knowledge_id: [source.source_ref_id]},
+    )
+
+    with pytest.raises(
+        GenerationError,
+        match="revision_claim_set_empty_after_repair",
+    ):
+        ContentGenerationAgent(
+            generator=object(), renderer=render_resource_markdown
+        ).converge(request, [previous], {})
 
 
 def test_generation_agent_revises_previous_candidate_instead_of_regenerating() -> None:

@@ -33,6 +33,7 @@ from app.services.knowledge_import_publish_service import (
 from app.services.knowledge_import_validation_service import validate_import
 from app.services.knowledge_parser_service import parse_document, replace_chunks
 from app.services.knowledge_model_import_service import (
+    complete_candidate_ability_weights,
     enrich_unstructured_sections,
     generate_model_relations,
     generate_model_questions,
@@ -40,6 +41,8 @@ from app.services.knowledge_model_import_service import (
     validate_model_candidates,
 )
 from app.services.knowledge_graph_quality_service import evaluate_graph_quality
+from app.services.domain_api_service import readiness_policy
+from app.services.ability_weight_service import ability_weight_gate
 from app.services.knowledge_import_batch_service import (
     KnowledgeImportBatchCancelled,
     batch_progress,
@@ -282,7 +285,16 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
         if source_items else 0.0
     )
 
-    minimum_items, minimum_questions = ((50, 60) if document.domain_code == "ai_app_dev" else (10, 10))
+    policy = readiness_policy(domain) if domain is not None else {
+        "minimum_published_knowledge": 10,
+        "minimum_diagnostic_questions": 10,
+    }
+    weight_blockers = [
+        str((item.payload_json or {}).get("target_public_id") or item.public_id)
+        for item in candidates
+        if item.candidate_type == "knowledge_item"
+        and ability_weight_gate(item.payload_json or {})
+    ]
     checks = {
         "knowledge_items": len({
             item.public_id for item in [*published_items, *staged_items]
@@ -294,6 +306,16 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
         "proposed_learning_directions": directions,
         **graph_quality,
     }
+    checks["ability_weights_ready"] = imported_knowledge_count - len(weight_blockers)
+    checks["ability_weights_missing"] = len(weight_blockers)
+    checks["ability_weight_blocking_ids"] = weight_blockers[:50]
+    if weight_blockers:
+        checks["blocking_issues"].append({
+            "code": "ABILITY_WEIGHTS_NOT_READY",
+            "message": "存在未通过能力权重门禁的知识点",
+            "count": len(weight_blockers),
+            "knowledge_ids": weight_blockers[:50],
+        })
     if question_coverage < 1.0:
         checks["blocking_issues"].append({
             "code": "QUESTION_COVERAGE_INCOMPLETE",
@@ -330,8 +352,8 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
             "actual": sorted(quiz_levels),
         })
     checks["passed"] = bool(
-        checks["knowledge_items"] >= minimum_items
-        and question_count >= minimum_questions
+        checks["knowledge_items"] >= policy["minimum_published_knowledge"]
+        and question_count >= policy["minimum_diagnostic_questions"]
         and not checks["blocking_issues"]
     )
     checks["quality_gate_passed"] = checks["passed"]
@@ -566,6 +588,7 @@ def run_import(run_id: str) -> None:
             _raise_if_cancel_requested(db, run_id)
             candidates = replace_candidates(db, document, sections)
             if settings.enable_knowledge_import_models:
+                complete_candidate_ability_weights(candidates)
                 _step(db, run, document, "graph_generation")
                 _raise_if_cancel_requested(db, run_id)
                 relation_candidates = generate_model_relations(

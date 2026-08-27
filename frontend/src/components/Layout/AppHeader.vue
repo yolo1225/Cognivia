@@ -38,8 +38,8 @@
             <strong>{{ authStore.userId }}</strong>
             <span>{{ authStore.role === 'admin' ? '管理员' : '学习者' }}</span>
           </div>
-          <button v-if="reportAvailable" type="button" role="menuitem" class="menu-item" @click="goTo('/report')">学习报告</button>
-          <button v-else type="button" role="menuitem" class="menu-item" @click="goTo('/learners')">用户管理</button>
+          <button v-if="authStore.role === 'admin'" type="button" role="menuitem" class="menu-item" @click="goTo('/learners')">用户管理</button>
+          <button v-else-if="reportAvailable" type="button" role="menuitem" class="menu-item" @click="goTo('/report')">学习报告</button>
           <div class="menu-divider"></div>
           <button type="button" role="menuitem" class="logout" @click="logout">退出登录</button>
         </div>

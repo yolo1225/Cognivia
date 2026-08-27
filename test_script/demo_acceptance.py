@@ -150,11 +150,11 @@ def _stage0_task_evidence(
         raise AssertionError("internal trace thread_id does not match task_id")
     trace_runs = trace.get("runs") or []
     if not trace_runs or any(
-            run.get("contract_version") != "agent-contract-v8"
+            run.get("contract_version") != "agent-contract-v9"
         or len(str(run.get("prompt_hash") or "")) != 64
         for run in trace_runs
     ):
-        raise AssertionError("internal trace lacks V8 contract or Prompt provenance")
+        raise AssertionError("internal trace lacks V9 contract or Prompt provenance")
     if not trace.get("messages"):
         raise AssertionError("internal trace has no structured handoff records")
     trace_arbitrations = sum(

@@ -1614,6 +1614,55 @@ def test_package_quality_uses_weighted_counts_after_partial_revision() -> None:
     assert not output.package_passed
 
 
+def test_package_quality_recomputes_after_removing_one_of_twenty_two_claims() -> None:
+    flow = initial_generation_flow_example()
+    reports = []
+    remaining_claim_counts = [10, 11, 6]
+    for index, report in enumerate(flow["review_resource"]["output"].reports):
+        count = remaining_claim_counts[index]
+        metrics = report.quality_metrics.model_copy(
+            update={
+                "evaluated_claim_count": count,
+                "verifiable_claim_count": count,
+                "contradicted_claim_count": 0,
+                "evidence_insufficient_claim_count": 0,
+                "unresolved_claim_count": 0,
+                "hallucinated_claim_count": 0,
+                "hallucination_rate": 0,
+                "difficulty_match_score": 100,
+                "passed": True,
+                "revision_count": 2,
+            }
+        )
+        reports.append(
+            report.model_copy(
+                update={
+                    "quality_metrics": metrics,
+                    "decision": ReviewDecision.PASSED,
+                    "passed": True,
+                    "contradicted_claim_ids": [],
+                    "undetermined_claim_ids": [],
+                    "unresolved_claim_ids": [],
+                }
+            )
+        )
+
+    output = build_review_resource_output(
+        task_id=flow["review_resource"]["output"].task_id,
+        reports=reports,
+        required_knowledge_ids=flow[
+            "review_resource"
+        ]["input"].requirements.required_knowledge_ids,
+        revision_count=2,
+    )
+
+    assert output.package_quality.evaluated_claim_count == 21
+    assert output.package_quality.hallucinated_claim_count == 0
+    assert output.package_quality.hallucination_rate == 0
+    assert output.package_quality.passed
+    assert output.package_passed
+
+
 def test_certified_quiz_uses_deterministic_suitability_review() -> None:
     flow = initial_generation_flow_example()
     request = flow["review_resource"]["input"]

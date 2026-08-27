@@ -829,8 +829,8 @@
         <div class="metric-grid compact">
           <article><span>事实关系</span><strong>{{ importSummary.factual_relations || 0 }}</strong></article>
           <article><span>教学推荐</span><strong>{{ importSummary.recommended_relations || 0 }}</strong></article>
-          <article><span>模型调用</span><strong>{{ importSummary.model_calls || 0 }}</strong></article>
-          <article><span>复用批次</span><strong>{{ importSummary.reused_batches || 0 }}</strong></article>
+          <article><span>权重就绪</span><strong>{{ importSummary.ability_weights_ready || 0 }} / {{ importSummary.knowledge_items || 0 }}</strong></article>
+          <article><span>权重缺失</span><strong>{{ importSummary.ability_weights_missing || 0 }}</strong></article>
         </div>
         <div class="metric-grid compact">
           <article><span>全节点参与率</span><strong>{{ Math.round(Number(importSummary.path_participation_ratio || 0) * 100) }}%</strong></article>
@@ -856,6 +856,38 @@
         <article v-if="importSummary.projected_readiness?.proposed_learning_directions?.length" class="candidate-item">
           <header><strong>系统建议的学习方向</strong><StatusBadge label="确认后生效" type="wait" /></header>
           <p>{{ importSummary.projected_readiness.proposed_learning_directions.map((item: any) => item.label).join("、") }}</p>
+        </article>
+        <article v-if="knowledgeImportCandidates.length" class="candidate-item">
+          <header><strong>知识点能力权重复核</strong><StatusBadge label="发布强门禁" type="wait" /></header>
+          <p class="candidate-source">前四维之和必须为 1；学习速度由学习过程证据计算，导入值固定为 0。</p>
+          <div class="ability-candidate-list">
+            <section v-for="candidate in knowledgeImportCandidates" :key="candidate.candidate_id" class="ability-candidate">
+              <header>
+                <div><strong>{{ candidate.payload.name || candidate.payload.knowledge_id || candidate.candidate_id }}</strong><span>{{ candidate.payload.category || "未分类" }}</span></div>
+                <StatusBadge :label="weightSourceLabel(candidate.payload.ability_weight_source)" :type="candidate.validation_errors.length ? 'danger' : 'wait'" />
+              </header>
+              <div class="ability-weight-grid">
+                <label v-for="field in abilityWeightFields" :key="field.key">
+                  <span>{{ field.label }}</span>
+                  <input
+                    v-model.number="ensureCandidateWeights(candidate)[field.key]"
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    :disabled="field.key === 'learning_speed' || savingCandidateId === candidate.candidate_id"
+                  />
+                </label>
+              </div>
+              <div class="ability-candidate-footer">
+                <span>置信度 {{ Math.round(Number(candidate.payload.ability_weight_confidence || 0) * 100) }}%</span>
+                <button class="btn" :disabled="savingCandidateId === candidate.candidate_id" @click="saveCandidateWeights(candidate)">
+                  {{ savingCandidateId === candidate.candidate_id ? "保存中" : "保存并校验" }}
+                </button>
+              </div>
+              <p v-for="error in candidate.validation_errors" :key="error" class="document-error">{{ error }}</p>
+            </section>
+          </div>
         </article>
         <KnowledgeGraph v-if="previewItems.length" :items="previewItems" :relations="previewRelations" />
         <article v-for="event in importSummary.events || []" :key="event.event_id" class="candidate-item">
@@ -950,7 +982,12 @@ import {
   cancelKnowledgeImport,
   getKnowledgeImportGraph,
   getKnowledgeImportSummary,
+  listImportCandidates,
+  updateImportCandidate,
+  validateKnowledgeImport,
+  type AbilityWeights,
   type GraphPreview,
+  type ImportCandidate,
   type KnowledgeImportSummary,
 } from "@/api/knowledgeImports";
 import { useDomainStore } from "@/stores/domainStore";
@@ -1047,7 +1084,12 @@ const importReviewOpen = ref(false),
   importActionLoading = ref(false),
   importSummary = ref<KnowledgeImportSummary | null>(null),
   importGraph = ref<GraphPreview | null>(null),
+  importCandidates = ref<ImportCandidate[]>([]),
+  savingCandidateId = ref(""),
   activeImportId = ref("");
+const knowledgeImportCandidates = computed(() =>
+  importCandidates.value.filter((candidate) => candidate.candidate_type === "knowledge_item"),
+);
 const previewItems = computed<KnowledgeItem[]>(() => (importGraph.value?.nodes || []).map((node) => ({
   knowledge_id: node.id, domain_code: selectedCode.value, name: node.name,
   category: node.category, difficulty: node.difficulty, tags: node.tags,
@@ -1634,9 +1676,10 @@ async function loadImportReview() {
   if (!activeImportId.value) return;
   importLoading.value = true;
   try {
-    [importSummary.value, importGraph.value] = await Promise.all([
+    [importSummary.value, importGraph.value, importCandidates.value] = await Promise.all([
       getKnowledgeImportSummary(activeImportId.value),
       getKnowledgeImportGraph(activeImportId.value),
+      listImportCandidates(activeImportId.value),
     ]);
   } catch (error: any) {
     showToast(error?.response?.data?.detail || "导入候选加载失败");
@@ -1663,6 +1706,52 @@ function confirmImport() {
     () => confirmKnowledgeImport(activeImportId.value, summary.input_version, indexVersion),
     "知识导入已发布",
   );
+}
+const abilityWeightFields: Array<{ key: keyof AbilityWeights; label: string }> = [
+  { key: "theory", label: "理论" },
+  { key: "practice", label: "实操" },
+  { key: "problem_solving", label: "问题解决" },
+  { key: "knowledge_breadth", label: "知识广度" },
+  { key: "learning_speed", label: "学习速度" },
+];
+function ensureCandidateWeights(candidate: ImportCandidate): AbilityWeights {
+  if (!candidate.payload.ability_weights) {
+    candidate.payload.ability_weights = {
+      theory: 0,
+      practice: 0,
+      problem_solving: 0,
+      knowledge_breadth: 0,
+      learning_speed: 0,
+    };
+  }
+  return candidate.payload.ability_weights;
+}
+function weightSourceLabel(source?: string): string {
+  return { explicit: "领域包", model: "模型补全", admin: "管理员", missing: "缺失" }[source || "missing"] || source || "缺失";
+}
+async function saveCandidateWeights(candidate: ImportCandidate) {
+  const weights = ensureCandidateWeights(candidate);
+  const firstFour = weights.theory + weights.practice + weights.problem_solving + weights.knowledge_breadth;
+  if (Object.values(weights).some((value) => !Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 1)) {
+    showToast("五维权重必须是 0 到 1 之间的数字");
+    return;
+  }
+  if (Math.abs(firstFour - 1) > 0.000001) {
+    showToast(`前四维权重之和必须为 1，当前为 ${firstFour.toFixed(4)}`);
+    return;
+  }
+  weights.learning_speed = 0;
+  savingCandidateId.value = candidate.candidate_id;
+  try {
+    await updateImportCandidate(activeImportId.value, candidate.candidate_id, candidate.payload);
+    await validateKnowledgeImport(activeImportId.value);
+    showToast("能力权重已保存并重新校验");
+    await loadImportReview();
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "能力权重保存失败");
+  } finally {
+    savingCandidateId.value = "";
+  }
 }
 function quizLevelLabel(level: QuestionBankItem["quiz_level"]) {
   return { foundation: "基础", improvement: "提升", challenge: "挑战" }[level] || level;
@@ -2747,6 +2836,48 @@ onBeforeUnmount(() => {
   color: var(--muted);
   font-size: 12px;
 }
+.ability-candidate-list {
+  display: grid;
+  gap: 10px;
+}
+.ability-candidate {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft, transparent);
+}
+.ability-candidate > header,
+.ability-candidate-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ability-candidate > header div {
+  display: grid;
+  gap: 2px;
+}
+.ability-candidate > header span,
+.ability-candidate-footer span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.ability-weight-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(90px, 1fr));
+  gap: 8px;
+}
+.ability-weight-grid input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--body);
+}
 .delete-message {
   display: grid;
   grid-template-columns: 32px 1fr;
@@ -2771,6 +2902,9 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 @media (max-width: 1000px) {
+  .ability-weight-grid {
+    grid-template-columns: repeat(2, minmax(100px, 1fr));
+  }
   .domain-metrics {
     grid-template-columns: 1fr 1fr;
   }

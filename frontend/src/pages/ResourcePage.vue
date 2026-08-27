@@ -225,6 +225,7 @@ import { useToast } from '@/composables/useToast'
 import { downloadResourceExport, listResources, exportResource, submitFeedback, type ResourceSummary } from '@/api/resources'
 import { resourceQualityStatusLabel } from '@/utils/resourceQualityStatus'
 import { masteryCheckErrorMessage } from '@/utils/masteryCheckError'
+import { generationFailureCopy } from '@/utils/generationFailure'
 import { dismissKnowledgeImpact, exportLearningPackage, getCurrentLearningPackage, getLearningPackage, refreshAffectedResources, type LearningPackage, type LearningPackageExportFormat } from '@/api/learningPackages'
 import { getActiveGenerationTask, getGenerationTask, retryGenerationTask, type GenerationTaskDetail } from '@/api/generation'
 import { getLearnerProfile } from '@/api/learners'
@@ -373,14 +374,11 @@ const isContentPolicyFailure = computed(() => (
   taskDetail.value?.failure_details?.failure_code === 'generated_content_policy_invalid'
   || taskDetail.value?.failure_reason === 'generated_content_policy_invalid'
 ))
-const generationFailureTitle = computed(() => (
-  isContentPolicyFailure.value ? '实训内容缺少可核对的知识库证据' : '本次资源未达到发布标准'
+const generationFailure = computed(() => generationFailureCopy(
+  taskDetail.value?.failure_details?.failure_code || taskDetail.value?.failure_reason,
 ))
-const generationFailureDescription = computed(() => (
-  isContentPolicyFailure.value
-    ? '系统未发布包含无依据命令、固定结果或排错结论的资源，讲义、实训指南和分级测验仍按完整包规则统一处理。'
-    : taskDetail.value?.failure_reason || '自动修订达到上限，未达标资源不会向学习者发布。'
-))
+const generationFailureTitle = computed(() => generationFailure.value.title)
+const generationFailureDescription = computed(() => generationFailure.value.description)
 const failedResourceLabels = computed(() => (
   (taskDetail.value?.failure_details?.resource_types || []).map(typeLabel).join('、')
 ))

@@ -29,7 +29,7 @@ from app.rag.candidate_manifest import (
 from app.rag.database_manifest_store import DatabaseManifestStore
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.rag.vector_store import VectorStore
-from app.services.domain_api_service import default_ability_weights
+from app.services.ability_weight_service import normalize_ability_weights
 from app.services.question_source_binding_service import (
     bind_domain_question_sources,
     candidate_chunks_for_item,
@@ -44,6 +44,10 @@ from app.services.question_certification_service import (
 
 class KnowledgeImportPublishError(ValueError):
     pass
+
+
+def _raise_invalid_weights(knowledge_id: str) -> dict[str, float]:
+    raise KnowledgeImportPublishError(f"能力权重未通过门禁：{knowledge_id}")
 
 
 def activate_import_candidate(
@@ -124,7 +128,10 @@ def activate_import_candidate(
             target.source_title = str(payload.get("source_title") or document.source_title)[:255]
             target.source_url = payload.get("source_url")
             target.license_note = str(payload.get("license_note") or document.license_note)[:255]
-            target.ability_weights_json = payload.get("ability_weights") or default_ability_weights()
+            weights = normalize_ability_weights(payload.get("ability_weights"))
+            if weights is None:
+                raise KnowledgeImportPublishError(f"能力权重未通过门禁：{target.public_id}")
+            target.ability_weights_json = weights
             target.needs_reembedding = False
     relation_candidates = [
         item for item in candidates if item.candidate_type == "knowledge_relation"
@@ -482,7 +489,10 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
             license_note=str(payload.get("license_note") or document.license_note)[:255],
             needs_reembedding=True,
             source_document_id=document.id,
-            ability_weights_json=payload.get("ability_weights") or default_ability_weights(),
+            ability_weights_json=(
+                normalize_ability_weights(payload.get("ability_weights"))
+                or _raise_invalid_weights(str(payload.get("target_public_id") or candidate.public_id))
+            ),
             source_locator_json=candidate.source_locator_json or {},
             status="staged",
             )

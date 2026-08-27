@@ -4,10 +4,27 @@ import type { ApiResponse } from '@/types/api'
 export type ImportCandidateType = 'knowledge_item' | 'knowledge_relation' | 'diagnostic_question'
 export type ImportCandidateStatus = 'pending' | 'approved' | 'rejected' | 'needs_edit' | 'published'
 
+export interface AbilityWeights {
+  theory: number
+  practice: number
+  problem_solving: number
+  knowledge_breadth: number
+  learning_speed: number
+}
+
+export interface KnowledgeCandidatePayload extends Record<string, any> {
+  knowledge_id?: string
+  name?: string
+  category?: string
+  ability_weights?: AbilityWeights | null
+  ability_weight_source?: 'explicit' | 'model' | 'admin' | 'missing'
+  ability_weight_confidence?: number
+}
+
 export interface ImportCandidate {
   candidate_id: string
   candidate_type: ImportCandidateType
-  payload: Record<string, any>
+  payload: KnowledgeCandidatePayload
   source_locator: Record<string, any>
   confidence: number
   status: ImportCandidateStatus
@@ -28,6 +45,9 @@ export interface KnowledgeImportSummary {
   candidate_counts?: Record<string, number>
   review_counts?: Record<string, number>
   knowledge_items?: number
+  ability_weights_ready?: number
+  ability_weights_missing?: number
+  ability_weight_blocking_ids?: string[]
   diagnostic_questions?: number
   relations_generated?: number
   relations_accepted?: number

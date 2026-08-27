@@ -31,9 +31,11 @@ from app.services.question_certification_service import (
 
 
 DOMAIN_STATUSES = {"draft", "preparing", "ready", "disabled"}
-PRIMARY_READINESS_POLICY = {"minimum_published_knowledge": 50, "minimum_diagnostic_questions": 60}
-SECONDARY_READINESS_POLICY = {"minimum_published_knowledge": 10, "minimum_diagnostic_questions": 10}
-DEFAULT_ABILITY_WEIGHTS = {
+SERVER_MINIMUM_READINESS_POLICY = {
+    "minimum_published_knowledge": 10,
+    "minimum_diagnostic_questions": 10,
+}
+MANUAL_ENTRY_ABILITY_WEIGHTS = {
     "theory": 0.3,
     "practice": 0.25,
     "problem_solving": 0.2,
@@ -48,11 +50,7 @@ class DomainServiceError(ValueError):
 
 def readiness_policy(domain: Domain) -> dict[str, int]:
     raw = dict((domain.config_json or {}).get("readiness_policy") or {})
-    defaults = (
-        PRIMARY_READINESS_POLICY
-        if domain.domain_code == "ai_app_dev"
-        else SECONDARY_READINESS_POLICY
-    )
+    defaults = SERVER_MINIMUM_READINESS_POLICY
     return {
         "minimum_published_knowledge": max(
             defaults["minimum_published_knowledge"],
@@ -87,7 +85,8 @@ def mark_domain_preparing(db: Session, domain_code: str) -> None:
 
 
 def default_ability_weights() -> dict[str, float]:
-    return dict(DEFAULT_ABILITY_WEIGHTS)
+    """Manual-entry default; the document import pipeline must never use it."""
+    return dict(MANUAL_ENTRY_ABILITY_WEIGHTS)
 
 
 class DomainApiService:
@@ -126,7 +125,7 @@ class DomainApiService:
             config_json={
                 "description": description,
                 "learning_directions": learning_directions,
-                "readiness_policy": dict(SECONDARY_READINESS_POLICY),
+                "readiness_policy": dict(SERVER_MINIMUM_READINESS_POLICY),
             },
         )
         self.db.add(domain)

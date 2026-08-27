@@ -24,7 +24,7 @@ from app.services import candidate_index_job
 router = APIRouter()
 
 
-def process_knowledge_document(run_id: str) -> None:
+def _schedule_import(run_id: str) -> None:
     """Compatibility scheduling hook retained for existing tests and callers."""
     schedule_import(run_id)
 
@@ -108,7 +108,7 @@ async def upload_document(
         code = 409 if "已存在" in str(exc) else 422
         raise HTTPException(status_code=code, detail=str(exc)) from exc
     run = create_import_run(db, document)
-    process_knowledge_document(run.public_id)
+    _schedule_import(run.public_id)
     return ok({**serialize_document(document), "import_id": run.public_id, "run_id": run.public_id, "input_version": run.input_version})
 
 
@@ -128,7 +128,7 @@ def retry_failed_document(
     except KnowledgeDocumentError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     run = create_import_run(db, document)
-    process_knowledge_document(run.public_id)
+    _schedule_import(run.public_id)
     return ok({**serialize_document(document), "import_id": run.public_id, "run_id": run.public_id, "input_version": run.input_version})
 
 

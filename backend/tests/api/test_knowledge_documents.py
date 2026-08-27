@@ -1,13 +1,13 @@
 from collections.abc import Generator
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.db import get_db
 from app.main import app
-from app.models import Base, Domain, KnowledgeDocument, KnowledgeImportCandidate, KnowledgeItem
+from app.models import Base, Domain
 from app.services import knowledge_document_service
 
 
@@ -30,7 +30,7 @@ def test_document_upload_is_isolated_by_domain(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
     monkeypatch.setattr(
-        "app.api.v1.knowledge_documents.process_knowledge_document", lambda _document_id: None
+        "app.api.v1.knowledge_documents._schedule_import", lambda _run_id: None
     )
 
     def override_db() -> Generator[Session, None, None]:
@@ -80,57 +80,5 @@ def test_document_upload_rejects_invalid_and_oversized_files(tmp_path, monkeypat
     try:
         knowledge_document_service.validate_upload("bad.exe", b"content")
         raise AssertionError("invalid extension accepted")
-    except knowledge_document_service.KnowledgeDocumentError:
-        pass
-
-
-def test_text_document_is_parsed_into_review_candidates(tmp_path, monkeypatch) -> None:
-    engine = create_engine("sqlite+pysqlite:///:memory:", poolclass=StaticPool)
-    Base.metadata.create_all(bind=engine)
-    testing_session = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
-    monkeypatch.setattr(knowledge_document_service, "SessionLocal", testing_session)
-    with testing_session() as db:
-        document = knowledge_document_service.create_document(
-            db,
-            domain_code="domain_a",
-            original_name="rag-guide.txt",
-            content=b"RAG retrieval guide.\n\nThis document contains enough text to be indexed safely.",
-            mime_type="text/plain",
-            source_title="RAG Guide",
-            license_note="test",
-            uploaded_by="tester",
-        )
-        document_id = document.public_id
-
-    knowledge_document_service.process_knowledge_document(document_id)
-
-    with testing_session() as db:
-        stored = db.scalar(
-            select(KnowledgeDocument).where(KnowledgeDocument.public_id == document_id)
-        )
-        candidates = list(
-            db.scalars(
-                select(KnowledgeImportCandidate).where(
-                    KnowledgeImportCandidate.document_id == stored.id
-                )
-            )
-        )
-        item = db.scalar(select(KnowledgeItem).where(KnowledgeItem.source_document_id == stored.id))
-        assert stored.status == "review_pending"
-        assert stored.chunk_count >= 1
-        assert stored.embedding_model is None
-        assert stored.error_summary is None
-        assert item is None
-        assert {candidate.candidate_type for candidate in candidates} == {
-            "knowledge_item",
-            "diagnostic_question",
-        }
-        assert all(candidate.source_locator_json for candidate in candidates)
-    try:
-        knowledge_document_service.validate_upload(
-            "large.txt", b"x" * (knowledge_document_service.MAX_FILE_BYTES + 1)
-        )
-        raise AssertionError("oversized upload accepted")
     except knowledge_document_service.KnowledgeDocumentError:
         pass

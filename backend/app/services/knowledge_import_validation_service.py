@@ -13,6 +13,7 @@ from app.models import (
     KnowledgeItem,
 )
 from app.services.knowledge_parser_service import parse_document
+from app.services.ability_weight_service import ability_weight_gate
 from app.services.question_certification_service import (
     QUESTION_CERTIFICATION_RULE_VERSION,
     deterministic_certification_issues,
@@ -68,24 +69,7 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
                 errors.append("来源摘录无法在原文中定位")
             if not 1 <= int(payload.get("difficulty", 0) or 0) <= 5:
                 errors.append("难度必须为 1 到 5")
-            weights = payload.get("ability_weights") or {}
-            if (
-                abs(
-                    sum(
-                        float(weights.get(key, 0))
-                        for key in (
-                            "theory",
-                            "practice",
-                            "problem_solving",
-                            "knowledge_breadth",
-                        )
-                    )
-                    - 1
-                )
-                > 0.001
-                or float(weights.get("learning_speed", 0)) != 0
-            ):
-                errors.append("能力权重不合法")
+            errors.extend(ability_weight_gate(payload))
             derived_capabilities = classify_evidence_capabilities(str(payload.get("content") or ""))
             if payload.get("evidence_capabilities") != derived_capabilities:
                 payload["evidence_capabilities"] = derived_capabilities

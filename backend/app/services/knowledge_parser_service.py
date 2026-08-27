@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,11 @@ def _structured_metadata(text: str) -> tuple[dict[str, Any], str]:
         key, value = match.group(1).lower(), match.group(2).strip().strip("`")
         if key in {"tags", "prerequisites"}:
             metadata[key] = [item.strip().strip("`") for item in value.split(",") if item.strip()]
+        elif key == "ability_weights":
+            try:
+                metadata[key] = json.loads(value)
+            except json.JSONDecodeError:
+                metadata[key] = value
         elif key == "difficulty":
             try:
                 metadata[key] = int(value)

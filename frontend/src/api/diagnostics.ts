@@ -22,6 +22,10 @@ export interface DiagnosticSession {
     short_answer_count: number
     theory_count: number
     practice_count: number
+    algorithm_version?: string
+    random_seed?: number
+    question_ids?: string[]
+    difficulty_distribution?: Record<string, number>
   }
 }
 
@@ -41,7 +45,9 @@ export interface DiagnosticResult {
     category: string
     weakness_level: number
   }>
-  learning_path_id: string
+  evidence_sufficient?: boolean
+  evidence_reason?: string | null
+  learning_path_id: string | null
   learning_path?: {
     nodes?: Array<{
       path_node_id: string
@@ -57,7 +63,7 @@ export interface DiagnosticResult {
       name: string
       description?: string
     }>
-  }
+  } | null
   next_action: string
   answer_results: DiagnosticAnswerResult[]
 }

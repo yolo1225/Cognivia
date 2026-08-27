@@ -89,6 +89,8 @@ RECOVERABLE_CHECKPOINT_FAILURES = {
     "review_execution_failed",
 }
 INTERRUPTED_TASK_STATUSES = {"running", "retry_pending"}
+NODE_ADVANCEMENT_EVENT_TYPE = "node_advancement"
+NODE_ADVANCEMENT_RESOURCE_TYPES = {"lecture", "practice_guide", "graded_quiz"}
 
 
 def _message(
@@ -604,6 +606,32 @@ def _finalization_failure_code(result: FinalizeTaskOutput | None) -> str:
     return "generation_incomplete"
 
 
+def _node_advancement_package_failure(
+    db: Session,
+    task: GenerationTask,
+    result: FinalizeTaskOutput | None,
+) -> str | None:
+    """Return a terminal failure code for an incomplete confirmed learning package."""
+    if task.event_type != NODE_ADVANCEMENT_EVENT_TYPE:
+        return None
+    expected = set(task.resource_types_json or [])
+    if expected != NODE_ADVANCEMENT_RESOURCE_TYPES:
+        return "node_package_resource_types_invalid"
+    if result is None or result.decision.value == "no_change":
+        return "node_package_not_generated"
+    resources = list(
+        db.scalars(
+            select(LearningResource).where(LearningResource.generation_task_id == task.id)
+        )
+    )
+    passed_types = {
+        resource.resource_type for resource in resources if resource.review_status == "passed"
+    }
+    if result.decision.value != "completed" or passed_types != expected:
+        return "node_package_resources_incomplete"
+    return None
+
+
 def _restore_refresh_impact(db: Session, task: GenerationTask) -> None:
     if task.event_type != "knowledge_refresh" or not task.source_task_id:
         return
@@ -1056,9 +1084,28 @@ def run_generation_task(task_id: str) -> dict[str, Any]:
             result = final.get("finalize_task")
             task.revision_count = result.revision_count if result else 0
             task.decision = result.decision.value if result else "failed"
-            if task.decision in {"completed", "no_change"}:
+            node_package_failure = _node_advancement_package_failure(db, task, result)
+            if node_package_failure:
+                task.status = "failed"
+                task.decision = "failed"
+                task.failure_reason = node_package_failure
+                _restore_refresh_impact(db, task)
+                _message(
+                    db,
+                    task,
+                    "generation_worker",
+                    {
+                        "task_id": task.public_id,
+                        "status": "failed",
+                        "failure_code": node_package_failure,
+                        "failed_step": "finalize_task",
+                    },
+                    message_type="error",
+                )
+            elif task.decision in {"completed", "no_change"}:
                 task.status = "completed"
                 task.progress = 100
+                task.failure_reason = ""
                 checkpointer.mark_status(task.public_id, "resolved")
             else:
                 task.status = "failed"

@@ -11,7 +11,6 @@ from uuid import uuid4
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.core.db import SessionLocal
 from app.models import (
     KnowledgeDocument,
     KnowledgeImportCandidate,
@@ -106,47 +105,6 @@ def _document_path(document: KnowledgeDocument) -> Path:
     if root not in path.parents:
         raise KnowledgeDocumentError("文档存储路径非法")
     return path
-
-
-def process_knowledge_document(document_id: str) -> None:
-    with SessionLocal() as db:
-        document = db.scalar(
-            select(KnowledgeDocument).where(KnowledgeDocument.public_id == document_id)
-        )
-        if document is None or document.status == "deleted":
-            return
-        try:
-            document.status = "parsing"
-            document.error_summary = None
-            db.commit()
-            from app.services.knowledge_extraction_service import replace_candidates
-            from app.services.knowledge_import_validation_service import validate_import
-            from app.services.knowledge_parser_service import parse_document
-
-            sections = parse_document(document)
-            candidates = replace_candidates(db, document, sections)
-            document.status = "validating"
-            document.chunk_count = len(sections)
-            db.commit()
-            result = validate_import(db, document.id)
-            document = db.get(KnowledgeDocument, document.id)
-            document.status = "review_pending"
-            document.error_summary = (
-                None if not result["invalid"] else f"{result['invalid']} 个候选需要修改"
-            )
-            document.knowledge_item_count = sum(
-                item.candidate_type == "knowledge_item" for item in candidates
-            )
-            db.commit()
-        except Exception as exc:
-            db.rollback()
-            failed = db.scalar(
-                select(KnowledgeDocument).where(KnowledgeDocument.public_id == document_id)
-            )
-            if failed is not None and failed.status != "deleted":
-                failed.status = "failed"
-                failed.error_summary = str(exc)[:1000]
-                db.commit()
 
 
 def retry_document(db: Session, document: KnowledgeDocument) -> None:

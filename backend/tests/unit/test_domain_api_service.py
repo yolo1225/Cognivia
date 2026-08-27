@@ -321,12 +321,44 @@ def test_readiness_policy_cannot_be_lowered_below_server_minimum() -> None:
     )
 
     assert readiness_policy(primary) == {
-        "minimum_published_knowledge": 50,
-        "minimum_diagnostic_questions": 60,
+        "minimum_published_knowledge": 10,
+        "minimum_diagnostic_questions": 10,
     }
     assert readiness_policy(secondary) == {
         "minimum_published_knowledge": 10,
         "minimum_diagnostic_questions": 10,
+    }
+
+
+def test_readiness_policy_uses_domain_configuration_without_code_branch() -> None:
+    primary_named_domain = Domain(
+        domain_code="ai_app_dev",
+        name="主领域",
+        config_json={
+            "readiness_policy": {
+                "minimum_published_knowledge": 17,
+                "minimum_diagnostic_questions": 23,
+            }
+        },
+    )
+    differently_named_domain = Domain(
+        domain_code="imported_industry_domain",
+        name="导入领域",
+        config_json={
+            "readiness_policy": {
+                "minimum_published_knowledge": 50,
+                "minimum_diagnostic_questions": 60,
+            }
+        },
+    )
+
+    assert readiness_policy(primary_named_domain) == {
+        "minimum_published_knowledge": 17,
+        "minimum_diagnostic_questions": 23,
+    }
+    assert readiness_policy(differently_named_domain) == {
+        "minimum_published_knowledge": 50,
+        "minimum_diagnostic_questions": 60,
     }
 
 

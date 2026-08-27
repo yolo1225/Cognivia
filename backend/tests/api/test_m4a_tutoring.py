@@ -352,9 +352,10 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             )
             assert db.query(Feedback).count() == 2
             generated = db.query(GenerationTask).filter_by(public_id=resource_decision["task_id"]).one()
+            generated_profile_id = generated.profile_id
             assert generated.path_node_id == NEXT_NODE_ID
-            assert generated.trigger_type == "resource_feedback"
-            assert generated.event_type == "resource_feedback"
+            assert generated.trigger_type == "initial_generation"
+            assert generated.event_type == "node_advancement"
             assert generated.source_feedback_id is not None
             assert generated.source_resource_id is not None
             assert generated.source_task_id is not None
@@ -364,6 +365,27 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
                 "practice_guide": ["distractor_knowledge"],
                 "graded_quiz": ["distractor_knowledge"],
             }
+            generated.status = "completed"
+            generated.decision = "no_change"
+            db.commit()
+        recovery = client.post(
+            f"/api/v1/learning-adjustments/{second_answer['adjustment_proposal_id']}/resource-decision",
+            json={"decision": "generate"},
+        )
+        assert recovery.status_code == 200, recovery.json()
+        assert recovery.json()["data"]["recovered"] is True
+        assert recovery.json()["data"]["task_id"] != resource_decision["task_id"]
+        retry = client.post(
+            f"/api/v1/learning-adjustments/{second_answer['adjustment_proposal_id']}/resource-decision",
+            json={"decision": "generate"},
+        )
+        assert retry.status_code == 200, retry.json()
+        assert retry.json()["data"]["task_id"] == recovery.json()["data"]["task_id"]
+        with factory() as db:
+            replacement = db.query(GenerationTask).filter_by(public_id=recovery.json()["data"]["task_id"]).one()
+            assert replacement.trigger_type == "initial_generation"
+            assert replacement.event_type == "node_advancement"
+            assert replacement.profile_id == generated_profile_id
         assert calls == 2
         assert evidence_counts == [1, 1]
     finally:
