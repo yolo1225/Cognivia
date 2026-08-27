@@ -52,6 +52,7 @@ from app.services.node_generation_target_service import (
     resolve_node_generation_basis,
 )
 from app.services.profile_service import public_id
+from app.services.question_bank_service import graded_quiz_preflight
 from app.services.question_certification_service import (
     QUESTION_CERTIFICATION_RULE_VERSION,
 )
@@ -1028,6 +1029,26 @@ def decide_proposal_resource(
     if decision != "generate":
         raise ValueError("invalid_resource_decision")
     resource_types = list(recommendation.get("resource_types") or [])
+    basis = resolve_node_generation_basis(
+        db,
+        path=path,
+        path_node_id=current_node_id,
+        profile=profile,
+        resource_types=resource_types,
+    )
+    if "graded_quiz" in resource_types:
+        quiz_preflight = graded_quiz_preflight(
+            db,
+            domain_code=path.domain_code,
+            target_knowledge_ids=list(
+                (basis.get("resource_knowledge_targets") or {}).get("graded_quiz") or []
+            ),
+            focus_knowledge_ids=list(basis.get("focus_knowledge_ids") or []),
+            target_difficulty=int(basis.get("target_difficulty") or 3),
+            profile_type=profile_snapshot(profile).profile_type.value,
+        )
+        if not quiz_preflight["ready"]:
+            raise ValueError("graded_quiz_question_bank_not_ready")
     if recommendation.get("mode") == "remedial":
         resource = db.get(LearningResource, proposal.source_resource_id)
         feedback = db.get(Feedback, (proposal.source_feedback_ids_json or [None])[-1])
@@ -1044,31 +1065,23 @@ def decide_proposal_resource(
         task.learning_path_id = path.id
         task.path_node_id = current_node_id
     else:
-        task = GenerationTask(
-            public_id=public_id("task"),
-            learner_id=learner.id,
-            profile_id=profile.id,
-            learning_path_id=path.id,
-            path_node_id=current_node_id,
-            domain_code=path.domain_code,
-            status="pending",
-            resource_types_json=resource_types,
-            decision="pending",
-            trigger_type="initial_generation",
-            execution_mode="auto",
-            learning_goal=f"为学习路线当前节点 {current_node_id} 生成学习资源",
-            event_type="generation",
-            progress=0,
+        resource = db.get(LearningResource, proposal.source_resource_id)
+        feedback = db.get(Feedback, (proposal.source_feedback_ids_json or [None])[-1])
+        if resource is None or feedback is None:
+            raise ValueError("learning_adjustment_source_missing")
+        task = create_feedback_task(
+            db,
+            learner=learner,
+            profile=profile,
+            resource=resource,
+            feedback=feedback,
+            resource_types=resource_types,
         )
-        db.add(task)
-        db.flush()
-    basis = resolve_node_generation_basis(
-        db,
-        path=path,
-        path_node_id=current_node_id,
-        profile=profile,
-        resource_types=resource_types,
-    )
+        task.learning_path_id = path.id
+        task.path_node_id = current_node_id
+        task.learning_goal = (
+            f"掌握验证已确认，继续学习路线当前节点 {current_node_id}"
+        )
     bind_node_generation_targets(task, basis)
     proposal.status = "resource_started"
     proposal.resource_decision = "generate"

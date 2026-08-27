@@ -348,10 +348,10 @@ def _with_formal_question_bank(request: GenerateResourceInput) -> GenerateResour
     return request.model_copy(update={"reference_questions": questions})
 
 
-def test_formal_question_bank_requires_all_six_typed_level_slots() -> None:
+def test_formal_question_bank_allows_short_matching_quiz_but_requires_three_questions() -> None:
     request = initial_generation_flow_example()["generate_resource"]["input"]
     request = _with_formal_question_bank(request)
-    incomplete = request.model_copy(update={"reference_questions": request.reference_questions[:-1]})
+    incomplete = request.model_copy(update={"reference_questions": request.reference_questions[:-4]})
 
     with pytest.raises(QuestionBankError, match="graded_quiz_question_bank_insufficient"):
         _select_reference_questions(incomplete)
@@ -456,7 +456,7 @@ def test_quiz_only_revision_preserves_selected_related_question_source() -> None
     content = build_graded_quiz_from_question_bank(
         partial, [chunk.source for chunk in partial.retrieved_chunks]
     )
-    assert len(content.questions) == 6
+    assert len(content.questions) == 3
     assert any(question.knowledge_id == "RELATED-K001" for question in content.questions)
 
 
@@ -499,13 +499,8 @@ def test_formal_quiz_revision_replaces_rejected_question_without_model_generatio
     revised = agent.revise(revised_request, [previous]).resources[0].structured_content
 
     assert isinstance(revised, GradedQuizContent)
-    assert len(revised.questions) == 6
+    assert len(revised.questions) == 3
     assert rejected_id not in {question.question_id for question in revised.questions}
-    assert {question.level.value for question in revised.questions} == {
-        "foundation",
-        "improvement",
-        "challenge",
-    }
     assert all(question.reference_question_ids for question in revised.questions)
 
 
@@ -514,7 +509,7 @@ def test_v3_generation_emits_contract_artifact_and_deterministic_markdown() -> N
         generator=StubGenerator(), renderer=render_resource_markdown
     ).execute(_input())
 
-    assert output.contract_version == "agent-contract-v8"
+    assert output.contract_version == "agent-contract-v9"
     assert output.task_id == _input().task_id
     assert [item.resource_type for item in output.resources] == [ResourceType.LECTURE]
     artifact = output.resources[0]
@@ -744,6 +739,25 @@ def test_quiz_content_policy_drops_absence_based_distractor_reasoning() -> None:
     assert sanitized.questions[0].explanation == "HTTP 请求包含方法和目标 URI；"
 
 
+def test_lecture_explanation_is_not_treated_as_a_quiz_distractor_rationale() -> None:
+    request = _input()
+    sources = [chunk.source for chunk in request.retrieved_chunks]
+    content = _fixture_response(request, ResourceType.LECTURE, sources).structured_content
+    assert isinstance(content, LectureContent)
+    content = content.model_copy(deep=True)
+    content.core_concepts[0].explanation = "文档未说明响应头字段可选，因此应重点核对响应结构。"
+
+    violations = _content_policy_violations(content)
+
+    assert not any(
+        item == {
+            "path": "core_concepts[0].explanation",
+            "code": "unsupported_distractor_rationale",
+        }
+        for item in violations
+    )
+
+
 def test_generation_deterministically_downgrades_unsupported_practice_fields() -> None:
     request = _input()
     requirements = request.requirements.model_copy(
@@ -765,7 +779,7 @@ def test_generation_deterministically_downgrades_unsupported_practice_fields() -
 
     content = output.resources[0].structured_content
     assert isinstance(content, PracticeGuideContent)
-    assert generator.repair_calls == 1
+    assert generator.repair_calls == 0
     assert content.environment_requirements == ["准备练习所需的材料与受控环境。"]
     assert content.steps[0].instruction == "阅读、比较并分析引用材料中的概念说明。"
     assert content.steps[0].expected_result == "记录实际结果，并与引用材料中的描述进行核对。"
@@ -986,7 +1000,7 @@ def test_unrepaired_second_practice_step_converges_without_task_failure() -> Non
 
     content = output.resources[0].structured_content
     assert isinstance(content, PracticeGuideContent)
-    assert generator.repair_calls == 1
+    assert generator.repair_calls == 0
     assert content.steps[1].instruction == "阅读、比较并分析引用材料中的概念说明。"
     assert not _content_policy_violations(content)
 
@@ -1712,6 +1726,46 @@ def test_quiz_blueprint_detects_slot_drift() -> None:
     assert {item["field"] for item in violations} == {"knowledge_id"}
 
 
+def test_quiz_blueprint_uses_certified_attribution_not_runtime_token_overlap() -> None:
+    request = _input()
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.GRADED_QUIZ],
+            "resource_knowledge_targets": {
+                ResourceType.GRADED_QUIZ: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    quiz_request = _with_formal_question_bank(
+        request.model_copy(update={"requirements": requirements})
+    )
+    sources = [chunk.source for chunk in quiz_request.retrieved_chunks]
+    blueprint = _quiz_blueprint(quiz_request, sources)
+    content = _fixture_response(
+        quiz_request, ResourceType.GRADED_QUIZ, sources
+    ).structured_content
+    assert isinstance(content, GradedQuizContent)
+
+    # The fixed formal-question identity, primary knowledge and certified
+    # evidence stay intact even where wording leans on a related target.
+    other_chunk = next(
+        chunk
+        for chunk in quiz_request.retrieved_chunks
+        if chunk.knowledge_id != content.questions[0].knowledge_id
+    )
+    questions = list(content.questions)
+    questions[0] = questions[0].model_copy(
+        update={
+            "prompt": f"综合比较：{other_chunk.content}",
+            "correct_answer": "按已认证题目的答案评分。",
+            "explanation": "该题的主归因、真实关联和来源已在题目认证时验证。",
+        }
+    )
+    integrated = content.model_copy(update={"questions": questions})
+
+    assert not _quiz_blueprint_violations(integrated, blueprint, quiz_request)
+
+
 def test_failed_structured_generation_is_collected_without_model_content() -> None:
     with collect_model_calls() as collector:
         with pytest.raises(GenerationError, match="generated_structured_output_invalid"):
@@ -1770,15 +1824,6 @@ def test_quiz_is_assembled_from_formal_question_bank_without_model_repair() -> N
 
     quiz = output.resources[0].structured_content
     assert isinstance(quiz, GradedQuizContent)
-    assert [question.question_id for question in quiz.questions] == [
-        f"formal_{request.requirements.required_knowledge_ids[0]}_{slot}"
-        for slot in range(1, 7)
-    ]
-    assert [question.prompt for question in quiz.questions] == [
-        f"正式题库题目 {slot}" for slot in range(1, 7)
-    ]
-    assert {question.level.value for question in quiz.questions} == {
-        "foundation",
-        "improvement",
-        "challenge",
-    }
+    assert len(quiz.questions) == 3
+    assert all(question.question_id.startswith("formal_") for question in quiz.questions)
+    assert all(question.reference_question_ids == [question.question_id] for question in quiz.questions)

@@ -849,7 +849,12 @@ class CandidateRetriever:
                     (row[0].answer_key_json or {}).get("quiz_level") or ""
                 ),
                 "question_id": lambda row: row[0].public_id,
-                "require_complete": False,
+                "difficulty": lambda row: row[0].difficulty,
+                "question_type": lambda row: row[0].question_type,
+                "focus_knowledge_ids": request.retrieval_plan.priority_knowledge_ids,
+                "target_difficulty": request.retrieval_plan.target_difficulty,
+                "profile_type": request.profile.profile_type.value,
+                "require_complete": True,
             }
             excluded_question_ids: set[str] = set()
             questions = select_graded_quiz_candidates(

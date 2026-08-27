@@ -39,7 +39,7 @@ from app.models import (
     LearningPath,
 )
 from app.services.learner_service import get_or_create_demo_learner
-from app.services.learning_path_service import normalize_path_for_domain
+from app.services.learning_path_service import normalize_path_for_domain, serialize_learning_path
 from app.services.domain_runtime_service import (
     DomainRuntime,
     practice_generation_mode_for_items,
@@ -70,6 +70,63 @@ class DiagnosticScoringPending(RuntimeError):
 
 
 SCORING_STATUSES = {"scoring", "pending_scoring"}
+
+
+def _evidence_based_initial_ability(
+    *, assessments: list[KnowledgeAssessment], runtime: DomainRuntime,
+    context_snapshot: dict[str, Any],
+) -> dict[str, Any]:
+    """Fuse scored evidence with a deliberately low-weight background prior."""
+    config = runtime.profile_config
+    if config is None:
+        raise ValueError("profile_config_required")
+    education = str(context_snapshot.get("education_level") or "")
+    major = str(context_snapshot.get("major") or "").lower()
+    experience = max(0.0, min(10.0, float(context_snapshot.get("experience_years") or 0)))
+    relevant_major = any(marker in major for marker in (
+        "软件", "计算机", "人工智能", "数据", "信息", "automation", "computer"
+    ))
+    education_bonus = 4 if education in {"本科", "硕士及以上"} else 2 if education == "专科" else 0
+    background_prior = min(72.0, 42.0 + education_bonus + (5 if relevant_major else 0) + experience * 2)
+    dimensions: dict[str, int] = {}
+    observed_counts: dict[str, int] = {}
+    for dimension in ("theory", "practice", "problem_solving"):
+        weighted_scores: list[tuple[float, float]] = []
+        for assessment in assessments:
+            if not assessment.attempted or assessment.score is None:
+                continue
+            ability_weight = float(config.ability_weights[assessment.knowledge_id][dimension])
+            if ability_weight <= 0:
+                continue
+            evidence_weight = ability_weight * config.difficulty_weight(assessment.difficulty)
+            weighted_scores.append((float(assessment.score), evidence_weight))
+        observed_counts[dimension] = len(weighted_scores)
+        observed = (
+            sum(score * weight for score, weight in weighted_scores)
+            / sum(weight for _, weight in weighted_scores) * 100
+            if weighted_scores else background_prior
+        )
+        dimensions[dimension] = round(observed * 0.85 + background_prior * 0.15)
+    confidence_values = [float(item.confidence) for item in assessments if item.attempted]
+    aggregate = round(sum(dimensions.values()) / len(dimensions))
+    return {
+        **dimensions,
+        "breadth": aggregate,
+        "knowledge_breadth": aggregate,
+        "learning_speed": 0,
+        "evidence_profile": {
+            "version": "initial-evidence-v1",
+            "ability_dimensions": ["theory", "practice", "problem_solving"],
+            "diagnostic_weight": 0.85,
+            "background_weight": 0.15,
+            "background_prior": round(background_prior, 1),
+            "assessed_question_count": len([item for item in assessments if item.attempted]),
+            "assessed_knowledge_count": len({item.knowledge_id for item in assessments if item.attempted}),
+            "mean_scoring_confidence": round(sum(confidence_values) / len(confidence_values), 2) if confidence_values else 0,
+            "observed_counts": observed_counts,
+            "learning_speed_status": "insufficient_longitudinal_evidence",
+        },
+    }
 
 
 def _answer_hash(question_ids: list[str], answers: list[dict[str, Any]]) -> str:
@@ -920,6 +977,23 @@ def submit_diagnostic_session(
         active_profile = current_profile
         if analysis.profile_update_required:
             ability_payload = ability_profile_payload(analysis.profile)
+            ability_payload.update(_evidence_based_initial_ability(
+                assessments=assessments,
+                runtime=runtime,
+                context_snapshot=context_snapshot,
+            ))
+            observed_average = sum(
+                int(ability_payload[key])
+                for key in ("theory", "practice", "problem_solving")
+            ) / 3
+            ability_payload["profile_type"] = (
+                "practice_oriented"
+                if int(ability_payload["practice"]) >= int(ability_payload["theory"]) + 10
+                and int(ability_payload["practice"]) >= 60
+                else "advanced" if observed_average >= 85
+                else "intermediate" if observed_average >= 60
+                else "beginner"
+            )
             ability_payload["category_mastery"] = {
                 category: round(sum(scores) / len(scores) * 100, 1)
                 for category, scores in sorted(category_scores.items())
@@ -988,11 +1062,14 @@ def submit_diagnostic_session(
             else None,
             "profile_changed_dimensions": analysis.changed_dimensions,
             "profile_source": "diagnostic_result",
-            "profile_type": analysis.profile.profile_type.value,
+            "profile_type": str(
+                (active_profile.ability_profile_json or {}).get("profile_type")
+                or analysis.profile.profile_type.value
+            ),
             "ability_profile": active_profile.ability_profile_json,
             "weak_knowledge": active_profile.weak_knowledge_json,
             "learning_path_id": path.public_id,
-            "learning_path": path.path_json,
+            "learning_path": serialize_learning_path(path),
             "answer_results": answer_results,
             "next_action": "create_generation_task",
         }

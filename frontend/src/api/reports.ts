@@ -15,10 +15,12 @@ export interface LearningReport {
   direction_tags?: string[]
   context_snapshot?: Record<string, unknown>
   radar: number[]
+  ability_profile?: Record<string, any>
   path: string[]
   diagnostic_summary?: {
     answer_count: number
     correct_count: number
+    total_score: number
     accuracy: number
     latest_session_id?: string | null
   }
@@ -33,12 +35,6 @@ export interface LearningReport {
     category: string
     weakness_level: number
   }>
-  metrics: {
-    hallucination_rate: number
-    difficulty_match: number
-    difficulty_match_accuracy?: number
-    knowledge_coverage: number
-  }
   loop_status: {
     diagnosis: string
     profile: string
@@ -116,6 +112,7 @@ export interface LearningReport {
     }
   }>
   progress_comparison?: LearningProgressComparison
+  learning_history?: LearningHistoryEvent[]
   next_actions: Array<{
     type: string
     label: string
@@ -146,6 +143,20 @@ export interface LearningProgressComparison {
   path_progress?: { total: number; completed: number; current: number; locked: number; skipped: number; completion_rate: number | null }
   mistake_consolidation?: { total: number; pending: number; in_progress: number; consolidated: number; verified: number; consolidation_rate: number | null }
   timeline?: Array<{ type: string; title: string; occurred_at: string; profile_version: number | null; confidence: number; reason: string | null; evidence_refs: string[]; governance_status?: string; path_result?: Record<string, unknown> }>
+}
+
+export interface LearningHistoryEvent {
+  event_id: string
+  type: string
+  title: string
+  occurred_at: string
+  path_id?: string | null
+  path_node_id?: string | null
+  task_id?: string | null
+  feedback_id?: string | null
+  profile_version?: number | null
+  reason?: string | null
+  evidence_refs: string[]
 }
 
 export interface KnowledgeProgressItem {

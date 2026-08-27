@@ -421,6 +421,62 @@ def test_prerequisite_refresh_inherits_completed_knowledge() -> None:
     assert refreshed["node_states"][node_id_for("k2")]["status"] == "current"
 
 
+def test_unit_refresh_preserves_completed_and_current_units() -> None:
+    db = _db()
+    items = [
+        KnowledgeItem(
+            public_id=f"k{index}",
+            domain_code="ai_app_dev",
+            name=f"K{index}",
+            category="test",
+            difficulty=2,
+            content_md="content",
+            source_title="source",
+            license_note="test",
+            status="published",
+        )
+        for index in range(1, 7)
+    ]
+    db.add_all(items)
+    db.commit()
+    previous = normalize_path_for_domain(
+        db,
+        domain_code="ai_app_dev",
+        payload={"stages": [{"name": "old", "knowledge_ids": [item.public_id for item in items]}]},
+    )
+    states = sorted(previous["node_states"].values(), key=lambda item: item["path_order"])
+    completed, current = states[:2]
+    completed.update(
+        {
+            "status": "completed",
+            "completed_at": "2026-08-26T01:00:00+00:00",
+            "completion_evidence_ids": ["answer_record:1"],
+        }
+    )
+    current["status"] = "current"
+    previous["current_node_id"] = current["path_node_id"]
+
+    revised = normalize_path_for_domain(
+        db,
+        domain_code="ai_app_dev",
+        payload={"stages": [{"name": "new", "knowledge_ids": ["k5", "k6", "k3", "k4"]}]},
+        previous_payload=previous,
+    )
+    repeated = normalize_path_for_domain(
+        db,
+        domain_code="ai_app_dev",
+        payload=revised,
+        previous_payload=revised,
+    )
+
+    assert revised["node_states"][completed["path_node_id"]]["status"] == "completed"
+    assert revised["node_states"][completed["path_node_id"]]["completion_evidence_ids"] == [
+        "answer_record:1"
+    ]
+    assert revised["current_node_id"] == current["path_node_id"]
+    assert repeated["current_node_id"] == current["path_node_id"]
+
+
 def test_node_assessment_scores_idempotently_and_advances_only_on_pass() -> None:
     db = _db()
     learner = Learner(public_id="learner_assessment", target_domain="ai_app_dev")

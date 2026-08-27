@@ -16,8 +16,8 @@ from app.services.profile_service import (
     serialize_profile_detail,
 )
 from app.services.report_service import (
+    build_learning_history,
     build_learning_progress_comparison,
-    build_metric_summary,
     refresh_learning_path,
 )
 from app.services.learning_path_service import normalize_path_for_domain, serialize_learning_path
@@ -159,11 +159,11 @@ def get_learning_report(
         db, learner, task.domain_code if task_id and task is not None else learner.target_domain
     )
     path = latest_path_for_profile(db, profile) if profile is not None else None
+    original_path_payload = dict(path.path_json or {}) if path is not None else None
     if path is not None:
         path.path_json = normalize_path_for_domain(
             db, domain_code=path.domain_code, payload=path.path_json or {}, previous_payload=path.path_json or {}
         )
-    original_path_payload = dict(path.path_json or {}) if path is not None else None
     detail = serialize_profile_detail(db, learner, profile, path=path)
     path_refresh_performed = False
     if path is not None and path.needs_refresh and profile is not None:
@@ -288,11 +288,6 @@ def get_learning_report(
             "learning_path": learning_path,
             "weak_knowledge": detail.get("weak_knowledge", []),
             "diagnostic_summary": diagnostic_summary,
-            "metrics": build_metric_summary(
-                hallucination_rate=0.03,
-                difficulty_match=0.87,
-                coverage=0.91,
-            ),
             "loop_status": {
                 "diagnosis": "completed" if has_diagnosis else "pending",
                 "profile": "completed" if has_profile else "pending",
@@ -331,6 +326,9 @@ def get_learning_report(
             "profile_changes": profile_changes,
             "progress_comparison": build_learning_progress_comparison(
                 db, learner=learner, current_profile=profile, path=path
+            ),
+            "learning_history": build_learning_history(
+                db, learner=learner, domain_code=active_domain_code
             ),
             "next_actions": _next_actions(
                 has_profile=has_profile,

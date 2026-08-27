@@ -105,7 +105,7 @@ def test_v3_graph_stops_after_two_revisions_using_prior_finalize_output() -> Non
 
     state = graph.invoke(
         {
-            "contract_version": "agent-contract-v8",
+            "contract_version": "agent-contract-v9",
             "task_request": prepare["input"].request,
             "current_profile": analyze["input"].current_profile,
             "diagnostic_summary": analyze["input"].diagnostic_summary,

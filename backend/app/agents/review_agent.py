@@ -35,7 +35,6 @@ from app.agents.contracts import (
     ReviewResourceInput,
     ReviewResourceOutput,
     ResourceType,
-    QuizLevel,
     RetrieveKnowledgeInput,
     RetrievedChunk,
     RetrievalPurpose,
@@ -617,6 +616,11 @@ def extract_atomic_claims(
         filter_group: str | None = None,
     ) -> None:
         sources = tuple(_ordered_unique(source_ids))
+        if filter_group == "expected_result":
+            whole_field_decision = classify_claim(filter_group, text)
+            if whole_field_decision.review_disposition is not ReviewDisposition.DUAL_REVIEW:
+                excluded.setdefault(whole_field_decision.category.value, []).append(field_path)
+                return
         knowledge_ids = tuple(
             _ordered_unique(
                 evidence_by_source[source_id].knowledge_id
@@ -1460,15 +1464,10 @@ def _review_certified_quiz(
         )
     )
     evidence_ids = {chunk.source.source_ref_id for chunk in request.evidence}
-    level_counts = {
-        level: sum(question.level is level for question in content.questions)
-        for level in QuizLevel
-    }
     question_ids = [question.question_id for question in content.questions]
     package_structure_valid = (
-        len(content.questions) == 6
+        3 <= len(content.questions) <= 8
         and len(question_ids) == len(set(question_ids))
-        and all(count == 2 for count in level_counts.values())
     )
     checks: list[FactCheck] = []
     covered_ids: set[str] = set()

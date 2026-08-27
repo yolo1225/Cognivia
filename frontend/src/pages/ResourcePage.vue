@@ -67,14 +67,14 @@
     <template v-else-if="taskDetail?.status !== 'failed'">
       <header v-if="resources.length" class="rp-hero">
         <div class="hero-copy">
-          <span class="hero-kicker">{{ showKnowledgeChangedState ? '学习包 · 需要更新' : '个性化学习包 · 已达标' }}</span>
+          <span class="hero-kicker">{{ showKnowledgeChangedState ? '学习包 · 需要更新' : '个性化学习包 · 本次审核已达标' }}</span>
           <h2>{{ showKnowledgeChangedState ? '部分资源需要重新生成' : '你的个性化学习包' }}</h2>
-          <p>{{ showKnowledgeChangedState ? '相关知识库已更新，当前资源仍可继续使用；你可以只更新受影响内容并形成新的学习包。' : '针对诊断画像生成的三类资源已通过自动质量校验，按「讲义 → 实训 → 测验」顺序完成学习。' }}</p>
+          <p>{{ showKnowledgeChangedState ? '相关知识库已更新，当前资源仍可继续使用；你可以只更新受影响内容并形成新的学习包。' : '以下数据是本次学习包的自动审核结果，不代表全系统或人工评测结论；请按「讲义 → 实训 → 测验」顺序完成学习。' }}</p>
         </div>
         <div v-if="packageQuality" class="hero-metrics">
-          <div><span>幻觉率</span><strong>{{ fmt(packageQuality.hallucination_rate) }}%</strong></div>
-          <div><span>难度适配</span><strong>{{ fmt(packageQuality.difficulty_match_score) }}%</strong></div>
-          <div><span>核心覆盖</span><strong>{{ fmt(packageQuality.core_knowledge_coverage) }}%</strong></div>
+          <div><span>本包审核幻觉率</span><strong>{{ fmt(packageQuality.hallucination_rate) }}%</strong></div>
+          <div><span>本包难度适配</span><strong>{{ fmt(packageQuality.difficulty_match_score) }}%</strong></div>
+          <div><span>本包核心覆盖</span><strong>{{ fmt(packageQuality.core_knowledge_coverage) }}%</strong></div>
         </div>
       </header>
 

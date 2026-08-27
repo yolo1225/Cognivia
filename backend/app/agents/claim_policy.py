@@ -129,9 +129,20 @@ _NORMATIVE_DIRECTIVE_RE = re.compile(
 )
 _SAFE_OBSERVATION_RE = re.compile(
     r"^(?:记录|整理|比较|核对|形成|提交|观察).{0,160}"
-    r"(?:记录|清单|笔记|差异|材料|描述|实际结果|表格|核对|对照|观察|响应).{0,60}$|"
+    r"(?:记录|清单|笔记|差异|材料|描述|实际结果|表格|核对|对照|比对|观察|响应).{0,60}$|"
     r"^(?:record|organize|compare|check|observe|submit).{0,180}"
     r"(?:result|observation|difference|record|notes?|table|response).*$",
+    re.I,
+)
+_KNOWLEDGE_SUMMARY_ACTION_RE = re.compile(
+    r"^(?:(?:学习者|学员|你)(?:应|需|需要|可以|可)?|请|可以|可)?\s*"
+    r"(?:整理|梳理|复述|列出|总结|说明|描述).{0,220}$",
+    re.I,
+)
+_EXPLICIT_ACCEPTANCE_FACT_RE = re.compile(
+    r"(?:自动|固定|默认|支持|不支持|兼容|不兼容|必须|只能|始终|无需|"
+    r"返回|输出|显示|状态码|版本|\b\d+(?:\.\d+)+(?:\+|以上|以下)?\b|"
+    r"\b\d+(?:\.\d+)?\s*(?:秒|毫秒|次|%|mb|gb)\b)",
     re.I,
 )
 _QUESTION_DIRECTIVE_RE = re.compile(
@@ -299,6 +310,17 @@ def classify_claim(
             **common,
         )
     if field_group in {"instruction", "environment_requirement", "acceptance_criterion"}:
+        if (
+            field_group == "acceptance_criterion"
+            and _KNOWLEDGE_SUMMARY_ACTION_RE.fullmatch(sentence)
+            and not _EXPLICIT_ACCEPTANCE_FACT_RE.search(sentence)
+        ):
+            return ClaimPolicyDecision(
+                ClaimCategory.TEACHING_ACTION,
+                RiskLevel.LOW,
+                ReviewDisposition.EXCLUDE,
+                **common,
+            )
         deliverable_action = bool(_DELIVERABLE_ACTION_RE.fullmatch(sentence))
         pedagogical_action = bool(
             _ACTION_START_RE.match(sentence)

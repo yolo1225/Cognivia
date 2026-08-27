@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION = "agent-contract-v8"
+CONTRACT_VERSION = "agent-contract-v9"
 QUALITY_RULE_VERSION = "quality-v6-20260818"
 
 
@@ -14,7 +14,7 @@ class ContractModel(BaseModel):
 
 
 class NodeContract(ContractModel):
-    contract_version: Literal["agent-contract-v8"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v9"] = CONTRACT_VERSION
     task_id: str = Field(min_length=1, max_length=64)
 
 
@@ -186,7 +186,7 @@ class MessagePayload(ContractModel):
 
 
 class AgentMessage(ContractModel):
-    contract_version: Literal["agent-contract-v8"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v9"] = CONTRACT_VERSION
     message_id: str = Field(default_factory=lambda: str(uuid4()))
     sender: AgentName
     receiver: AgentName
@@ -323,7 +323,7 @@ class TaskRequest(ContractModel):
 
 
 class TaskContext(TaskRequest):
-    contract_version: Literal["agent-contract-v8"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v9"] = CONTRACT_VERSION
 
 
 class ContextNodeContract(NodeContract):
@@ -674,14 +674,10 @@ class GradedQuizContent(ContractModel):
     title: str = Field(min_length=1, max_length=255)
     target_audience: str = Field(min_length=1, max_length=500)
     learning_objectives: list[str] = Field(min_length=1, max_length=10)
-    questions: list[QuizQuestion] = Field(min_length=6, max_length=30)
-
-    @model_validator(mode="after")
-    def validate_levels(self) -> "GradedQuizContent":
-        levels = {question.level for question in self.questions}
-        if levels != set(QuizLevel):
-            raise ValueError("graded quiz requires foundation, improvement, and challenge levels")
-        return self
+    # A resource quiz is selected from the certified formal bank for the current
+    # learning unit.  Its size and teaching-level mix are profile-dependent;
+    # question difficulty remains the certified, immutable item difficulty.
+    questions: list[QuizQuestion] = Field(min_length=3, max_length=8)
 
 
 StructuredResourceContent = Annotated[

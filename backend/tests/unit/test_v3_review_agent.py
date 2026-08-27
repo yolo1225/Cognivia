@@ -9,6 +9,7 @@ from app.agents.contract_examples import initial_generation_flow_example, resour
 from app.core.config import settings
 from app.agents.contracts import (
     EvidenceVerdict,
+    GradedQuizContent,
     ModelReview,
     ReviewCriterionScores,
     ReviewDecision,
@@ -299,7 +300,7 @@ def test_v3_review_emits_dual_model_contract_report() -> None:
     output = ReviewValidationAgent(channel=DeterministicChannel()).execute(_input())
 
     report = output.reports[0]
-    assert output.contract_version == "agent-contract-v8"
+    assert output.contract_version == "agent-contract-v9"
     assert report.primary_review.model_role == "primary_review_model"
     assert report.secondary_review.model_role == "secondary_review_model"
     assert report.decision in {ReviewDecision.PASSED, ReviewDecision.REVISION_REQUIRED}
@@ -1329,6 +1330,33 @@ def test_practice_environment_and_acceptance_actions_are_not_factual_claims() ->
     assert claims_by_path["acceptance_criteria[5][0]"] == "在清单旁注明接口固定返回 JSON 字段"
 
 
+def test_practice_compound_observation_and_summary_actions_are_not_split_as_facts() -> None:
+    request = _input()
+    practice = resource_examples()[1]
+    content = practice.structured_content.model_copy(deep=True)
+    content.steps[0].expected_result = "记录实际收到的响应结构；与文档中声明的响应格式进行比对。"
+    content.acceptance_criteria = [
+        "总结 asyncio 事件循环调度机制的核心要点：await 触发挂起、事件循环恢复协程"
+    ]
+    practice = practice.model_copy(update={"structured_content": content})
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "resource_knowledge_targets": {
+                ResourceType.PRACTICE_GUIDE: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    practice_request = request.model_copy(
+        update={"resources": [practice], "requirements": requirements}
+    )
+
+    paths = {claim.field_path for claim in extract_atomic_claims(practice, practice_request)}
+
+    assert not any(path.startswith("steps[0].expected_result") for path in paths)
+    assert not any(path.startswith("acceptance_criteria[0]") for path in paths)
+
+
 def test_workflow_mapping_and_learning_record_are_pedagogical_actions() -> None:
     request = _input()
     practice = resource_examples()[1]
@@ -1605,6 +1633,41 @@ def test_certified_quiz_uses_deterministic_suitability_review() -> None:
     assert not report.arbitration.required
     assert report.quality_metrics.hallucination_rate == 0
     assert all("correct_answer" not in (check.field_path or "") for check in report.primary_review.fact_checks)
+
+
+def test_certified_quiz_allows_three_question_single_level_package() -> None:
+    flow = initial_generation_flow_example()
+    request = flow["review_resource"]["input"]
+    quiz = next(
+        resource
+        for resource in request.resources
+        if resource.resource_type is ResourceType.GRADED_QUIZ
+    )
+    assert isinstance(quiz.structured_content, GradedQuizContent)
+    questions = [
+        question.model_copy(update={"reference_question_ids": [question.question_id]})
+        for question in quiz.structured_content.questions[:3]
+    ]
+    target_id = questions[0].knowledge_id
+    short_quiz = quiz.model_copy(
+        update={"structured_content": quiz.structured_content.model_copy(update={"questions": questions})}
+    )
+    short_request = request.model_copy(
+        update={
+            "requirements": request.requirements.model_copy(
+                update={
+                    "resource_knowledge_targets": {
+                        ResourceType.GRADED_QUIZ: [target_id]
+                    }
+                }
+            )
+        }
+    )
+
+    report = _review_certified_quiz(short_quiz, short_request)
+
+    assert report.passed
+    assert report.decision is ReviewDecision.PASSED
 
 
 @pytest.mark.parametrize("resource_count", [1, 2, 3])

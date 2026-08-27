@@ -47,7 +47,8 @@ from app.services.profile_service import (
     profile_source,
     public_id,
 )
-from app.services.question_bank_service import question_bank_coverage
+from app.services.question_bank_service import graded_quiz_preflight
+from app.services.contract_mapping import profile_snapshot
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.workers.generation_worker import run_generation_task
 
@@ -320,20 +321,20 @@ def create_generation_task(
         quiz_targets = list(
             (basis.get("resource_knowledge_targets") or {}).get("graded_quiz") or []
         )
-        coverage = question_bank_coverage(
+        quiz_preflight = graded_quiz_preflight(
             db,
             domain_code=domain_code,
-            knowledge_ids=quiz_targets,
+            target_knowledge_ids=quiz_targets,
+            focus_knowledge_ids=list(basis.get("focus_knowledge_ids") or []),
+            target_difficulty=int(basis.get("target_difficulty") or 3),
+            profile_type=profile_snapshot(profile).profile_type.value,
         )
-        if coverage["missing_knowledge_ids"]:
+        if not quiz_preflight["ready"]:
             return api_error_response(
                 status_code=409,
                 code="GRADED_QUIZ_QUESTION_BANK_NOT_READY",
-                message="当前学习节点的正式题库尚不足以生成分级测验，请先补齐题库。",
-                details={
-                    "missing_knowledge_ids": coverage["missing_knowledge_ids"],
-                    "requirements": coverage["requirements"],
-                },
+                message="当前学习单元题库密度不足，正式认证题少于3道，无法生成测验。",
+                details=quiz_preflight,
             )
     bind_node_generation_targets(task, basis)
     db.add(task)
@@ -350,6 +351,7 @@ def create_generation_task(
             "path_id": path.public_id,
             "path_node_id": current_node_id,
             "generation_basis": basis,
+            "quiz_preflight": quiz_preflight if "graded_quiz" in requested_types else None,
             "agent_graph": "unified_learning_graph_v3",
             **_profile_summary(db, task),
             "decision": task.decision,

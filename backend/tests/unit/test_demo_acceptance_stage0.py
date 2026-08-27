@@ -73,7 +73,7 @@ def test_stage0_task_evidence_requires_resources_sources_quality_and_dual_review
                 "thread_id": "task-1",
                 "runs": [
                     {
-            "contract_version": "agent-contract-v8",
+            "contract_version": "agent-contract-v9",
                         "prompt_hash": "a" * 64,
                     }
                 ],

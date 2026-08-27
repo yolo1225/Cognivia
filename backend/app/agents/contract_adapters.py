@@ -245,7 +245,7 @@ def _output_patch(node_name: str, output: OutputT) -> AgentGraphState:
     if expected_field is None:
         raise ValueError(f"unknown V3 node '{node_name}'")
     if output.contract_version != CONTRACT_VERSION:
-        raise ValueError("output contract version does not match Agent Contract V8")
+        raise ValueError("output contract version does not match Agent Contract V9")
     return cast(AgentGraphState, {expected_field: output})
 
 

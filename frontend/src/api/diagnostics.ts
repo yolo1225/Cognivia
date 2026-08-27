@@ -43,6 +43,16 @@ export interface DiagnosticResult {
   }>
   learning_path_id: string
   learning_path?: {
+    nodes?: Array<{
+      path_node_id: string
+      title: string
+      status: 'current' | 'locked' | 'completed' | 'skipped'
+      learning_objective?: string
+      recommendation_reason?: string
+      knowledge_items?: Array<{ knowledge_id: string; name: string; category: string }>
+      focus_knowledge_ids?: string[]
+      path_order?: number
+    }>
     stages?: Array<{
       name: string
       description?: string

@@ -4,12 +4,13 @@ from collections import defaultdict
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models import (
     AnswerRecord,
     DiagnosticQuestion,
+    DiagnosticSession,
     KnowledgeItem,
     KnowledgeRelation,
     Learner,
@@ -503,47 +504,53 @@ def diagnostic_summary_for_learner(
     db: Session, learner: Learner, domain_code: str | None = None
 ) -> dict[str, Any]:
     selected_domain = str(domain_code or learner.target_domain).strip()
-    total_count = (
-        db.scalar(
-            select(func.count(AnswerRecord.id))
-            .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
-            .where(
-                AnswerRecord.learner_id == learner.id,
-                DiagnosticQuestion.domain_code == selected_domain,
-            )
-        )
-        or 0
-    )
-    correct_count = (
-        db.scalar(
-            select(func.count(AnswerRecord.id))
-            .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
-            .where(
-                AnswerRecord.learner_id == learner.id,
-                DiagnosticQuestion.domain_code == selected_domain,
-                AnswerRecord.is_correct.is_(True),
-            )
-        )
-        or 0
-    )
-    latest_answer = db.scalar(
-        select(AnswerRecord)
-        .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+    diagnostic_session = db.scalar(
+        select(DiagnosticSession)
         .where(
-            AnswerRecord.learner_id == learner.id,
-            DiagnosticQuestion.domain_code == selected_domain,
+            DiagnosticSession.learner_id == learner.id,
+            DiagnosticSession.domain_code == selected_domain,
+            DiagnosticSession.status == "scored",
         )
-        .order_by(AnswerRecord.id.desc())
+        .order_by(DiagnosticSession.updated_at.desc(), DiagnosticSession.id.desc())
+    )
+    latest_session_id = diagnostic_session.public_id if diagnostic_session else None
+    records = (
+        list(
+            db.scalars(
+                select(AnswerRecord)
+                .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+                .where(
+                    AnswerRecord.learner_id == learner.id,
+                    DiagnosticQuestion.domain_code == selected_domain,
+                    AnswerRecord.session_id == latest_session_id,
+                )
+                .order_by(AnswerRecord.id)
+            )
+        )
+        if latest_session_id
+        else []
+    )
+    total_count = len(records)
+    correct_count = sum(record.is_correct is True for record in records)
+    total_score = sum(float(record.score or 0) for record in records)
+    persisted_result = dict(diagnostic_session.result_json or {}) if diagnostic_session else {}
+    # The scored session result is authoritative. Path quizzes, mistake review,
+    # and tutoring checks also create AnswerRecord rows but are not diagnostics.
+    total_count = int(persisted_result.get("question_count") or total_count)
+    correct_count = int(persisted_result.get("correct_count") or correct_count)
+    score_percent = (
+        float(persisted_result["score"])
+        if persisted_result.get("score") is not None
+        else round(total_score / total_count * 100, 1) if total_count else 0
     )
     return {
         "answer_count": total_count,
         "correct_count": correct_count,
+        # This is the learner-facing overall score: choice and short-answer
+        # partial scores are added together, then divided by the question count.
+        "total_score": score_percent,
         "accuracy": round(correct_count / total_count * 100, 1) if total_count else 0,
-        "latest_session_id": (
-            latest_answer.session_id or (latest_answer.answer_summary_json or {}).get("session_id")
-        )
-        if latest_answer
-        else None,
+        "latest_session_id": latest_session_id,
     }
 
 

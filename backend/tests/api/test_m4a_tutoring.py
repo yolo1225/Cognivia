@@ -261,6 +261,10 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             {"profile_changed": False, "ability_score_changes": {}},
         ),
     )
+    monkeypatch.setattr(
+        "app.services.learning_adjustment_service.graded_quiz_preflight",
+        lambda *_args, **_kwargs: {"ready": True},
+    )
     monkeypatch.setattr("app.api.v1.tutoring.run_generation_task", lambda _task_id: None)
     monkeypatch.setattr("app.api.v1.learning_adjustments.run_generation_task", lambda _task_id: None)
     app.dependency_overrides[get_db] = _override(factory)
@@ -349,6 +353,12 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             assert db.query(Feedback).count() == 2
             generated = db.query(GenerationTask).filter_by(public_id=resource_decision["task_id"]).one()
             assert generated.path_node_id == NEXT_NODE_ID
+            assert generated.trigger_type == "resource_feedback"
+            assert generated.event_type == "resource_feedback"
+            assert generated.source_feedback_id is not None
+            assert generated.source_resource_id is not None
+            assert generated.source_task_id is not None
+            assert db.query(LearnerProfile).count() == 1
             assert generated.resource_knowledge_targets_json == {
                 "lecture": ["distractor_knowledge"],
                 "practice_guide": ["distractor_knowledge"],

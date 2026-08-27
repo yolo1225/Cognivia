@@ -9,6 +9,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 const props = defineProps<{
   values: number[]
   baselineValues?: number[]
+  indicators?: string[]
 }>()
 
 const chartRef = ref<HTMLDivElement | null>(null)
@@ -28,13 +29,8 @@ function renderChart() {
     radar: {
       radius: '66%',
       splitNumber: 4,
-      indicator: [
-        { name: '理论基础', max: 100 },
-        { name: '实操能力', max: 100 },
-        { name: '问题解决', max: 100 },
-        { name: '知识广度', max: 100 },
-        { name: '学习速度', max: 100 },
-      ],
+      indicator: (props.indicators || ['理论基础', '实操能力', '问题解决', '知识广度', '学习速度'])
+        .map(name => ({ name, max: 100 })),
       axisName: { color: '#5e6f84', fontSize: 12, fontWeight: 600 },
       splitLine: { lineStyle: { color: '#e4eaf2' } },
       splitArea: { areaStyle: { color: ['#fafcff', '#f2f6fd'] } },
@@ -74,7 +70,7 @@ onMounted(() => {
   renderChart()
   window.addEventListener('resize', resizeChart)
 })
-watch(() => [props.values, props.baselineValues], renderChart, { deep: true })
+watch(() => [props.values, props.baselineValues, props.indicators], renderChart, { deep: true })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resizeChart)
   chart?.dispose()

@@ -32,7 +32,7 @@
           </div>
         </div>
         <div class="hero-stats">
-          <div class="stat"><strong>{{ diagnosticAccuracy }}%</strong><span>诊断正确率</span></div>
+          <div class="stat"><strong>{{ diagnosticTotalScore }}%</strong><span>诊断总得分</span><small>{{ diagnosticCorrectCount }}/{{ diagnosticAnswerCount }} 题完全答对</small></div>
           <div class="stat"><strong>{{ percentOrEmpty(progress?.mistake_consolidation?.consolidation_rate) }}</strong><span>错题巩固率</span></div>
           <div class="stat"><strong>{{ percentOrEmpty(progress?.path_progress?.completion_rate) }}</strong><span>路径完成率</span></div>
           <div class="stat"><strong>{{ resourceTotal }}</strong><span>已通过资源</span></div>
@@ -43,11 +43,11 @@
       <div class="report-grid">
         <section class="card">
           <div class="card-head">
-            <div><h2>能力画像变化</h2><p class="section-note">灰色虚线为首次诊断，蓝色实线为当前画像<template v-if="progress?.available">，平均变化 <span :class="deltaTone(progress.average_ability_delta)">{{ signed(progress.average_ability_delta) }}</span></template></p></div>
+            <div><h2>能力证据画像</h2><p class="section-note">只展示当前证据可支持的能力项；学习速度需多轮行为证据后另行判断</p></div>
             <div v-if="progress?.available" class="comparison-meta"><span class="version-pill">V{{ progress.baseline?.profile_version }} → V{{ progress.current?.profile_version }}</span><small>{{ formatDate(progress.period?.started_at) }} 至 {{ formatDate(progress.period?.updated_at) }}</small></div>
           </div>
           <div class="profile-body">
-            <div class="radar-wrap"><RadarChart :values="report.radar" :baseline-values="progress?.baseline?.radar" /></div>
+            <div class="radar-wrap"><RadarChart :values="abilityValues" :baseline-values="baselineAbilityValues" :indicators="abilityLabels" /></div>
             <div class="ability-list">
               <div v-for="item in abilityRows" :key="item.label" class="ability-row">
                 <div class="ability-meta"><span>{{ item.label }}</span><strong>{{ item.value }} <small v-if="item.delta != null" :class="deltaTone(item.delta)">{{ signed(item.delta) }}</small></strong></div>
@@ -86,6 +86,7 @@
               <div v-if="node.status === 'current'" class="path-actions"><button v-if="node.resource_state === 'ready'" class="btn primary" @click="openNodeResource(node)">继续当前学习</button><button v-else-if="node.resource_state === 'generating'" class="btn primary" @click="openNodeResource(node)">查看生成进度</button><button v-else class="btn primary" :disabled="creatingGeneration" @click="generateNodeResources(node)">{{ creatingGeneration ? '正在创建...' : node.resource_state === 'failed' ? '重新生成本节点资源' : '生成本节点资源' }}</button></div>
             </div>
           </div>
+          <div class="ability-evidence"><span>诊断得分权重 {{ Math.round(Number(evidenceProfile.diagnostic_weight || 0) * 100) }}%</span><span>学习背景先验 {{ Math.round(Number(evidenceProfile.background_weight || 0) * 100) }}%</span><span>已测 {{ evidenceProfile.assessed_knowledge_count || 0 }} 个知识点</span><span>评分置信度 {{ Math.round(Number(evidenceProfile.mean_scoring_confidence || 0) * 100) }}%</span></div>
         </div>
         <div v-else-if="report.path_detail?.length" class="path-h"><div v-for="(stage, index) in report.path_detail" :key="index" class="path-h-step"><span class="path-num">{{ index + 1 }}</span><div><h3>{{ stage.name }}</h3><p>{{ stage.description || '根据当前画像推荐' }}</p></div></div></div>
         <div v-else class="empty-hint">尚未形成可展示的学习路径。</div>
@@ -148,9 +149,9 @@
         </article>
       </section>
 
-      <section v-if="progress?.timeline?.length" class="card evidence-timeline">
-        <div class="card-head"><div><h2>画像变化证据</h2><p class="section-note">记录首次诊断、错题正式证据及画像消费结果</p></div></div>
-          <ol><li v-for="event in progress.timeline" :key="`${event.type}:${event.profile_version}:${event.occurred_at}`"><time>{{ formatDate(event.occurred_at) }}</time><div><strong>{{ event.title }}</strong><p>{{ event.reason || '基于正式学习证据更新' }}</p><small>置信度 {{ Math.round(Number(event.confidence || 0) * 100) }}%<template v-if="event.governance_status"> · {{ governanceLabel(event.governance_status) }}</template><template v-if="event.evidence_refs?.length"> · {{ formatEvidenceRefs(event.evidence_refs) }}</template></small></div></li></ol>
+      <section v-if="learningHistory.length" class="card evidence-timeline">
+        <div class="card-head"><div><h2>学习历程</h2><p class="section-note">记录诊断、导学反馈、掌握验证、路径推进与反馈驱动资源任务</p></div></div>
+          <ol><li v-for="event in learningHistory" :key="event.event_id"><time>{{ formatDate(event.occurred_at) }}</time><div><strong>{{ event.title }}</strong><p>{{ event.reason || '已记录本次学习事件。' }}</p><small><template v-if="event.profile_version != null">画像 V{{ event.profile_version }}</template><template v-if="event.path_node_id"> · {{ nodeTitle(event.path_node_id) }}</template><template v-if="event.evidence_refs?.length"> · {{ formatEvidenceRefs(event.evidence_refs) }}</template></small></div></li></ol>
       </section>
 
       <!-- 最近资源 -->
@@ -214,7 +215,7 @@ const adjustmentSubmitting = ref('')
 const knowledgeView = ref<'weak' | 'changes'>('weak')
 const showAllWeakKnowledge = ref(false)
 
-const radarLabels = ['理论基础', '实操能力', '问题解决', '知识广度', '学习速度']
+const abilityLabels = ['理论掌握', '实操应用', '场景解决']
 const DIRECTION_LABELS: Record<string, string> = {
   llm_application: '大模型应用开发',
   prompt_engineering: 'Prompt 工程',
@@ -223,7 +224,11 @@ const DIRECTION_LABELS: Record<string, string> = {
 }
 
 const progress = computed(() => report.value?.progress_comparison)
-const abilityRows = computed(() => radarLabels.map((label, index) => ({
+const learningHistory = computed(() => report.value?.learning_history || [])
+const abilityValues = computed(() => (report.value?.radar || []).slice(0, 3))
+const baselineAbilityValues = computed(() => progress.value?.baseline?.radar?.slice(0, 3))
+const evidenceProfile = computed<Record<string, any>>(() => report.value?.ability_profile?.evidence_profile || {})
+const abilityRows = computed(() => abilityLabels.map((label, index) => ({
   label,
   value: Math.max(0, Math.min(100, Number(report.value?.radar?.[index] || 0))),
   delta: progress.value?.ability_changes?.[index]?.delta,
@@ -239,7 +244,9 @@ const directionList = computed(() => {
     return directions.find(item => item.value === code)?.label || DIRECTION_LABELS[code] || '专项学习方向'
   }))]
 })
-const diagnosticAccuracy = computed(() => Math.round(Number(report.value?.diagnostic_summary?.accuracy || 0)))
+const diagnosticTotalScore = computed(() => Math.round(Number(report.value?.diagnostic_summary?.total_score || 0)))
+const diagnosticCorrectCount = computed(() => Number(report.value?.diagnostic_summary?.correct_count || 0))
+const diagnosticAnswerCount = computed(() => Number(report.value?.diagnostic_summary?.answer_count || 0))
 const resourceTotal = computed(() => report.value?.resource_summary?.total || 0)
 const pathNodes = computed<LearningPathNode[]>(() => report.value?.learning_path?.nodes || [])
 function formatEvidenceRefs(refs: unknown[]) { return `已记录 ${refs.length} 条正式证据` }
@@ -314,8 +321,23 @@ async function generateNodeResources(node: LearningPathNode) {
       { pathId, nodeId: node.path_node_id },
     )
     router.push({ path: '/resources', query: { learner_id: learnerId.value, task_id: task.task_id } })
-  } catch { showToast('创建节点学习包失败，路线可能已更新，请刷新后重试。', 'error') }
+  } catch (error: unknown) { showToast(nodeGenerationErrorMessage(error), 'error') }
   finally { creatingGeneration.value = false }
+}
+
+function nodeGenerationErrorMessage(error: unknown) {
+  const detail = (error as { response?: { data?: { error?: { code?: string; message?: string } } } })
+    ?.response?.data?.error
+  if (detail?.code === 'GRADED_QUIZ_QUESTION_BANK_NOT_READY') {
+    return '当前学习单元的正式认证题不足 3 道，暂不能生成分级测验。'
+  }
+  if (detail?.message?.includes('DOMAIN_GENERATION_NOT_READY:question_source_binding_invalid')) {
+    return '领域题目来源校验未通过，系统已阻止生成以保证内容可追溯。'
+  }
+  if (detail?.code === 'http_409' && detail.message === 'PATH_NODE_CHANGED') {
+    return '学习路线已更新，请刷新报告后按新的当前节点生成资源。'
+  }
+  return detail?.message || '创建节点学习包失败，请稍后重试。'
 }
 
 function profileTypeLabel(type?: string) {
@@ -497,4 +519,6 @@ onBeforeUnmount(() => window.removeEventListener('focus', loadReport))
   .weak-grid-compact { grid-template-columns: 1fr; }
   .evidence-timeline li { grid-template-columns: 74px 14px minmax(0, 1fr); gap: 7px; }
 }
+.ability-evidence { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 16px; border-top: 1px solid var(--line); padding-top: 13px; }
+.ability-evidence span { border-radius: 999px; background: var(--soft); color: var(--muted); padding: 5px 9px; font-size: 10px; }
 </style>

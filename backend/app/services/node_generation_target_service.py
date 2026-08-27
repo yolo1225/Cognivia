@@ -63,6 +63,10 @@ def resolve_node_generation_basis(
         "path_node_id": path_node_id,
         "path_node_title": str(node.get("title") or cores[0].name),
         "path_node_order": int(node.get("path_order") or 1),
+        "target_difficulty": int(
+            node.get("target_difficulty")
+            or round(sum(item.difficulty for item in cores) / len(cores))
+        ),
         "core_knowledge": [
             {"knowledge_id": item.public_id, "name": item.name} for item in cores
         ],

@@ -88,7 +88,9 @@ class GeneratedQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     knowledge_id: str
-    question_slot: int = Field(ge=1, le=6)
+    # Slots are import-batch identities only. They are not a global six-question
+    # template and carry no pedagogical meaning.
+    question_slot: int = Field(ge=1, le=99)
     quiz_level: Literal["foundation", "improvement", "challenge"]
     question_type: Literal["single_choice", "short_answer"]
     stem: str
@@ -202,7 +204,7 @@ def _adapt_question_output(result: object) -> dict:
         except (TypeError, ValueError):
             question_slot = fallback_slot
         next_slot_by_knowledge[knowledge_id] = max(fallback_slot, question_slot) + 1
-        if not 1 <= question_slot <= 6:
+        if not 1 <= question_slot <= 99:
             continue
         if question_type == "short_answer" and not isinstance(answer, str):
             continue
@@ -220,19 +222,14 @@ def _adapt_question_output(result: object) -> dict:
         if dimension not in {"概念理解", "机制与因果", "实操场景选择", "错误诊断与修复"}:
             dimension = "概念理解"
         quiz_level = str(item.get("quiz_level") or item.get("level") or "")
-        expected_level = (
-            "foundation" if question_slot <= 2
-            else "improvement" if question_slot <= 4
-            else "challenge"
-        )
         if quiz_level not in {"foundation", "improvement", "challenge"}:
-            quiz_level = expected_level
+            quiz_level = "foundation"
         try:
             difficulty = int(item.get("difficulty") or 0)
         except (TypeError, ValueError):
             difficulty = 0
         if not 1 <= difficulty <= 5:
-            difficulty = {"foundation": 1, "improvement": 3, "challenge": 5}[quiz_level]
+            difficulty = {"foundation": 2, "improvement": 3, "challenge": 4}[quiz_level]
         explanation = item.get("explanation") or item.get("analysis")
         if not explanation:
             explanation = str(answer or "依据给定来源摘录作答")
@@ -589,18 +586,14 @@ def _generate_question_records(
         candidate.public_id: projected_chunks(candidate) for candidate in knowledge
     }
     for item in knowledge:
-        required_slots = sorted(
-            (missing_slots_by_knowledge or {}).get(item.public_id, range(1, 7))
-        )
+        required_slots = sorted((missing_slots_by_knowledge or {}).get(item.public_id, [1]))
         if not required_slots:
             continue
         payload = item.payload_json or {}
         for slot in required_slots:
-            tier = (
-                "foundation" if slot <= 2
-                else "improvement" if slot <= 4
-                else "challenge"
-            )
+            # Density is assigned per knowledge item.  Only central items receive
+            # later slots, whose evidence budget permits genuinely integrated work.
+            tier = "foundation" if slot == 1 else "improvement" if slot == 2 else "challenge"
             related_limit = 0 if tier == "foundation" else 1 if tier == "improvement" else 2
             related_ids = [
                 candidate_id
@@ -671,21 +664,18 @@ def _generate_question_records(
             batch_id,
             model=model_name,
             system_prompt=(
-                "你是正式题库生成器。只生成每个 knowledge 记录中 required_question_slots 指定的题槽；"
-                "首轮请求时该字段为1到6，补题请求时只允许输出缺失题槽，禁止输出已有题槽。"
-                "为每个 knowledge_id 生成互不重复、可追溯的题，按"
-                "question_slot=1..6输出：1基础单选、2基础简答、3提升单选、4提升简答、"
-                "5挑战单选、6挑战简答；quiz_level依次为foundation、foundation、improvement、"
-                "improvement、challenge、challenge。不得考查标题记忆，只能使用 source_chunks，"
+                "你是正式题库生成器。只生成每个 knowledge 记录中 required_question_slots 指定的本批次题目；"
+                "题槽仅用于幂等去重，不代表固定的题型、层级或全局六题模板。不得考查标题记忆，只能使用 source_chunks，"
                 "不得补充外部事实。基础题只使用给定的主知识点 Chunk；提升题可综合1到2个给定 Chunk；"
                 "挑战题可综合1到3个给定 Chunk。每题必须返回 evidence_quotes，包含1到3个"
                 "{source_ref_id, quote}对象；quote 必须来自对应 source_ref_id 的 Chunk content，"
                 "且可在规范化空白后连续精确匹配，禁止跨 Chunk 拼接。单选题必须有四个同层次"
                 "且仅一个正确的选项，answer使用从0开始"
-                "的索引；简答题必须有2到4个可执行评分点。difficulty按1到5逐级设置。已有题目 ID 仅用于去重。只有包含"
+                "的索引；简答题必须有2到4个可执行评分点。difficulty必须按题目实际认知操作标注1到5，"
+                "不得因教学层级直接抬高难度。已有题目 ID 仅用于去重。只有包含"
                 "operation或troubleshooting证据能力时才能生成实操或排错题。"
-                "questions 数组的题槽集合必须与 required_question_slots 完全一致；即使证据只支持"
-                "概念题，也必须基于该证据生成对应层级的概念理解或机制题，禁止返回空数组或遗漏题槽。"
+                "questions 数组的题槽集合必须与 required_question_slots 完全一致；证据不足以支撑提升或挑战题时"
+                "不得伪造综合题，应仅生成有证据支撑的基础题。"
                 "若 certification_failed_fields 非空，必须只针对这些失败字段修正，同时保持题目仍由"
                 "当前 source_chunks 和精确引文支持。"
             ),
@@ -742,7 +732,7 @@ def _persist_questions(
         except (TypeError, ValueError):
             question_slot = 0
         key = (knowledge_id, question_slot)
-        if item is None or not 1 <= question_slot <= 6 or key in seen:
+        if item is None or not 1 <= question_slot <= 99 or key in seen:
             continue
         payload = item.payload_json or {}
         evidence_quotes = [
@@ -763,14 +753,13 @@ def _persist_questions(
             json.dumps(source_hashes, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         question_type = str(record.get("question_type") or "")
-        expected_type = "single_choice" if question_slot % 2 else "short_answer"
         options = [str(value).strip() for value in record.get("options") or []]
         answer = record.get("answer")
         rubric = [str(value).strip() for value in record.get("rubric") or [] if str(value).strip()]
         explanation = str(record.get("explanation") or "").strip()
         if (
             not evidence_quotes
-            or question_type != expected_type
+            or question_type not in {"single_choice", "short_answer"}
             or not explanation
         ):
             continue
@@ -877,21 +866,22 @@ def generate_model_questions(
         key=lambda item: (-degree[item.public_id], item.public_id),
     )
     target_total = max(60, len(knowledge))
-    target_slots: dict[str, set[int]] = {
-        item.public_id: {(index % 6) + 1}
-        for index, item in enumerate(ordered)
-    }
+    # Every published knowledge item receives one primary-attribution question.
+    # Extra density goes to graph-central items, capped at four before any
+    # fallback expansion; no knowledge point is forced through six fixed slots.
+    target_slots: dict[str, set[int]] = {item.public_id: {1} for item in ordered}
     remaining = target_total - len(knowledge)
     allocation_index = 0
     while remaining > 0 and ordered:
         item = ordered[allocation_index % len(ordered)]
         slots = target_slots[item.public_id]
-        next_slot = next((slot for slot in range(1, 7) if slot not in slots), None)
-        if next_slot is not None:
+        density_cap = min(4, 1 + max(1, degree[item.public_id]))
+        next_slot = len(slots) + 1
+        if len(slots) < density_cap:
             slots.add(next_slot)
             remaining -= 1
         allocation_index += 1
-        if allocation_index > len(ordered) * 6:
+        if allocation_index > len(ordered) * 8:
             break
     existing_slots: dict[str, set[int]] = {}
     existing_ids: dict[str, list[str]] = {}

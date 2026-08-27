@@ -214,7 +214,7 @@ def test_v3_worker_persists_checkpoint_runs_messages_resources_and_review(
     assert len(runs) == 6 and all(run.status == "completed" for run in runs)
     assert len(messages) >= len(runs)
     assert all(
-        run.contract_version == "agent-contract-v8" and len(run.prompt_hash) == 64
+            run.contract_version == "agent-contract-v9" and len(run.prompt_hash) == 64
         for run in runs
     )
     result_receivers = [

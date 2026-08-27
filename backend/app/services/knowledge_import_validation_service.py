@@ -139,22 +139,12 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
                         "正式题目证据或结构失效："
                         + ",".join(deterministic_issues[0].fields)
                     )
-                try:
-                    question_slot = int(payload.get("question_slot") or 0)
-                except (TypeError, ValueError):
-                    question_slot = 0
-                expected_type = "single_choice" if question_slot % 2 else "short_answer"
-                expected_level = (
-                    "foundation" if question_slot <= 2
-                    else "improvement" if question_slot <= 4
-                    else "challenge"
-                )
-                if not 1 <= question_slot <= 6:
-                    errors.append("正式题库题目缺少1到6的题槽")
-                elif payload.get("question_type") != expected_type:
-                    errors.append("正式题库题型与题槽不匹配")
-                if payload.get("quiz_level") != expected_level:
-                    errors.append("正式题库层级与题槽不匹配")
+                if payload.get("question_type") not in {"single_choice", "short_answer"}:
+                    errors.append("正式题库题型不合法")
+                if payload.get("quiz_level") not in {
+                    "foundation", "improvement", "challenge"
+                }:
+                    errors.append("正式题库教学层级不合法")
         elif item.candidate_type == "knowledge_relation":
             source, target = payload.get("source_candidate_id"), payload.get("target_candidate_id")
             relation_type = str(payload.get("relation_type") or "")

@@ -27,12 +27,30 @@ from app.services.question_certification_service import (
 MIN_PRIMARY_QUESTIONS_PER_KNOWLEDGE = 1
 MIN_DOMAIN_QUESTION_BANK_SIZE = 60
 MAX_SHORT_ANSWER_RUBRIC_POINTS = 8
-QUIZ_QUESTIONS_PER_LEVEL = 2
 QuestionCandidate = TypeVar("QuestionCandidate")
 
 
 class QuestionBankError(ValueError):
-    pass
+    def __init__(self, code: str, *, details: dict[str, object] | None = None) -> None:
+        super().__init__(code)
+        self.code = code
+        self.details = details or {}
+
+
+def expected_quiz_question_count(knowledge_count: int) -> int:
+    """Return the preferred (never mandatory) resource-quiz length for a unit."""
+
+    return min(8, max(3, int(knowledge_count) + 2))
+
+
+def _profile_level_score(profile_type: str, quiz_level: str) -> int:
+    preferred = {
+        "beginner": {"foundation": 3, "improvement": 1, "challenge": 0},
+        "intermediate": {"foundation": 1, "improvement": 3, "challenge": 1},
+        "advanced": {"foundation": 0, "improvement": 2, "challenge": 3},
+        "practice_oriented": {"foundation": 2, "improvement": 3, "challenge": 1},
+    }
+    return preferred.get(profile_type, preferred["intermediate"]).get(quiz_level, 0)
 
 
 def select_graded_quiz_candidates(
@@ -45,57 +63,87 @@ def select_graded_quiz_candidates(
     require_complete: bool,
     question_id: Callable[[QuestionCandidate], str] | None = None,
     excluded_question_ids: Iterable[str] = (),
+    difficulty: Callable[[QuestionCandidate], int] | None = None,
+    question_type: Callable[[QuestionCandidate], str] | None = None,
+    focus_knowledge_ids: Iterable[str] = (),
+    target_difficulty: int = 3,
+    profile_type: str = "intermediate",
 ) -> list[QuestionCandidate]:
-    """Select one deterministic six-question set for retrieval and generation."""
+    """Select a profile-specific certified quiz without inventing filler items.
+
+    Primary knowledge alignment always outranks relation-only alignment.  The
+    caller has already applied the active+certified gate; this selector only
+    determines the pedagogical structure of the current learning unit.
+    """
 
     target_set = {str(value) for value in target_ids if str(value)}
     excluded_ids = {str(value) for value in excluded_question_ids if str(value)}
-    grouped: dict[QuizLevel, list[QuestionCandidate]] = defaultdict(list)
+    focus_set = {str(value) for value in focus_knowledge_ids if str(value)}
+    scored: list[tuple[QuestionCandidate, int, int, int, str]] = []
     for candidate in candidates:
         if question_id is not None and question_id(candidate) in excluded_ids:
             continue
-        covered_ids = {
-            knowledge_id(candidate),
-            *(str(value) for value in related_knowledge_ids(candidate)),
-        }
-        if not covered_ids.intersection(target_set):
+        primary_id = str(knowledge_id(candidate))
+        related_ids = {str(value) for value in related_knowledge_ids(candidate)}
+        primary_hit = primary_id in target_set
+        related_hit = bool(related_ids & target_set)
+        if not primary_hit and not related_hit:
             continue
         try:
             level = QuizLevel(quiz_level(candidate))
         except ValueError:
             continue
-        grouped[level].append(candidate)
+        item_difficulty = difficulty(candidate) if difficulty else target_difficulty
+        # A primary focus hit is deliberately stronger than any relation hit.
+        alignment = 30 if primary_hit else 10
+        focus = 8 if primary_id in focus_set else 3 if related_ids & focus_set else 0
+        proximity = -abs(int(item_difficulty) - target_difficulty)
+        scored.append((candidate, alignment, focus, proximity, level.value))
 
     selected: list[QuestionCandidate] = []
     covered: set[str] = set()
-    for level in QuizLevel:
-        level_candidates = list(grouped.get(level, []))
-        for _ in range(QUIZ_QUESTIONS_PER_LEVEL):
-            if not level_candidates:
-                if require_complete:
-                    raise QuestionBankError("graded_quiz_question_bank_insufficient")
-                break
-            chosen = max(
-                level_candidates,
-                key=lambda item: len(
-                    (
-                        {
-                            knowledge_id(item),
-                            *(str(value) for value in related_knowledge_ids(item)),
-                        }
-                        & target_set
-                    )
-                    - covered
-                ),
+    selected_types: set[str] = set()
+    desired_count = expected_quiz_question_count(len(target_set))
+    remaining = list(scored)
+    while remaining and len(selected) < desired_count:
+        def rank(value: tuple[QuestionCandidate, int, int, int, str]) -> tuple:
+            item, alignment, focus, proximity, level = value
+            primary_id = str(knowledge_id(item))
+            related_ids = {str(part) for part in related_knowledge_ids(item)}
+            expands_coverage = int(bool(({primary_id, *related_ids} & target_set) - covered))
+            kind = question_type(item) if question_type else ""
+            balances_type = int(bool(kind) and kind not in selected_types)
+            item_id = question_id(item) if question_id else str(id(item))
+            return (
+                alignment,
+                focus,
+                proximity,
+                expands_coverage,
+                balances_type,
+                _profile_level_score(profile_type, level),
+                # Keep primary targets and stable IDs deterministic on ties.
+                -len(related_ids),
+                item_id,
             )
-            level_candidates.remove(chosen)
-            selected.append(chosen)
-            covered.update(
-                {
-                    knowledge_id(chosen),
-                    *(str(value) for value in related_knowledge_ids(chosen)),
-                }
-            )
+
+        chosen_row = max(remaining, key=rank)
+        remaining.remove(chosen_row)
+        chosen = chosen_row[0]
+        selected.append(chosen)
+        covered.update({str(knowledge_id(chosen)), *(str(value) for value in related_knowledge_ids(chosen))})
+        if question_type:
+            selected_types.add(question_type(chosen))
+    if require_complete and len(selected) < 3:
+        raise QuestionBankError(
+            "graded_quiz_question_bank_insufficient",
+            details={
+                "available_question_count": len(selected),
+                "minimum_question_count": 3,
+                "expected_question_count": desired_count,
+                "target_knowledge_ids": sorted(target_set),
+                "target_difficulty": target_difficulty,
+            },
+        )
     return selected
 
 
@@ -181,6 +229,7 @@ def question_bank_coverage(
     distribution = {
         "question_types": defaultdict(int),
         "quiz_levels": defaultdict(int),
+        "difficulty_levels": defaultdict(int),
         "eligible_total": 0,
     }
     for knowledge_id in requested:
@@ -207,6 +256,7 @@ def question_bank_coverage(
             counts[knowledge_id]["total"] += 1
             distribution["question_types"][question.question_type] += 1
             distribution["quiz_levels"][str((question.answer_key_json or {}).get("quiz_level"))] += 1
+            distribution["difficulty_levels"][str(question.difficulty)] += 1
             distribution["eligible_total"] += 1
     ready_ids = [
         knowledge_id
@@ -222,6 +272,7 @@ def question_bank_coverage(
         "distribution": {
             "question_types": dict(distribution["question_types"]),
             "quiz_levels": dict(distribution["quiz_levels"]),
+            "difficulty_levels": dict(distribution["difficulty_levels"]),
             "eligible_total": distribution["eligible_total"],
         },
         "requirements": {
@@ -232,7 +283,91 @@ def question_bank_coverage(
                 QuestionType.SINGLE_CHOICE.value,
                 QuestionType.SHORT_ANSWER.value,
             ],
+            "difficulty_levels": [1, 2, 3, 4, 5],
         },
+    }
+
+
+def graded_quiz_preflight(
+    db: Session,
+    *,
+    domain_code: str,
+    target_knowledge_ids: Iterable[str],
+    focus_knowledge_ids: Iterable[str] = (),
+    target_difficulty: int = 3,
+    profile_type: str = "intermediate",
+) -> dict[str, object]:
+    """Check a learning unit before a generation task is created.
+
+    This deliberately uses the same deterministic selector as runtime so a
+    successful preflight cannot later fail merely because the former six-slot
+    blueprint is unavailable.
+    """
+
+    target_ids = list(dict.fromkeys(str(value) for value in target_knowledge_ids if str(value)))
+    focus_ids = list(dict.fromkeys(str(value) for value in focus_knowledge_ids if str(value)))
+    rows = list(
+        db.execute(
+            select(DiagnosticQuestion, KnowledgeItem.public_id)
+            .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
+            .where(
+                DiagnosticQuestion.domain_code == domain_code,
+                DiagnosticQuestion.status == "active",
+                DiagnosticQuestion.certification_status == "certified",
+                DiagnosticQuestion.certification_rule_version == QUESTION_CERTIFICATION_RULE_VERSION,
+            )
+            .order_by(DiagnosticQuestion.id)
+        )
+    )
+    eligible = [
+        row for row in rows
+        if is_question_bank_eligible(row[0])
+        and (
+            row[1] in target_ids
+            or bool(set(row[0].related_knowledge_ids_json or []) & set(target_ids))
+        )
+    ]
+    selected = select_graded_quiz_candidates(
+        eligible,
+        target_ids,
+        knowledge_id=lambda row: row[1],
+        related_knowledge_ids=lambda row: row[0].related_knowledge_ids_json or [],
+        quiz_level=lambda row: str((row[0].answer_key_json or {}).get("quiz_level") or ""),
+        question_id=lambda row: row[0].public_id,
+        difficulty=lambda row: row[0].difficulty,
+        question_type=lambda row: row[0].question_type,
+        focus_knowledge_ids=focus_ids,
+        target_difficulty=target_difficulty,
+        profile_type=profile_type,
+        require_complete=False,
+    )
+    primary_ids = {row[1] for row in eligible if row[1] in target_ids}
+    selected_difficulties = [row[0].difficulty for row in selected]
+    missing_targets = sorted(set(target_ids) - primary_ids)
+    required = expected_quiz_question_count(len(target_ids))
+    matching_target_difficulty = sum(
+        abs(row[0].difficulty - target_difficulty) <= 1 for row in eligible
+    )
+    return {
+        "ready": len(selected) >= 3,
+        "available_question_count": len(selected),
+        "minimum_question_count": 3,
+        "expected_question_count": required,
+        "target_knowledge_ids": target_ids,
+        "focus_knowledge_ids": focus_ids,
+        "missing_primary_knowledge_ids": missing_targets,
+        "target_difficulty": target_difficulty,
+        "matching_target_difficulty_count": matching_target_difficulty,
+        "selected_question_ids": [row[0].public_id for row in selected],
+        "selected_difficulties": selected_difficulties,
+        "selected_question_types": [row[0].question_type for row in selected],
+        "warning": (
+            "当前学习单元题库密度不足"
+            if len(selected) < 3
+            else "题量低于期望值，已按正式匹配题生成较短测验"
+            if len(selected) < required
+            else None
+        ),
     }
 
 
@@ -263,6 +398,15 @@ def _select_reference_questions(
         require_complete=True,
         question_id=lambda question: question.question_id,
         excluded_question_ids=excluded_question_ids,
+        difficulty=lambda question: question.difficulty,
+        question_type=lambda question: question.question_type.value,
+        focus_knowledge_ids=(
+            request.current_path_node.focus_knowledge_ids
+            if request.current_path_node is not None
+            else []
+        ),
+        target_difficulty=request.requirements.target_difficulty,
+        profile_type=request.profile.profile_type.value,
     )
     return [
         (
@@ -362,10 +506,6 @@ def build_graded_quiz_from_question_bank(
     return GradedQuizContent(
         title=f"{node_title}分级测验",
         target_audience=f"{request.profile.profile_type.value}学习者",
-        learning_objectives=[
-            f"检验对{node_title}的基础理解",
-            f"检验对{node_title}的综合判断",
-            f"检验对{node_title}的进阶应用",
-        ],
+        learning_objectives=[f"检验对{node_title}的理解、应用与迁移能力"],
         questions=questions,
     )

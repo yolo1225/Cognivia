@@ -347,17 +347,45 @@ def normalize_path_for_domain(
             prerequisites[public_by_id[relation.target_item_id]].add(
                 public_by_id[relation.source_item_id]
             )
+    prior_retired = (previous_payload or {}).get("retired_node_states") or {}
+    prior_all_states = [
+        *[state for state in previous_states.values() if isinstance(state, dict)],
+        *[state for state in prior_retired.values() if isinstance(state, dict)],
+    ]
+    completed_states_by_node: dict[str, dict[str, Any]] = {}
+    for state in sorted(
+        prior_all_states,
+        key=lambda item: (
+            str(item.get("completed_at") or ""),
+            int(item.get("path_order") or 0),
+        ),
+    ):
+        if state.get("status") != "completed" or not state.get("path_node_id"):
+            continue
+        completed_states_by_node.setdefault(str(state["path_node_id"]), state)
+    completed_states = list(completed_states_by_node.values())
     completed_ids = list(dict.fromkeys(
         str(knowledge_id)
-        for state in previous_states.values()
-        if isinstance(state, dict) and state.get("status") == "completed"
-        for knowledge_id in (
-            state.get("knowledge_ids") or [state.get("knowledge_id")]
-        )
+        for state in completed_states
+        for knowledge_id in (state.get("knowledge_ids") or [state.get("knowledge_id")])
         if knowledge_id
     ))
+    prior_current = next(
+        (
+            state
+            for state in _state_order(previous_states)
+            if state.get("status") == "current"
+        ),
+        None,
+    )
+    prior_current_ids = [
+        str(value)
+        for value in (prior_current or {}).get("knowledge_ids")
+        or [(prior_current or {}).get("knowledge_id")]
+        if value
+    ]
     expanded_ids = list(completed_ids)
-    for knowledge_id in recommended_ids:
+    for knowledge_id in [*recommended_ids, *prior_current_ids]:
         expanded_ids.extend(
             _prerequisite_closure(
                 knowledge_id,
@@ -378,23 +406,52 @@ def normalize_path_for_domain(
     )
     names_by_public_id = {item.public_id: normalize_knowledge_name(item.name) for item in items}
     categories_by_public_id = {item.public_id: item.category for item in items}
-    ordered_ids = _ordered_knowledge_ids(normalized)
     weak_ids = {
         str(value)
         for stage in normalized.get("stages") or []
         if isinstance(stage, dict) and "薄弱" in str(stage.get("name") or "")
         for value in stage.get("knowledge_ids") or []
     }
-    prior_states = (previous_payload or {}).get("node_states") or {}
-    prior_by_members = {
-        tuple(state.get("knowledge_ids") or [state.get("knowledge_id")]): state
-        for state in prior_states.values()
-        if isinstance(state, dict)
+    completed_knowledge = set(completed_ids)
+    current_prerequisites = {
+        prerequisite
+        for knowledge_id in prior_current_ids
+        for prerequisite in prerequisites.get(knowledge_id, set())
+        if prerequisite not in completed_knowledge and prerequisite not in prior_current_ids
     }
+    keep_prior_current = bool(
+        prior_current
+        and prior_current_ids
+        and not current_prerequisites
+        and all(knowledge_id in expanded_ids for knowledge_id in prior_current_ids)
+        and not (set(prior_current_ids) & completed_knowledge)
+    )
+    remaining_ids = [
+        knowledge_id for knowledge_id in expanded_ids if knowledge_id not in completed_knowledge
+    ]
+    future_units: list[list[str]] = []
+    if keep_prior_current:
+        future_units.append(prior_current_ids)
+        remaining_ids = [
+            knowledge_id
+            for knowledge_id in remaining_ids
+            if knowledge_id not in set(prior_current_ids)
+        ]
+    future_units.extend(_balanced_units(remaining_ids))
+
     unit_states: dict[str, dict[str, Any]] = {}
-    for index, member_ids in enumerate(_balanced_units(ordered_ids)):
+    for index, state in enumerate(completed_states, start=1):
+        preserved = deepcopy(state)
+        preserved["path_order"] = index
+        preserved["status"] = "completed"
+        preserved["completed_at"] = preserved.get("completed_at")
+        preserved["completion_evidence_ids"] = list(
+            preserved.get("completion_evidence_ids") or []
+        )
+        unit_states[str(preserved["path_node_id"])] = preserved
+
+    for offset, member_ids in enumerate(future_units, start=len(unit_states) + 1):
         node_id = unit_node_id_for(member_ids)
-        inherited = prior_by_members.get(tuple(member_ids), {})
         focus_ids = [value for value in member_ids if value in weak_ids][:3]
         categories = list(dict.fromkeys(
             categories_by_public_id.get(value, "") for value in member_ids
@@ -408,7 +465,12 @@ def normalize_path_for_domain(
             for prerequisite in prerequisites.get(value, set())
             if prerequisite not in member_ids
         })
-        completed = inherited.get("status") == "completed"
+        inherited_current = (
+            prior_current
+            if keep_prior_current
+            and tuple(member_ids) == tuple(prior_current_ids)
+            else {}
+        )
         unit_states[node_id] = {
             "path_node_id": node_id,
             "knowledge_ids": member_ids,
@@ -422,13 +484,11 @@ def normalize_path_for_domain(
             ],
             "focus_knowledge_ids": focus_ids,
             "title": title,
-            "path_order": index + 1,
-            "status": "completed" if completed else "locked",
-            "completed_at": inherited.get("completed_at") if completed else None,
-            "completion_evidence_ids": list(
-                inherited.get("completion_evidence_ids") or []
-            ) if completed else [],
-            "completion_condition": dict(inherited.get("completion_condition") or {
+            "path_order": offset,
+            "status": "locked",
+            "completed_at": None,
+            "completion_evidence_ids": [],
+            "completion_condition": dict(inherited_current.get("completion_condition") or {
                 "type": "unit_quiz_score",
                 "threshold": 0.8,
                 "focus_threshold": 0.6,
@@ -442,9 +502,7 @@ def normalize_path_for_domain(
             ),
             "prerequisite_knowledge_ids": prerequisite_ids,
         }
-    current = next(
-        (state for state in unit_states.values() if state["status"] != "completed"), None
-    )
+    current = next((state for state in unit_states.values() if state["status"] != "completed"), None)
     if current is not None:
         current["status"] = "current"
     normalized["node_states"] = unit_states
@@ -453,7 +511,9 @@ def normalize_path_for_domain(
     inserted_prerequisites = [
         value
         for value in expanded_ids
-        if value not in completed_ids and value not in recommended_ids
+        if value not in completed_ids
+        and value not in recommended_ids
+        and value not in prior_current_ids
     ]
     if inserted_prerequisites:
         normalized["revision_summary"] = {
@@ -462,6 +522,19 @@ def normalize_path_for_domain(
             "inserted_knowledge_ids": inserted_prerequisites,
             "current_node_id": normalized["current_node_id"],
         }
+    else:
+        normalized.pop("revision_summary", None)
+    retired = {
+        key: value
+        for key, value in prior_retired.items()
+        if key not in unit_states
+        and isinstance(value, dict)
+        and value.get("status") != "completed"
+    }
+    for key, value in previous_states.items():
+        if key not in unit_states and isinstance(value, dict) and value.get("status") != "completed":
+            retired[key] = value
+    normalized["retired_node_states"] = retired
     return normalized
 
 

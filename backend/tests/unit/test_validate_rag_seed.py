@@ -68,10 +68,10 @@ def test_validated_seed_loads_through_existing_database_seed_path() -> None:
         db.flush()
 
         assert len(seeded) == 50
-        assert len(questions) == 60
+        assert len(questions) == 64
         assert db.scalar(select(func.count()).select_from(KnowledgeItem)) == 50
         assert db.scalar(select(func.count()).select_from(KnowledgeRelation)) == 81
-        assert db.scalar(select(func.count()).select_from(DiagnosticQuestion)) == 60
+        assert db.scalar(select(func.count()).select_from(DiagnosticQuestion)) == 64
 
 
 @pytest.mark.parametrize(

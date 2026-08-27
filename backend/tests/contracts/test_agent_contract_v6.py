@@ -7,6 +7,7 @@ from app.agents.contracts import (
     AgentContractSchema,
     CONTRACT_VERSION,
     GenerationPackageQuality,
+    GradedQuizContent,
     ResourceQualityMetrics,
     ReviewDecision,
     TaskDecision,
@@ -14,15 +15,15 @@ from app.agents.contracts import (
 from app.agents.graphs import build_learning_graph
 
 
-def test_v8_preserves_review_decisions_and_graph_topology() -> None:
-    assert CONTRACT_VERSION == "agent-contract-v8"
+def test_v9_preserves_review_decisions_and_graph_topology() -> None:
+    assert CONTRACT_VERSION == "agent-contract-v9"
     assert "manual_review_required" not in {item.value for item in ReviewDecision}
     assert "manual_review_required" not in {item.value for item in TaskDecision}
     graph = build_learning_graph()
     assert "human_review_node" not in graph.get_graph().nodes
 
 
-def test_v8_expands_the_complete_evidence_pipeline_to_eighteen_chunks() -> None:
+def test_v9_preserves_the_complete_evidence_pipeline_to_eighteen_chunks() -> None:
     definitions = AgentContractSchema.model_json_schema()["$defs"]
 
     assert definitions["RetrievalPlan"]["properties"]["n_results"]["maximum"] == 18
@@ -33,6 +34,14 @@ def test_v8_expands_the_complete_evidence_pipeline_to_eighteen_chunks() -> None:
         ]
         == 18
     )
+
+
+def test_v9_allows_short_profile_specific_quizzes_without_all_teaching_levels() -> None:
+    definitions = AgentContractSchema.model_json_schema()["$defs"]
+    questions = definitions["GradedQuizContent"]["properties"]["questions"]
+    assert questions["minItems"] == 3
+    assert questions["maxItems"] == 8
+    assert "validate_levels" not in GradedQuizContent.__dict__
     assert definitions["ReviewResourceInput"]["properties"]["evidence"]["maxItems"] == 18
 
 

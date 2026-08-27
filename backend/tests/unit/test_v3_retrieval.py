@@ -506,7 +506,7 @@ def test_v3_retrieval_keeps_revision_query_and_reports_explicit_budget(tmp_path:
     assert "explicit_plan_exceeds_output_budget" in result.warnings
 
 
-def test_related_question_appends_exact_primary_knowledge_source(tmp_path: Path) -> None:
+def test_related_question_under_minimum_density_stops_before_generation(tmp_path: Path) -> None:
     sessions = _session()
     target_ids = ["target-a", "target-b", "target-c"]
     primary_id = "question-primary"
@@ -549,26 +549,14 @@ def test_related_question_appends_exact_primary_knowledge_source(tmp_path: Path)
         )
         db.commit()
         retriever, _ = _retriever(tmp_path, db, records)
-        result = retriever.execute(
-            _input(
-                priority=target_ids,
-                n_results=3,
-                resource_types=["graded_quiz"],
+        with pytest.raises(ValueError, match="graded_quiz_question_bank_insufficient"):
+            retriever.execute(
+                _input(
+                    priority=target_ids,
+                    n_results=3,
+                    resource_types=["graded_quiz"],
+                )
             )
-        )
-
-    assert [question.question_id for question in result.reference_questions] == [
-        "related-question"
-    ]
-    assert result.reference_questions[0].knowledge_id == primary_id
-    assert result.reference_questions[0].related_knowledge_ids == ["target-a"]
-    assert [chunk.chunk_id for chunk in result.chunks] == [
-        "target-a::chunk::0",
-        "target-b::chunk::0",
-        "target-c::chunk::0",
-        exact_source_locator,
-    ]
-    assert primary_id in result.covered_knowledge_ids
 
 
 def test_lecture_only_retrieval_does_not_include_question_bank_sources(
@@ -619,7 +607,7 @@ def test_lecture_only_retrieval_does_not_include_question_bank_sources(
     assert [chunk.knowledge_id for chunk in result.chunks] == ["lecture-target"]
 
 
-def test_two_questions_on_same_primary_knowledge_keep_both_exact_locators(
+def test_two_questions_on_same_primary_knowledge_are_density_insufficient(
     tmp_path: Path,
 ) -> None:
     sessions = _session()
@@ -663,19 +651,13 @@ def test_two_questions_on_same_primary_knowledge_keep_both_exact_locators(
             )
         db.commit()
         retriever, _ = _retriever(tmp_path, db, records)
-        result = retriever.execute(
-            _input(priority=["target"], n_results=1, resource_types=["graded_quiz"])
-        )
-
-    assert len(result.reference_questions) == 2
-    assert {
-        chunk.source_locator
-        for chunk in result.chunks
-        if chunk.knowledge_id == "shared-primary"
-    } == {"shared-primary::chunk::0", "shared-primary::chunk::1"}
+        with pytest.raises(ValueError, match="graded_quiz_question_bank_insufficient"):
+            retriever.execute(
+                _input(priority=["target"], n_results=1, resource_types=["graded_quiz"])
+            )
 
 
-def test_quiz_source_supplements_expand_within_v8_chunk_budget(tmp_path: Path) -> None:
+def test_quiz_source_supplements_expand_within_v9_chunk_budget(tmp_path: Path) -> None:
     sessions = _session()
     target_ids = ["target-a", "target-b", "target-c"]
     related_primary_ids = ["related-primary-a", "related-primary-b", "related-primary-c"]
@@ -746,8 +728,8 @@ def test_quiz_source_supplements_expand_within_v8_chunk_budget(tmp_path: Path) -
             )
         )
 
-    assert len(result.reference_questions) == 6
-    assert len(result.chunks) == 15
+    assert len(result.reference_questions) == 5
+    assert len(result.chunks) == 14
     chunk_knowledge_ids = {chunk.knowledge_id for chunk in result.chunks}
     assert {
         question.knowledge_id for question in result.reference_questions
@@ -870,7 +852,7 @@ def test_v3_retrieval_ablation_modes_do_not_change_contract_shape(tmp_path: Path
             result = retriever.execute(_input(priority=["priority"]))
             assert result.task_id == "task-v3-1"
             assert len(result.chunks) <= 18
-    assert result.model_dump()["contract_version"] == "agent-contract-v8"
+    assert result.model_dump()["contract_version"] == "agent-contract-v9"
 
 
 def test_v3_retrieval_rejects_cross_domain_chunk(tmp_path: Path) -> None:

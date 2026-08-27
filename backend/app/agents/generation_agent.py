@@ -700,6 +700,25 @@ class ContentGenerationAgent:
                     ]
                     if not policy_violations:
                         break
+                    if resource_type is ResourceType.PRACTICE_GUIDE:
+                        deterministic_content = _apply_practice_evidence_fallback(
+                            response.structured_content, policy_violations
+                        )
+                        if deterministic_content != response.structured_content:
+                            response = response.model_copy(
+                                update={"structured_content": deterministic_content}
+                            )
+                            policy_violations = [
+                                *_content_policy_violations(response.structured_content),
+                                *_evidence_depth_violations(
+                                    response.structured_content,
+                                    validated,
+                                    allowed_sources,
+                                    self._evidence_capabilities_by_knowledge,
+                                ),
+                            ]
+                            if not policy_violations:
+                                break
                     if attempt == MAX_CONTENT_POLICY_REPAIR_ATTEMPTS:
                         fallback_content = _apply_content_policy_fallback(
                             response.structured_content, policy_violations
@@ -1665,7 +1684,11 @@ def _content_policy_violations(
     for path, value in values:
         _cleaned, codes = sanitize_deterministic_text(path, value)
         violations.extend({"path": path, "code": code} for code in codes)
-        if path.endswith(".explanation") and _QUIZ_UNSUPPORTED_DISTRACTOR_RE.search(value):
+        if (
+            path.startswith("questions[")
+            and path.endswith(".explanation")
+            and _QUIZ_UNSUPPORTED_DISTRACTOR_RE.search(value)
+        ):
             violations.append({"path": path, "code": "unsupported_distractor_rationale"})
     return violations
 
@@ -2214,33 +2237,32 @@ def _quiz_question_matches_target(
     slot: dict[str, object],
     request: GenerateResourceInput,
 ) -> bool:
-    question_tokens = _quiz_semantic_tokens(
-        " ".join((question.prompt, question.correct_answer, question.explanation))
-    )
+    """Validate a bank question's certified attribution deterministically.
+
+    The formal-question certification already establishes that the stem, answer
+    and rubric are supported by its primary knowledge item and declared real
+    relations.  Re-comparing CJK token overlap at runtime is both lossy and
+    incorrect for integrated questions: a question may legitimately use more
+    terms from a related item than from its primary item.  Runtime only needs
+    to confirm that the immutable blueprint attribution and certified evidence
+    links have survived assembly.
+    """
+    if question.knowledge_id != str(slot["knowledge_id"]):
+        return False
+    if question.reference_question_ids != list(slot["reference_question_ids"]):
+        return False
+    allowed_source_ids = {str(value) for value in slot["allowed_source_ref_ids"]}
+    question_source_ids = {str(value) for value in question.source_ref_ids}
+    if not question_source_ids or not question_source_ids.issubset(allowed_source_ids):
+        return False
+
     chunks_by_source = {chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks}
-    target_tokens = _quiz_semantic_tokens(
-        " ".join(
-            chunks_by_source[source_id].content
-            for source_id in slot["allowed_source_ref_ids"]
-            if source_id in chunks_by_source
-        )
+    return all(
+        source_id in chunks_by_source
+        and chunks_by_source[source_id].knowledge_id
+        in {question.knowledge_id, *question.related_knowledge_ids}
+        for source_id in question_source_ids
     )
-    target_overlap = len(question_tokens & target_tokens)
-    other_overlaps: list[int] = []
-    for knowledge_id in request.requirements.resource_knowledge_targets[
-        ResourceType.GRADED_QUIZ
-    ]:
-        if knowledge_id == slot["knowledge_id"]:
-            continue
-        other_tokens = _quiz_semantic_tokens(
-            " ".join(
-                chunk.content
-                for chunk in request.retrieved_chunks
-                if chunk.knowledge_id == knowledge_id
-            )
-        )
-        other_overlaps.append(len(question_tokens & other_tokens))
-    return not other_overlaps or max(other_overlaps) <= target_overlap + 2
 
 
 def _candidate_evidence_body(value: str) -> str:

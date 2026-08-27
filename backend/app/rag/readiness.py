@@ -101,6 +101,7 @@ def candidate_rag_status(domain_code: str) -> dict[str, Any]:
             str((question.answer_key_json or {}).get("quiz_level") or "")
             for question in questions
         }
+        difficulty_levels = {question.difficulty for question in questions}
         for question in questions:
             answer = dict(question.answer_key_json or {})
             source_ref_ids = [str(value) for value in answer.get("source_ref_ids") or []]
@@ -174,13 +175,19 @@ def candidate_rag_status(domain_code: str) -> dict[str, Any]:
         }
     required_types = {"single_choice", "short_answer"}
     required_levels = {"foundation", "improvement", "challenge"}
-    if not required_types.issubset(question_types) or not required_levels.issubset(quiz_levels):
+    required_difficulties = {1, 2, 3, 4, 5}
+    if (
+        not required_types.issubset(question_types)
+        or not required_levels.issubset(quiz_levels)
+        or not required_difficulties.issubset(difficulty_levels)
+    ):
         return {
             "ready": False,
             "domain_code": domain_code,
             "reason": "question_bank_distribution_insufficient",
             "missing_question_types": sorted(required_types - question_types),
             "missing_quiz_levels": sorted(required_levels - quiz_levels),
+            "missing_difficulty_levels": sorted(required_difficulties - difficulty_levels),
         }
     if invalid_question_source_ids:
         return {

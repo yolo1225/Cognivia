@@ -74,6 +74,59 @@ def test_report_returns_empty_loop_summary_for_new_learner() -> None:
     assert data["next_actions"][0]["type"] == "diagnosis"
 
 
+def test_report_persists_path_normalization_without_refresh_flag() -> None:
+    testing_session = build_test_session()
+    with testing_session() as db:
+        learner = Learner(
+            public_id="learner_report_normalized_path",
+            target_domain="ai_app_dev",
+        )
+        db.add(learner)
+        db.flush()
+        profile = LearnerProfile(
+            public_id="profile_report_normalized_path",
+            learner_id=learner.id,
+            domain_code="ai_app_dev",
+            ability_profile_json={"profile_type": "beginner"},
+            weak_knowledge_json=[],
+            diagnosis_completed=True,
+            profile_source="diagnostic",
+        )
+        db.add(profile)
+        db.flush()
+        db.add(
+            LearningPath(
+                public_id="path_report_normalized_path",
+                learner_id=learner.id,
+                profile_id=profile.id,
+                domain_code="ai_app_dev",
+                path_json={"stages": [{"name": "Stage 1", "knowledge_ids": ["k1"]}]},
+                needs_refresh=False,
+            )
+        )
+        db.commit()
+
+    app.dependency_overrides[get_db] = make_override(testing_session)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "test_learner", "learner", "learner_report_normalized_path"
+    )
+    try:
+        response = TestClient(app).get("/api/v1/reports/learners/learner_report_normalized_path")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    with testing_session() as db:
+        path = db.scalar(
+            select(LearningPath).where(
+                LearningPath.public_id == "path_report_normalized_path"
+            )
+        )
+        assert path is not None
+        assert path.path_json["current_node_id"]
+        assert path.path_json["node_states"]
+
+
 def test_report_summarizes_resources_reviews_feedback_and_path_refresh() -> None:
     testing_session = build_test_session()
     with testing_session() as db:
@@ -101,6 +154,7 @@ def test_report_summarizes_resources_reviews_feedback_and_path_refresh() -> None
             },
             weak_knowledge_json=[],
             diagnosis_completed=True,
+            profile_source="diagnostic",
             context_snapshot_json={
                 "education_level": "本科",
                 "major": "软件工程",
@@ -221,6 +275,9 @@ def test_report_summarizes_resources_reviews_feedback_and_path_refresh() -> None
     assert data["feedback_summary"]["latest_action"] == "remedial_explanation"
     assert data["feedback_summary"]["learning_path_needs_refresh"] is False
     assert data["feedback_summary"]["path_refresh_performed"] is True
+    assert "metrics" not in data
+    assert any(event["type"] == "initial_diagnosis" for event in data["learning_history"])
+    assert any(event["type"] == "feedback_received" for event in data["learning_history"])
     with testing_session() as db:
         path = db.scalar(select(LearningPath).where(LearningPath.public_id == "path_report_ready"))
         assert path is not None

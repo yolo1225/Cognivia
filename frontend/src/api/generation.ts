@@ -6,6 +6,7 @@ export interface GenerationBasis {
   path_node_id: string
   path_node_title?: string | null
   path_node_order?: number | null
+  target_difficulty?: number
   core_knowledge: Array<{ knowledge_id: string; name: string }>
   focus_knowledge_ids?: string[]
   prerequisite_knowledge: Array<{ knowledge_id: string; name: string }>
@@ -27,6 +28,21 @@ export interface GenerationTaskResult {
   execution_mode: string
   resource_types: string[]
   generation_basis?: GenerationBasis | null
+  quiz_preflight?: {
+    ready: boolean
+    available_question_count: number
+    minimum_question_count: number
+    expected_question_count: number
+    target_knowledge_ids: string[]
+    focus_knowledge_ids: string[]
+    missing_primary_knowledge_ids: string[]
+    target_difficulty: number
+    matching_target_difficulty_count: number
+    selected_question_ids: string[]
+    selected_difficulties: number[]
+    selected_question_types: string[]
+    warning?: string | null
+  } | null
   agent_graph: string
   decision: string
   agent_trace: Array<{
