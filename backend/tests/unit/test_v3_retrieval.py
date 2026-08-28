@@ -852,7 +852,7 @@ def test_v3_retrieval_ablation_modes_do_not_change_contract_shape(tmp_path: Path
             result = retriever.execute(_input(priority=["priority"]))
             assert result.task_id == "task-v3-1"
             assert len(result.chunks) <= 18
-    assert result.model_dump()["contract_version"] == "agent-contract-v9"
+    assert result.model_dump()["contract_version"] == "agent-contract-v10"
 
 
 def test_v3_retrieval_rejects_cross_domain_chunk(tmp_path: Path) -> None:

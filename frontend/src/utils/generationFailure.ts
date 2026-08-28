@@ -13,8 +13,8 @@ const FAILURE_COPY: Record<string, GenerationFailureCopy> = {
     description: '历史修订结果没有留下可供双模型审核的事实内容，可使用最新修订策略重新生成。',
   },
   revision_exhausted: {
-    title: '核心声明未能安全收敛',
-    description: '两轮修订后仍有不能安全删除的核心、高风险或唯一覆盖声明，因此本次学习包未发布。',
+    title: '学习包质量指标未达标',
+    description: '两轮局部修订后，幻觉率、难度匹配或核心知识覆盖仍有指标未达到发布门槛，本次学习包未发布。',
   },
   node_package_resources_incomplete: {
     title: '最终学习包未达到发布门槛',

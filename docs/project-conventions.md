@@ -152,20 +152,20 @@ finalize_task -> retrieve_knowledge   when revision_required and revision_count 
 
 ### 5.1 Agent 契约修改规范
 
-`docs/agent-contract-v9.md`、`backend/app/agents/contracts.py`、`backend/app/agents/state.py` 和对应 Schema 是当前唯一活动契约。契约由一名指定负责人统一维护，其他成员及开发代理在实现具体 Agent 时必须将以下文件视为只读：
+`docs/agent-contract-v10.md`、`backend/app/agents/contracts.py`、`backend/app/agents/state.py` 和对应 Schema 是当前唯一活动契约。契约由一名指定负责人统一维护，其他成员及开发代理在实现具体 Agent 时必须将以下文件视为只读：
 
 - `backend/app/agents/contracts.py`
 - `backend/app/agents/state.py`
 - `backend/app/agents/contract_adapters.py`
 - `backend/tests/contracts/`
-- `docs/agent-contract-v9.md`
-- `docs/contracts/v9/`
+- `docs/agent-contract-v10.md`
+- `docs/contracts/v10/`
 
 具体 Agent 实现者不得为了让代码、Prompt 或测试通过，擅自修改字段名、类型、枚举、必填性、默认值、State 字段所有权、Schema 或顶层图。实现与契约不一致时，先在 Agent 内按已有契约适配；确实无法表达时，停止修改共享文件并提交契约变更申请。
 
 变更申请必须说明申请字段或规则、所属输入/输出、生产与消费节点、使用原因、是否可空、默认值和兼容性影响。只有契约负责人可以决定是否修改，并统一更新模型、State、适配器、示例、Schema、测试和文档。破坏性变更必须升级契约版本。
 
-当前运行链和所有独立服务入口统一使用正式 `contracts` 与 `state`。V8 及更早文档和 Schema 仅供读取历史记录；V1-V8 契约、State 和 Agent 实现已经退出活动运行链，禁止重新引入或与 V9 指标混算。
+当前运行链和所有独立服务入口统一使用正式 `contracts` 与 `state`。V9 及更早文档和 Schema 仅供读取历史记录；旧契约、State 和 Agent 实现已经退出活动运行链，禁止重新引入或与 V10 指标混算。
 
 ## 6. 审核与反幻觉规范
 

@@ -668,7 +668,12 @@ function openReport() {
 async function retryTask() {
   if (!taskId.value) return
   retrying.value = true
-  try { taskDetail.value = await retryGenerationTask(taskId.value); await pollTask(taskId.value) }
+  try {
+    taskDetail.value = await retryGenerationTask(taskId.value)
+    const successorTaskId = taskDetail.value.task_id
+    await router.replace({ query: { ...route.query, task_id: successorTaskId } })
+    await pollTask(successorTaskId)
+  }
   catch { showToast('重新生成失败') }
   finally { retrying.value = false }
 }

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.agents.checkpointer import MySQLLangGraphCheckpointer
 from app.agents.contracts import (
     CONTRACT_VERSION,
+    QUALITY_RULE_VERSION,
     ConversationSummary,
     EvidenceRef,
     EvidenceType,
@@ -223,7 +224,7 @@ def _initial_state(
             raise ValueError("source_package_not_found")
         if (source_task.package_quality_json or {}).get(
             "quality_rule_version"
-        ) != "quality-v6-20260818":
+        ) != QUALITY_RULE_VERSION:
             raise ValueError("v6_full_regeneration_required")
         stored_targets = (source_task.package_coverage_json or {}).get(
             "resource_knowledge_targets"

@@ -147,13 +147,13 @@ development agents implementing concrete Agents must treat these files as read-o
 - `backend/app/agents/state.py`
 - `backend/app/agents/contract_adapters.py`
 - `backend/tests/contracts/`
-- `docs/agent-contract-v9.md`
-- `docs/contracts/v9/`
+- `docs/agent-contract-v10.md`
+- `docs/contracts/v10/`
 
-The V9 source of truth is `docs/agent-contract-v9.md` together with the executable Pydantic
-models and generated JSON Schema. V8 and earlier documents and Schema are historical compatibility
+The V10 source of truth is `docs/agent-contract-v10.md` together with the executable Pydantic
+models and generated JSON Schema. V9 and earlier documents and Schema are historical compatibility
 artifacts only and must not be used for new runs. All Agent implementations import only from
-`app.agents.contracts` and `app.agents.state`. V1-V8 contracts, State and Agent implementations
+`app.agents.contracts` and `app.agents.state`. V1-V9 contracts, State and Agent implementations
 have been retired and must not be reintroduced into the active runtime.
 
 Concrete Agent developers must not change contract fields, enums, required/optional rules,

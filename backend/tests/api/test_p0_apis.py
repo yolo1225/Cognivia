@@ -246,7 +246,7 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
             run = db.query(AgentRun).filter_by(agent_name="tutoring_agent").one()
             messages = db.query(AgentMessageRecord).filter_by(session_id=session_id).all()
             assert run.prompt_version == "v6"
-            assert run.contract_version == "agent-contract-v9"
+            assert run.contract_version == "agent-contract-v10"
             assert len(run.prompt_hash) == 64
             assert run.status == "completed"
             assert {item.message_type for item in messages} >= {"command", "result"}

@@ -66,7 +66,7 @@ def _current_resource(
             if item.get("resource_type") == resource_type
             and item.get("review_status") == "passed"
             and (item.get("package_quality") or {}).get("quality_rule_version")
-            == "quality-v6-20260818"
+            == "quality-v8-official-gates"
         ),
         None,
     )
@@ -150,7 +150,7 @@ def _stage0_task_evidence(
         raise AssertionError("internal trace thread_id does not match task_id")
     trace_runs = trace.get("runs") or []
     if not trace_runs or any(
-            run.get("contract_version") != "agent-contract-v9"
+            run.get("contract_version") != "agent-contract-v10"
         or len(str(run.get("prompt_hash") or "")) != 64
         for run in trace_runs
     ):

@@ -1,6 +1,9 @@
 from sqlalchemy import select, update
 
-from app.agents.contracts import ResourceType, ReviewReport as ContractReviewReport
+from app.agents.contracts import (
+    QUALITY_RULE_VERSION,
+    ReviewReport as ContractReviewReport,
+)
 from app.agents.claim_policy import CLAIM_POLICY_VERSION, QUALITY_POLICY_VERSION
 from app.agents.knowledge_coverage_policy import primary_owner_by_knowledge
 from app.agents.nodes import GRAPH_STATE, pop_convergence_audit
@@ -155,15 +158,7 @@ def _recalculate_package_quality(db, task: GenerationTask) -> None:
     selected = [latest[resource_id] for resource_id in resource_ids if resource_id in latest]
     if len(selected) != len(resource_ids):
         return
-    teaching_rows = [
-        (member, resource)
-        for member, resource in rows
-        if resource.resource_type in {
-            ResourceType.LECTURE.value,
-            ResourceType.PRACTICE_GUIDE.value,
-        }
-    ]
-    metric_rows = teaching_rows or rows
+    metric_rows = rows
     metric_reports = [latest[resource.id] for _member, resource in metric_rows]
     evaluated_count = sum(item.evaluated_claim_count for item in metric_reports)
     contradicted_count = sum(item.contradicted_claim_count for item in metric_reports)
@@ -172,7 +167,7 @@ def _recalculate_package_quality(db, task: GenerationTask) -> None:
     )
     unresolved_count = sum(item.unresolved_claim_count for item in metric_reports)
     claim_count = evaluated_count
-    hallucinated = sum(item.hallucinated_claim_count for item in metric_reports)
+    hallucinated = contradicted_count + evidence_insufficient_count + unresolved_count
     target_ids = {
         knowledge_id
         for item in metric_reports
@@ -191,20 +186,14 @@ def _recalculate_package_quality(db, task: GenerationTask) -> None:
     target_count = len(target_ids)
     covered_count = len(covered_ids)
     hallucination_rate = round(100 * hallucinated / claim_count, 2) if claim_count else 0.0
-    difficulty_denominator = sum(
-        max(1, item.verifiable_claim_count) for item in metric_reports
-    )
     difficulty_score = round(
-        sum(
-            item.difficulty_match_score * max(1, item.verifiable_claim_count)
-            for item in metric_reports
-        )
-        / max(1, difficulty_denominator),
+        sum(item.difficulty_match_score for item in metric_reports)
+        / max(1, len(metric_reports)),
         2,
     )
     coverage_score = round(100 * covered_count / target_count, 2) if target_count else 0.0
     task.package_coverage_json = {
-        "quality_rule_version": "quality-v6-20260818",
+        "quality_rule_version": QUALITY_RULE_VERSION,
         "required_knowledge_ids": sorted(target_ids),
         "covered_knowledge_ids": sorted(covered_ids),
         "missing_knowledge_ids": sorted(target_ids - covered_ids),
@@ -216,7 +205,7 @@ def _recalculate_package_quality(db, task: GenerationTask) -> None:
         },
     }
     task.package_quality_json = {
-        "quality_rule_version": "quality-v6-20260818",
+        "quality_rule_version": QUALITY_RULE_VERSION,
         "evaluated_claim_count": evaluated_count,
         "contradicted_claim_count": contradicted_count,
         "evidence_insufficient_claim_count": evidence_insufficient_count,
@@ -229,12 +218,10 @@ def _recalculate_package_quality(db, task: GenerationTask) -> None:
         "target_core_knowledge_count": target_count,
         "core_knowledge_coverage": coverage_score,
         "passed": (
-            all(item.quality_passed for item in selected)
-            and evaluated_count > 0
-            and evidence_insufficient_count == 0
-            and unresolved_count == 0
+            evaluated_count > 0
             and hallucination_rate < 5
             and difficulty_score >= 85
+            and target_count > 0
             and coverage_score >= 90
         ),
         "revision_count": max((item.revision_count for item in selected), default=0),
@@ -384,7 +371,6 @@ def persist_generated_resources(
         finalization.decision.value == "completed"
         and report_types == expected_types
         and review.package_quality.passed
-        and all(item.passed for item in review.reports)
     )
     existing_resources = {
         item.resource_type: item

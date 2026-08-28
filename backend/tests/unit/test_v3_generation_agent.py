@@ -42,6 +42,7 @@ from app.agents.generation_agent import (
     _strip_audited_claims_after_repairs,
 )
 from app.agents.observability import collect_model_calls
+from app.agents.review_claim_manifest import build_review_claims
 from app.agents.nodes import _merge_revision_retrieval, _partial_generation_input
 from app.agents.domain_evidence_policy import (
     EvidenceCapability,
@@ -509,7 +510,7 @@ def test_v3_generation_emits_contract_artifact_and_deterministic_markdown() -> N
         generator=StubGenerator(), renderer=render_resource_markdown
     ).execute(_input())
 
-    assert output.contract_version == "agent-contract-v9"
+    assert output.contract_version == "agent-contract-v10"
     assert output.task_id == _input().task_id
     assert [item.resource_type for item in output.resources] == [ResourceType.LECTURE]
     artifact = output.resources[0]
@@ -1434,6 +1435,7 @@ def test_deterministic_convergence_removes_atomic_claim_without_model_call() -> 
     previous = GeneratedResourceArtifact(
         resource_type=ResourceType.LECTURE,
         structured_content=content,
+        review_claims=build_review_claims(ResourceType.LECTURE, content),
         content_md="上一轮候选资源",
         difficulty=candidate.difficulty,
         source_refs=[source],
@@ -1517,6 +1519,7 @@ def test_claim_free_practice_convergence_adds_one_grounded_anchor_only() -> None
     previous = GeneratedResourceArtifact(
         resource_type=ResourceType.PRACTICE_GUIDE,
         structured_content=content,
+        review_claims=build_review_claims(ResourceType.PRACTICE_GUIDE, content),
         content_md="上一轮候选资源",
         difficulty=candidate.difficulty,
         source_refs=[source],
@@ -1588,6 +1591,7 @@ def test_claim_free_practice_revision_fails_at_generation_without_groundable_evi
     previous = GeneratedResourceArtifact(
         resource_type=ResourceType.PRACTICE_GUIDE,
         structured_content=content,
+        review_claims=build_review_claims(ResourceType.PRACTICE_GUIDE, content),
         content_md="上一轮候选资源",
         difficulty=candidate.difficulty,
         source_refs=[source],
@@ -1629,6 +1633,9 @@ def test_generation_agent_revises_previous_candidate_instead_of_regenerating() -
     previous = GeneratedResourceArtifact(
         resource_type=ResourceType.PRACTICE_GUIDE,
         structured_content=candidate.structured_content,
+        review_claims=build_review_claims(
+            ResourceType.PRACTICE_GUIDE, candidate.structured_content
+        ),
         content_md="上一轮候选资源",
         difficulty=candidate.difficulty,
         source_refs=[source],
@@ -1679,6 +1686,7 @@ def test_revision_structure_failure_uses_valid_candidate_and_audited_fallback() 
     previous = GeneratedResourceArtifact(
         resource_type=ResourceType.PRACTICE_GUIDE,
         structured_content=content,
+        review_claims=build_review_claims(ResourceType.PRACTICE_GUIDE, content),
         content_md="上一轮候选资源",
         difficulty=candidate.difficulty,
         source_refs=[source],

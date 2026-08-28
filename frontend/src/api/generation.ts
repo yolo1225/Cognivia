@@ -103,6 +103,11 @@ export interface GenerationTaskDetail {
   decision: string
   package_quality?: ResourceQualityMetrics | null
   failure_reason?: string | null
+  failed_metrics?: Array<{
+    metric: 'hallucination_rate' | 'difficulty_match_score' | 'core_knowledge_coverage'
+    actual: number
+    threshold: string
+  }>
   failure_details?: {
     failure_code?: string | null
     failed_step?: string | null

@@ -174,6 +174,18 @@ def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
         if path is not None and task.path_node_id
         else None
     )
+    quality = task.package_quality_json or {}
+    failed_metrics = []
+    for metric, actual, threshold in (
+        ("hallucination_rate", quality.get("hallucination_rate"), "< 5"),
+        ("difficulty_match_score", quality.get("difficulty_match_score"), ">= 85"),
+        ("core_knowledge_coverage", quality.get("core_knowledge_coverage"), ">= 90"),
+    ):
+        if actual is None:
+            continue
+        passed = actual < 5 if metric == "hallucination_rate" else actual >= int(threshold[3:])
+        if not passed:
+            failed_metrics.append({"metric": metric, "actual": actual, "threshold": threshold})
     return {
         "task_id": task.public_id,
         "thread_id": task.public_id,
@@ -197,6 +209,7 @@ def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
         "revision_count": task.revision_count,
         "decision": task.decision,
         "failure_reason": task.failure_reason or None,
+        "failed_metrics": failed_metrics,
         "failure_details": {
             "failure_code": failure_output.get("failure_code"),
             "failed_step": failure_output.get("failed_step"),
@@ -515,6 +528,34 @@ def retry_generation_task(
     stale_contract_checkpoint = bool(
         latest_failure and latest_failure.contract_version != CONTRACT_VERSION
     )
+    if stale_contract_checkpoint or "revision_exhausted" in failure_code:
+        successor = GenerationTask(
+            public_id=public_id("task"),
+            learner_id=task.learner_id,
+            profile_id=task.profile_id,
+            learning_path_id=task.learning_path_id,
+            path_node_id=task.path_node_id,
+            domain_code=task.domain_code,
+            status="pending",
+            resource_types_json=list(task.resource_types_json or []),
+            resource_knowledge_targets_json=dict(
+                task.resource_knowledge_targets_json or {}
+            ),
+            revision_count=0,
+            decision="pending",
+            trigger_type=task.trigger_type,
+            execution_mode=task.execution_mode,
+            learning_goal=task.learning_goal,
+            source_resource_id=task.source_resource_id,
+            source_feedback_id=task.source_feedback_id,
+            source_task_id=task.id,
+            event_type=task.event_type,
+            progress=0,
+        )
+        db.add(successor)
+        db.commit()
+        background_tasks.add_task(run_generation_task, successor.public_id)
+        return ok(_task_detail_summary(db, successor))
     fresh_state_retry = (
         failure_code in FRESH_STATE_RETRY_FAILURES or stale_contract_checkpoint
     )

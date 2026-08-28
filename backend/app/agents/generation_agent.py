@@ -34,6 +34,7 @@ from app.agents.claim_policy import (
     sanitize_deterministic_text,
 )
 from app.agents.prompt_registry import get_prompt
+from app.agents.review_claim_manifest import build_review_claims
 from app.agents.domain_evidence_policy import (
     EvidenceCapability,
     evidence_capability_payload,
@@ -927,6 +928,9 @@ class ContentGenerationAgent:
                             for source_id in used_source_ids
                         )
                     },
+                    review_claims=build_review_claims(
+                        resource_type, response.structured_content
+                    ),
                 )
 
             resource_types = validated.requirements.resource_types

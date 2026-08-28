@@ -68,7 +68,7 @@ def test_prepare_routes_initial_and_feedback_tasks() -> None:
 
     assert initial_output.next_node == "analyze_profile"
     assert feedback_output.next_node == "interpret_feedback"
-    assert initial_output.contract_version == "agent-contract-v9"
+    assert initial_output.contract_version == "agent-contract-v10"
     assert initial_output.task_id == initial_output.context.task_id
 
 

@@ -11,7 +11,7 @@ from demo_acceptance import _assessment_option
 from run_live import _api_json, _authenticate
 
 
-QUALITY_RULE_VERSION = "quality-v6-20260818"
+QUALITY_RULE_VERSION = "quality-v8-official-gates"
 
 
 def _current_node(path: dict[str, Any]) -> dict[str, Any]:

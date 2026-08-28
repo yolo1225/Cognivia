@@ -88,7 +88,7 @@ def build_review_resource_output(
         for report in coverage_reports
         for knowledge_id in report.covered_knowledge_ids
     } & package_required
-    metric_reports = teaching_reports or reports
+    metric_reports = reports
     evaluated_count = sum(
         report.quality_metrics.evaluated_claim_count for report in metric_reports
     )
@@ -103,26 +103,19 @@ def build_review_resource_output(
         report.quality_metrics.unresolved_claim_count for report in metric_reports
     )
     claim_count = evaluated_count
-    hallucinated_count = sum(
-        report.quality_metrics.hallucinated_claim_count for report in metric_reports
+    hallucinated_count = (
+        contradicted_count + evidence_insufficient_count + unresolved_count
     )
     # Competition coverage is the union of teaching resources. A quiz validates
     # learning but must not backfill missing lecture/practice instruction.
     target_count = len(package_required)
     covered_count = len(package_covered)
-    difficulty_denominator = sum(
-        max(1, report.quality_metrics.verifiable_claim_count)
-        for report in metric_reports
-    )
-    difficulty_weight = sum(
-        report.quality_metrics.difficulty_match_score
-        * max(1, report.quality_metrics.verifiable_claim_count)
-        for report in metric_reports
-    )
     hallucination_rate = (
         0.0 if claim_count == 0 else 100.0 * hallucinated_count / claim_count
     )
-    difficulty_score = difficulty_weight / max(1, difficulty_denominator)
+    difficulty_score = sum(
+        report.quality_metrics.difficulty_match_score for report in metric_reports
+    ) / max(1, len(metric_reports))
     core_coverage = 0.0 if target_count == 0 else 100.0 * covered_count / target_count
     expected_types = expected_resource_types or [report.resource_type for report in reports]
     report_types = [report.resource_type for report in reports]
@@ -134,10 +127,9 @@ def build_review_resource_output(
     )
     metric_passed = (
         evaluated_count > 0
-        and evidence_insufficient_count == 0
-        and unresolved_count == 0
         and hallucination_rate < 5
         and difficulty_score >= 85
+        and target_count > 0
         and core_coverage >= 90
     )
     package_quality = GenerationPackageQuality(
@@ -165,7 +157,6 @@ def build_review_resource_output(
         package_coverage_score=round(compatibility_coverage, 2),
         package_passed=(
             reports_complete
-            and all(report.quality_metrics.passed for report in reports)
             and package_quality.passed
         ),
         package_quality=package_quality,
@@ -599,9 +590,59 @@ def _project_claim_source_ids(
 def extract_atomic_claims(
     resource: GeneratedResourceArtifact, request: ReviewResourceInput
 ) -> list[AtomicClaim]:
-    """Create one stable claim set shared by both review channels."""
+    """Read the canonical V10 claim set shared by both review channels."""
     evidence_by_source = {chunk.source.source_ref_id: chunk for chunk in request.evidence}
     evidence_policy = get_domain_evidence_policy(request.context.domain_code)
+    category_by_kind = {
+        "professional_fact": ClaimCategory.VERIFIABLE_FACT,
+        "operational_fact": ClaimCategory.OPERATIONAL_FACT,
+        "code_behavior": ClaimCategory.CODE_OR_COMMAND,
+        "expected_result": ClaimCategory.FIXED_RESULT,
+        "error_handling": ClaimCategory.ERROR_HANDLING,
+    }
+    risk_by_kind = {
+        "professional_fact": RiskLevel.NORMAL,
+        "operational_fact": RiskLevel.NORMAL,
+        "code_behavior": RiskLevel.HIGH,
+        "expected_result": RiskLevel.HIGH,
+        "error_handling": RiskLevel.HIGH,
+    }
+    manifest_claims: list[AtomicClaim] = []
+    for claim in resource.review_claims:
+        knowledge_ids = tuple(
+            _ordered_unique(
+                evidence_by_source[source_id].knowledge_id
+                for source_id in claim.source_ref_ids
+                if source_id in evidence_by_source
+            )
+        )
+        capabilities = tuple(
+            sorted(
+                {
+                    capability.value
+                    for source_id in claim.source_ref_ids
+                    if source_id in evidence_by_source
+                    for capability in evidence_policy.classify(evidence_by_source[source_id])
+                }
+            )
+        )
+        manifest_claims.append(
+            AtomicClaim(
+                claim_id=claim.claim_id,
+                field_path=claim.field_path,
+                claim=claim.claim,
+                category=category_by_kind[claim.claim_kind.value],
+                risk_level=risk_by_kind[claim.claim_kind.value],
+                review_disposition=ReviewDisposition.DUAL_REVIEW,
+                knowledge_ids=knowledge_ids,
+                source_ref_ids=tuple(claim.source_ref_ids),
+                evidence_capabilities=capabilities,
+            )
+        )
+    return manifest_claims
+
+    # V9 extraction is intentionally unreachable for V10 runs. It remains below so
+    # historical review snapshots can still be interpreted by compatibility tooling.
     all_sources = tuple(source.source_ref_id for source in resource.source_refs)
     claims: list[AtomicClaim] = []
     excluded: dict[str, list[str]] = {}
@@ -1582,8 +1623,10 @@ def _review_certified_quiz(
             evidence_insufficient_claim_count=len(undetermined_ids),
             unresolved_claim_count=0,
             verifiable_claim_count=len(checks),
-            hallucinated_claim_count=0,
-            hallucination_rate=0.0,
+            hallucinated_claim_count=len(undetermined_ids),
+            hallucination_rate=round(
+                100.0 * len(undetermined_ids) / max(1, len(checks)), 2
+            ),
             difficulty_match_score=difficulty,
             covered_core_knowledge_count=len(covered_ids),
             target_core_knowledge_count=len(target_ids),
@@ -1690,17 +1733,11 @@ class ReviewValidationAgent:
         claims = extract_atomic_claims(resource, request)
         primary, secondary = self._review_pair(resource, request, recheck=False)
         disputed = _disputed_claim_ids(primary, secondary)
-        non_supported = {
-            claim_id
-            for review in (primary, secondary)
-            for claim_id, verdict in _fact_statuses(review).items()
-            if verdict is not EvidenceVerdict.SUPPORTED
-        }
-        claims_to_refresh = disputed | non_supported
         disagreement = _reviews_disagree(primary, secondary)
+        claims_to_refresh = disputed
         if disagreement and not claims_to_refresh:
             claims_to_refresh = {claim.claim_id for claim in claims}
-        evidence_refresh_required = bool(claims_to_refresh)
+        evidence_refresh_required = disagreement
         final_primary, final_secondary = primary, secondary
         primary_recheck: ModelReview | None = None
         secondary_recheck: ModelReview | None = None
@@ -1765,11 +1802,6 @@ class ReviewValidationAgent:
             undetermined_ids=undetermined_ids,
             missing_knowledge_ids=sorted(target_ids - covered_ids),
         )
-        decision = _decision_from_claims(
-            contradicted_ids=contradicted_ids,
-            undetermined_ids=undetermined_ids,
-            unresolved_ids=final_disputed,
-        )
         evidence_ref_ids = sorted(
             {
                 source_id
@@ -1791,7 +1823,9 @@ class ReviewValidationAgent:
         # the denominator can therefore produce impossible rates above 100%.
         evaluated_count = len(canonical_claim_ids)
         evidence_insufficient_count = len(undetermined_ids)
-        hallucinated_count = len(set(contradicted_ids) | set(final_disputed))
+        hallucinated_count = len(
+            set(contradicted_ids) | set(undetermined_ids) | set(final_disputed)
+        )
         difficulty_score = final_scores.difficulty_match
         target_count = len(target_ids)
         covered_count = len(covered_ids)
@@ -1799,7 +1833,16 @@ class ReviewValidationAgent:
             0.0 if evaluated_count == 0 else 100.0 * hallucinated_count / evaluated_count
         )
         coverage_rate = 0.0 if target_count == 0 else 100.0 * covered_count / target_count
-        metrics_passed = decision is ReviewDecision.PASSED
+        metrics_passed = (
+            evaluated_count > 0
+            and hallucination_rate < 5
+            and difficulty_score >= 85
+            and target_count > 0
+            and coverage_rate >= 90
+        )
+        decision = (
+            ReviewDecision.PASSED if metrics_passed else ReviewDecision.REVISION_REQUIRED
+        )
         revision_count = request.requirements.revision_plan.revision_count if request.requirements.revision_plan else 0
         return ReviewReport(
             resource_type=resource.resource_type,

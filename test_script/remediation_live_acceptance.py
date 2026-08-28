@@ -215,7 +215,7 @@ def _diagnostic_acceptance(run_suffix: str) -> dict:
             learning_goal="流式导学验收",
             is_current_package=True,
             progress=100,
-            package_quality_json={"quality_rule_version": "quality-v6-20260818"},
+            package_quality_json={"quality_rule_version": "quality-v8-official-gates"},
         )
         db.add(task)
         db.flush()

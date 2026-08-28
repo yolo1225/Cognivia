@@ -124,8 +124,6 @@ class OrchestratorAgent:
 
         if (
             reports_complete
-            and all(report.passed for report in reports)
-            and validated.package_passed
             and validated.package_quality is not None
             and validated.package_quality.passed
         ):
@@ -136,14 +134,17 @@ class OrchestratorAgent:
                 reason="所有资源均通过双通道审核。",
             )
 
-        if any(report.decision == ReviewDecision.REVISION_REQUIRED for report in reports):
+        if (
+            validated.package_quality is not None
+            and not validated.package_quality.passed
+        ):
             return self._revision_or_failure(
                 validated,
                 passed_types,
                 deterministic_convergence_attempted=deterministic_convergence_attempted,
             )
 
-        if reports_complete and all(report.passed for report in reports):
+        if reports_complete and validated.package_quality is None:
             return self._revision_or_failure(
                 validated,
                 passed_types,
