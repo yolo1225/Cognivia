@@ -36,6 +36,17 @@ export interface GenerationTaskResult {
     target_knowledge_ids: string[]
     focus_knowledge_ids: string[]
     missing_primary_knowledge_ids: string[]
+    missing_mastery_reserve_knowledge_ids: string[]
+    counts_by_knowledge: Record<
+      string,
+      {
+        single_choice: number
+        short_answer: number
+        total: number
+        graded_quiz: number
+        mastery_reserve: number
+      }
+    >
     target_difficulty: number
     matching_target_difficulty_count: number
     selected_question_ids: string[]

@@ -12,13 +12,11 @@ from app.models import (
     LearningPath,
 )
 from app.services.learning_path_service import (
-    answer_path_node_assessment,
     complete_path_node,
     node_id_for as atomic_node_id_for,
     unit_node_id_for,
     normalize_path_payload,
     normalize_path_for_domain,
-    start_path_node_assessment,
     verify_path_node,
 )
 
@@ -475,104 +473,3 @@ def test_unit_refresh_preserves_completed_and_current_units() -> None:
     ]
     assert revised["current_node_id"] == current["path_node_id"]
     assert repeated["current_node_id"] == current["path_node_id"]
-
-
-def test_node_assessment_scores_idempotently_and_advances_only_on_pass() -> None:
-    db = _db()
-    learner = Learner(public_id="learner_assessment", target_domain="ai_app_dev")
-    first, second = [
-        KnowledgeItem(
-            public_id=knowledge_id,
-            domain_code="ai_app_dev",
-            name=knowledge_id,
-            category="test",
-            difficulty=2,
-            content_md="content",
-            source_title="source",
-            license_note="test",
-            status="published",
-        )
-        for knowledge_id in ("k1", "k2")
-    ]
-    db.add_all([learner, first, second])
-    db.flush()
-    db.add_all(
-        [DiagnosticQuestion(
-            public_id=f"q_assessment_{index}",
-            domain_code="ai_app_dev",
-            knowledge_item_id=first.id,
-            question_type="single_choice",
-            stem=f"验证题 {index}",
-            options_json=["错误", "正确"],
-            answer_key_json={"correct_option": 1},
-            difficulty=2,
-            status="active",
-            certification_status="certified",
-            certification_rule_version="question-cert-v1",
-            source_content_hash="sha256:" + "3" * 64,
-        ) for index in range(2)]
-    )
-    path = LearningPath(
-        public_id="path_assessment",
-        learner_id=learner.id,
-        domain_code="ai_app_dev",
-        path_json={"stages": [{"name": "path", "knowledge_ids": ["k1", "k2"]}]},
-    )
-    db.add(path)
-    db.commit()
-    path.path_json = normalize_path_for_domain(
-        db, domain_code="ai_app_dev", payload=path.path_json
-    )
-    path.path_json["node_states"][_unit_id("k1")]["completion_condition"][
-        "question_count_min"
-    ] = 1
-    path.path_json["node_states"][_unit_id("k1")]["completion_condition"][
-        "threshold"
-    ] = 0.5
-    db.commit()
-
-    first_assessment = start_path_node_assessment(
-        db,
-        path_id=path.public_id,
-        node_id=_unit_id("k1"),
-        learner_public_id=learner.public_id,
-    )
-    failed, remedial_task = answer_path_node_assessment(
-        db,
-        path_id=path.public_id,
-        node_id=_unit_id("k1"),
-        assessment_id=first_assessment["assessment_id"],
-        learner_public_id=learner.public_id,
-        answer=0,
-    )
-    assert failed["passed"] is False
-    assert remedial_task is None
-    assert path.path_json["current_node_id"] == node_id_for("k1")
-
-    second_assessment = start_path_node_assessment(
-        db,
-        path_id=path.public_id,
-        node_id=_unit_id("k1"),
-        learner_public_id=learner.public_id,
-    )
-    passed, remedial_task = answer_path_node_assessment(
-        db,
-        path_id=path.public_id,
-        node_id=_unit_id("k1"),
-        assessment_id=second_assessment["assessment_id"],
-        learner_public_id=learner.public_id,
-        answer=1,
-    )
-    repeated, repeated_task = answer_path_node_assessment(
-        db,
-        path_id=path.public_id,
-        node_id=_unit_id("k1"),
-        assessment_id=second_assessment["assessment_id"],
-        learner_public_id=learner.public_id,
-        answer=0,
-    )
-    assert passed["passed"] is True
-    assert remedial_task is None
-    assert repeated == passed
-    assert repeated_task is None
-    assert path.path_json["current_node_id"] == node_id_for("k2")

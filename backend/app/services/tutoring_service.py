@@ -475,7 +475,10 @@ def add_learner_message(
             resource=resource,
         )
     except ValueError as exc:
-        if str(exc) == "learning_adjustment_assessment_unavailable":
+        if str(exc) in {
+            "learning_adjustment_assessment_unavailable",
+            "MASTERY_QUESTION_BANK_INSUFFICIENT",
+        }:
             assessment_unavailable = str(exc)
         elif str(exc) not in {
             "learning_adjustment_context_missing",

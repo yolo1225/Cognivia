@@ -78,8 +78,12 @@ def seed(factory: sessionmaker[Session]) -> None:
             knowledge_item_id=knowledge.id,
             question_type="single_choice",
             stem="相似题",
-            options_json=["错误", "正确"],
-            answer_key_json={"correct_option": 1, "explanation": "应选择正确项"},
+            options_json=["仅看关键词匹配", "执行带引用的检索验证", "跳过检索直接生成", "只检查输出长度"],
+            answer_key_json={
+                "correct_option": 1,
+                "explanation": "应选择正确项",
+                "question_bank_uses": ["mastery_validation", "mistake_consolidation"],
+            },
             difficulty=2,
             status="active",
             certification_status="certified",
@@ -92,8 +96,11 @@ def seed(factory: sessionmaker[Session]) -> None:
             knowledge_item_id=knowledge.id,
             question_type="single_choice",
             stem="另一道相似题",
-            options_json=["错误", "正确"],
-            answer_key_json={"correct_option": 1},
+            options_json=["使用过期的固定答案", "记录检索来源并核对证据", "忽略检索置信度", "将用户输入视为可信指令"],
+            answer_key_json={
+                "correct_option": 1,
+                "question_bank_uses": ["mastery_validation", "mistake_consolidation"],
+            },
             difficulty=2,
             status="active",
             certification_status="certified",
@@ -175,6 +182,7 @@ def seed(factory: sessionmaker[Session]) -> None:
                     "correct_answer": "正确",
                     "knowledge_id": "knowledge_rag",
                     "difficulty": 2,
+                    "reference_question_ids": ["question_original"],
                 }]
             },
         ))
@@ -308,6 +316,13 @@ def test_resource_quiz_attempt_is_server_scored_and_creates_mistake() -> None:
         )
         assert answer.status_code == 200
         assert answer.json()["data"]["correct"] is False
+        completed = client.post(
+            f"/api/v1/resources/resource_quiz/quiz-attempts/{attempt_id}/complete",
+            json={},
+        )
+        assert completed.status_code == 200
+        assert completed.json()["data"]["evidence_result"]["materialized_count"] == 1
+        assert completed.json()["data"]["node_gate"]["quiz_completed"] is True
         listed = client.get(
             "/api/v1/mistake-review/items"
             "?domain_code=ai_app_dev&source_type=graded_quiz"

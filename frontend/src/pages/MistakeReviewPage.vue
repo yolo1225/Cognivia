@@ -67,7 +67,7 @@
               <div class="assessment-title"><h3>同知识点验证</h3><span>难度 {{ activeAttempt.question.difficulty }}</span></div>
               <p class="question-stem">{{ activeAttempt.question.stem }}</p>
               <div class="answer-options"><button v-for="(option, index) in activeAttempt.question.options" :key="option" type="button" :class="{ selected: selectedAnswer === index }" :disabled="Boolean(result)" @click="selectedAnswer = index"><i></i>{{ option }}</button></div>
-              <div v-if="result" class="result-box" :class="result.passed ? 'passed' : 'failed'"><strong>{{ result.passed ? '本次验证已通过' : '本次需要继续练习' }}</strong><p>得分 {{ Math.round(result.score * 100) }}，通过阈值 {{ Math.round(result.threshold * 100) }}，置信度 {{ Math.round(result.confidence * 100) }}%</p><p>{{ governanceMessage(result) }}</p><p v-if="result.profile_result.decision_reason">{{ result.profile_result.decision_reason }}</p><p v-if="result.path_result.updated">学习路径已推进，当前节点：{{ result.path_result.current_node_id || '等待下一节点' }}</p><small>证据 {{ result.evidence_ref }}</small></div>
+              <div v-if="result" class="result-box" :class="result.passed ? 'passed' : 'failed'"><strong>{{ result.passed ? '本次验证已通过' : '本次需要继续练习' }}</strong><p>得分 {{ Math.round(result.score * 100) }}，通过阈值 {{ Math.round(result.threshold * 100) }}，置信度 {{ Math.round(result.confidence * 100) }}%</p><p>{{ governanceMessage(result) }}</p><p v-if="result.profile_result.decision_reason">{{ result.profile_result.decision_reason }}</p><p v-if="result.node_gate && !result.node_gate.can_advance">核心知识已确认 {{ result.node_gate.mastered_knowledge_count || 0 }}/{{ result.node_gate.core_knowledge_count || 0 }}，当前节点仍有 {{ result.node_gate.blocking_mistake_count }} 道阻断性错题。</p><p v-if="result.path_result.updated">学习路径已推进，当前节点：{{ result.path_result.current_node_id || '等待下一节点' }}</p><div v-if="result.resource_recommendation" class="result-actions"><button type="button" class="btn primary small" :disabled="resourceDecisionSubmitting" @click="generateRecommendedResource">{{ resourceDecisionSubmitting ? '正在创建任务' : result.resource_recommendation.mode === 'next_node' ? '生成下一节点资源' : '生成补救资源' }}</button></div><small>证据 {{ result.evidence_ref }}</small></div>
               <button v-else type="button" class="btn primary" :disabled="selectedAnswer == null || submitting" @click="submitAttempt">{{ submitting ? '正在评分' : '提交验证' }}</button>
             </section>
             <section v-if="selected.recommended_resource" class="review-block resource-link"><div><h3>关联学习资源</h3><p>{{ selected.recommended_resource.title }}</p></div><button type="button" class="btn small" @click="openResource(selected)">打开资源</button></section>
@@ -94,6 +94,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { answerConsolidation, getMistakeItem, getMistakeSummary, listMistakeItems, startConsolidation, type ConsolidationAttempt, type ConsolidationResult, type MistakeReviewItem, type MistakeStatus, type MistakeSummary } from '@/api/mistakeReview'
 import { createTutoringSession, streamTutoringMessage } from '@/api/tutoring'
+import { decideLearningAdjustmentResource } from '@/api/learningAdjustments'
 import AppIcon from '@/components/Shared/AppIcon.vue'
 import PageHeader from '@/components/Shared/PageHeader.vue'
 import PageState from '@/components/Shared/PageState.vue'
@@ -122,6 +123,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(totalItems.value / pageS
 const selected = ref<MistakeReviewItem | null>(null)
 const activeAttempt = ref<ConsolidationAttempt | null>(null)
 const result = ref<ConsolidationResult | null>(null)
+const resourceDecisionSubmitting = ref(false)
 const selectedAnswer = ref<number | null>(null)
 const showOriginalOptions = ref(false)
 const loading = ref(false)
@@ -217,6 +219,17 @@ async function submitAttempt() {
     if (items.value.some(item => item.item_id === itemId)) selected.value = await getMistakeItem(itemId, learnerId.value)
   } catch { showToast('验证结果提交失败，请检查网络后重试。', 'error') }
   finally { submitting.value = false }
+}
+
+async function generateRecommendedResource() {
+  const recommendation = result.value?.resource_recommendation
+  if (!recommendation || resourceDecisionSubmitting.value) return
+  resourceDecisionSubmitting.value = true
+  try {
+    const decision = await decideLearningAdjustmentResource(recommendation.proposal_id, 'generate')
+    if (decision.task_id) await router.push({ path: '/resources', query: { task_id: decision.task_id, learner_id: learnerId.value } })
+  } catch { showToast('补救资源任务创建失败，请稍后重试。', 'error') }
+  finally { resourceDecisionSubmitting.value = false }
 }
 
 function openResource(item: MistakeReviewItem) { if (item.recommended_resource) router.push({ path: '/resources', query: { resource_id: item.recommended_resource.resource_id, learner_id: learnerId.value } }) }

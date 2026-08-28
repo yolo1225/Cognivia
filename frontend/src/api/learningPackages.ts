@@ -1,6 +1,7 @@
 import { getData, postData } from './client'
 import type { ResourceSummary } from './resources'
 import type { GenerationBasis } from './generation'
+import type { NodeGate } from './tutoring'
 
 export interface KnowledgeImpact {
   impact_id: string
@@ -35,6 +36,7 @@ export interface LearningPackage {
   }>
   knowledge_impact?: KnowledgeImpact | null
   package_quality?: ResourceSummary['package_quality']
+  node_gate?: NodeGate | null
   created_at?: string | null
 }
 

@@ -42,7 +42,6 @@ from app.services.domain_runtime_service import load_domain_runtime
 from app.services.feedback_service import create_feedback_task
 from app.services.learning_path_service import (
     _advance_path_node,
-    _question_unit_coverage,
     normalize_learning_path,
 )
 from app.services.profile_revision_service import persist_profile_revision
@@ -55,10 +54,15 @@ from app.services.node_generation_target_service import (
     bind_node_generation_targets,
     resolve_node_generation_basis,
 )
+from app.services.node_mastery_service import (
+    affected_resource_types,
+    build_node_gate,
+)
 from app.services.profile_service import public_id
-from app.services.question_bank_service import graded_quiz_preflight
-from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
+from app.services.question_bank_service import (
+    QuestionBankError,
+    graded_quiz_preflight,
+    select_mastery_question,
 )
 
 
@@ -208,73 +212,32 @@ def _assessment_for_proposal(
     node: dict[str, Any],
 ) -> dict[str, Any]:
     knowledge_ids = [str(value) for value in node.get("knowledge_ids") or []]
-    knowledge_rows = list(db.scalars(
-        select(KnowledgeItem).where(
-            KnowledgeItem.public_id.in_(knowledge_ids),
-            KnowledgeItem.domain_code == path.domain_code,
-        )
-    ))
-    if not knowledge_rows:
-        raise ValueError("learning_adjustment_assessment_unavailable")
-    attempted = set(
-        db.scalars(
-            select(PathNodeAssessment.question_id).where(
-                PathNodeAssessment.learner_id == proposal.learner_id,
-                PathNodeAssessment.path_node_id == proposal.path_node_id,
-            )
-        )
+    profile = db.get(LearnerProfile, proposal.profile_id)
+    source_resource = db.get(LearningResource, proposal.source_resource_id)
+    package_task = (
+        db.get(GenerationTask, source_resource.generation_task_id)
+        if source_resource is not None
+        else None
     )
-    questions = list(
-        db.scalars(
-            select(DiagnosticQuestion)
-            .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
-            .where(
-                DiagnosticQuestion.domain_code == path.domain_code,
-                KnowledgeItem.domain_code == path.domain_code,
-                DiagnosticQuestion.question_type == "single_choice",
-                DiagnosticQuestion.status == "active",
-                DiagnosticQuestion.certification_status == "certified",
-                DiagnosticQuestion.certification_rule_version
-                == QUESTION_CERTIFICATION_RULE_VERSION,
-            )
-            .order_by(DiagnosticQuestion.difficulty.desc(), DiagnosticQuestion.id)
-        )
+    gate = (
+        build_node_gate(db, path=path, profile=profile, package_task=package_task)
+        if profile is not None
+        else None
     )
-    if not questions:
-        raise ValueError("learning_adjustment_assessment_unavailable")
-    unit_ids = set(knowledge_ids)
-    public_id_by_item_id = {item.id: item.public_id for item in knowledge_rows}
-    eligible = [
-        item
-        for item in questions
-        if _question_unit_coverage(
-            item,
-            primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
-            unit_knowledge_ids=unit_ids,
+    try:
+        question, knowledge = select_mastery_question(
+            db,
+            learner_id=proposal.learner_id,
+            domain_code=path.domain_code,
+            knowledge_ids=knowledge_ids,
+            target_difficulty=int(node.get("target_difficulty") or 3),
+            use="mastery_validation",
+            node_gate=gate,
+            package_task=package_task,
+            preferred_knowledge_ids=node.get("focus_knowledge_ids") or [],
         )
-    ]
-    if not eligible:
-        raise ValueError("learning_adjustment_assessment_unavailable")
-    focus_ids = set(node.get("focus_knowledge_ids") or []) & unit_ids
-    eligible.sort(
-        key=lambda item: (
-            item.id in attempted,
-            not bool(
-                _question_unit_coverage(
-                    item,
-                    primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
-                    unit_knowledge_ids=unit_ids,
-                )
-                & focus_ids
-            ),
-            -item.difficulty,
-            item.id,
-        )
-    )
-    question = eligible[0]
-    knowledge = next(
-        (item for item in knowledge_rows if item.id == question.knowledge_item_id), None
-    )
+    except QuestionBankError as exc:
+        raise ValueError(exc.code) from exc
     assessment = PathNodeAssessment(
         public_id=public_id("pathval"),
         learning_path_id=path.id,
@@ -409,6 +372,7 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
             "pending_assessment": None,
             "node_adjustment_result": None,
             "evidence_scope": None,
+            "node_gate": None,
         }
     task_proposal = db.scalar(
         select(LearningAdjustmentProposal)
@@ -459,6 +423,7 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
                 "path_node_title": None,
                 "generation_task_id": task.public_id,
             },
+            "node_gate": result.get("node_gate") if isinstance(result, dict) else None,
         }
     path = db.scalar(
         select(LearningPath)
@@ -485,6 +450,7 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
             "pending_assessment": None,
             "node_adjustment_result": None,
             "evidence_scope": None,
+            "node_gate": None,
         }
     proposal = db.scalar(
         select(LearningAdjustmentProposal)
@@ -514,6 +480,7 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
                 knowledge=knowledge,
             )
             state = "pending_validation"
+    active_profile = db.get(LearnerProfile, path.profile_id)
     return {
         "node_adjustment_state": state,
         "pending_assessment": pending_assessment,
@@ -523,6 +490,11 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
             "path_node_title": node.get("title") or node.get("knowledge_id"),
             "generation_task_id": task.public_id,
         },
+        "node_gate": (
+            build_node_gate(db, path=path, profile=active_profile, package_task=task)
+            if active_profile is not None
+            else None
+        ),
     }
 
 
@@ -837,7 +809,8 @@ def answer_adjustment_assessment(
     )
     if assessment is None or proposal is None or proposal.learner_id != session.learner_id:
         raise ValueError("learning_adjustment_assessment_not_found")
-    feedback = db.get(Feedback, (proposal.source_feedback_ids_json or [None])[-1])
+    feedback_id = (proposal.source_feedback_ids_json or [None])[-1]
+    feedback = db.get(Feedback, feedback_id) if feedback_id is not None else None
     if feedback is None:
         feedback = Feedback(
             resource_id=proposal.source_resource_id,
@@ -901,35 +874,70 @@ def answer_adjustment_assessment(
         scoring_method="deterministic",
         confidence=0.9,
         answer_summary_json={
+            "evidence_type": "path_validation",
+            "evidence_role": "validation",
             "assessment_id": assessment.public_id,
             "adjustment_proposal_id": proposal.public_id,
             "contract_evidence_type": "scored_quiz",
-            "confirmed": confirmed,
+            "confirmed": True,
             "confidence": 0.9,
+            "generation_task_id": db.get(GenerationTask, resource.generation_task_id).public_id,
+            "path_node_id": proposal.path_node_id,
             "consumed_by_profile_id": None,
         },
     )
     db.add(record)
     db.flush()
     evidence_id = f"answer_record:{record.id}"
-    decision = "hypothesis_rejected"
+    package_task = db.get(GenerationTask, resource.generation_task_id)
+    preliminary_gate = build_node_gate(
+        db,
+        path=path,
+        profile=profile,
+        package_task=package_task,
+    )
+    knowledge = db.get(KnowledgeItem, question.knowledge_item_id)
+    knowledge_id = knowledge.public_id if knowledge else None
+    knowledge_progress = next(
+        (
+            item
+            for item in preliminary_gate.get("knowledge_progress") or []
+            if item.get("knowledge_id") == knowledge_id
+        ),
+        None,
+    )
+    mastery_evidence_ready = bool(
+        is_correct
+        and knowledge_progress
+        and knowledge_progress.get("eligible_evidence_count", 0)
+        >= knowledge_progress.get("required_evidence_count", 2)
+        and knowledge_progress.get("has_corroborating_evidence")
+        and knowledge_progress.get("has_target_difficulty_evidence")
+    )
+    confirmed = (
+        proposal.hypothesis_type == "mastery_up" and mastery_evidence_ready
+    ) or (proposal.hypothesis_type == "support_down" and not is_correct)
+    decision = "evidence_recorded" if is_correct else "hypothesis_rejected"
     profile_changed = False
     resulting_profile = profile
     resulting_path = path
     completed_node_id = None
     profile_change_summary = None
     if confirmed:
-        if proposal.hypothesis_type == "mastery_up":
-            _advance_path_node(
-                db,
-                path=path,
-                node_id=proposal.path_node_id,
-                evidence_ids=[evidence_id],
+        evidence_records = None
+        if proposal.hypothesis_type == "mastery_up" and knowledge_progress:
+            record_ids = [
+                int(value.split(":", 1)[1])
+                for value in knowledge_progress.get("evidence_ids") or []
+                if str(value).startswith("answer_record:")
+            ]
+            evidence_records = list(
+                db.scalars(
+                    select(AnswerRecord)
+                    .where(AnswerRecord.id.in_(record_ids))
+                    .order_by(AnswerRecord.created_at, AnswerRecord.id)
+                )
             )
-            completed_node_id = proposal.path_node_id
-            decision = "confirmed_mastery"
-        else:
-            decision = "confirmed_support_need"
         resulting_profile, revised_path, _analysis, profile_change_summary = _analyze_profile(
             db,
             proposal=proposal,
@@ -939,11 +947,35 @@ def answer_adjustment_assessment(
             feedback=feedback,
             record=record,
             question=question,
+            evidence_records=evidence_records,
         )
         profile_changed = resulting_profile.id != profile.id
         if revised_path is not None:
             resulting_path = revised_path
+        node_gate = build_node_gate(
+            db,
+            path=resulting_path,
+            profile=resulting_profile,
+            package_task=package_task,
+        )
+        if proposal.hypothesis_type == "mastery_up" and node_gate["can_advance"]:
+            completed_node_id = proposal.path_node_id
+            _advance_path_node(
+                db,
+                path=resulting_path,
+                node_id=completed_node_id,
+                evidence_ids=[
+                    evidence_id
+                    for item in node_gate.get("knowledge_progress") or []
+                    for evidence_id in item.get("evidence_ids") or []
+                ],
+            )
+            decision = "confirmed_mastery"
+        else:
+            decision = "confirmed_support_need" if proposal.hypothesis_type == "support_down" else "evidence_recorded"
         current_node_id = (resulting_path.path_json or {}).get("current_node_id")
+        node_gate["completed_node_id"] = completed_node_id
+        node_gate["current_node_id"] = current_node_id
         profile_change_summary = dict(profile_change_summary or {})
         profile_change_summary.update(
             {
@@ -955,25 +987,41 @@ def answer_adjustment_assessment(
                 "current_node_id": current_node_id,
             }
         )
-        recommendation = {
-            "proposal_id": proposal.public_id,
-            "path_id": resulting_path.public_id,
-            "path_node_id": current_node_id,
-            "resource_types": (
+        recommendation = None
+        if profile_changed:
+            is_next_node = completed_node_id is not None
+            affected_ids = (
+                list(node_gate.get("unmastered_knowledge_ids") or [])
+                if not is_next_node
+                else []
+            )
+            if knowledge_id and knowledge_id not in affected_ids:
+                affected_ids.append(knowledge_id)
+            resource_types = (
                 ["lecture", "practice_guide", "graded_quiz"]
-                if proposal.hypothesis_type == "mastery_up"
-                else [resource.resource_type]
-            ),
-            "mode": "next_node" if proposal.hypothesis_type == "mastery_up" else "remedial",
-        }
-        proposal.status = "resource_pending"
+                if is_next_node
+                else affected_resource_types(
+                    package_task=package_task,
+                    affected_knowledge_ids=affected_ids,
+                    fallback_resource_type=resource.resource_type,
+                )
+            )
+            recommendation = {
+                "proposal_id": proposal.public_id,
+                "path_id": resulting_path.public_id,
+                "path_node_id": current_node_id,
+                "resource_types": resource_types,
+                "mode": "next_node" if is_next_node else "remedial",
+            }
+        proposal.status = "resource_pending" if recommendation else "evidence_recorded"
         proposal.resulting_profile_id = resulting_profile.id
         proposal.resulting_learning_path_id = resulting_path.id
-        proposal.resource_recommendation_json = recommendation
+        proposal.resource_recommendation_json = recommendation or {}
     else:
         current_node_id = (path.path_json or {}).get("current_node_id")
         recommendation = None
-        proposal.status = "rejected"
+        node_gate = preliminary_gate
+        proposal.status = "evidence_recorded" if is_correct else "rejected"
     result = {
         "adjustment_proposal_id": proposal.public_id,
         "hypothesis_type": proposal.hypothesis_type,
@@ -987,13 +1035,22 @@ def answer_adjustment_assessment(
         "completed_node_id": completed_node_id,
         "current_node_id": current_node_id,
         "resource_recommendation": recommendation,
+        "node_gate": node_gate,
         "profile_change_summary": profile_change_summary,
         "decision_reason": {
             "confirmed_mastery": "已确认掌握，学习路线已推进",
             "confirmed_support_need": "已确认需要补强，当前学习节点保持不变",
+            "evidence_recorded": "本次正式证据已记录，尚未达到画像或节点更新门槛",
             "hypothesis_rejected": "验证结果与近期反馈不一致，画像和路线保持不变",
         }[decision],
+        "submitted_option": selected,
     }
+    if is_correct:
+        result.update({
+            "correct_option": correct,
+            "correct_answer": (question.options_json or [])[correct],
+            "explanation": str((question.answer_key_json or {}).get("explanation") or ""),
+        })
     assessment.answer_record_id = record.id
     assessment.status = "scored"
     assessment.score = score

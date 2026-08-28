@@ -99,6 +99,7 @@
           <h4>建议巩固的知识点</h4>
           <div class="summary-weak-tags"><span v-for="k in weakPoints" :key="k" class="tag">{{ k }}</span></div>
         </div>
+        <div v-if="completionMessage" class="quiz-evidence-note">{{ completionMessage }}</div>
         <div class="summary-actions">
           <button type="button" class="btn ghost" @click="restart">重新作答</button>
         </div>
@@ -109,7 +110,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { completeQuizAttempt, createQuizAttempt, saveQuizAnswer, type GradedQuizContent, type QuizLevel, type QuizQuestion } from '@/api/resources'
+import { completeQuizAttempt, createQuizAttempt, saveQuizAnswer, type GradedQuizContent, type QuizLevel, type QuizQuestion, type ResourceQuizAttempt } from '@/api/resources'
 import { loadGradedQuizDraft, saveGradedQuizDraft } from '@/utils/gradedQuizDraft'
 
 interface AnswerState {
@@ -138,6 +139,7 @@ const currentIndex = ref(0)
 const showSummary = ref(false)
 const serverAttemptId = ref('')
 const syncState = ref<'ready' | 'saving' | 'pending'>('ready')
+const completionResult = ref<ResourceQuizAttempt | null>(null)
 const answers = reactive<Record<string, AnswerState>>({})
 for (const q of props.content.questions) {
   answers[q.question_id] = { selected: [], text: '', checked: false, correct: null, selfMarked: false }
@@ -314,8 +316,18 @@ async function markSelfChecked(q: QuizQuestion) {
 watch(showSummary, async value => {
   if (!value || !serverAttemptId.value || !hasDraftScope.value) return
   try {
-    await completeQuizAttempt(props.resourceId || '', serverAttemptId.value, props.learnerId)
+    completionResult.value = await completeQuizAttempt(props.resourceId || '', serverAttemptId.value, props.learnerId)
   } catch { syncState.value = 'pending' }
+})
+
+const completionMessage = computed(() => {
+  const result = completionResult.value
+  if (!result) return ''
+  const gate = result.node_gate
+  if (gate?.can_advance) return '当前节点的核心知识、错题和分阶测验门槛均已满足，可申请进入下一阶段。'
+  if (gate?.blocking_mistake_count) return `测验证据已记录，仍有 ${gate.blocking_mistake_count} 道当前节点错题需要巩固。`
+  if (gate) return `测验证据已记录，核心知识已确认 ${gate.mastered_knowledge_count || 0}/${gate.core_knowledge_count || 0}。`
+  return result.evidence_result?.materialized_count ? '测验结果已记录为正式画像证据。' : ''
 })
 
 function optionClass(q: QuizQuestion, opt: string): string {
@@ -438,6 +450,7 @@ function restart(): void {
 .summary-level .sl-stat { color: var(--ink); font-size: 20px; font-weight: 700; }
 .summary-weak h4 { margin: 0 0 8px; color: var(--ink); font-size: 14px; }
 .summary-weak-tags { display: flex; flex-wrap: wrap; gap: 7px; }
+.quiz-evidence-note { border: 1px solid var(--line); border-radius: 8px; background: var(--soft); padding: 11px 13px; color: var(--body); font-size: 13px; line-height: 1.6; }
 .summary-actions { display: flex; justify-content: flex-end; }
 @media (max-width: 560px) { .summary-levels { grid-template-columns: 1fr; } }
 </style>

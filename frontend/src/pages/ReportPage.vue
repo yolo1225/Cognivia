@@ -73,14 +73,20 @@
           <div class="path-head-meta"><span class="path-progress-text">已完成 {{ progress?.path_progress?.completed ?? 0 }} / {{ progress?.path_progress?.total ?? pathNodes.length }} 个节点</span><span class="status" :class="report.feedback_summary?.learning_path_needs_refresh ? 'wait' : 'ok'">{{ report.feedback_summary?.learning_path_needs_refresh ? '待刷新' : '当前版本' }}</span></div>
         </div>
         <div v-if="report.learning_path?.revision_summary" class="path-revision-summary"><strong>路线已调整</strong><p>{{ report.learning_path.revision_summary.message }}，请先完成新的当前节点。</p></div>
+        <div v-if="report.node_gate && !report.node_gate.can_advance" class="node-gate-summary">
+          <strong>当前节点完成条件</strong>
+          <span>核心知识 {{ report.node_gate.mastered_knowledge_count || 0 }} / {{ report.node_gate.core_knowledge_count || 0 }}</span>
+          <span>{{ report.node_gate.quiz_completed ? '分阶测验已完成' : '分阶测验待完成' }}</span>
+          <span>阻断性错题 {{ report.node_gate.blocking_mistake_count }} 道</span>
+        </div>
         <div v-for="proposal in report.learning_adjustments || []" :key="proposal.proposal_id" class="adjustment-summary">
           <div><strong>{{ adjustmentTitle(proposal) }}</strong><p>{{ adjustmentDescription(proposal) }}</p></div>
           <div class="path-actions">
             <template v-if="proposal.status === 'resource_pending'">
-              <button class="btn primary" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'generate')">生成下一节点学习包</button>
+              <button class="btn primary" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'generate')">{{ adjustmentGenerateLabel(proposal) }}</button>
               <button class="btn" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'skip')">暂不生成</button>
             </template>
-            <button v-else-if="proposal.recovery_available" class="btn primary" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'generate')">重新生成下一节点学习包</button>
+            <button v-else-if="proposal.recovery_available" class="btn primary" :disabled="adjustmentSubmitting === proposal.proposal_id" @click="decideReportAdjustment(proposal.proposal_id, 'generate')">{{ adjustmentGenerateLabel(proposal, true) }}</button>
             <button v-else-if="proposal.generation_task?.task_id" class="btn" @click="router.push({ path: '/resources', query: { task_id: proposal.generation_task?.task_id, ...(learnerId ? { learner_id: learnerId } : {}) } })">{{ adjustmentTaskAction(proposal) }}</button>
           </div>
         </div>
@@ -294,9 +300,10 @@ const pendingDimensionText = computed(() => {
 })
 const nextActionText = computed(() => {
   const proposal = (report.value?.learning_adjustments || [])[0]
-  if (proposal?.status === 'resource_pending') return '确认生成下一节点学习包'
-  if (proposal?.recovery_available) return '重新生成下一节点学习包'
-  if (proposal?.generation_task?.status === 'failed') return '重新生成下一节点学习包'
+  const resourceLabel = proposal?.resource_recommendation.mode === 'remedial' ? '补救资源' : '下一节点学习包'
+  if (proposal?.status === 'resource_pending') return `确认生成${resourceLabel}`
+  if (proposal?.recovery_available) return `重新生成${resourceLabel}`
+  if (proposal?.generation_task?.status === 'failed') return `重新生成${resourceLabel}`
   if (proposal?.generation_task?.status && proposal.generation_task.status !== 'completed') return '等待学习包生成完成'
   return pathNodes.value.some(node => node.status === 'current') ? '继续当前节点学习' : '查看学习成果'
 })
@@ -345,25 +352,35 @@ function knowledgeChangeDetail(item: KnowledgeProgressItem) {
 }
 
 function adjustmentTitle(proposal: LearningAdjustmentSummary) {
-  if (proposal.recovery_available) return '下一节点学习包未完成'
-  if (proposal.status === 'resource_pending') return proposal.decision === 'confirmed_mastery' ? '掌握已验证，等待生成下一节点学习包' : '画像与路线已更新，等待生成资源'
-  if (proposal.generation_task?.status === 'failed') return '下一节点学习包生成失败'
-  if (proposal.generation_task?.status === 'completed') return '下一节点学习包已完成'
-  return '下一节点学习包正在生成'
+  const remedial = proposal.resource_recommendation.mode === 'remedial'
+  const label = remedial ? '当前节点补救资源' : '下一节点学习包'
+  if (proposal.recovery_available) return `${label}未完成`
+  if (proposal.status === 'resource_pending') return remedial ? '画像已更新，等待生成补救资源' : '掌握已验证，等待生成下一节点学习包'
+  if (proposal.generation_task?.status === 'failed') return `${label}生成失败`
+  if (proposal.generation_task?.status === 'completed') return `${label}已完成`
+  return `${label}正在生成`
 }
 
 function adjustmentDescription(proposal: LearningAdjustmentSummary) {
   const node = nodeTitle(proposal.resource_recommendation.path_node_id)
   const targetTypes = proposal.resource_recommendation.resource_types.map(type => ({ lecture: '讲义', practice_guide: '实操指南', graded_quiz: '分阶测试' } as Record<string, string>)[type] || type).join('、')
   if (proposal.recovery_available) return `此前任务没有产出完整资源，已保留原始记录。可重新为「${node}」生成 ${targetTypes}。`
-  if (proposal.status === 'resource_pending') return `已推进到「${node}」，确认后将生成 ${targetTypes} 并进入双模型审核。`
+  if (proposal.status === 'resource_pending') return proposal.resource_recommendation.mode === 'remedial'
+    ? `路线保持在「${node}」，确认后将局部生成 ${targetTypes} 并继承未受影响资源。`
+    : `已推进到「${node}」，确认后将生成 ${targetTypes} 并进入双模型审核。`
   if (proposal.generation_task?.status === 'failed') return generationFailureCopy(proposal.generation_task.failure_reason).description
   if (proposal.generation_task?.status === 'completed') return `已通过审核并产出 ${proposal.generation_task.published_resource_types.length} 类资源。`
   return `正在为「${node}」生成 ${targetTypes}。`
 }
 
 function adjustmentTaskAction(proposal: LearningAdjustmentSummary) {
-  return proposal.generation_task?.status === 'completed' ? '查看下一节点资源' : '查看生成进度'
+  if (proposal.generation_task?.status !== 'completed') return '查看生成进度'
+  return proposal.resource_recommendation.mode === 'remedial' ? '查看补救资源' : '查看下一节点资源'
+}
+
+function adjustmentGenerateLabel(proposal: LearningAdjustmentSummary, retry = false) {
+  const label = proposal.resource_recommendation.mode === 'remedial' ? '补救资源' : '下一节点学习包'
+  return `${retry ? '重新生成' : '生成'}${label}`
 }
 
 function profileChangeLabel(change: NonNullable<LearningReport['profile_changes']>[number]) {
@@ -622,6 +639,8 @@ onBeforeUnmount(() => {
 .path-revision-summary { margin-bottom: 14px; border: 1px solid #efd29f; border-radius: 8px; background: var(--amber2); padding: 11px 13px; }
 .path-revision-summary strong { color: var(--ink); font-size: 13px; }
 .path-revision-summary p { margin-top: 3px; color: var(--body); font-size: 12px; line-height: 1.5; }
+.node-gate-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 14px; margin-bottom: 14px; border-left: 3px solid var(--blue); background: var(--blue2); padding: 11px 13px; color: var(--body); font-size: 12px; }
+.node-gate-summary strong { color: var(--ink); font-size: 13px; }
 .adjustment-summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; border-left: 3px solid var(--green); background: var(--green2); padding: 11px 13px; }
 .adjustment-summary strong { color: var(--ink); font-size: 13px; }
 .adjustment-summary p { margin-top: 3px; color: var(--body); font-size: 12px; }

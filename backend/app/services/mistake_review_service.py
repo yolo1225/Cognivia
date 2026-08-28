@@ -20,8 +20,9 @@ from app.models import (
     PathNodeAssessment,
 )
 from app.services.knowledge_extraction_service import normalize_knowledge_name
-from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
+from app.services.question_bank_service import (
+    QuestionBankError,
+    select_mastery_question,
 )
 
 
@@ -342,33 +343,36 @@ def start_attempt(db: Session, *, learner: Learner, item_id: str) -> dict[str, A
                 },
                 "recommended_resource": serialize_item(db, item).get("recommended_resource"),
             }
-    attempted = set(
-        db.scalars(
-            select(MistakeReviewAttempt.question_id).where(MistakeReviewAttempt.mistake_item_id == item.id)
-        )
-    )
     original_question_id = (item.error_summary_json or {}).get("question_id")
-    questions = list(
-        db.scalars(
-            select(DiagnosticQuestion)
-            .where(
-                DiagnosticQuestion.domain_code == item.domain_code,
-                DiagnosticQuestion.knowledge_item_id == item.knowledge_item_id,
-                DiagnosticQuestion.question_type == "single_choice",
-                DiagnosticQuestion.status == "active",
-                DiagnosticQuestion.certification_status == "certified",
-                DiagnosticQuestion.certification_rule_version
-                == QUESTION_CERTIFICATION_RULE_VERSION,
-            )
-            .order_by(func.abs(DiagnosticQuestion.difficulty - item.difficulty), DiagnosticQuestion.id)
+    original_id = db.scalar(
+        select(DiagnosticQuestion.id).where(
+            DiagnosticQuestion.public_id == str(original_question_id)
         )
     )
-    question = next(
-        (q for q in questions if q.id not in attempted and q.public_id != original_question_id),
-        None,
-    )
-    if question is None:
+    knowledge = db.get(KnowledgeItem, item.knowledge_item_id)
+    if knowledge is None:
         raise ValueError("CONSOLIDATION_QUESTION_UNAVAILABLE")
+    package_task = None
+    if item.source_resource_id is not None:
+        source_resource = db.get(LearningResource, item.source_resource_id)
+        if source_resource is not None:
+            package_task = db.get(GenerationTask, source_resource.generation_task_id)
+    try:
+        question, _knowledge = select_mastery_question(
+            db,
+            learner_id=learner.id,
+            domain_code=item.domain_code,
+            knowledge_ids=[knowledge.public_id],
+            target_difficulty=int(item.difficulty or 1),
+            use="mistake_consolidation",
+            package_task=package_task,
+            preferred_knowledge_ids=[knowledge.public_id],
+            additional_excluded_question_ids=(
+                [original_id] if original_id is not None else []
+            ),
+        )
+    except QuestionBankError as exc:
+        raise ValueError(exc.code) from exc
     attempt = MistakeReviewAttempt(
         public_id=f"consolidation_{uuid4().hex[:12]}",
         mistake_item_id=item.id,

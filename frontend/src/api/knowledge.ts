@@ -30,6 +30,11 @@ export interface QuestionBankItem {
   knowledge_name: string
   related_knowledge_ids: string[]
   question_slot: number | null
+  question_bank_uses: Array<
+    'diagnosis' | 'graded_quiz' | 'mastery_validation' | 'mistake_consolidation'
+  >
+  reserve_role: 'consolidation' | 'mastery_transfer' | null
+  assessment_focus: string | null
   quiz_level: 'foundation' | 'improvement' | 'challenge'
   question_type: 'single_choice' | 'short_answer'
   stem: string
@@ -61,6 +66,18 @@ export interface QuestionBankResponse {
     total_items: number
     ready_items: number
     missing_knowledge_ids: string[]
+    missing_quiz_knowledge_ids: string[]
+    missing_mastery_reserve_knowledge_ids: string[]
+    counts_by_knowledge: Record<
+      string,
+      {
+        single_choice: number
+        short_answer: number
+        total: number
+        graded_quiz: number
+        mastery_reserve: number
+      }
+    >
   }
 }
 

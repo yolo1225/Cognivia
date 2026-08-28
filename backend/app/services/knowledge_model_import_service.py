@@ -13,7 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, object_session
 
 from app.core.config import settings
-from app.models import KnowledgeDocument, KnowledgeImportCandidate, KnowledgeImportRun
+from app.models import (
+    DiagnosticQuestion,
+    KnowledgeDocument,
+    KnowledgeImportCandidate,
+    KnowledgeImportRun,
+    KnowledgeItem,
+)
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.rag.candidate_chunker import CHUNKER_VERSION, chunk_knowledge_item
 from app.services.knowledge_import_batch_service import (
@@ -116,6 +122,12 @@ class GeneratedQuestion(BaseModel):
     diagnostic_dimension: Literal["概念理解", "机制与因果", "实操场景选择", "错误诊断与修复"]
     evidence_quotes: list[GeneratedEvidenceQuote] = Field(min_length=1, max_length=3)
     difficulty: int = Field(ge=1, le=5)
+
+
+def question_bank_uses_for_slot(question_slot: int) -> list[str]:
+    if question_slot in {4, 5}:
+        return ["mastery_validation", "mistake_consolidation"]
+    return ["diagnosis", "graded_quiz"]
 
 
 class QuestionOutput(BaseModel):
@@ -695,6 +707,7 @@ def _generate_question_records(
                 "evidence_capabilities": payload.get("evidence_capabilities") or [],
                 "source_chunks": source_chunks,
                 "required_question_slots": [slot],
+                "required_question_type": "single_choice",
                 "existing_question_ids": (existing_question_ids_by_knowledge or {}).get(
                     item.public_id, []
                 ),
@@ -736,12 +749,15 @@ def _generate_question_records(
                 "挑战题可综合1到3个给定 Chunk。每题必须返回 evidence_quotes，包含1到3个"
                 "{source_ref_id, quote}对象；quote 必须来自对应 source_ref_id 的 Chunk content，"
                 "且可在规范化空白后连续精确匹配，禁止跨 Chunk 拼接。单选题必须有四个同层次"
-                "且仅一个正确的选项，answer使用从0开始"
-                "的索引；简答题必须有2到4个可执行评分点。difficulty必须按题目实际认知操作标注1到5，"
+                "且仅一个正确的选项，answer使用从0开始的索引。每个槽位必须返回一道"
+                "single_choice，rubric必须返回空数组；不得返回简答题或空 questions 数组。"
+                "difficulty必须按题目实际认知操作标注1到5，"
                 "不得因教学层级直接抬高难度。已有题目 ID 仅用于去重。只有包含"
+                "题槽1至3用于诊断和分阶测验，题槽4至5专用于掌握验证和错题巩固；不同题槽必须使用"
+                "不同情境或认知操作，不能只替换措辞。"
                 "operation或troubleshooting证据能力时才能生成实操或排错题。"
-                "questions 数组的题槽集合必须与 required_question_slots 完全一致；证据不足以支撑提升或挑战题时"
-                "不得伪造综合题，应仅生成有证据支撑的基础题。"
+                "questions 数组的题槽集合必须与 required_question_slots 完全一致；证据不足以支撑提升或挑战题时，"
+                "降低认知复杂度并基于当前 Chunk 生成不同情境的可判分单选题，不得伪造外部事实或省略题目。"
                 "若 certification_failed_fields 非空，必须只针对这些失败字段修正，同时保持题目仍由"
                 "当前 source_chunks 和精确引文支持。"
             ),
@@ -763,6 +779,8 @@ def _generate_question_records(
             continue
         source_chunks = [dict(value) for value in record["source_chunks"]]
         for question in result.get("questions") or []:
+            if question.get("question_type") != record["required_question_type"]:
+                continue
             output.append({**question, **{
                 "source_chunks": source_chunks,
                 "related_knowledge_candidate_ids": [
@@ -854,6 +872,7 @@ def _persist_questions(
             payload_json={
                 "knowledge_candidate_id": knowledge_id,
                 "question_slot": question_slot,
+                "question_bank_uses": question_bank_uses_for_slot(question_slot),
                 "quiz_level": record.get("quiz_level"),
                 "question_type": question_type,
                 "stem": str(record.get("stem") or "").strip(),
@@ -931,26 +950,45 @@ def generate_model_questions(
         knowledge,
         key=lambda item: (-degree[item.public_id], item.public_id),
     )
-    target_total = max(60, len(knowledge))
-    # Every published knowledge item receives one primary-attribution question.
-    # Extra density goes to graph-central items, capped at four before any
-    # fallback expansion; no knowledge point is forced through six fixed slots.
-    target_slots: dict[str, set[int]] = {item.public_id: {1} for item in ordered}
-    remaining = target_total - len(knowledge)
-    allocation_index = 0
-    while remaining > 0 and ordered:
-        item = ordered[allocation_index % len(ordered)]
-        slots = target_slots[item.public_id]
-        density_cap = min(4, 1 + max(1, degree[item.public_id]))
-        next_slot = len(slots) + 1
-        if len(slots) < density_cap:
-            slots.add(next_slot)
-            remaining -= 1
-        allocation_index += 1
-        if allocation_index > len(ordered) * 8:
-            break
-    existing_slots: dict[str, set[int]] = {}
-    existing_ids: dict[str, list[str]] = {}
+    # Slots 1-3 are the formal quiz pool; slots 4-5 are an isolated validation
+    # reserve. This density is a publish-readiness invariant for every item.
+    target_slots: dict[str, set[int]] = {
+        item.public_id: {1, 2, 3, 4, 5} for item in ordered
+    }
+    existing_slots: dict[str, set[int]] = defaultdict(set)
+    existing_ids: dict[str, list[str]] = defaultdict(list)
+    target_id_by_candidate = {
+        str((item.payload_json or {}).get("target_public_id") or ""): item.public_id
+        for item in knowledge
+    }
+    published_rows = list(
+        db.execute(
+            select(DiagnosticQuestion, KnowledgeItem.public_id)
+            .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
+            .where(
+                DiagnosticQuestion.domain_code == document.domain_code,
+                DiagnosticQuestion.status == "active",
+                DiagnosticQuestion.certification_status == "certified",
+                KnowledgeItem.public_id.in_(target_id_by_candidate),
+            )
+            .order_by(DiagnosticQuestion.id)
+        )
+    )
+    for question, public_knowledge_id in published_rows:
+        candidate_id = target_id_by_candidate.get(public_knowledge_id)
+        if not candidate_id:
+            continue
+        answer_key = question.answer_key_json or {}
+        uses = set(answer_key.get("question_bank_uses") or ["diagnosis", "graded_quiz"])
+        allowed_slots = [4, 5] if "mastery_validation" in uses else [1, 2, 3]
+        declared_slot = int(answer_key.get("question_slot") or 0)
+        slot = declared_slot if declared_slot in allowed_slots else next(
+            (value for value in allowed_slots if value not in existing_slots[candidate_id]),
+            0,
+        )
+        if slot:
+            existing_slots[candidate_id].add(slot)
+        existing_ids[candidate_id].append(question.public_id)
     for item in generated:
         payload = item.payload_json or {}
         knowledge_id = str(payload.get("knowledge_candidate_id") or "")

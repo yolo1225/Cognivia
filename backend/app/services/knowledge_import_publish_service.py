@@ -272,7 +272,7 @@ def activate_import_candidate(
                 "explanation": payload.get("explanation", ""),
                 "question_slot": payload.get("question_slot"),
                 "quiz_level": payload.get("quiz_level"),
-                "question_bank_purpose": "diagnosis_mastery_and_resource_quiz",
+                "question_bank_uses": list(payload.get("question_bank_uses") or []),
                 "source_ref_ids": source_ref_ids,
                 "source_locators": {
                     source_ref_id: exact_sources[source_ref_id]["source_locator"]

@@ -250,7 +250,11 @@ def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
 def seed_diagnostic_questions(
     db: Session, knowledge_items: dict[str, KnowledgeItem]
 ) -> list[DiagnosticQuestion]:
-    payloads = [*load_json("diagnostic_questions.json"), *HIGH_DIFFICULTY_SEED_QUESTIONS]
+    payloads = [
+        *load_json("diagnostic_questions.json"),
+        *load_json("question_bank_expansion.json"),
+        *HIGH_DIFFICULTY_SEED_QUESTIONS,
+    ]
     public_id_by_db_id = {item.id: item.public_id for item in knowledge_items.values()}
     related_ids_by_knowledge = {public_id: set() for public_id in knowledge_items}
     for relation in db.scalars(select(KnowledgeRelation)):
@@ -321,7 +325,7 @@ def seed_diagnostic_questions(
         ))
         answer_key.setdefault("quiz_level", quiz_level)
         answer_key.setdefault(
-            "question_bank_purpose", "diagnosis_mastery_and_resource_quiz"
+            "question_bank_uses", ["diagnosis", "graded_quiz"]
         )
         if payload["question_type"] == "short_answer":
             rubric = [str(value).strip() for value in answer_key.get("rubric") or []]
@@ -347,7 +351,9 @@ def seed_diagnostic_questions(
                 "certification_report_json": {
                     "rule_version": QUESTION_CERTIFICATION_RULE_VERSION,
                     "deterministic_passed": True,
-                    "certification_method": "curated_seed_exact_evidence",
+                    "certification_method": payload.get(
+                        "certification_method", "curated_seed_exact_evidence"
+                    ),
                     "failed_fields": [],
                     "source_content_hash": aggregate_source_hash,
                 },

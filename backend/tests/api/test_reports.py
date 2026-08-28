@@ -118,6 +118,8 @@ def test_report_persists_path_normalization_without_refresh_flag() -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
+    assert response.json()["data"]["node_gate"]["can_advance"] is False
+    assert response.json()["data"]["node_gate"]["reason"] == "GRADED_QUIZ_REQUIRED"
     with testing_session() as db:
         path = db.scalar(
             select(LearningPath).where(

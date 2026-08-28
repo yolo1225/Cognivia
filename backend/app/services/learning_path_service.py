@@ -5,7 +5,6 @@ import math
 from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,22 +12,14 @@ from sqlalchemy.orm import Session
 from app.models import (
     AnswerRecord,
     DiagnosticQuestion,
-    Feedback,
     GenerationTask,
     KnowledgeItem,
     KnowledgeRelation,
     Learner,
     LearningPath,
-    LearningResource,
     LearnerProfile,
-    PathNodeAssessment,
 )
 from app.services.knowledge_extraction_service import normalize_knowledge_name
-from app.services.feedback_service import FeedbackSourceCompatibilityError, create_feedback_task
-from app.services.mistake_review_service import sync_existing_mistakes
-from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
-)
 
 DEFAULT_COMPLETION_CONDITION = {"type": "scored_quiz_score", "threshold": 0.8}
 
@@ -677,12 +668,45 @@ def _verify_node_evidence(
         scores and sum(scores) / len(scores) >= focus_threshold
         for scores in focus_scores.values()
     )
-    verified = len(records) >= minimum_count and average_score >= threshold and focus_passed
+    legacy_score_verified = (
+        len(records) >= minimum_count and average_score >= threshold and focus_passed
+    )
+    profile = db.get(LearnerProfile, path.profile_id) if path.profile_id else None
+    package_task = db.scalar(
+        select(GenerationTask)
+        .where(
+            GenerationTask.learner_id == learner.id,
+            GenerationTask.domain_code == path.domain_code,
+            GenerationTask.path_node_id == node_id,
+            GenerationTask.is_current_package.is_(True),
+        )
+        .order_by(GenerationTask.id.desc())
+    )
+    node_gate = None
+    if profile is not None:
+        from app.services.node_mastery_service import build_node_gate
+
+        node_gate = build_node_gate(
+            db,
+            path=path,
+            profile=profile,
+            package_task=package_task,
+        )
+    strict_gate_available = profile is not None and package_task is not None
+    verified = (
+        bool(node_gate and node_gate["can_advance"])
+        if strict_gate_available
+        else legacy_score_verified
+    )
     return {
         "path_id": path.public_id,
         "node_id": node_id,
         "verified": verified,
-        "reason": "threshold_met" if verified else "unit_threshold_not_met",
+        "reason": (
+            "node_gate_met" if strict_gate_available else "legacy_threshold_met"
+            if verified
+            else str((node_gate or {}).get("reason") or "unit_threshold_not_met")
+        ),
         "threshold": threshold,
         "focus_threshold": focus_threshold,
         "question_count": len(records),
@@ -692,7 +716,19 @@ def _verify_node_evidence(
             for key, values in focus_scores.items()
         },
         "best_score": max((float(record.score) for record in records), default=None),
-        "evidence_ids": [f"answer_record:{record.id}" for record in records] if verified else [],
+        "evidence_ids": (
+            [
+                evidence_id
+                for item in (node_gate or {}).get("knowledge_progress") or []
+                for evidence_id in item.get("evidence_ids") or []
+            ]
+            if verified and strict_gate_available
+            else [f"answer_record:{record.id}" for record in records]
+            if verified
+            else []
+        ),
+        "legacy_score_verified": legacy_score_verified,
+        "node_gate": node_gate,
         "node": node,
     }
 
@@ -790,22 +826,6 @@ def _advance_path_node(
     path.path_json = payload
 
 
-def _serialize_assessment(assessment: PathNodeAssessment, question: DiagnosticQuestion) -> dict[str, Any]:
-    return {
-        "assessment_id": assessment.public_id,
-        "path_id": None,
-        "node_id": assessment.path_node_id,
-        "question_id": question.public_id,
-        "question_type": question.question_type,
-        "difficulty": question.difficulty,
-        "stem": question.stem,
-        "options": question.options_json or [],
-        "status": assessment.status,
-        "score": assessment.score,
-        "passed": assessment.passed,
-    }
-
-
 def _question_unit_coverage(
     question: DiagnosticQuestion,
     *,
@@ -818,296 +838,3 @@ def _question_unit_coverage(
     if primary_knowledge_id:
         declared.add(primary_knowledge_id)
     return declared & unit_knowledge_ids
-
-
-def start_path_node_assessment(
-    db: Session, *, path_id: str, node_id: str, learner_public_id: str
-) -> dict[str, Any]:
-    path, learner = _path_and_learner(db, path_id)
-    if learner.public_id != learner_public_id:
-        raise ValueError("learning_path_not_found")
-    payload = normalize_path_for_domain(
-        db, domain_code=path.domain_code, payload=path.path_json or {}, previous_payload=path.path_json or {}
-    )
-    path.path_json = payload
-    node = (payload.get("node_states") or {}).get(node_id)
-    if not isinstance(node, dict):
-        raise ValueError("learning_path_node_not_found")
-    if node.get("status") != "current" or payload.get("current_node_id") != node_id:
-        raise ValueError("learning_path_node_locked")
-    existing = db.scalar(
-        select(PathNodeAssessment)
-        .where(
-            PathNodeAssessment.learning_path_id == path.id,
-            PathNodeAssessment.path_node_id == node_id,
-            PathNodeAssessment.learner_id == learner.id,
-            PathNodeAssessment.status == "pending",
-        )
-        .order_by(PathNodeAssessment.id.desc())
-    )
-    if existing is not None:
-        question = db.get(DiagnosticQuestion, existing.question_id)
-        if question is not None:
-            result = _serialize_assessment(existing, question)
-            result["path_id"] = path.public_id
-            return result
-    knowledge_ids = [str(value) for value in node.get("knowledge_ids") or []]
-    knowledge_rows = list(db.scalars(
-        select(KnowledgeItem).where(
-            KnowledgeItem.public_id.in_(knowledge_ids),
-            KnowledgeItem.domain_code == path.domain_code,
-        )
-    ))
-    if not knowledge_rows:
-        raise ValueError("learning_path_assessment_unavailable")
-    questions = list(db.scalars(
-        select(DiagnosticQuestion)
-        .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
-        .where(
-            DiagnosticQuestion.domain_code == path.domain_code,
-            KnowledgeItem.domain_code == path.domain_code,
-            DiagnosticQuestion.question_type == "single_choice",
-            DiagnosticQuestion.status == "active",
-            DiagnosticQuestion.certification_status == "certified",
-            DiagnosticQuestion.certification_rule_version
-            == QUESTION_CERTIFICATION_RULE_VERSION,
-        )
-        .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.id)
-    ))
-    if not questions:
-        raise ValueError("learning_path_assessment_unavailable")
-    attempted = set(db.scalars(select(PathNodeAssessment.question_id).where(
-        PathNodeAssessment.learning_path_id == path.id,
-        PathNodeAssessment.path_node_id == node_id,
-        PathNodeAssessment.learner_id == learner.id,
-    )))
-    public_id_by_item_id = {item.id: item.public_id for item in knowledge_rows}
-    unit_ids = set(knowledge_ids)
-    eligible = [
-        item
-        for item in questions
-        if _question_unit_coverage(
-            item,
-            primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
-            unit_knowledge_ids=unit_ids,
-        )
-    ]
-    attempted_questions = [item for item in eligible if item.id in attempted]
-    covered_before = {
-        knowledge_id
-        for item in attempted_questions
-        for knowledge_id in _question_unit_coverage(
-            item,
-            primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
-            unit_knowledge_ids=unit_ids,
-        )
-    }
-    focus_ids = set(node.get("focus_knowledge_ids") or []) & unit_ids
-    unattempted = [item for item in eligible if item.id not in attempted]
-    unattempted.sort(
-        key=lambda item: (
-            not bool(
-                _question_unit_coverage(
-                    item,
-                    primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
-                    unit_knowledge_ids=unit_ids,
-                )
-                & (focus_ids - covered_before)
-            ),
-            not bool(
-                _question_unit_coverage(
-                    item,
-                    primary_knowledge_id=public_id_by_item_id.get(item.knowledge_item_id),
-                    unit_knowledge_ids=unit_ids,
-                )
-                - covered_before
-            ),
-            item.difficulty,
-            item.id,
-        )
-    )
-    question = unattempted[0] if unattempted else None
-    if question is None:
-        raise ValueError("learning_path_assessment_unavailable")
-    assessment = PathNodeAssessment(
-        public_id=f"pathval_{uuid4().hex[:12]}", learning_path_id=path.id,
-        path_node_id=node_id, learner_id=learner.id, question_id=question.id,
-        status="pending", result_json={},
-    )
-    db.add(assessment)
-    db.commit()
-    result = _serialize_assessment(assessment, question)
-    result["path_id"] = path.public_id
-    return result
-
-
-def _current_node_resource(db: Session, *, path: LearningPath, node_id: str) -> LearningResource | None:
-    return db.scalar(
-        select(LearningResource)
-        .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
-        .where(
-            GenerationTask.learning_path_id == path.id,
-            GenerationTask.path_node_id == node_id,
-            GenerationTask.status == "completed",
-            LearningResource.is_current.is_(True),
-            LearningResource.review_status == "passed",
-        )
-        .order_by(LearningResource.id.desc())
-    )
-
-
-def _maybe_create_remedial_task(
-    db: Session, *, path: LearningPath, learner: Learner, node_id: str
-) -> GenerationTask | None:
-    assessments = list(db.scalars(
-        select(PathNodeAssessment)
-        .where(
-            PathNodeAssessment.learning_path_id == path.id,
-            PathNodeAssessment.path_node_id == node_id,
-            PathNodeAssessment.learner_id == learner.id,
-            PathNodeAssessment.status == "scored",
-            PathNodeAssessment.passed.is_(False),
-        )
-        .order_by(PathNodeAssessment.id.desc()).limit(2)
-    ))
-    if len(assessments) < 2:
-        return None
-    resource = _current_node_resource(db, path=path, node_id=node_id)
-    profile = db.get(LearnerProfile, path.profile_id) if path.profile_id else None
-    if resource is None or profile is None:
-        return None
-    evidence = []
-    for item in assessments:
-        if item.answer_record_id is None:
-            continue
-        question = db.get(DiagnosticQuestion, item.question_id)
-        knowledge = db.get(KnowledgeItem, question.knowledge_item_id) if question else None
-        evidence.append({
-            "evidence_id": f"answer_record:{item.answer_record_id}",
-            "evidence_type": "scored_quiz",
-            "knowledge_id": knowledge.public_id if knowledge else None,
-            "source_ref_id": question.public_id if question else None,
-            "confidence": 0.9,
-            "confirmed": True,
-        })
-    feedback = Feedback(
-        resource_id=resource.id, learner_id=learner.id, feedback_type="path_node_assessment",
-        feedback_summary_json={"node_id": node_id, "assessment_count": len(evidence)},
-        triggered_action="explain", comment="节点验证未达到通过阈值", feedback_intent="too_hard",
-        recommended_action="explain", profile_update_required=False,
-        profile_change_evidence_json=evidence, decision_confidence=0.9,
-        decision_reason="连续两次节点验证未通过，进入统一画像分析与补救资源流程",
-    )
-    db.add(feedback)
-    db.flush()
-    try:
-        task = create_feedback_task(
-            db, learner=learner, profile=profile, resource=resource, feedback=feedback,
-            resource_types=["lecture", "practice_guide", "graded_quiz"],
-        )
-    except FeedbackSourceCompatibilityError:
-        return None
-    task.learning_path_id = path.id
-    task.path_node_id = node_id
-    return task
-
-
-def answer_path_node_assessment(
-    db: Session, *, path_id: str, node_id: str, assessment_id: str,
-    learner_public_id: str, answer: Any,
-) -> tuple[dict[str, Any], GenerationTask | None]:
-    path, learner = _path_and_learner(db, path_id)
-    if learner.public_id != learner_public_id:
-        raise ValueError("learning_path_not_found")
-    assessment = db.scalar(select(PathNodeAssessment).where(
-        PathNodeAssessment.public_id == assessment_id
-    ).with_for_update())
-    if assessment is None or assessment.learning_path_id != path.id or assessment.path_node_id != node_id or assessment.learner_id != learner.id:
-        raise ValueError("learning_path_assessment_not_found")
-    if assessment.status == "scored":
-        return dict(assessment.result_json or {}), None
-    payload = normalize_path_for_domain(
-        db, domain_code=path.domain_code, payload=path.path_json or {}, previous_payload=path.path_json or {}
-    )
-    path.path_json = payload
-    node = (payload.get("node_states") or {}).get(node_id)
-    if not isinstance(node, dict) or node.get("status") != "current":
-        raise ValueError("path_node_changed")
-    question = db.get(DiagnosticQuestion, assessment.question_id)
-    if question is None:
-        raise ValueError("learning_path_assessment_unavailable")
-    try:
-        selected = int(answer)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("invalid_single_choice_answer") from exc
-    if selected < 0 or selected >= len(question.options_json or []):
-        raise ValueError("invalid_single_choice_answer")
-    correct = int((question.answer_key_json or {}).get("correct_option", -1))
-    score = 1.0 if selected == correct else 0.0
-    threshold = float((node.get("completion_condition") or {}).get("threshold") or 0.8)
-    passed = score >= threshold
-    record = AnswerRecord(
-        learner_id=learner.id, question_id=question.id, knowledge_item_id=question.knowledge_item_id,
-        session_id=assessment.public_id, answer_text=str(selected), score=score, is_correct=passed,
-        scoring_status="scored", scoring_method="deterministic", confidence=0.9,
-        answer_summary_json={
-            "assessment_id": assessment.public_id, "evidence_type": "path_node_validation",
-            "contract_evidence_type": "scored_quiz", "path_id": path.public_id,
-            "path_node_id": node_id, "confirmed": True, "confidence": 0.9,
-            "consumed_by_profile_id": None,
-        },
-    )
-    db.add(record)
-    db.flush()
-    evidence_id = f"answer_record:{record.id}"
-    verification = _verify_node_evidence(
-        db,
-        path=path,
-        learner=learner,
-        node_id=node_id,
-        node=node,
-        evidence_ids=None,
-    )
-    unit_passed = bool(verification["verified"])
-    if unit_passed:
-        _advance_path_node(
-            db, path=path, node_id=node_id, evidence_ids=verification["evidence_ids"]
-        )
-    result = {
-        "assessment_id": assessment.public_id, "path_id": path.public_id, "node_id": node_id,
-        "score": score, "threshold": threshold, "passed": passed, "evidence_id": evidence_id,
-        "unit_verification": verification,
-        "completed_node_id": node_id if unit_passed else None,
-        "current_node_id": (path.path_json or {}).get("current_node_id"),
-        "path_completed": path.status == "completed", "profile_adjustment_task_id": None,
-    }
-    assessment.answer_record_id = record.id
-    assessment.status, assessment.score, assessment.passed = "scored", score, passed
-    from app.models import MistakeReviewItem
-    from app.services.mistake_evidence_service import evaluate_mistake_evidence
-    from app.services.mistake_review_service import _recommended_resource
-
-    mistake_item = db.scalar(
-        select(MistakeReviewItem)
-        .where(
-            MistakeReviewItem.learner_id == learner.id,
-            MistakeReviewItem.domain_code == path.domain_code,
-            MistakeReviewItem.knowledge_item_id == question.knowledge_item_id,
-        )
-        .order_by(MistakeReviewItem.id.desc())
-    )
-    if mistake_item is not None:
-        result["mistake_evidence_governance"] = evaluate_mistake_evidence(
-            db,
-            learner=learner,
-            item=mistake_item,
-            record=record,
-            resource=_recommended_resource(db, mistake_item),
-        )
-    task = None if passed else _maybe_create_remedial_task(db, path=path, learner=learner, node_id=node_id)
-    if task is not None:
-        result["profile_adjustment_task_id"] = task.public_id
-    assessment.result_json = dict(result)
-    sync_existing_mistakes(db, learner=learner, domain_code=path.domain_code)
-    db.commit()
-    return result, task

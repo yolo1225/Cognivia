@@ -8,7 +8,18 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import GenerationTask, KnowledgeItem, Learner, LearningResource, ResourceQuizAttempt
+from app.models import (
+    AnswerRecord,
+    DiagnosticQuestion,
+    GenerationTask,
+    KnowledgeItem,
+    Learner,
+    LearnerProfile,
+    LearningPath,
+    LearningResource,
+    MistakeReviewItem,
+    ResourceQuizAttempt,
+)
 from app.services.mistake_review_service import _upsert_item
 
 
@@ -169,13 +180,229 @@ def save_answer(
 def complete(
     db: Session, *, learner: Learner, resource: LearningResource, attempt_id: str
 ) -> dict[str, Any]:
-    _resource_owner(db, resource, learner.id)
+    task = _resource_owner(db, resource, learner.id)
     attempt = db.scalar(
         select(ResourceQuizAttempt).where(ResourceQuizAttempt.public_id == attempt_id).with_for_update()
     )
     if attempt is None or attempt.learner_id != learner.id or attempt.resource_id != resource.id:
         raise ValueError("QUIZ_ATTEMPT_NOT_FOUND")
+    questions = _questions(resource)
+    objective_questions = [
+        question for question in questions
+        if str(question.get("question_type") or "") in OBJECTIVE_TYPES
+    ]
+    answers = attempt.answers_json or {}
+    if any(
+        not isinstance(answers.get(str(question.get("question_id") or "")), dict)
+        or answers[str(question.get("question_id") or "" )].get("correct") is None
+        for question in objective_questions
+    ):
+        raise ValueError("QUIZ_ATTEMPT_INCOMPLETE")
     attempt.status = "completed"
     attempt.completed_at = attempt.completed_at or datetime.now(UTC)
+    evidence_records = _materialize_objective_evidence(
+        db,
+        learner=learner,
+        resource=resource,
+        task=task,
+        attempt=attempt,
+        questions=objective_questions,
+    )
+    governance_results = _evaluate_materialized_evidence(
+        db,
+        learner=learner,
+        resource=resource,
+        records=evidence_records,
+    )
+    node_gate = _node_gate_for_attempt(
+        db,
+        learner=learner,
+        task=task,
+    )
     db.commit()
-    return _serialize(attempt)
+    return {
+        **_serialize(attempt),
+        "evidence_result": {
+            "materialized_count": len(evidence_records),
+            "evidence_ids": [f"answer_record:{record.id}" for record in evidence_records],
+            "governance_results": governance_results,
+        },
+        "node_gate": node_gate,
+    }
+
+
+def _materialize_objective_evidence(
+    db: Session,
+    *,
+    learner: Learner,
+    resource: LearningResource,
+    task: GenerationTask,
+    attempt: ResourceQuizAttempt,
+    questions: list[dict[str, Any]],
+) -> list[AnswerRecord]:
+    evidence_records: list[AnswerRecord] = []
+    answers = attempt.answers_json or {}
+    for question_payload in questions:
+        public_ids = [
+            str(value)
+            for value in [
+                question_payload.get("question_id"),
+                *(question_payload.get("reference_question_ids") or []),
+            ]
+            if str(value)
+        ]
+        question = db.scalar(
+            select(DiagnosticQuestion)
+            .where(
+                DiagnosticQuestion.domain_code == task.domain_code,
+                DiagnosticQuestion.public_id.in_(public_ids),
+            )
+            .order_by(DiagnosticQuestion.id)
+        ) if public_ids else None
+        if question is None:
+            continue
+        existing = db.scalar(
+            select(AnswerRecord).where(
+                AnswerRecord.learner_id == learner.id,
+                AnswerRecord.session_id == attempt.public_id,
+                AnswerRecord.question_id == question.id,
+            )
+        )
+        if existing is None:
+            answer_payload = answers.get(str(question_payload.get("question_id") or "")) or {}
+            is_correct = answer_payload.get("correct") is True
+            answer_value = answer_payload.get("answer")
+            existing = AnswerRecord(
+                learner_id=learner.id,
+                question_id=question.id,
+                knowledge_item_id=question.knowledge_item_id,
+                session_id=attempt.public_id,
+                answer_text=str(answer_value if answer_value is not None else "")[:2000],
+                score=1.0 if is_correct else 0.0,
+                is_correct=is_correct,
+                scoring_status="scored",
+                scoring_method="deterministic",
+                confidence=1.0,
+                answer_summary_json={
+                    "evidence_type": "graded_quiz",
+                    "evidence_role": "validation",
+                    "contract_evidence_type": "scored_quiz",
+                    "confirmed": True,
+                    "confidence": 1.0,
+                    "resource_id": resource.public_id,
+                    "resource_version": resource.version,
+                    "generation_task_id": task.public_id,
+                    "path_node_id": task.path_node_id,
+                    "quiz_attempt_id": attempt.public_id,
+                    "consumed_by_profile_id": None,
+                },
+            )
+            db.add(existing)
+            db.flush()
+        evidence_records.append(existing)
+    return evidence_records
+
+
+def _evaluate_materialized_evidence(
+    db: Session,
+    *,
+    learner: Learner,
+    resource: LearningResource,
+    records: list[AnswerRecord],
+) -> list[dict[str, Any]]:
+    from app.services.mistake_evidence_service import evaluate_mistake_evidence
+
+    results: list[dict[str, Any]] = []
+    for record in records:
+        item = db.scalar(
+            select(MistakeReviewItem)
+            .where(
+                MistakeReviewItem.learner_id == learner.id,
+                MistakeReviewItem.knowledge_item_id == record.knowledge_item_id,
+            )
+            .order_by(MistakeReviewItem.id.desc())
+        )
+        if item is None:
+            continue
+        results.append(
+            evaluate_mistake_evidence(
+                db,
+                learner=learner,
+                item=item,
+                record=record,
+                resource=resource,
+            )
+        )
+    return results
+
+
+def _node_gate_for_attempt(
+    db: Session,
+    *,
+    learner: Learner,
+    task: GenerationTask,
+) -> dict[str, Any] | None:
+    path = db.scalar(
+        select(LearningPath)
+        .where(
+            LearningPath.learner_id == learner.id,
+            LearningPath.domain_code == task.domain_code,
+            LearningPath.status == "active",
+        )
+        .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
+    )
+    profile = db.get(LearnerProfile, path.profile_id) if path else None
+    if path is None or profile is None:
+        return None
+    from app.services.node_mastery_service import build_node_gate
+
+    return build_node_gate(
+        db,
+        path=path,
+        profile=profile,
+        package_task=task,
+    )
+
+
+def backfill_completed_attempt_evidence(db: Session) -> int:
+    materialized = 0
+    attempts = list(
+        db.scalars(
+            select(ResourceQuizAttempt)
+            .where(ResourceQuizAttempt.status == "completed")
+            .order_by(ResourceQuizAttempt.id)
+        )
+    )
+    for attempt in attempts:
+        learner = db.get(Learner, attempt.learner_id)
+        resource = db.get(LearningResource, attempt.resource_id)
+        if learner is None or resource is None:
+            continue
+        try:
+            task = _resource_owner(db, resource, learner.id)
+            objective_questions = [
+                question
+                for question in _questions(resource)
+                if str(question.get("question_type") or "") in OBJECTIVE_TYPES
+            ]
+        except ValueError:
+            continue
+        existing_question_ids = set(
+            db.scalars(
+                select(AnswerRecord.question_id).where(
+                    AnswerRecord.session_id == attempt.public_id
+                )
+            )
+        )
+        records = _materialize_objective_evidence(
+            db,
+            learner=learner,
+            resource=resource,
+            task=task,
+            attempt=attempt,
+            questions=objective_questions,
+        )
+        materialized += sum(
+            record.question_id not in existing_question_ids for record in records
+        )
+    return materialized

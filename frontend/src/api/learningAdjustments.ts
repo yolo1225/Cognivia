@@ -4,7 +4,7 @@ export interface LearningAdjustmentSummary {
   proposal_id: string
   hypothesis_type: 'mastery_up' | 'support_down'
   status: 'resource_pending' | 'resource_started'
-  decision: 'confirmed_mastery' | 'confirmed_support_need'
+  decision?: 'confirmed_mastery' | 'confirmed_support_need' | null
   resource_recommendation: {
     proposal_id: string
     path_id: string

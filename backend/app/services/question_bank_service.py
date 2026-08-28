@@ -18,13 +18,27 @@ from app.agents.contracts import (
     ResourceType,
     SourceRef,
 )
-from app.models import DiagnosticQuestion, KnowledgeItem
+from app.models import (
+    AnswerRecord,
+    DiagnosticQuestion,
+    GenerationTask,
+    KnowledgeItem,
+    LearningResource,
+    MistakeReviewAttempt,
+    MistakeReviewItem,
+    PathNodeAssessment,
+)
 from app.services.question_certification_service import (
     QUESTION_CERTIFICATION_RULE_VERSION,
 )
 
 
-MIN_PRIMARY_QUESTIONS_PER_KNOWLEDGE = 1
+QUIZ_QUESTION_USES = frozenset({"diagnosis", "graded_quiz"})
+MASTERY_QUESTION_USES = frozenset(
+    {"mastery_validation", "mistake_consolidation"}
+)
+MIN_QUIZ_QUESTIONS_PER_KNOWLEDGE = 3
+MIN_MASTERY_QUESTIONS_PER_KNOWLEDGE = 2
 MIN_DOMAIN_QUESTION_BANK_SIZE = 60
 MAX_SHORT_ANSWER_RUBRIC_POINTS = 8
 QuestionCandidate = TypeVar("QuestionCandidate")
@@ -35,6 +49,225 @@ class QuestionBankError(ValueError):
         super().__init__(code)
         self.code = code
         self.details = details or {}
+
+
+def question_bank_uses(question: DiagnosticQuestion) -> set[str]:
+    """Return explicit uses, keeping legacy questions out of mastery reserve."""
+
+    raw = (question.answer_key_json or {}).get("question_bank_uses")
+    if not isinstance(raw, list):
+        return set(QUIZ_QUESTION_USES)
+    return {str(value) for value in raw if str(value)}
+
+
+def question_supports_use(question: DiagnosticQuestion, use: str) -> bool:
+    return use in question_bank_uses(question)
+
+
+def question_assessment_fingerprint(question: DiagnosticQuestion) -> tuple[int, tuple[str, ...]]:
+    """Identify equivalent choice questions even when their option order differs."""
+
+    normalized_options = tuple(
+        sorted(
+            re.sub(r"\s+", " ", str(option)).strip().casefold()
+            for option in (question.options_json or [])
+        )
+    )
+    return question.knowledge_item_id, normalized_options
+
+
+def _resource_reference_question_ids(resource: LearningResource) -> set[str]:
+    payload = resource.structured_content_json or {}
+    return {
+        str(question_id)
+        for question in payload.get("questions") or []
+        if isinstance(question, dict)
+        for question_id in question.get("reference_question_ids") or []
+        if str(question_id)
+    }
+
+
+def learner_seen_question_ids(
+    db: Session,
+    *,
+    learner_id: int,
+    package_task: GenerationTask | None = None,
+) -> set[int]:
+    """Return every formal, pending, or reserved question already exposed."""
+
+    seen = set(
+        db.scalars(select(AnswerRecord.question_id).where(AnswerRecord.learner_id == learner_id))
+    )
+    seen.update(
+        db.scalars(
+            select(PathNodeAssessment.question_id).where(
+                PathNodeAssessment.learner_id == learner_id
+            )
+        )
+    )
+    seen.update(
+        db.scalars(
+            select(MistakeReviewAttempt.question_id)
+            .join(
+                MistakeReviewItem,
+                MistakeReviewAttempt.mistake_item_id == MistakeReviewItem.id,
+            )
+            .where(MistakeReviewItem.learner_id == learner_id)
+        )
+    )
+    if package_task is not None:
+        public_ids: set[str] = set()
+        resources = db.scalars(
+            select(LearningResource).where(
+                LearningResource.generation_task_id == package_task.id,
+                LearningResource.resource_type == "graded_quiz",
+            )
+        )
+        for resource in resources:
+            public_ids.update(_resource_reference_question_ids(resource))
+        if public_ids:
+            seen.update(
+                db.scalars(
+                    select(DiagnosticQuestion.id).where(
+                        DiagnosticQuestion.public_id.in_(public_ids)
+                    )
+                )
+            )
+    return {int(value) for value in seen}
+
+
+def select_mastery_question(
+    db: Session,
+    *,
+    learner_id: int,
+    domain_code: str,
+    knowledge_ids: Iterable[str],
+    target_difficulty: int,
+    use: str,
+    node_gate: dict[str, object] | None = None,
+    package_task: GenerationTask | None = None,
+    preferred_knowledge_ids: Iterable[str] = (),
+    additional_excluded_question_ids: Iterable[int] = (),
+) -> tuple[DiagnosticQuestion, KnowledgeItem]:
+    """Select the most useful reserve question, retrying a failed one when needed."""
+
+    if use not in MASTERY_QUESTION_USES:
+        raise QuestionBankError("MASTERY_QUESTION_USE_INVALID", details={"use": use})
+    ordered_ids = list(dict.fromkeys(str(value) for value in knowledge_ids if str(value)))
+    preferred = {str(value) for value in preferred_knowledge_ids if str(value)}
+    progress_by_id = {
+        str(row.get("knowledge_id")): row
+        for row in (node_gate or {}).get("knowledge_progress", [])
+        if isinstance(row, dict) and row.get("knowledge_id")
+    }
+    unmet_ids = [
+        value for value in ordered_ids
+        if not bool(progress_by_id.get(value, {}).get("mastered"))
+    ]
+    # A completed knowledge point never becomes a fallback merely because the
+    # actual gap has exhausted fresh reserve questions.
+    if unmet_ids:
+        ordered_ids = unmet_ids
+
+    def knowledge_rank(value: str) -> tuple[int, int, int, int, int]:
+        progress = progress_by_id.get(value, {})
+        return (
+            int(bool(progress.get("mastered"))),
+            int(progress.get("eligible_evidence_count") or 0),
+            int(bool(progress.get("has_target_difficulty_evidence"))),
+            int(bool(progress.get("has_corroborating_evidence"))),
+            0 if value in preferred else 1,
+        )
+
+    stable_order = {value: index for index, value in enumerate(ordered_ids)}
+    ordered_ids.sort(key=lambda value: (*knowledge_rank(value), stable_order[value]))
+    rows = list(
+        db.execute(
+            select(DiagnosticQuestion, KnowledgeItem)
+            .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
+            .where(
+                DiagnosticQuestion.domain_code == domain_code,
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.public_id.in_(ordered_ids),
+                DiagnosticQuestion.question_type == "single_choice",
+                DiagnosticQuestion.status == "active",
+                DiagnosticQuestion.certification_status == "certified",
+                DiagnosticQuestion.certification_rule_version
+                == QUESTION_CERTIFICATION_RULE_VERSION,
+            )
+        )
+    )
+    excluded = learner_seen_question_ids(
+        db, learner_id=learner_id, package_task=package_task
+    ) | {int(value) for value in additional_excluded_question_ids}
+    failed_question_ids = {
+        int(value)
+        for value in db.scalars(
+            select(AnswerRecord.question_id).where(
+                AnswerRecord.learner_id == learner_id,
+                AnswerRecord.scoring_status == "scored",
+                AnswerRecord.is_correct.is_(False),
+            )
+        )
+    }
+    retry_ids = {
+        question.id
+        for question, _knowledge in rows
+        if question.id in failed_question_ids and question_supports_use(question, use)
+    }
+    # A retry is explicitly permitted after a wrong answer. It is not a new
+    # unseen item, but a later correct submission can close that evidence gap.
+    excluded -= retry_ids
+    seen_assessment_fingerprints: set[tuple[int, tuple[str, ...]]] = set()
+    if excluded:
+        seen_assessment_fingerprints = {
+            question_assessment_fingerprint(question)
+            for question in db.scalars(
+                select(DiagnosticQuestion).where(DiagnosticQuestion.id.in_(excluded))
+            )
+        }
+    candidates = [
+        row
+        for row in rows
+        if question_supports_use(row[0], use)
+        and (
+            row[0].id in retry_ids
+            or (
+                row[0].id not in excluded
+                and question_assessment_fingerprint(row[0]) not in seen_assessment_fingerprints
+            )
+        )
+    ]
+    def reserve_role_rank(question: DiagnosticQuestion) -> int:
+        role = str((question.answer_key_json or {}).get("reserve_role") or "")
+        if use == "mastery_validation":
+            return 0 if role == "mastery_transfer" else 1
+        if target_difficulty >= 4:
+            return 0 if role == "mastery_transfer" else 1
+        return 0 if role == "consolidation" else 1
+
+    rank_by_knowledge = {value: index for index, value in enumerate(ordered_ids)}
+    candidates.sort(
+        key=lambda row: (
+            rank_by_knowledge[row[1].public_id],
+            0 if row[0].id in retry_ids else 1,
+            reserve_role_rank(row[0]),
+            int(row[0].difficulty < target_difficulty),
+            abs(int(row[0].difficulty) - target_difficulty),
+            row[0].id,
+        )
+    )
+    if not candidates:
+        raise QuestionBankError(
+            "MASTERY_QUESTION_BANK_INSUFFICIENT",
+            details={
+                "use": use,
+                "target_knowledge_ids": ordered_ids,
+                "target_difficulty": target_difficulty,
+                "excluded_question_count": len(excluded),
+            },
+        )
+    return candidates[0]
 
 
 def expected_quiz_question_count(knowledge_count: int) -> int:
@@ -223,7 +456,13 @@ def question_bank_coverage(
     items = list(db.scalars(item_query.order_by(KnowledgeItem.id)))
     item_by_id = {item.id: item for item in items}
     counts = {
-        item.public_id: {"single_choice": 0, "short_answer": 0, "total": 0}
+        item.public_id: {
+            "single_choice": 0,
+            "short_answer": 0,
+            "total": 0,
+            "graded_quiz": 0,
+            "mastery_reserve": 0,
+        }
         for item in items
     }
     distribution = {
@@ -235,7 +474,13 @@ def question_bank_coverage(
     for knowledge_id in requested:
         counts.setdefault(
             knowledge_id,
-            {"single_choice": 0, "short_answer": 0, "total": 0},
+            {
+                "single_choice": 0,
+                "short_answer": 0,
+                "total": 0,
+                "graded_quiz": 0,
+                "mastery_reserve": 0,
+            },
         )
     if item_by_id:
         questions = db.scalars(
@@ -254,20 +499,36 @@ def question_bank_coverage(
             knowledge_id = item_by_id[question.knowledge_item_id].public_id
             counts[knowledge_id][question.question_type] += 1
             counts[knowledge_id]["total"] += 1
+            uses = question_bank_uses(question)
+            if question.question_type == QuestionType.SINGLE_CHOICE.value:
+                if "graded_quiz" in uses:
+                    counts[knowledge_id]["graded_quiz"] += 1
+                if MASTERY_QUESTION_USES & uses:
+                    counts[knowledge_id]["mastery_reserve"] += 1
             distribution["question_types"][question.question_type] += 1
             distribution["quiz_levels"][str((question.answer_key_json or {}).get("quiz_level"))] += 1
             distribution["difficulty_levels"][str(question.difficulty)] += 1
             distribution["eligible_total"] += 1
-    ready_ids = [
+    quiz_ready_ids = [
         knowledge_id
         for knowledge_id, values in counts.items()
-        if values["total"] >= MIN_PRIMARY_QUESTIONS_PER_KNOWLEDGE
+        if values["graded_quiz"] >= MIN_QUIZ_QUESTIONS_PER_KNOWLEDGE
     ]
+    mastery_ready_ids = [
+        knowledge_id
+        for knowledge_id, values in counts.items()
+        if values["mastery_reserve"] >= MIN_MASTERY_QUESTIONS_PER_KNOWLEDGE
+    ]
+    ready_ids = sorted(set(quiz_ready_ids) & set(mastery_ready_ids))
     return {
         "total_items": len(counts),
         "ready_items": len(ready_ids),
         "ready_knowledge_ids": ready_ids,
         "missing_knowledge_ids": sorted(set(counts) - set(ready_ids)),
+        "missing_quiz_knowledge_ids": sorted(set(counts) - set(quiz_ready_ids)),
+        "missing_mastery_reserve_knowledge_ids": sorted(
+            set(counts) - set(mastery_ready_ids)
+        ),
         "counts_by_knowledge": counts,
         "distribution": {
             "question_types": dict(distribution["question_types"]),
@@ -276,7 +537,9 @@ def question_bank_coverage(
             "eligible_total": distribution["eligible_total"],
         },
         "requirements": {
-            "primary_total": MIN_PRIMARY_QUESTIONS_PER_KNOWLEDGE,
+            "primary_total": MIN_QUIZ_QUESTIONS_PER_KNOWLEDGE,
+            "graded_quiz_per_knowledge": MIN_QUIZ_QUESTIONS_PER_KNOWLEDGE,
+            "mastery_reserve_per_knowledge": MIN_MASTERY_QUESTIONS_PER_KNOWLEDGE,
             "domain_total": MIN_DOMAIN_QUESTION_BANK_SIZE,
             "levels": [level.value for level in QuizLevel],
             "question_types": [
@@ -322,6 +585,7 @@ def graded_quiz_preflight(
     eligible = [
         row for row in rows
         if is_question_bank_eligible(row[0])
+        and question_supports_use(row[0], "graded_quiz")
         and (
             row[1] in target_ids
             or bool(set(row[0].related_knowledge_ids_json or []) & set(target_ids))
@@ -342,6 +606,10 @@ def graded_quiz_preflight(
         require_complete=False,
     )
     primary_ids = {row[1] for row in eligible if row[1] in target_ids}
+    coverage = question_bank_coverage(
+        db, domain_code=domain_code, knowledge_ids=target_ids
+    )
+    missing_reserve = list(coverage["missing_mastery_reserve_knowledge_ids"])
     selected_difficulties = [row[0].difficulty for row in selected]
     missing_targets = sorted(set(target_ids) - primary_ids)
     required = expected_quiz_question_count(len(target_ids))
@@ -349,13 +617,19 @@ def graded_quiz_preflight(
         abs(row[0].difficulty - target_difficulty) <= 1 for row in eligible
     )
     return {
-        "ready": len(selected) >= 3,
+        "ready": (
+            len(selected) >= 3
+            and not missing_targets
+            and not missing_reserve
+        ),
         "available_question_count": len(selected),
         "minimum_question_count": 3,
         "expected_question_count": required,
         "target_knowledge_ids": target_ids,
         "focus_knowledge_ids": focus_ids,
         "missing_primary_knowledge_ids": missing_targets,
+        "missing_mastery_reserve_knowledge_ids": missing_reserve,
+        "counts_by_knowledge": coverage["counts_by_knowledge"],
         "target_difficulty": target_difficulty,
         "matching_target_difficulty_count": matching_target_difficulty,
         "selected_question_ids": [row[0].public_id for row in selected],
@@ -364,6 +638,10 @@ def graded_quiz_preflight(
         "warning": (
             "当前学习单元题库密度不足"
             if len(selected) < 3
+            else "当前学习单元缺少独立掌握验证预留题"
+            if missing_reserve
+            else "当前学习单元存在未被分阶测验主问题覆盖的知识点"
+            if missing_targets
             else "题量低于期望值，已按正式匹配题生成较短测验"
             if len(selected) < required
             else None
@@ -376,6 +654,8 @@ def _valid_reference_question(question: RetrievedQuestion) -> bool:
         question.question_type.value,
         list(question.options),
         dict(question.answer_key),
+    ) and "graded_quiz" in set(
+        question.answer_key.get("question_bank_uses") or QUIZ_QUESTION_USES
     )
 
 

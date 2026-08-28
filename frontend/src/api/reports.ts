@@ -1,6 +1,7 @@
 import { getData } from './client'
 import type { LearningPathState } from './learningPaths'
 import type { LearningAdjustmentSummary } from './learningAdjustments'
+import type { NodeGate } from './tutoring'
 
 export interface LearningReport {
   diagnosis_completed?: boolean
@@ -29,6 +30,7 @@ export interface LearningReport {
     description?: string
   }>
   learning_path?: LearningPathState
+  node_gate?: NodeGate | null
   weak_knowledge?: Array<{
     knowledge_id: string
     name: string

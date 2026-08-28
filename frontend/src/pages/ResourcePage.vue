@@ -19,6 +19,12 @@
       <span>必要前置知识：{{ prerequisiteNames }}</span>
       <span>适配画像 V{{ generationBasis.profile_version }}</span>
     </section>
+    <section v-if="nodeGate && !nodeGate.can_advance" class="generation-basis" aria-label="当前节点掌握进度">
+      <strong>节点掌握进度</strong>
+      <span>核心知识 {{ nodeGate.mastered_knowledge_count || 0 }} / {{ nodeGate.core_knowledge_count || 0 }}</span>
+      <span>{{ nodeGate.quiz_completed ? '分阶测验已完成' : '分阶测验待完成' }}</span>
+      <span>阻断性错题 {{ nodeGate.blocking_mistake_count }} 道</span>
+    </section>
 
     <div v-if="isShowingProgress" class="panel generation-state">
       <strong>{{ generationStatusTitle }}</strong>
@@ -310,6 +316,7 @@ const knowledgeImpact = computed(() => currentPackage.value?.knowledge_impact ||
 const pathNodeTitle = computed(() => taskDetail.value?.path_node_title || currentPackage.value?.path_node_title || '')
 const pathNodeOrder = computed(() => taskDetail.value?.path_node_order || currentPackage.value?.path_node_order || '-')
 const generationBasis = computed(() => taskDetail.value?.generation_basis || currentPackage.value?.generation_basis || null)
+const nodeGate = computed(() => currentPackage.value?.node_gate || null)
 const prerequisiteNames = computed(() => generationBasis.value?.prerequisite_knowledge.length
   ? generationBasis.value.prerequisite_knowledge.map(item => item.name).join('、')
   : '无需额外前置复习')
@@ -492,7 +499,7 @@ async function answerAssessment(assessment: TutoringAssessment, answer: number) 
     const result = await answerTutoringAssessment(tutorSession.value.session_id, assessment.assessment_id, answer)
     Object.assign(assessment, result, { status: 'scored' })
     tutorSession.value.pending_assessment = null
-    tutorSession.value.node_adjustment_state = result.decision === 'hypothesis_rejected' ? 'none' : 'confirmed'
+    tutorSession.value.node_adjustment_state = ['confirmed_mastery', 'confirmed_support_need'].includes(result.decision || '') ? 'confirmed' : 'none'
     tutorSession.value.node_adjustment_result = assessment
     showToast(result.decision_reason)
   } catch {

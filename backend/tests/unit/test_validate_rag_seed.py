@@ -38,9 +38,9 @@ def test_repository_rag_seed_meets_frozen_baseline() -> None:
     assert result["sources"]["required_field_completeness"] == 1.0
     assert result["content"]["over_800_characters"] >= 3
     assert result["diagnostic_questions"] == {
-        "total": 60,
-        "unique_question_ids": 60,
-        "single_choice": 50,
+        "total": 61,
+        "unique_question_ids": 61,
+        "single_choice": 51,
         "short_answer": 10,
         "invalid_knowledge_references": 0,
     }
@@ -69,16 +69,26 @@ def test_validated_seed_loads_through_existing_database_seed_path() -> None:
         db.flush()
 
         assert len(seeded) == 50
-        assert len(questions) == 64
+        assert len(questions) == 264
         assert db.scalar(select(func.count()).select_from(KnowledgeItem)) == 50
         assert db.scalar(select(func.count()).select_from(KnowledgeRelation)) == 81
-        assert db.scalar(select(func.count()).select_from(DiagnosticQuestion)) == 64
+        assert db.scalar(select(func.count()).select_from(DiagnosticQuestion)) == 264
+        assert db.scalar(
+            select(func.count())
+            .select_from(DiagnosticQuestion)
+            .where(DiagnosticQuestion.question_type == "single_choice")
+        ) == 250
+        assert db.scalar(
+            select(func.count())
+            .select_from(DiagnosticQuestion)
+            .where(DiagnosticQuestion.question_type == "short_answer")
+        ) == 14
         assert bind_domain_question_sources(db, domain_code="ai_app_dev") == 0
         assert db.scalar(
             select(func.count())
             .select_from(DiagnosticQuestion)
             .where(DiagnosticQuestion.certification_status == "certified")
-        ) == 64
+        ) == 264
 
 
 @pytest.mark.parametrize(

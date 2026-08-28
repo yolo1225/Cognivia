@@ -334,11 +334,13 @@
         <div v-else-if="assetView === 'questions'" class="asset-body">
           <div class="experimental-note">
             <span>正式题库</span>
-            <p>题目按知识重要度配置密度并绑定精确来源；资源生成只抽取已认证正式题，不临时生成。</p>
+            <p>每个知识点保留 3 道分阶测验题和 2 道独立掌握验证题；全部绑定精确来源并通过认证，运行时不临时生成。</p>
           </div>
           <p class="knowledge-results" aria-live="polite">
             已覆盖 {{ questionCoverage?.ready_items || 0 }} / {{ questionCoverage?.total_items || 0 }} 个知识点，
-            当前显示 {{ questionBank.length }} 道题，其中已认证 {{ certifiedQuestionCount }} 道
+              当前显示 {{ questionBank.length }} 道题，其中已认证 {{ certifiedQuestionCount }} 道；
+              缺少测验题的知识点 {{ questionCoverage?.missing_quiz_knowledge_ids.length || 0 }} 个，
+              缺少验证预留题的知识点 {{ questionCoverage?.missing_mastery_reserve_knowledge_ids.length || 0 }} 个
           </p>
           <div v-if="questionBank.length === 0" class="empty-view">
             <strong>当前领域暂无正式题目</strong>
@@ -346,11 +348,12 @@
           </div>
           <div v-else class="table-wrap">
             <table class="knowledge-table">
-              <thead><tr><th>主要知识点</th><th>层级</th><th>题型</th><th>题干</th><th>精确来源</th><th>认证</th><th>运营状态</th><th class="table-actions">操作</th></tr></thead>
+              <thead><tr><th>主要知识点</th><th>用途</th><th>层级</th><th>题型</th><th>题干</th><th>精确来源</th><th>认证</th><th>运营状态</th><th class="table-actions">操作</th></tr></thead>
               <tbody>
                 <tr v-for="question in questionBank" :key="question.question_id">
                   <td><strong>{{ question.knowledge_name }}</strong><small v-if="question.related_knowledge_ids.length">关联 {{ question.related_knowledge_ids.length }} 个知识点</small></td>
-                  <td>{{ quizLevelLabel(question.quiz_level) }}</td>
+                  <td>{{ questionPoolLabel(question) }}</td>
+                  <td>{{ quizLevelLabel(question.quiz_level) }} / 难度 {{ question.difficulty }}</td>
                   <td>{{ question.question_type === 'single_choice' ? '单选题' : '简答题' }}</td>
                   <td><span class="source-text" :title="question.stem">{{ question.stem }}</span></td>
                   <td><span class="source-text" :title="question.source_quote || question.source_ref_ids.join('、')">{{ question.source_ref_ids.join('、') }}</span></td>
@@ -1755,6 +1758,15 @@ async function saveCandidateWeights(candidate: ImportCandidate) {
 }
 function quizLevelLabel(level: QuestionBankItem["quiz_level"]) {
   return { foundation: "基础", improvement: "提升", challenge: "挑战" }[level] || level;
+}
+
+function questionPoolLabel(question: QuestionBankItem) {
+  if (!question.question_bank_uses.includes('mastery_validation')) return '诊断 / 动态分阶测验'
+  return question.reserve_role === 'consolidation'
+    ? '错题巩固预留'
+    : question.reserve_role === 'mastery_transfer'
+      ? '掌握验证预留'
+      : '验证 / 巩固预留'
 }
 const certifiedQuestionCount = computed(
   () => questionBank.value.filter((item) => item.certification_status === "certified").length,

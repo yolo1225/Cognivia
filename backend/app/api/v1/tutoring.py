@@ -255,6 +255,11 @@ def answer_tutoring_assessment(
                 "completed_node_id",
                 "current_node_id",
                 "resource_recommendation",
+                "node_gate",
+                "submitted_option",
+                "correct_option",
+                "correct_answer",
+                "explanation",
             }
         },
     })
@@ -281,6 +286,10 @@ def request_tutoring_mastery_check(
                 "已有掌握检查待完成，请先完成当前验证题。",
             ),
             "learning_adjustment_assessment_unavailable": (
+                "MASTERY_CHECK_QUESTION_UNAVAILABLE",
+                "当前知识点缺少可判分的单选验证题，请联系管理员补题后重试。",
+            ),
+            "MASTERY_QUESTION_BANK_INSUFFICIENT": (
                 "MASTERY_CHECK_QUESTION_UNAVAILABLE",
                 "当前知识点缺少可判分的单选验证题，请联系管理员补题后重试。",
             ),

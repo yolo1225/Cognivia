@@ -35,6 +35,7 @@ from app.services.learning_adjustment_service import (
     pending_resource_proposals,
     recent_profile_changes,
 )
+from app.services.learning_package_service import current_package
 from app.services.domain_runtime_service import DomainRuntimeError, load_domain_runtime
 from app.services.profile_knowledge_state_service import (
     STATE_KEY,
@@ -350,6 +351,21 @@ def get_learning_report(
         for key, value in internal_ability.items()
         if key not in {STATE_KEY}
     }
+    package_task = current_package(
+        db,
+        learner_id=learner.id,
+        domain_code=active_domain_code,
+    )
+    node_gate = None
+    if path is not None and profile is not None:
+        from app.services.node_mastery_service import build_node_gate
+
+        node_gate = build_node_gate(
+            db,
+            path=path,
+            profile=profile,
+            package_task=package_task,
+        )
 
 
     return ok(
@@ -370,6 +386,7 @@ def get_learning_report(
             "path": [stage.get("name", "") for stage in stages],
             "path_detail": stages,
             "learning_path": learning_path,
+            "node_gate": node_gate,
             "weak_knowledge": detail.get("weak_knowledge", []),
             "knowledge_states": knowledge_profile["knowledge_states"],
             "knowledge_status_counts": knowledge_profile["status_counts"],

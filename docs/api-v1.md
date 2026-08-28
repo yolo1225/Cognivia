@@ -34,12 +34,10 @@
 | POST | `/diagnostics/sessions/{session_id}/submit` | 提交诊断；简答题按独立评分任务完成 |
 | GET | `/diagnostics/sessions/current`、`/{session_id}`、`/{session_id}/events` | 恢复会话、轮询状态或订阅 SSE |
 | POST | `/diagnostics/sessions/{session_id}/retry` | 重试可恢复的评分会话 |
-| POST | `/learning-paths/{path_id}/nodes/{node_id}/assessments` | 发起当前节点正式测验 |
-| POST | `/learning-paths/{path_id}/nodes/{node_id}/assessments/{assessment_id}/answer` | 提交节点测验答案 |
 | POST | `/learning-paths/{path_id}/nodes/{node_id}/verify` | 用服务端已确认答题记录验证节点 |
 | POST | `/learning-paths/{path_id}/nodes/{node_id}/complete` | 以已验证证据完成节点并解锁后继 |
 
-诊断与节点测验只使用 `active + certified` 正式题库。题目不足不会跨领域或用临时题静默补齐。
+诊断、分阶测试、错题巩固与导学掌握检查只使用 `active + certified` 正式题库。题目不足不会跨领域或用临时题静默补齐；节点推进只接受这些服务端已确认的正式证据。
 
 ## 生成、资源、导学与调整
 

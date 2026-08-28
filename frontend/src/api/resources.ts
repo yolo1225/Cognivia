@@ -1,4 +1,5 @@
 import { apiClient, getData, postData, putData } from './client'
+import type { NodeGate } from './tutoring'
 
 export type QuizLevel = 'foundation' | 'improvement' | 'challenge'
 export type QuestionType = 'single_choice' | 'multiple_choice' | 'short_answer' | 'coding'
@@ -125,6 +126,12 @@ export interface ResourceQuizAttempt {
   objective_correct: number
   objective_total: number
   completed_at?: string | null
+  evidence_result?: {
+    materialized_count: number
+    evidence_ids: string[]
+    governance_results?: Array<Record<string, unknown>>
+  }
+  node_gate?: NodeGate | null
 }
 
 export function createQuizAttempt(resourceId: string, learnerId?: string) {

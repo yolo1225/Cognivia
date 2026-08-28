@@ -79,6 +79,8 @@ export interface ConsolidationResult {
   evidence: GovernanceResult['evidence']
   profile_result: GovernanceResult['profile_result']
   path_result: GovernanceResult['path_result']
+  node_gate?: import('./tutoring').NodeGate
+  resource_recommendation?: import('./tutoring').ResourceRecommendation | null
 }
 
 export interface GovernanceResult {

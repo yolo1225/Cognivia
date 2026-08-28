@@ -25,6 +25,7 @@ from app.services.feedback_service import (
     create_feedback_task,
 )
 from app.services.learning_package_service import ensure_package_members, package_member_rows
+from app.services.node_mastery_service import affected_resource_types
 
 
 def _report(resource: LearningResource, task: GenerationTask) -> ReviewReport:
@@ -162,13 +163,24 @@ def test_partial_refresh_composes_new_package_with_inherited_resource() -> None:
     Session = sessionmaker(bind=engine)
     with Session() as db:
         learner, profile, source_task, source_resources = _package_fixture(db)
+        source_task.resource_knowledge_targets_json = {
+            "lecture": ["knowledge_lecture"],
+            "practice_guide": ["knowledge_practice_guide"],
+            "graded_quiz": ["knowledge_lecture", "knowledge_practice_guide"],
+        }
+        selected_types = affected_resource_types(
+            package_task=source_task,
+            affected_knowledge_ids=["knowledge_practice_guide"],
+            fallback_resource_type="lecture",
+        )
+        assert selected_types == ["practice_guide", "graded_quiz"]
         refresh_task = GenerationTask(
             public_id="task_refresh",
             learner_id=learner.id,
             profile_id=profile.id,
             domain_code="ai_app_dev",
             status="running",
-            resource_types_json=["practice_guide", "graded_quiz"],
+            resource_types_json=selected_types,
             source_task_id=source_task.id,
             event_type="knowledge_refresh",
         )
