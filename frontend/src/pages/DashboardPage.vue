@@ -26,13 +26,26 @@
         <template v-if="dashboardState.kind === 'assessment'">
           <span class="stage-label">建议下一步</span><h2>{{ primaryAction?.label || '开始你的首个学习包' }}</h2><p>{{ primaryAction?.description || '画像与路线已准备好，现在可以创建包含讲义、实操指南和分阶测试的学习包。' }}</p>
           <div class="assessment-facts"><span>诊断已完成</span><span>{{ profile?.weak_knowledge.length || 0 }} 项待巩固</span><span>{{ profile?.direction_tags.map(directionLabel).join('、') || '学习方向已确认' }}</span></div>
-          <div class="stage-actions"><button class="btn primary stage-primary" type="button" :disabled="creatingGeneration && primaryAction?.type === 'generation'" @click="triggerPrimaryAction">{{ creatingGeneration && primaryAction?.type === 'generation' ? '正在创建学习包...' : primaryAction?.label || '创建学习包' }}</button><button class="btn" type="button" @click="openReport">查看学习报告</button></div>
+          <div class="stage-actions"><button class="btn primary stage-primary" type="button" :disabled="creatingGeneration && primaryAction?.type === 'generation'" @click="triggerPrimaryAction">{{ creatingGeneration && primaryAction?.type === 'generation' ? '正在创建学习包...' : primaryAction?.label || '创建学习包' }}</button><button class="btn" type="button" @click="openReport">查看学情画像</button></div>
         </template>
         <template v-else-if="dashboardState.kind === 'preparing'">
           <span class="stage-label">{{ dashboardState.feedbackTriggered ? '正在根据反馈调整学习内容' : '正在生成学习包' }}</span><h2>{{ dashboardState.task.decision === 'revision_required' ? '资源正在自动修订' : '正在准备个性化学习资源' }}</h2><p>检索、生成和自动质量校验会依次完成；仅达到质量门槛的资源会发布到学习资源页。</p><div class="task-progress"><span><i :style="{ width: `${progressValue}%` }"></i></span><strong>{{ progressValue }}%</strong></div><div class="stage-actions"><button class="btn" type="button" @click="openResources(dashboardState.task.task_id)">查看生成进度</button></div>
         </template>
+        <template v-else-if="dashboardState.kind === 'mistake_review'">
+          <span class="stage-label">当前节点优先任务</span>
+          <h2>先完成 {{ dashboardState.blockingMistakeCount }} 道错题巩固</h2>
+          <p>这些错题与当前学习节点直接相关，完成巩固验证后才能满足节点门禁并继续推进学习路线。</p>
+          <div class="resource-meta">
+            <span>{{ currentPathNode?.title || '当前学习节点' }}</span>
+            <span>{{ dashboardState.blockingMistakeCount }} 道当前必做</span>
+          </div>
+          <div class="stage-actions">
+            <button class="btn primary stage-primary" type="button" @click="openMistakeReview">开始错题巩固</button>
+            <button class="btn" type="button" @click="() => openResources()">查看学习资源</button>
+          </div>
+        </template>
         <template v-else-if="dashboardState.kind === 'resource'">
-          <span class="stage-label">学习包已准备好</span><h2>{{ dashboardState.resource.title }}</h2><p>学习过程中可通过分阶测试、反馈和导学对话提供新的证据，系统会据此决定是否更新画像。</p><div class="resource-meta"><span>{{ resourceTypeLabel(dashboardState.resource.resource_type) }}</span><span>难度 {{ dashboardState.resource.difficulty }}/5</span><span>质量校验通过</span></div><div class="stage-actions"><button class="btn primary" type="button" @click="openResources()">开始学习</button><button class="btn" type="button" @click="openReport">查看学习报告</button></div>
+          <span class="stage-label">学习包已准备好</span><h2>{{ dashboardState.resource.title }}</h2><p>学习过程中可通过分阶测试、反馈和导学对话提供新的证据，系统会据此决定是否更新画像。</p><div class="resource-meta"><span>{{ resourceTypeLabel(dashboardState.resource.resource_type) }}</span><span>难度 {{ dashboardState.resource.difficulty }}/5</span><span>质量校验通过</span></div><div class="stage-actions"><button class="btn primary" type="button" @click="openResources()">开始学习</button><button class="btn" type="button" @click="openReport">查看学情画像</button></div>
         </template>
         <template v-else>
           <span class="stage-label">本次资源生成失败</span><h2>{{ failedGenerationCopy.title }}</h2><p>{{ failedGenerationCopy.description }}</p><div class="stage-actions"><button class="btn primary" type="button" :disabled="retrying" @click="retryTask(dashboardState.task.task_id)">{{ retrying ? '正在重新生成...' : '重新生成' }}</button></div>
@@ -46,8 +59,8 @@
     </section>
     <section v-if="report && pathNodes.length" class="home-route-card">
       <div class="home-route-head">
-        <div><span class="section-kicker">当前学习路线</span><h2>路线节点已完成 {{ completedPathNodeCount }}/{{ pathNodes.length }}</h2><p>{{ currentPathNode ? '当前学习：' + currentPathNode.title + '；节点完成不代表新节点资源已经生成成功。' : '当前路线已完成，可在学习报告查看完整记录。' }}</p></div>
-        <button class="btn" type="button" @click="openReport">查看学习报告</button>
+        <div><span class="section-kicker">当前学习路线</span><h2>路线节点已完成 {{ completedPathNodeCount }}/{{ pathNodes.length }}</h2><p>{{ currentPathNode ? '当前学习：' + currentPathNode.title + '；节点完成不代表新节点资源已经生成成功。' : '当前路线已完成，可在学情画像查看完整记录。' }}</p></div>
+        <button class="btn" type="button" @click="openReport">查看学情画像</button>
       </div>
       <div class="home-route-steps">
         <article v-for="node in visiblePathNodes" :key="node.path_node_id" class="home-route-step" :class="'node-' + node.status">
@@ -95,9 +108,14 @@ const resources = ref<ResourceSummary[]>([])
 const report = ref<LearningReport | null>(null)
 const currentLearnerId = computed(() => authStore.user?.learner_id || '')
 const profileReady = computed(() => profile.value?.profile_status === 'ready')
-const dashboardState = computed(() => getDashboardState(activeTask.value, resources.value, recentTasks.value))
+const dashboardState = computed(() => getDashboardState(
+  activeTask.value,
+  resources.value,
+  recentTasks.value,
+  report.value?.node_gate,
+))
 const progressValue = computed(() => Math.min(100, Math.max(0, dashboardState.value.kind === 'preparing' ? dashboardState.value.task.progress ?? 0 : 0)))
-const visualLabel = computed(() => ({ assessment: '路线已就绪', preparing: '正在处理', resource: '可以开始', failed: '需要重试' })[dashboardState.value.kind])
+const visualLabel = computed(() => ({ assessment: '路线已就绪', preparing: '正在处理', mistake_review: '优先完成', resource: '可以开始', failed: '需要重试' })[dashboardState.value.kind])
 const failedGenerationCopy = computed(() => generationFailureCopy(dashboardState.value.kind === 'failed' ? dashboardState.value.task.failure_reason : null))
 const pathNodes = computed<LearningPathNode[]>(() => report.value?.learning_path?.nodes || [])
 const currentPathNode = computed(() => pathNodes.value.find(node => node.status === 'current'))
@@ -161,6 +179,7 @@ async function switchLearningDomain() {
 }
 function openReport() { router.push({ path: '/report', query: { learner_id: currentLearnerId.value } }) }
 function openResources(taskId?: string | null) { router.push({ path: '/resources', query: { learner_id: currentLearnerId.value, ...(taskId ? { task_id: taskId } : {}) } }) }
+function openMistakeReview() { router.push({ path: '/mistake-review', query: { learner_id: currentLearnerId.value } }) }
 async function retryTask(taskId: string) { retrying.value = true; try { const task = await retryGenerationTask(taskId); activeTask.value = task; openResources(task.task_id) } catch { loadError.value = '重新生成失败，请稍后再试。' } finally { retrying.value = false } }
 function pathStatusLabel(status: LearningPathNode['status']) { return ({ locked: '未解锁', current: '当前学习', completed: '已完成', skipped: '已跳过' } as const)[status] }
 function triggerPrimaryAction() { if (primaryAction.value) void handleNextAction(primaryAction.value); else openReport() }
@@ -185,7 +204,7 @@ onMounted(loadDashboard)
 </script>
 
 <style scoped>
-.dashboard { display: grid; width: 100%; gap: 18px; }.learning-stage { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 230px; min-height: 360px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--panel); }.stage-copy { display: grid; align-content: center; justify-items: start; gap: 14px; padding: 48px 54px; }.stage-label { color: var(--blue); font-size: 12px; font-weight: 750; }.stage-copy h2 { max-width: 620px; margin: 0; color: var(--ink); font-size: 30px; line-height: 1.3; text-wrap: balance; }.stage-copy > p { max-width: 560px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.75; text-wrap: pretty; }.stage-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 8px; }.stage-actions .btn { min-width: 112px; }.stage-primary { min-height: 42px; padding-inline: 18px; }.assessment-facts,.resource-meta { display: flex; flex-wrap: wrap; gap: 8px; }.assessment-facts span,.resource-meta span { border: 1px solid var(--line); border-radius: 6px; background: var(--soft); padding: 5px 8px; color: var(--body); font-size: 12px; }.stage-visual { display: grid; place-content: center; gap: 12px; border-left: 1px solid var(--line); background: var(--soft); color: var(--body); font-size: 12px; font-weight: 700; text-align: center; }.visual-mark { width: 48px; height: 48px; margin: auto; border: 10px solid var(--visual-ring); border-top-color: var(--blue); border-radius: 50%; }.state-assessment .stage-visual { background: var(--blue2); color: var(--info); }.state-resource .stage-visual { background: var(--green2); color: var(--green); }.state-failed .stage-visual { background: var(--amber2); color: #8b4c0b; }.task-progress { display: grid; grid-template-columns: minmax(180px, 340px) auto; align-items: center; gap: 10px; width: 100%; margin-top: 2px; }.task-progress > span { display: block; height: 7px; overflow: hidden; border-radius: 5px; background: var(--track); }.task-progress i { display: block; height: 100%; border-radius: inherit; background: var(--blue); }.task-progress strong { color: var(--body); font-size: 12px; }.stage-error { display: block; min-height: 280px; border-color: #edc9c9; background: var(--red2); }.stage-error .stage-label { color: var(--red); }.loading-stage { display: grid; align-content: center; gap: 14px; padding: 48px 54px; }.loading-line { width: min(420px, 76%); height: 14px; border-radius: 5px; background: var(--track); }.loading-line.wide { width: min(520px, 92%); height: 32px; }.loading-line.short { width: 132px; height: 40px; margin-top: 10px; background: var(--blue2); }@media (max-width: 760px) { .learning-stage { grid-template-columns: 1fr; min-height: 0; }.stage-copy { padding: 34px 26px; }.stage-copy h2 { font-size: 25px; }.stage-visual { min-height: 96px; border-top: 1px solid var(--line); border-left: 0; }.visual-mark { width: 32px; height: 32px; border-width: 7px; }.task-progress { grid-template-columns: minmax(0, 1fr) auto; } }@media (max-width: 480px) { .dashboard { gap: 16px; }.stage-copy { padding: 28px 20px; }.stage-actions { display: grid; width: 100%; }.stage-actions .btn { width: 100%; min-height: 44px; } }
+.dashboard { display: grid; width: 100%; gap: 18px; }.learning-stage { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 230px; min-height: 360px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--panel); }.stage-copy { display: grid; align-content: center; justify-items: start; gap: 14px; padding: 48px 54px; }.stage-label { color: var(--blue); font-size: 12px; font-weight: 750; }.stage-copy h2 { max-width: 620px; margin: 0; color: var(--ink); font-size: 30px; line-height: 1.3; text-wrap: balance; }.stage-copy > p { max-width: 560px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.75; text-wrap: pretty; }.stage-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 8px; }.stage-actions .btn { min-width: 112px; }.stage-primary { min-height: 42px; padding-inline: 18px; }.assessment-facts,.resource-meta { display: flex; flex-wrap: wrap; gap: 8px; }.assessment-facts span,.resource-meta span { border: 1px solid var(--line); border-radius: 6px; background: var(--soft); padding: 5px 8px; color: var(--body); font-size: 12px; }.stage-visual { display: grid; place-content: center; gap: 12px; border-left: 1px solid var(--line); background: var(--soft); color: var(--body); font-size: 12px; font-weight: 700; text-align: center; }.visual-mark { width: 48px; height: 48px; margin: auto; border: 10px solid var(--visual-ring); border-top-color: var(--blue); border-radius: 50%; }.state-assessment .stage-visual { background: var(--blue2); color: var(--info); }.state-mistake_review .stage-visual { background: var(--amber2); color: var(--amber); }.state-resource .stage-visual { background: var(--green2); color: var(--green); }.state-failed .stage-visual { background: var(--amber2); color: #8b4c0b; }.task-progress { display: grid; grid-template-columns: minmax(180px, 340px) auto; align-items: center; gap: 10px; width: 100%; margin-top: 2px; }.task-progress > span { display: block; height: 7px; overflow: hidden; border-radius: 5px; background: var(--track); }.task-progress i { display: block; height: 100%; border-radius: inherit; background: var(--blue); }.task-progress strong { color: var(--body); font-size: 12px; }.stage-error { display: block; min-height: 280px; border-color: #edc9c9; background: var(--red2); }.stage-error .stage-label { color: var(--red); }.loading-stage { display: grid; align-content: center; gap: 14px; padding: 48px 54px; }.loading-line { width: min(420px, 76%); height: 14px; border-radius: 5px; background: var(--track); }.loading-line.wide { width: min(520px, 92%); height: 32px; }.loading-line.short { width: 132px; height: 40px; margin-top: 10px; background: var(--blue2); }@media (max-width: 760px) { .learning-stage { grid-template-columns: 1fr; min-height: 0; }.stage-copy { padding: 34px 26px; }.stage-copy h2 { font-size: 25px; }.stage-visual { min-height: 96px; border-top: 1px solid var(--line); border-left: 0; }.visual-mark { width: 32px; height: 32px; border-width: 7px; }.task-progress { grid-template-columns: minmax(0, 1fr) auto; } }@media (max-width: 480px) { .dashboard { gap: 16px; }.stage-copy { padding: 28px 20px; }.stage-actions { display: grid; width: 100%; }.stage-actions .btn { width: 100%; min-height: 44px; } }
 .domain-picker { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
 .domain-picker select { min-width: 180px; }
 .section-kicker { color: var(--blue); font-size: 12px; font-weight: 750; }
@@ -210,4 +229,16 @@ onMounted(loadDashboard)
 :global(.app.theme-dark) .home-route-step.node-completed { border-color: #34765f; }
 @media (max-width: 760px) { .home-feedback-card { align-items: flex-start; flex-direction: column; }.home-route-head { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 480px) { .home-feedback-card .btn { width: 100%; min-height: 44px; }.home-feedback-card,.home-route-card { padding: 20px; } }
+.state-failed .stage-visual { color: var(--text-warning-strong); }
+.stage-error { border-color: var(--line-danger); }
+.home-feedback-card { border-color: var(--line-success); }
+.home-route-step.node-current { border-color: var(--line-info); }
+.home-route-step.node-completed { border-color: var(--line-success); }
+
+/* Keep state emphasis tied to the shared theme palette. */
+.state-failed .stage-visual { color: var(--text-warning-strong); }
+.stage-error { border-color: var(--line-danger); }
+.home-feedback-card { border-color: var(--line-success); }
+.home-route-step.node-current { border-color: var(--line-info); }
+.home-route-step.node-completed { border-color: var(--line-success); }
 </style>

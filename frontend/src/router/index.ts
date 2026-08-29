@@ -12,7 +12,7 @@ const routes = [
   { path:'/diagnostic', redirect:'/dashboard', meta:{ ...auth, title:'诊断训练' } },
   { path:'/resources', component:()=>import('@/pages/ResourcePage.vue'), meta:{ ...auth, title:'学习资源' } },
   { path:'/mistake-review', component:()=>import('@/pages/MistakeReviewPage.vue'), meta:{ ...auth, title:'错题巩固' } },
-  { path:'/report', component:()=>import('@/pages/ReportPage.vue'), meta:{ ...auth, title:'学习报告' } },
+  { path:'/report', component:()=>import('@/pages/ReportPage.vue'), meta:{ ...auth, title:'学情画像' } },
   { path:'/metrics', component:()=>import('@/pages/MetricsPage.vue'), meta:{ ...auth, title:'学习历程' } },
   { path:'/learners', component:()=>import('@/pages/LearnersPage.vue'), meta:{ ...admin, title:'用户管理' } },
   { path:'/domain-hub', component:()=>import('@/pages/DomainHubPage.vue'), meta:{ ...admin, title:'领域管理' } },

@@ -89,7 +89,7 @@ const allNavGroups: NavGroup[] = [
       { page: 'dashboard', label: '首页', icon: 'home', route: '/dashboard' },
       { page: 'resources', label: '学习资源', icon: 'resources', route: '/resources' },
       { page: 'mistakeReview', label: '错题巩固', icon: 'check', route: '/mistake-review' },
-      { page: 'report', label: '学习报告', icon: 'report', route: '/report' },
+      { page: 'report', label: '学情画像', icon: 'report', route: '/report' },
       { page: 'metrics', label: '学习历程', icon: 'history', route: '/metrics' },
     ],
   },

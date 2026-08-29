@@ -62,7 +62,7 @@
           <span class="field-text">显示名称</span>
           <div class="field-control">
             <svg class="field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2" /><circle cx="8" cy="11" r="2" /><path d="M5 17c.5-1.5 1.6-2 3-2s2.5.5 3 2" /><path d="M14 10h4M14 14h4" /></svg>
-            <input id="display-name" v-model.trim="displayName" autocomplete="name" required placeholder="在学习报告中显示的名称" />
+            <input id="display-name" v-model.trim="displayName" autocomplete="name" required placeholder="在学情画像中显示的名称" />
           </div>
         </label>
         <label class="field-label" for="password">
@@ -128,8 +128,8 @@ async function submit() {
 
 <style scoped>
 .login-page {
-  --auth-ink: #172746;
-  --auth-muted: #61718a;
+  --auth-ink: var(--ink);
+  --auth-muted: var(--muted);
   min-height: 100vh;
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(420px, 0.85fr);
@@ -197,30 +197,30 @@ async function submit() {
 
 .login-panel { min-height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: clamp(28px, 7vw, 88px); background: var(--panel); }
 .auth-switch { width: min(100%, 380px); display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 0 auto 28px; border-radius: 10px; background: var(--soft); padding: 4px; }
-.auth-switch button { min-height: 38px; border: 0; border-radius: 7px; background: transparent; color: #61718a; font-size: 13px; font-weight: 700; transition: background 180ms ease, color 180ms ease, box-shadow 180ms ease; }
-.auth-switch button.active { background: var(--panel); color: #172746; box-shadow: 0 1px 3px rgb(31 48 75 / .14); }
+.auth-switch button { min-height: 38px; border: 0; border-radius: 7px; background: transparent; color: var(--auth-muted); font-size: 13px; font-weight: 700; transition: background 180ms ease, color 180ms ease, box-shadow 180ms ease; }
+.auth-switch button.active { background: var(--panel); color: var(--auth-ink); box-shadow: var(--shadow-card); }
 .login-form { width: min(100%, 380px); margin: auto; display: grid; gap: 18px; }
 .form-heading { margin-bottom: 12px; }
-.form-kicker { color: #315fce; }
+.form-kicker { color: var(--blue); }
 .form-heading h2 { margin: 0; color: var(--auth-ink); font-size: 30px; line-height: 1.25; letter-spacing: -.025em; }
 .form-heading > p:last-child { margin: 10px 0 0; color: var(--auth-muted); font-size: 14px; line-height: 1.65; }
-.field-label { display: grid; gap: 8px; color: #344762; font-size: 13px; font-weight: 700; }
+.field-label { display: grid; gap: 8px; color: var(--body); font-size: 13px; font-weight: 700; }
 .field-text { display: block; }
 .field-control { position: relative; }
-.field-icon { position: absolute; left: 14px; top: 50%; width: 18px; height: 18px; transform: translateY(-50%); color: #94a3b8; pointer-events: none; transition: color 180ms ease; }
-.field-control:focus-within .field-icon { color: #315fce; }
-.field-label input { width: 100%; height: 48px; border: 1px solid #cbd6e4; border-radius: 10px; background: var(--panel); color: var(--auth-ink); padding: 0 14px 0 42px; font-size: 15px; outline: 0; transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease; }
-.field-label input::placeholder { color: #718096; opacity: 1; }
-.field-label input:hover { border-color: #9eafc6; }
-.field-label input:focus { border-color: #315fce; background: var(--panel); box-shadow: 0 0 0 3px rgb(49 95 206 / .16); }
-.auth-error { margin: -2px 0 0; border-radius: 8px; background: var(--red2); color: #ae3030; padding: 10px 12px; font-size: 13px; line-height: 1.45; }
+.field-icon { position: absolute; left: 14px; top: 50%; width: 18px; height: 18px; transform: translateY(-50%); color: var(--muted); pointer-events: none; transition: color 180ms ease; }
+.field-control:focus-within .field-icon { color: var(--blue); }
+.field-label input { width: 100%; height: 48px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--auth-ink); padding: 0 14px 0 42px; font-size: 15px; outline: 0; transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease; }
+.field-label input::placeholder { color: var(--muted); opacity: 1; }
+.field-label input:hover { border-color: var(--line-strong); }
+.field-label input:focus { border-color: var(--blue); background: var(--panel); box-shadow: var(--focus); }
+.auth-error { margin: -2px 0 0; border-radius: 8px; background: var(--red2); color: var(--text-danger-strong); padding: 10px 12px; font-size: 13px; line-height: 1.45; }
 .submit-button { min-height: 48px; display: flex; align-items: center; justify-content: space-between; border: 0; border-radius: 10px; background: linear-gradient(135deg, #3d6fe0, #274fae); color: #fff; padding: 0 16px; font-size: 15px; font-weight: 720; box-shadow: 0 4px 14px rgb(39 79 174 / .24); transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease; }
 .submit-button:hover:not(:disabled) { filter: brightness(1.04); box-shadow: 0 6px 18px rgb(39 79 174 / .3); transform: translateY(-1px); }
 .submit-button:disabled { cursor: wait; filter: saturate(.7) brightness(1.05); }
 .register-link { margin: 2px 0 0; color: var(--auth-muted); font-size: 13px; text-align: center; }
-.register-link button { border: 0; background: transparent; color: #315fce; padding: 0; font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
-.security-note { width: min(100%, 380px); margin: 40px auto 0; color: #6b7b91; font-size: 12px; line-height: 1.55; }
-.security-note span { margin-right: 5px; color: #138a63; font-weight: 800; }
+.register-link button { border: 0; background: transparent; color: var(--blue); padding: 0; font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.security-note { width: min(100%, 380px); margin: 40px auto 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.security-note span { margin-right: 5px; color: var(--green); font-weight: 800; }
 
 @media (max-width: 820px) {
   .login-page { grid-template-columns: 1fr; }

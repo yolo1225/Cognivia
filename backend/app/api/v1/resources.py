@@ -15,6 +15,7 @@ from app.core.security import (
 )
 from app.models import (
     GenerationTask,
+    KnowledgeItem,
     Learner,
     LearningPackageResource,
     LearningResource,
@@ -183,6 +184,19 @@ def list_resources(
     if domain_code:
         statement = statement.where(creation_task.domain_code == domain_code)
     rows = list(db.execute(statement))
+    knowledge_ids = {
+        str(source.get("knowledge_id") or "").strip()
+        for resource, _task in rows
+        for source in (resource.sources_json or [])
+        if str(source.get("knowledge_id") or "").strip()
+    }
+    knowledge_names = dict(
+        db.execute(
+            select(KnowledgeItem.public_id, KnowledgeItem.name).where(
+                KnowledgeItem.public_id.in_(knowledge_ids)
+            )
+        ).all()
+    ) if knowledge_ids else {}
     resource_ids = [resource.id for resource, _ in rows]
     reports = (
         list(
@@ -200,7 +214,7 @@ def list_resources(
         report_by_resource.setdefault(report.resource_id, report)
     data = []
     for resource, task in rows:
-        item = serialize_resource(resource, task)
+        item = serialize_resource(resource, task, knowledge_names=knowledge_names)
         item["quality_metrics"] = _quality_metrics(report_by_resource.get(resource.id))
         item["package_quality"] = task.package_quality_json or None
         item["package_status"] = task.status

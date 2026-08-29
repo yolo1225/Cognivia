@@ -83,7 +83,11 @@ def _source_coverage(resources: list[LearningResource]) -> int:
     return len(source_ids)
 
 
-def _serialize_resource(resource: LearningResource, task: GenerationTask | None) -> dict[str, Any]:
+def _serialize_resource(
+    resource: LearningResource,
+    task: GenerationTask | None,
+    review: ReviewReport | None = None,
+) -> dict[str, Any]:
     return {
         "resource_id": resource.public_id,
         "resource_type": resource.resource_type,
@@ -92,6 +96,9 @@ def _serialize_resource(resource: LearningResource, task: GenerationTask | None)
         ),
         "title": resource.title,
         "difficulty": resource.difficulty,
+        "difficulty_match_score": (
+            float(review.difficulty_match_score) if review is not None else None
+        ),
         "review_status": resource.review_status,
         "source_count": len(resource.sources_json or []),
         "generation_task_id": task.public_id if task else None,
@@ -291,9 +298,6 @@ def get_learning_report(
             .order_by(LearningResource.id.desc())
         )
     )
-    resources = [resource for resource, _task in resource_rows]
-    recent_resources = [_serialize_resource(resource, task) for resource, task in resource_rows[:6]]
-
     review_reports = list(
         db.scalars(
             select(ReviewReport)
@@ -303,6 +307,15 @@ def get_learning_report(
             .order_by(ReviewReport.id.desc())
         )
     )
+    latest_review_by_resource: dict[int, ReviewReport] = {}
+    for review in review_reports:
+        latest_review_by_resource.setdefault(review.resource_id, review)
+
+    resources = [resource for resource, _task in resource_rows]
+    recent_resources = [
+        _serialize_resource(resource, task, latest_review_by_resource.get(resource.id))
+        for resource, task in resource_rows[:6]
+    ]
     feedback_rows = list(
         db.execute(
             select(Feedback, LearningResource)

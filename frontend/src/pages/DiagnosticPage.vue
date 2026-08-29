@@ -50,7 +50,7 @@
       <div class="completion-mark" aria-hidden="true">✓</div>
       <div>
         <h2>诊断训练已完成</h2>
-        <p class="sub">答题结果已保存，能力画像与薄弱知识分析请前往学习报告查看。</p>
+        <p class="sub">答题结果已保存，能力画像与薄弱知识分析请前往学情画像查看。</p>
       </div>
       <div class="completion-stats" aria-label="诊断训练结果">
         <div><span>答对题数</span><strong>{{ result.correct_count }}/{{ result.question_count }}</strong></div>
@@ -75,7 +75,7 @@
         </article>
       </div>
       <div class="actions completion-actions">
-        <button class="btn" @click="router.push('/report')">查看学习报告</button>
+        <button class="btn" @click="router.push('/report')">查看学情画像</button>
         <button class="btn primary" :disabled="generating" @click="generateResources">{{ generating ? '正在创建...' : '生成学习资源' }}</button>
       </div>
     </div>

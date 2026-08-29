@@ -71,32 +71,43 @@
       </div>
 
       <section v-else-if="activePane === 'overview'" class="pane-stack">
-        <div class="domain-metrics">
-          <div v-for="metric in overviewMetrics" :key="metric.label">
-            <span>{{ metric.label }}</span
-            ><strong>{{ metric.value }}</strong
-            ><small>{{ metric.note }}</small>
-          </div>
-        </div>
         <div v-if="errorMessage" class="inline-error">
           <span>{{ errorMessage }}</span
           ><button class="btn text" @click="loadDomain">重试</button>
         </div>
+        <section class="current-task" :class="currentTask.tone">
+          <div class="task-kicker">当前任务</div>
+          <div class="current-task-content">
+            <div>
+              <h2>{{ currentTask.title }}</h2>
+              <p>{{ currentTask.description }}</p>
+            </div>
+            <button
+              class="btn primary"
+              :disabled="primaryActionBusy"
+              :aria-busy="primaryActionBusy"
+              @click="runPrimaryAction"
+            >{{ primaryActionBusy ? '处理中...' : currentTask.label }}</button>
+          </div>
+          <div class="overview-statuses">
+            <span><i :class="overallReadinessClass" />{{ overallReadinessLabel }}</span>
+            <span><i :class="currentIndexState === 'ready' ? 'ready' : 'warning'" />检索索引 {{ indexStatusLabel }}</span>
+            <span><i :class="selectedDomain?.status === 'ready' ? 'ready' : 'warning'" />{{ domainStatusLabel(selectedDomain?.status) }}</span>
+          </div>
+        </section>
         <section class="panel readiness-panel">
           <div class="section-head">
             <div>
-              <h2>领域就绪度</h2>
-              <p>
-                以下条件共同决定该领域能否稳定完成诊断、检索和个性化资源生成。
-              </p>
+              <h2>领域运行概览</h2>
+              <p>已通过 {{ passedReadinessItems.length }} / {{ readinessItems.length }} 项基础检查。</p>
             </div>
             <span class="summary-status" :class="overallReadinessClass"
               ><i />{{ overallReadinessLabel }}</span
             >
           </div>
-          <ReadinessList class="readiness-list">
+          <ReadinessList v-if="attentionItems.length" class="readiness-list">
             <div
-              v-for="item in readinessItems"
+              v-for="item in attentionItems"
               :key="item.key"
               class="readiness-row"
             >
@@ -116,8 +127,27 @@
               >
             </div>
           </ReadinessList>
-          <div
+          <p v-else class="readiness-empty">当前基础检查均已通过，可以继续执行运行检查或发布领域。</p>
+          <button v-if="passedReadinessItems.length" class="btn text readiness-toggle" type="button" @click="showReadinessDetails = !showReadinessDetails">
+            {{ showReadinessDetails ? '收起已通过项' : `查看已通过项（${passedReadinessItems.length}）` }}
+          </button>
+          <ReadinessList v-if="showReadinessDetails" class="readiness-list readiness-passed-list">
+            <div v-for="item in passedReadinessItems" :key="item.key" class="readiness-row">
+              <span class="readiness-icon ready">✓</span>
+              <div><strong>{{ item.label }}</strong><small>{{ readinessDescription(item) }}</small></div>
+              <span class="readiness-value">{{ item.actual }} / {{ item.target }}</span>
+            </div>
+          </ReadinessList>
+          <button
             v-if="validationResult?.evidence_coverage"
+            class="evidence-toggle"
+            type="button"
+            @click="showEvidenceDetails = !showEvidenceDetails"
+          >
+            <span>实训支撑信息</span><span>{{ showEvidenceDetails ? '收起' : '查看' }}</span>
+          </button>
+          <div
+            v-if="showEvidenceDetails && validationResult?.evidence_coverage"
             class="evidence-coverage"
             :class="{ 'is-conceptual': practiceGenerationMode === 'safe_conceptual' }"
           >
@@ -138,28 +168,11 @@
             </div>
           </div>
         </section>
-        <section v-if="attentionItems.length" class="attention-strip">
-          <div>
-            <strong>有 {{ attentionItems.length }} 项需要处理</strong>
-            <p>{{ attentionSummary }}</p>
-          </div>
-          <div class="actions">
-            <button
-              v-if="stats?.pending_embeddings"
-              class="btn"
-              @click="openPendingKnowledge"
-            >
-              查看待索引知识点</button
-            ><button class="btn primary" @click="selectPane('operations')">
-              进入运行检查
-            </button>
-          </div>
-        </section>
         <section class="panel quick-links">
           <div class="section-head">
             <div>
               <h2>领域资产</h2>
-              <p>查看领域当前使用的知识来源与结构。</p>
+              <p>按资产类型维护知识内容、来源材料和知识结构。</p>
             </div>
           </div>
           <div class="asset-links">
@@ -185,9 +198,12 @@
         <div class="section-head asset-heading">
           <div>
             <h2>知识资产</h2>
-            <p>
-              知识点提供依据，正式题库统一服务诊断与分级测验，关系图谱表达知识结构。
-            </p>
+            <p>{{
+              assetView === 'items' ? '维护可追溯的知识内容、难度与检索状态。'
+                : assetView === 'questions' ? '检查三类正式题目的覆盖与认证状态。'
+                  : assetView === 'documents' ? '管理进入领域知识库的来源材料与处理状态。'
+                    : '浏览知识点之间的前置、后继与关联结构。'
+            }}</p>
           </div>
           <button
             v-if="assetView === 'items'"
@@ -332,35 +348,42 @@
         </div>
 
         <div v-else-if="assetView === 'questions'" class="asset-body">
-          <div class="experimental-note">
-            <span>正式题库</span>
-            <p>题库按首次诊断、分阶测验和掌握检查三种互斥用途管理；全部绑定精确来源并通过认证，运行时不临时生成。</p>
+          <div class="asset-summary-grid question-summary-grid">
+            <article v-for="item in questionCoverageCards" :key="item.label" :class="{ 'has-gap': item.missing }">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.ready }} / {{ questionCoverage?.total_items || stats?.knowledge_items || 0 }}</strong>
+              <small>{{ item.note }}</small>
+            </article>
           </div>
-          <p class="knowledge-results" aria-live="polite">
-            已覆盖 {{ questionCoverage?.ready_items || 0 }} / {{ questionCoverage?.total_items || 0 }} 个知识点，
-              当前显示 {{ questionBank.length }} 道题，其中已认证 {{ certifiedQuestionCount }} 道；
-              缺少诊断题的知识点 {{ questionCoverage?.missing_diagnosis_knowledge_ids.length || 0 }} 个，
-              缺少测验题的知识点 {{ questionCoverage?.missing_quiz_knowledge_ids.length || 0 }} 个，
-              缺少掌握检查题的知识点 {{ questionCoverage?.missing_mastery_reserve_knowledge_ids.length || 0 }} 个
+          <p class="asset-summary-note" aria-live="polite">
+            共 {{ questionBank.length }} 道题，已认证 {{ certifiedQuestionCount }} 道；每道正式题均绑定来源并按唯一用途运行。
           </p>
-          <div v-if="questionBank.length === 0" class="empty-view">
-            <strong>当前领域暂无正式题目</strong>
-            <p>请通过来源文档导入并完成题目审核发布。</p>
+          <div class="filterbar asset-filters">
+            <label class="search-field"><span aria-hidden="true">⌕</span><input v-model="questionFilters.keyword" type="search" placeholder="搜索知识点、题干或来源编号" /></label>
+            <select v-model="questionFilters.purpose" class="field"><option value="all">全部用途</option><option value="diagnosis">诊断题</option><option value="graded_quiz">分阶测验</option><option value="mastery_validation">掌握检查</option></select>
+            <select v-model="questionFilters.level" class="field"><option value="all">全部层级</option><option value="foundation">基础巩固</option><option value="improvement">能力提升</option><option value="challenge">挑战突破</option></select>
+            <select v-model="questionFilters.difficulty" class="field"><option value="all">全部难度</option><option v-for="level in 5" :key="level" :value="String(level)">难度 {{ level }}</option></select>
+            <select v-model="questionFilters.certification" class="field"><option value="all">全部认证</option><option value="certified">已认证</option><option value="pending">待认证</option><option value="stale">需复核</option><option value="rejected">未通过</option></select>
+            <select v-model="questionFilters.status" class="field"><option value="all">全部状态</option><option value="active">启用</option><option value="disabled">已停用</option></select>
+            <button v-if="hasQuestionFilters" class="btn text" type="button" @click="clearQuestionFilters">清除筛选</button>
           </div>
-          <div v-else class="table-wrap">
+          <p class="asset-results" aria-live="polite">显示 {{ filteredQuestionBank.length }} 道，共 {{ questionBank.length }} 道题</p>
+          <div v-if="filteredQuestionBank.length === 0" class="empty-view">
+            <strong>{{ questionBank.length ? '没有符合条件的题目' : '当前领域暂无正式题目' }}</strong>
+            <p>{{ questionBank.length ? '调整筛选条件后再试。' : '请通过来源文档导入并完成题目审核发布。' }}</p>
+            <button v-if="questionBank.length" class="btn" type="button" @click="clearQuestionFilters">清除筛选</button>
+          </div>
+          <div v-else class="table-wrap asset-table-wrap">
             <table class="knowledge-table">
-              <thead><tr><th>主要知识点</th><th>用途</th><th>层级</th><th>题型</th><th>题干</th><th>精确来源</th><th>认证</th><th>运营状态</th><th class="table-actions">操作</th></tr></thead>
+              <thead><tr><th>主要知识点</th><th>用途</th><th>层级与难度</th><th>认证</th><th>运营状态</th><th class="table-actions">操作</th></tr></thead>
               <tbody>
-                <tr v-for="question in questionBank" :key="question.question_id">
+                <tr v-for="question in filteredQuestionBank" :key="question.question_id">
                   <td><strong>{{ question.knowledge_name }}</strong><small v-if="question.related_knowledge_ids.length">关联 {{ question.related_knowledge_ids.length }} 个知识点</small></td>
                   <td>{{ questionPoolLabel(question) }}</td>
                   <td>{{ quizLevelLabel(question.quiz_level) }} / 难度 {{ question.difficulty }}</td>
-                  <td>{{ question.question_type === 'single_choice' ? '单选题' : '简答题' }}</td>
-                  <td><span class="source-text" :title="question.stem">{{ question.stem }}</span></td>
-                  <td><span class="source-text" :title="question.source_quote || question.source_ref_ids.join('、')">{{ question.source_ref_ids.join('、') }}</span></td>
-                  <td><StatusBadge :label="certificationStatusLabel(question.certification_status)" :type="question.certification_status === 'certified' ? 'ok' : question.certification_status === 'rejected' ? 'error' : 'wait'" /><small v-if="question.certification_summary.failed_fields.length" class="document-error">{{ question.certification_summary.failed_fields.join('、') }}</small></td>
+                  <td><StatusBadge :label="certificationStatusLabel(question.certification_status)" :type="question.certification_status === 'certified' ? 'ok' : question.certification_status === 'rejected' ? 'error' : 'wait'" /></td>
                   <td><StatusBadge :label="question.status === 'active' ? '启用' : '已停用'" :type="question.status === 'active' ? 'ok' : 'wait'" /></td>
-                  <td class="table-actions"><button v-if="question.status === 'active'" class="btn text danger" :disabled="questionActionLoading === question.question_id" @click="disableBankQuestion(question)">停用</button><span v-else class="system-label">等待补槽</span></td>
+                  <td class="table-actions"><div class="row-actions"><button class="btn text" @click="openQuestionDetail(question)">查看</button><button v-if="question.status === 'active'" class="btn text danger" :disabled="questionActionLoading === question.question_id" @click="disableBankQuestion(question)">停用</button><span v-else class="system-label">等待补槽</span></div></td>
                 </tr>
               </tbody>
             </table>
@@ -368,20 +391,27 @@
         </div>
 
         <div v-else-if="assetView === 'documents'" class="asset-body">
-          <div class="experimental-note">
-            <span>结构化导入</span>
-            <p>
-              文档会生成知识点、关系和诊断题候选，经复核、校验和索引冒烟后发布。
-            </p>
+          <div class="asset-summary-grid document-summary-grid">
+            <article><span>已就绪</span><strong>{{ documentSummary.ready }}</strong><small>可作为当前来源材料</small></article>
+            <article :class="{ 'has-gap': documentSummary.processing }"><span>处理中</span><strong>{{ documentSummary.processing }}</strong><small>{{ documentSummary.processing ? '等待导入完成' : '当前无处理任务' }}</small></article>
+            <article :class="{ 'has-gap': documentSummary.failed }"><span>处理失败</span><strong>{{ documentSummary.failed }}</strong><small>{{ documentSummary.failed ? '优先处理失败材料' : '当前无失败材料' }}</small></article>
           </div>
-          <div v-if="documents.length === 0" class="empty-view">
-            <strong>当前领域暂无来源文档</strong>
-            <p>上传 PDF、Markdown 或 TXT，进入可追溯的知识导入流程。</p>
+          <div class="filterbar asset-filters">
+            <label class="search-field"><span aria-hidden="true">⌕</span><input v-model="documentFilters.keyword" type="search" placeholder="搜索文件名或来源标题" /></label>
+            <select v-model="documentFilters.status" class="field"><option value="all">全部处理状态</option><option value="attention">待处理</option><option value="processing">处理中</option><option value="ready">已就绪</option></select>
+            <select v-model="documentFilters.fileType" class="field"><option value="all">全部文件类型</option><option value="pdf">PDF</option><option value="markdown">Markdown</option><option value="text">TXT</option><option value="seed_package">系统包</option></select>
+            <button v-if="hasDocumentFilters" class="btn text" type="button" @click="clearDocumentFilters">清除筛选</button>
+          </div>
+          <p class="asset-results" aria-live="polite">显示 {{ filteredDocuments.length }} 份，共 {{ documents.length }} 份来源文档</p>
+          <div v-if="filteredDocuments.length === 0" class="empty-view">
+            <strong>{{ documents.length ? '没有符合条件的来源文档' : '当前领域暂无来源文档' }}</strong>
+            <p>{{ documents.length ? '调整筛选条件后再试。' : '上传 PDF、Markdown 或 TXT，进入可追溯的知识导入流程。' }}</p>
+            <button v-if="documents.length" class="btn" type="button" @click="clearDocumentFilters">清除筛选</button>
             <button class="btn primary" @click="uploadOpen = true">
               上传实验文档
             </button>
           </div>
-          <div v-else class="table-wrap">
+          <div v-else class="table-wrap asset-table-wrap">
             <table class="document-table">
               <thead>
                 <tr>
@@ -395,7 +425,7 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="document in documents" :key="document.document_id">
+                <tr v-for="document in filteredDocuments" :key="document.document_id">
                   <td>
                     <strong>{{ document.original_name }}</strong
                     ><small>{{ document.source_title || "未填写来源" }}</small>
@@ -449,6 +479,11 @@
         </div>
 
         <div v-else class="asset-body graph-body">
+          <div class="graph-summary" aria-live="polite">
+            <span><strong>{{ knowledgeItems.length }}</strong> 个知识点</span>
+            <span><strong>{{ relations.length }}</strong> 条关系</span>
+            <span>点击节点查看上下游关系与来源</span>
+          </div>
           <div
             v-if="!graphLoading && !knowledgeItems.length"
             class="empty-view"
@@ -469,19 +504,19 @@
       </section>
 
       <section v-else-if="activePane === 'rules'" class="pane-stack">
-        <section class="panel">
+        <section class="panel config-panel">
           <div class="section-head">
             <div>
-              <h2>当前生效规则</h2>
-              <p>合并展示系统默认、文档自动生成和领域自定义规则。</p>
+              <h2>领域配置摘要</h2>
+              <p>这些配置决定学习者画像、可生成资源和学习方向。</p>
             </div>
             <span class="readonly-badge">自动生效</span>
           </div>
           <div class="rule-sections">
             <div class="rule-block">
               <div>
-                <h3>能力维度 <small class="rule-source">{{ parsedConfig.sources.abilityDimensions }}</small></h3>
-                <p>用于诊断画像和学习报告。</p>
+                <h3>能力维度</h3>
+                <p>用于诊断结果和学情画像的能力判断。</p>
               </div>
               <div class="rule-values">
                 <span
@@ -495,8 +530,8 @@
             </div>
             <div class="rule-block">
               <div>
-                <h3>资源类型 <small class="rule-source">{{ parsedConfig.sources.resourceTypes }}</small></h3>
-                <p>当前领域允许生成的资源形态。</p>
+                <h3>可生成资源</h3>
+                <p>通过审核后，可为学习者生成的资源形态。</p>
               </div>
               <div class="rule-values">
                 <span
@@ -508,21 +543,8 @@
             </div>
             <div class="rule-block">
               <div>
-                <h3>发布数量门槛 <small class="rule-source">{{ parsedConfig.sources.mvpTargets }}</small></h3>
-                <p>领域校验使用的最低数据规模。</p>
-              </div>
-              <div class="target-list">
-                <div v-for="entry in parsedConfig.mvpTargets" :key="entry[0]">
-                  <span>{{ targetLabel(entry[0]) }}</span
-                  ><strong>{{ entry[1] }}</strong>
-                </div>
-                <small v-if="!parsedConfig.mvpTargets.length">未配置</small>
-              </div>
-            </div>
-            <div class="rule-block">
-              <div>
-                <h3>学习方向 <small class="rule-source">{{ parsedConfig.sources.learningDirections }}</small></h3>
-                <p>上传文档后由系统自动生成，可在领域编辑中调整名称和标签映射。</p>
+                <h3>学习方向</h3>
+                <p>用于学习者建档时选择目标，并影响资源匹配。</p>
               </div>
               <div class="rule-values rule-values-action">
                 <span v-for="direction in parsedConfig.learningDirections" :key="direction.value">{{ direction.label }}</span>
@@ -531,96 +553,74 @@
               </div>
             </div>
           </div>
+          <button class="config-details-toggle" type="button" @click="showConfigDetails = !showConfigDetails">
+            {{ showConfigDetails ? '收起运行规则与来源' : '查看运行规则与来源' }}
+          </button>
+          <div v-if="showConfigDetails" class="config-details">
+            <div class="rule-block">
+              <div>
+                <h3>发布数量门槛</h3>
+                <p>领域校验使用的最低数据规模。</p>
+              </div>
+              <div class="target-list">
+                <div v-for="entry in parsedConfig.mvpTargets" :key="entry[0]"><span>{{ targetLabel(entry[0]) }}</span><strong>{{ entry[1] }}</strong></div>
+              </div>
+            </div>
+            <p class="config-source-note">
+              能力维度：{{ parsedConfig.sources.abilityDimensions }} · 资源类型：{{ parsedConfig.sources.resourceTypes }} · 发布门槛：{{ parsedConfig.sources.mvpTargets }} · 学习方向：{{ parsedConfig.sources.learningDirections }}
+            </p>
+          </div>
         </section>
       </section>
 
-      <section v-else class="operations-grid">
-        <section class="panel operation-panel">
+      <section v-else class="operations-workbench">
+        <div class="section-head">
+          <div>
+            <h2>运行检查</h2>
+            <p>{{ currentTask.tone === 'ready' ? '4 项运行检查均已通过。' : '按来源材料、检索索引、领域校验和发布状态确认领域是否可用。' }}</p>
+          </div>
+          <StatusBadge :label="overallReadinessLabel" :type="overallReadinessClass === 'ready' ? 'ok' : 'wait'" />
+        </div>
+        <ol class="operation-steps" :class="{ compact: currentTask.tone === 'ready' }">
+          <li :class="{ active: currentTask.id === 'open_documents', complete: documentSummary.failed === 0 && documentSummary.processing === 0 }">
+            <span>1</span><div><strong>来源文档</strong><small>{{ documentSummary.failed ? `${documentSummary.failed} 份需要处理` : documentSummary.processing ? `${documentSummary.processing} 份正在处理` : '来源材料正常' }}</small></div><StatusBadge :label="documentSummary.failed ? '待处理' : documentSummary.processing ? '处理中' : '已就绪'" :type="documentSummary.failed ? 'error' : documentSummary.processing ? 'wait' : 'ok'" />
+          </li>
+          <li :class="{ active: currentTask.id === 'rebuild_index' || (currentTask.id === 'review_operations' && currentIndexState === 'running'), complete: currentIndexState === 'ready' }">
+            <span>2</span><div><strong>检索索引</strong><small>当前活动索引：{{ indexStatusLabel }} · Candidate RAG</small></div><StatusBadge :label="indexStatusLabel" :type="indexStatusType" />
+          </li>
+          <li :class="{ active: currentTask.id === 'open_questions' || currentTask.id === 'open_validation', complete: validationResult?.passed }">
+            <span>3</span><div><strong>领域校验</strong><small>{{ missingQuestionKnowledgeIds.length ? `题库仍有 ${missingQuestionKnowledgeIds.length} 个知识点缺口` : validationResult?.passed ? '当前校验通过' : '等待处理未达标项' }}</small></div><StatusBadge :label="validationResult?.passed ? '已通过' : '待校验'" :type="validationResult?.passed ? 'ok' : 'wait'" />
+          </li>
+          <li :class="{ active: currentTask.id === 'publish_domain', complete: selectedDomain?.status === 'ready' }">
+            <span>4</span><div><strong>发布领域</strong><small>{{ selectedDomain?.status === 'ready' ? '学习者可选择此领域' : '通过全部检查后可发布' }}</small></div><StatusBadge :label="domainStatusLabel(selectedDomain?.status)" :type="selectedDomain?.status === 'ready' ? 'ok' : 'wait'" />
+          </li>
+        </ol>
+        <section v-if="currentTask.tone === 'ready'" class="operation-normal">
+          <div><strong>领域可用</strong><span>来源材料、检索索引、领域校验和发布状态均正常。</span></div>
+          <button class="btn text" type="button" @click="showValidationDetails = !showValidationDetails">{{ showValidationDetails ? '收起检查明细' : '查看检查明细' }}</button>
+        </section>
+        <section v-else class="operation-focus" :class="currentTask.tone">
           <div class="section-head">
-            <div>
-              <h2>Candidate RAG 索引</h2>
-              <p>以当前活动索引校验为准；待重新嵌入数量为 0 不代表活动索引已同步。</p>
-            </div>
-            <StatusBadge :label="indexStatusLabel" :type="indexStatusType" />
+            <div><h3>{{ currentTask.title }}</h3><p>{{ currentTask.description }}</p></div>
+            <button class="btn primary" :disabled="primaryActionBusy" @click="runPrimaryAction">{{ primaryActionBusy ? '处理中...' : currentTask.label }}</button>
           </div>
-          <div class="operation-stats">
-            <div>
-              <span>待重新嵌入知识点</span
-              ><strong>{{ stats?.pending_embeddings || 0 }}</strong>
-            </div>
-            <div>
-              <span>最近模型</span
-              ><strong>{{
-                rebuildStatus?.result?.embedding_model || "-"
-              }}</strong>
-            </div>
-            <div>
-              <span>最近结果</span><strong>{{ rebuildResultLabel }}</strong>
-            </div>
+          <div v-if="currentTask.id === 'rebuild_index' || currentIndexState === 'running'" class="operation-stats">
+            <div><span>待重新索引知识点</span><strong>{{ stats?.pending_embeddings || 0 }}</strong></div>
+            <div><span>最近模型</span><strong>{{ rebuildStatus?.result?.embedding_model || '-' }}</strong></div>
+            <div><span>最近结果</span><strong>{{ rebuildResultLabel }}</strong></div>
           </div>
-          <div
-            v-if="showRebuildMessage"
-            class="operation-message"
-            :class="rebuildStatus?.status || currentIndexState"
-          >
-            <strong>{{ rebuildMessageTitle }}</strong>
-            <p>{{ rebuildMessageBody }}</p>
-          </div>
-          <div class="operation-actions">
-            <button class="btn primary" :disabled="rebuilding" @click="rebuild">
-              {{ rebuilding ? "正在重建..." : "重建索引" }}
-            </button>
+          <div v-if="showRebuildMessage" class="operation-message" :class="rebuildStatus?.status || currentIndexState"><strong>{{ rebuildMessageTitle }}</strong><p>{{ rebuildMessageBody }}</p></div>
+          <div v-if="validationResult && ['open_validation', 'open_questions', 'review_operations', 'publish_domain'].includes(currentTask.id)" class="validation-list">
+            <div v-for="row in validationRows" :key="row.key"><span>{{ row.label }}</span><strong>{{ row.actual }} / {{ row.target }}</strong><StatusBadge :label="row.passed ? '达标' : '未达标'" :type="row.passed ? 'ok' : 'wait'" /></div>
+            <div v-for="issue in validationResult.issues" :key="issue.message" class="validation-issue"><span>!</span><p>{{ issue.message }}<small v-if="issue.actual !== undefined">实际 {{ issue.actual }}，目标 {{ issue.target }}</small></p></div>
           </div>
         </section>
-        <section class="panel operation-panel">
-          <div class="section-head">
-            <div>
-              <h2>领域校验</h2>
-              <p>核对知识点、诊断题和向量索引是否达到当前交付门槛。</p>
-            </div>
-            <StatusBadge
-              v-if="validationResult"
-              :label="validationResult.passed ? '校验通过' : '存在问题'"
-              :type="validationResult.passed ? 'ok' : 'wait'"
-            />
+        <section v-if="currentTask.tone === 'ready' && showValidationDetails && validationResult" class="validation-details">
+          <div class="validation-list">
+            <div v-for="row in validationRows" :key="row.key"><span>{{ row.label }}</span><strong>{{ row.actual }} / {{ row.target }}</strong><StatusBadge :label="row.passed ? '达标' : '未达标'" :type="row.passed ? 'ok' : 'wait'" /></div>
           </div>
-          <div v-if="!validationResult" class="validation-empty">
-            <p>执行校验后，将逐项显示实际值、目标值和问题原因。</p>
-          </div>
-          <div v-else class="validation-list">
-            <div v-for="row in validationRows" :key="row.key">
-              <span>{{ row.label }}</span
-              ><strong>{{ row.actual }} / {{ row.target }}</strong
-              ><StatusBadge
-                :label="row.passed ? '达标' : '未达标'"
-                :type="row.passed ? 'ok' : 'wait'"
-              />
-            </div>
-            <div
-              v-for="issue in validationResult.issues"
-              :key="issue.message"
-              class="validation-issue"
-            >
-              <span>!</span>
-              <p>
-                {{ issue.message
-                }}<small v-if="issue.actual !== undefined"
-                  >实际 {{ issue.actual }}，目标 {{ issue.target }}</small
-                >
-              </p>
-            </div>
-          </div>
-          <div class="operation-actions">
-            <button class="btn" :disabled="validating" @click="validate">
-              {{
-                validating
-                  ? "正在校验..."
-                  : validationResult
-                    ? "重新校验"
-                    : "执行领域校验"
-              }}
-            </button>
-          </div>
+          <div class="operation-actions"><button class="btn" :disabled="rebuilding" @click="rebuild">{{ rebuilding ? '正在重建...' : '重建检索索引' }}</button><button class="btn" :disabled="validating" @click="validate">{{ validating ? '正在校验...' : '重新执行检查' }}</button></div>
+          <p class="manual-operation-note">索引重建用于知识内容、来源或嵌入配置变更后的维护确认。</p>
         </section>
       </section>
     </template>
@@ -745,6 +745,37 @@
           </button>
         </div></template
       >
+    </AppDrawer>
+
+    <AppDrawer
+      v-model="questionDrawerOpen"
+      title="题目详情"
+      :subtitle="selectedQuestion ? `${selectedQuestion.knowledge_name} · ${questionPoolLabel(selectedQuestion)}` : ''"
+    >
+      <div v-if="selectedQuestion" class="question-detail">
+        <div class="question-detail-meta">
+          <span>{{ selectedQuestion.question_type === 'single_choice' ? '单选题' : '简答题' }}</span>
+          <span>{{ quizLevelLabel(selectedQuestion.quiz_level) }} · 难度 {{ selectedQuestion.difficulty }}</span>
+          <StatusBadge :label="certificationStatusLabel(selectedQuestion.certification_status)" :type="selectedQuestion.certification_status === 'certified' ? 'ok' : selectedQuestion.certification_status === 'rejected' ? 'error' : 'wait'" />
+        </div>
+        <section class="question-detail-block">
+          <h3>题干</h3>
+          <p>{{ selectedQuestion.stem }}</p>
+          <ul v-if="selectedQuestion.options.length" class="question-options">
+            <li v-for="(option, index) in selectedQuestion.options" :key="`${index}-${option}`">{{ String.fromCharCode(65 + index) }}. {{ option }}</li>
+          </ul>
+        </section>
+        <section class="question-detail-block">
+          <h3>精确来源</h3>
+          <p>{{ selectedQuestion.source_quote || '未提供来源摘录' }}</p>
+          <small>{{ selectedQuestion.source_ref_ids.join('、') || '未标注来源编号' }}</small>
+        </section>
+        <section v-if="selectedQuestion.certification_summary.failed_fields.length" class="question-detail-block question-detail-warning">
+          <h3>认证待处理项</h3>
+          <p>{{ selectedQuestion.certification_summary.failed_fields.join('、') }}</p>
+        </section>
+      </div>
+      <template #footer><div class="drawer-footer"><button class="btn" @click="questionDrawerOpen = false">关闭</button></div></template>
     </AppDrawer>
 
     <AppDrawer
@@ -1000,9 +1031,14 @@ import { formatBeijingDateTime } from "@/utils/dateTime";
 import {
   configList,
   domainReadiness,
+  filterAndSortDocuments,
   filterKnowledgeItems,
+  filterQuestionBank,
+  getDomainTaskAction,
   indexUiState,
+  type DocumentFilters,
   type KnowledgeFilters,
+  type QuestionFilters,
 } from "./domainHubState";
 
 type PaneId = "overview" | "assets" | "rules" | "operations";
@@ -1012,9 +1048,9 @@ const route = useRoute(),
   domainStore = useDomainStore(),
   { showToast } = useToast();
 const panes: Array<{ id: PaneId; label: string }> = [
-  { id: "overview", label: "领域概览" },
+  { id: "overview", label: "概览" },
   { id: "assets", label: "知识资产" },
-  { id: "rules", label: "领域规则" },
+  { id: "rules", label: "领域配置" },
   { id: "operations", label: "运行检查" },
 ];
 const domains = ref<DomainSummary[]>([]),
@@ -1043,6 +1079,12 @@ const loading = ref(false),
 const questionActionLoading = ref("");
 const selectedKnowledgeId = ref<string | null>(null),
   highlightedKnowledgeId = ref<string | null>(null);
+const questionDrawerOpen = ref(false),
+  selectedQuestion = ref<QuestionBankItem | null>(null);
+const showReadinessDetails = ref(false),
+  showEvidenceDetails = ref(false),
+  showConfigDetails = ref(false),
+  showValidationDetails = ref(false);
 const knowledgeRowRefs = new Map<string, HTMLElement>();
 const domainDrawerOpen = ref(false),
   editingDomain = ref<DomainSummary | null>(null),
@@ -1059,6 +1101,19 @@ const knowledgeFilters = reactive<KnowledgeFilters>({
   category: "all",
   difficulty: "all",
   indexStatus: "all",
+});
+const questionFilters = reactive<QuestionFilters>({
+  keyword: "",
+  purpose: "all",
+  level: "all",
+  difficulty: "all",
+  certification: "all",
+  status: "all",
+});
+const documentFilters = reactive<DocumentFilters>({
+  keyword: "",
+  status: "all",
+  fileType: "all",
 });
 const knowledgeDrawerOpen = ref(false),
   editingKnowledge = ref<KnowledgeItem | null>(null),
@@ -1137,28 +1192,27 @@ const hasKnowledgeFilters = computed(
     knowledgeFilters.difficulty !== "all" ||
     knowledgeFilters.indexStatus !== "all",
 );
-const overviewMetrics = computed(() => [
-  {
-    label: "知识点",
-    value: stats.value?.knowledge_items || 0,
-    note: "MVP 目标 ≥ 50",
-  },
-  {
-    label: "诊断题",
-    value: stats.value?.diagnostic_questions || 0,
-    note: "MVP 目标 ≥ 60",
-  },
-  {
-    label: "知识关系",
-    value: stats.value?.knowledge_relations || 0,
-    note: "前置、后继与关联",
-  },
-  {
-    label: "已发布资源",
-    value: stats.value?.published_resources || 0,
-    note: "通过审核的当前版本",
-  },
-]);
+const filteredQuestionBank = computed(() =>
+  filterQuestionBank(questionBank.value, questionFilters),
+);
+const hasQuestionFilters = computed(
+  () =>
+    Boolean(questionFilters.keyword.trim()) ||
+    questionFilters.purpose !== "all" ||
+    questionFilters.level !== "all" ||
+    questionFilters.difficulty !== "all" ||
+    questionFilters.certification !== "all" ||
+    questionFilters.status !== "all",
+);
+const filteredDocuments = computed(() =>
+  filterAndSortDocuments(documents.value, documentFilters),
+);
+const hasDocumentFilters = computed(
+  () =>
+    Boolean(documentFilters.keyword.trim()) ||
+    documentFilters.status !== "all" ||
+    documentFilters.fileType !== "all",
+);
 const readinessItems = computed(() =>
     domainReadiness(
       stats.value,
@@ -1170,6 +1224,9 @@ const readinessItems = computed(() =>
   attentionItems = computed(() =>
     readinessItems.value.filter((item) => item.state !== "ready"),
   );
+const passedReadinessItems = computed(() =>
+  readinessItems.value.filter((item) => item.state === "ready"),
+);
 const overallReadinessClass = computed(() =>
     attentionItems.value.some((item) => item.state === "error")
       ? "error"
@@ -1184,9 +1241,6 @@ const overallReadinessClass = computed(() =>
         ? "存在阻断项"
         : "需要处理",
   );
-const attentionSummary = computed(() =>
-  attentionItems.value.map((item) => item.label).join("、"),
-);
 const practiceGenerationMode = computed(
   () => validationResult.value?.evidence_coverage?.practice_generation_mode,
 );
@@ -1224,6 +1278,54 @@ const currentIndexState = computed(() =>
     rebuilding.value ? "running" : rebuildStatus.value?.status,
   ),
 );
+const missingQuestionKnowledgeIds = computed(() => {
+  const coverage = questionCoverage.value;
+  if (!coverage) return [];
+  return [...new Set([
+    ...coverage.missing_diagnosis_knowledge_ids,
+    ...coverage.missing_quiz_knowledge_ids,
+    ...coverage.missing_mastery_reserve_knowledge_ids,
+  ])];
+});
+const questionCoverageCards = computed(() => {
+  const coverage = questionCoverage.value;
+  const total = coverage?.total_items || stats.value?.knowledge_items || 0;
+  const groups = [
+    { label: "诊断题", missing: coverage?.missing_diagnosis_knowledge_ids.length || 0 },
+    { label: "分阶测验", missing: coverage?.missing_quiz_knowledge_ids.length || 0 },
+    { label: "掌握检查", missing: coverage?.missing_mastery_reserve_knowledge_ids.length || 0 },
+  ];
+  return groups.map((group) => ({
+    ...group,
+    ready: Math.max(0, total - group.missing),
+    note: group.missing ? `待补 ${group.missing} 个知识点` : "覆盖完整",
+  }));
+});
+const indexBlockedByQuestionBank = computed(() =>
+  Boolean(validationResult.value?.rag?.reason?.startsWith("question_")),
+);
+const currentTask = computed(() =>
+  getDomainTaskAction({
+    stats: stats.value,
+    domainStatus: selectedDomain.value?.status,
+    indexState: currentIndexState.value,
+    validationPassed: validationResult.value?.passed,
+    missingQuestionKnowledgeCount: missingQuestionKnowledgeIds.value.length,
+    indexBlockedByQuestionBank: indexBlockedByQuestionBank.value,
+  }),
+);
+const primaryActionBusy = computed(() => {
+  if (currentTask.value.id === "loading") return true;
+  if (currentTask.value.id === "rebuild_index") return rebuilding.value;
+  if (currentTask.value.id === "open_validation") return validating.value;
+  if (currentTask.value.id === "publish_domain") return lifecycleLoading.value;
+  return false;
+});
+const documentSummary = computed(() => ({
+  ready: documents.value.filter((document) => document.status === "ready").length,
+  processing: documents.value.filter((document) => isProcessing(document.status)).length,
+  failed: documents.value.filter((document) => ["failed", "cancelled", "interrupted"].includes(document.status)).length,
+}));
 const indexStatusLabel = computed(() => ({
   running: "重建中",
   ready: "已同步",
@@ -1231,7 +1333,13 @@ const indexStatusLabel = computed(() => ({
   failed: "异常",
 })[currentIndexState.value]);
 const indexStatusType = computed(() =>
-  currentIndexState.value === "ready" ? "ok" : ("wait" as const),
+  currentIndexState.value === "ready"
+    ? "ok"
+    : currentIndexState.value === "failed"
+      ? "error"
+      : currentIndexState.value === "running"
+        ? "info"
+        : "wait",
 );
 const showRebuildMessage = computed(
   () =>
@@ -1267,7 +1375,7 @@ const rebuildMessageBody = computed(
     (currentIndexState.value === "needs_rebuild"
       ? validationResult.value?.rag?.reason?.startsWith("question_")
         ? `当前阻断项来自正式题库（${validationResult.value.rag.reason}），无需重建向量索引。`
-        : `当前 Candidate RAG 校验未通过（${validationResult.value?.rag?.reason || "索引版本或数据版本不一致"}），请重建索引。`
+        : `当前检索索引校验未通过（${validationResult.value?.rag?.reason || "索引版本或数据版本不一致"}），请重建索引。`
       : rebuildStatus.value?.message) ||
     (rebuildStatus.value?.result?.status === "unchanged"
       ? "知识库没有变化，未重复向量化。"
@@ -1290,7 +1398,7 @@ const validationRows = computed(() => {
   const labels: Record<string, string> = {
     knowledge_items: "知识点",
     diagnostic_questions: "诊断题",
-    chroma_vectors: "Candidate RAG 向量",
+    chroma_vectors: "检索索引向量",
   };
   return Object.entries(result.targets).map(([key, target]) => {
     const countKey = key === "vector_chunks" ? "chroma_vectors" : key;
@@ -1332,9 +1440,35 @@ function openAssetView(id: AssetView) {
   assetView.value = id;
   updateRoute();
 }
-function openPendingKnowledge() {
-  knowledgeFilters.indexStatus = "pending";
-  openAssetView("items");
+function openQuestionDetail(question: QuestionBankItem) {
+  selectedQuestion.value = question;
+  questionDrawerOpen.value = true;
+}
+async function runPrimaryAction() {
+  switch (currentTask.value.id) {
+    case "open_documents":
+      openAssetView("documents");
+      return;
+    case "rebuild_index":
+      selectPane("operations");
+      await rebuild();
+      return;
+    case "open_questions":
+      openAssetView("questions");
+      return;
+    case "open_validation":
+      selectPane("operations");
+      await validate();
+      return;
+    case "publish_domain":
+      await publishSelectedDomain();
+      return;
+    case "review_operations":
+      selectPane("operations");
+      return;
+    default:
+      return;
+  }
 }
 function setKnowledgeRowRef(
   knowledgeId: string,
@@ -1512,6 +1646,8 @@ async function switchDomain() {
   knowledgeItems.value = [];
   relations.value = [];
   clearKnowledgeFilters();
+  clearQuestionFilters();
+  clearDocumentFilters();
   await loadDomain();
   await syncRebuildStatus();
 }
@@ -1586,6 +1722,19 @@ function clearKnowledgeFilters() {
   knowledgeFilters.category = "all";
   knowledgeFilters.difficulty = "all";
   knowledgeFilters.indexStatus = "all";
+}
+function clearQuestionFilters() {
+  questionFilters.keyword = "";
+  questionFilters.purpose = "all";
+  questionFilters.level = "all";
+  questionFilters.difficulty = "all";
+  questionFilters.certification = "all";
+  questionFilters.status = "all";
+}
+function clearDocumentFilters() {
+  documentFilters.keyword = "";
+  documentFilters.status = "all";
+  documentFilters.fileType = "all";
 }
 function openKnowledgeEditor(item?: KnowledgeItem) {
   editingKnowledge.value = item || null;
@@ -2082,7 +2231,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: var(--soft);
   padding: 13px 16px;
 }
@@ -2171,6 +2320,25 @@ onBeforeUnmount(() => {
   margin: 8px 0 5px;
   font-size: 25px;
 }
+.current-task {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  padding: 16px 18px;
+}
+.current-task.ready { background: var(--green2); }
+.current-task.warning { background: var(--amber2); }
+.current-task.error { background: var(--red2); }
+.current-task.info { background: var(--blue2); }
+.task-kicker { color: var(--muted); font-size: 11px; font-weight: 700; }
+.current-task-content { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-top: 5px; }
+.current-task h2 { font-size: 17px; }
+.current-task p { max-width: 700px; margin: 5px 0 0; color: var(--body); font-size: 12px; line-height: 1.55; }
+.overview-statuses { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; color: var(--muted); font-size: 11px; }
+.overview-statuses span { display: inline-flex; align-items: center; gap: 6px; }
+.overview-statuses i { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); }
+.overview-statuses i.ready { background: var(--green); }
+.overview-statuses i.error { background: var(--red); }
 .section-head {
   display: flex;
   align-items: flex-start;
@@ -2213,7 +2381,7 @@ onBeforeUnmount(() => {
 }
 .readiness-list {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   margin-top: 15px;
   border-top: 1px solid var(--line);
 }
@@ -2224,9 +2392,6 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 15px 12px;
   border-bottom: 1px solid var(--line);
-}
-.readiness-row:nth-child(odd) {
-  border-right: 1px solid var(--line);
 }
 .readiness-icon {
   width: 27px;
@@ -2262,6 +2427,11 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 700;
 }
+.readiness-empty { margin: 16px 0 0; color: var(--muted); font-size: 12px; }
+.readiness-toggle,
+.config-details-toggle { margin-top: 10px; padding-inline: 0; }
+.readiness-passed-list { margin-top: 8px; }
+.evidence-toggle { width: 100%; display: flex; justify-content: space-between; margin-top: 12px; border: 0; border-top: 1px solid var(--line); background: transparent; padding: 12px 0 0; color: var(--muted); font: inherit; font-size: 11px; font-weight: 650; text-align: left; }
 .evidence-coverage {
   display: grid;
   gap: 12px;
@@ -2391,14 +2561,24 @@ onBeforeUnmount(() => {
 .segmented button.active {
   background: var(--panel);
   color: var(--blue);
-  box-shadow: 0 1px 3px rgb(22 35 55/0.09);
+  box-shadow: var(--shadow-card);
 }
 .asset-body {
   padding: 16px 18px 0;
 }
+.asset-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--line); }
+.asset-summary-grid article { display: grid; gap: 5px; background: var(--panel); padding: 12px 14px; }
+.asset-summary-grid article.has-gap { background: var(--amber2); }
+.asset-summary-grid span,
+.asset-summary-grid small { color: var(--muted); font-size: 10px; }
+.asset-summary-grid strong { font-size: 18px; }
+.asset-summary-note { margin: 10px 0 12px; color: var(--muted); font-size: 11px; }
 .knowledge-filters {
   padding-bottom: 14px;
 }
+.asset-filters { align-items: center; padding: 2px 0 10px; }
+.asset-filters .search-field { min-width: 220px; }
+.asset-results { margin: -2px 0 10px; color: var(--muted); font-size: 11px; }
 .knowledge-results {
   margin: -4px 0 10px;
   color: var(--muted);
@@ -2409,7 +2589,19 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
+.asset-table-wrap {
+  max-height: clamp(360px, 56vh, 540px);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
 .knowledge-table-wrap thead th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: var(--soft);
+  box-shadow: 0 1px 0 var(--line);
+}
+.asset-table-wrap thead th {
   position: sticky;
   z-index: 1;
   top: 0;
@@ -2527,6 +2719,8 @@ onBeforeUnmount(() => {
 .graph-body {
   padding-bottom: 18px;
 }
+.graph-summary { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 12px; color: var(--muted); font-size: 11px; }
+.graph-summary strong { color: var(--body); }
 .empty-view {
   min-height: 210px;
   display: grid;
@@ -2547,6 +2741,9 @@ onBeforeUnmount(() => {
   margin-top: 14px;
   border-top: 1px solid var(--line);
 }
+.config-details { margin-top: 10px; border-top: 1px solid var(--line); }
+.config-details .rule-block { padding-bottom: 12px; }
+.config-source-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .rule-block {
   display: grid;
   grid-template-columns: minmax(180px, 0.45fr) 1fr;
@@ -2603,16 +2800,32 @@ onBeforeUnmount(() => {
   color: var(--body);
   font-size: 12px;
 }
-.operations-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-.operation-panel {
-  display: flex;
-  min-height: 360px;
-  flex-direction: column;
-}
+.operations-workbench { display: grid; gap: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 18px; }
+.operation-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--line); list-style: none; }
+.operation-steps li { display: grid; grid-template-columns: 26px 1fr; align-items: center; gap: 9px; min-height: 72px; background: var(--panel); padding: 11px; }
+.operation-steps li.active { background: var(--blue2); }
+.operation-steps li.complete { background: var(--green2); }
+.operation-steps > li > span:first-child { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--soft); color: var(--muted); font-size: 11px; font-weight: 750; }
+.operation-steps strong,
+.operation-steps small { display: block; }
+.operation-steps strong { font-size: 12px; }
+.operation-steps small { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.operation-steps .status { grid-column: 2; justify-self: start; }
+.operation-steps.compact li { min-height: 52px; grid-template-columns: 24px 1fr; padding: 9px 11px; }
+.operation-steps.compact small { display: none; }
+.operation-steps.compact .status { display: none; }
+.operation-normal { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.operation-normal > div { display: grid; gap: 4px; }
+.operation-normal strong { color: var(--green); font-size: 14px; }
+.operation-normal span { color: var(--muted); font-size: 11px; }
+.operation-focus { border: 1px solid var(--line); border-radius: 9px; background: var(--soft); padding: 15px; }
+.operation-focus.warning { background: var(--amber2); }
+.operation-focus.error { background: var(--red2); }
+.operation-focus.ready { background: var(--green2); }
+.operation-focus.info { background: var(--blue2); }
+.operation-focus h3 { font-size: 14px; }
+.operation-focus .section-head p { max-width: 650px; }
+.validation-details { border-top: 1px solid var(--line); padding-top: 2px; }
 .operation-stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -2663,9 +2876,11 @@ onBeforeUnmount(() => {
 .operation-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   margin-top: auto;
   padding-top: 18px;
 }
+.manual-operation-note { margin: 9px 0 0; color: var(--muted); font-size: 11px; text-align: right; }
 .validation-empty {
   display: grid;
   place-items: center;
@@ -2714,6 +2929,15 @@ onBeforeUnmount(() => {
   display: block;
   margin-top: 3px;
 }
+.question-detail { display: grid; gap: 16px; }
+.question-detail-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.question-detail-meta > span { border-radius: 999px; background: var(--soft); padding: 5px 8px; color: var(--muted); font-size: 11px; }
+.question-detail-block { border-top: 1px solid var(--line); padding-top: 14px; }
+.question-detail-block h3 { font-size: 13px; }
+.question-detail-block p { margin: 8px 0 0; color: var(--body); font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
+.question-detail-block small { display: block; margin-top: 8px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.question-options { display: grid; gap: 7px; margin: 10px 0 0; padding: 0; list-style: none; color: var(--body); font-size: 12px; line-height: 1.55; }
+.question-detail-warning { border-radius: 8px; border-top: 0; background: var(--amber2); padding: 12px; }
 .page-skeleton {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -2943,9 +3167,6 @@ onBeforeUnmount(() => {
   .domain-metrics > div:nth-child(-n + 2) {
     border-bottom: 1px solid var(--line);
   }
-  .operations-grid {
-    grid-template-columns: 1fr;
-  }
   .source-col {
     display: none;
   }
@@ -2964,6 +3185,11 @@ onBeforeUnmount(() => {
   .domain-banner {
     align-items: flex-start;
   }
+  .current-task-content {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .current-task-content .btn { width: 100%; }
   .readiness-list {
     grid-template-columns: 1fr;
   }
@@ -2985,10 +3211,17 @@ onBeforeUnmount(() => {
     align-items: flex-start;
     flex-direction: column;
   }
+  .asset-summary-grid { grid-template-columns: 1fr; }
   .knowledge-filters {
     align-items: stretch;
   }
   .knowledge-filters > * {
+    flex: 1;
+  }
+  .asset-filters {
+    align-items: stretch;
+  }
+  .asset-filters > * {
     flex: 1;
   }
   .knowledge-table-wrap {
@@ -2999,6 +3232,10 @@ onBeforeUnmount(() => {
   .knowledge-table-wrap thead th {
     position: static;
     box-shadow: none;
+  }
+  .asset-table-wrap {
+    max-height: min(500px, 62vh);
+    overflow: auto;
   }
   .search-field {
     min-width: 100%;
@@ -3012,6 +3249,12 @@ onBeforeUnmount(() => {
   .operation-stats {
     grid-template-columns: 1fr;
   }
+  .operations-workbench { padding: 14px; }
+  .operation-steps { grid-template-columns: 1fr; }
+  .operation-steps.compact li { grid-template-columns: 24px 1fr; }
+  .operation-normal { align-items: flex-start; flex-direction: column; }
+  .operation-focus .section-head { align-items: flex-start; flex-direction: column; }
+  .operation-focus .section-head .btn { width: 100%; }
   .table-actions {
     width: auto;
   }

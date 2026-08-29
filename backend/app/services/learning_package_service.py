@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     GenerationTask,
+    KnowledgeItem,
     KnowledgeUpdateImpact,
     Learner,
     LearnerProfile,
@@ -150,9 +151,26 @@ def serialize_package(
         )
         for report in reports:
             report_by_resource.setdefault(report.resource_id, report)
+    knowledge_ids = {
+        str(source.get("knowledge_id") or "").strip()
+        for _member, resource in rows
+        for source in (resource.sources_json or [])
+        if str(source.get("knowledge_id") or "").strip()
+    }
+    knowledge_names = dict(
+        db.execute(
+            select(KnowledgeItem.public_id, KnowledgeItem.name).where(
+                KnowledgeItem.public_id.in_(knowledge_ids)
+            )
+        ).all()
+    ) if knowledge_ids else {}
     resources = []
     for member, resource in rows:
-        payload = serialize_resource(resource, db.get(GenerationTask, resource.generation_task_id))
+        payload = serialize_resource(
+            resource,
+            db.get(GenerationTask, resource.generation_task_id),
+            knowledge_names=knowledge_names,
+        )
         payload.update(
             {
                 "membership_type": member.membership_type,

@@ -33,6 +33,15 @@ export interface LearningPathStage {
   trigger?: string
 }
 
+export interface LearnerPathNode {
+  path_node_id: string
+  title: string
+  path_order: number
+  status: 'locked' | 'current' | 'completed' | 'skipped'
+  learning_objective?: string
+  knowledge_ids?: string[]
+}
+
 export interface LearnerProfileDetail {
   learner_id: string
   domain_code: string
@@ -53,6 +62,7 @@ export interface LearnerProfileDetail {
     profile_type?: string
     score?: number
     stages?: LearningPathStage[]
+    nodes?: LearnerPathNode[]
     needs_refresh?: boolean
   } | null
   diagnostic_summary: {

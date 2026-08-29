@@ -9,6 +9,7 @@ from app.models import (
     Base,
     Feedback,
     GenerationTask,
+    KnowledgeItem,
     KnowledgeUpdateImpact,
     Learner,
     LearnerProfile,
@@ -24,7 +25,11 @@ from app.services.feedback_service import (
     FeedbackSourceCompatibilityError,
     create_feedback_task,
 )
-from app.services.learning_package_service import ensure_package_members, package_member_rows
+from app.services.learning_package_service import (
+    ensure_package_members,
+    package_member_rows,
+    serialize_package,
+)
 from app.services.node_mastery_service import affected_resource_types
 
 
@@ -155,6 +160,54 @@ def test_feedback_refresh_preserves_single_resource_package_scope() -> None:
         assert rows[0][1].resource_type == "practice_guide"
         assert refresh_task.is_current_package is True
         assert source_task.is_current_package is False
+
+
+def test_package_serialization_resolves_knowledge_names_for_existing_resources() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        _learner, _profile, task, _resources = _package_fixture(db, ("lecture",))
+        db.add(
+            KnowledgeItem(
+                public_id="knowledge_lecture",
+                domain_code="ai_app_dev",
+                name="异步 API 调用",
+                category="实操技能",
+                difficulty=3,
+                tags_json=[],
+                content_md="异步调用基础知识。",
+                source_title="Python 文档",
+                license_note="官方文档",
+                status="published",
+            )
+        )
+        db.add(
+            KnowledgeItem(
+                public_id="knowledge_lecture_duplicate",
+                domain_code="ai_app_dev",
+                name="异步 API 调用",
+                category="实操技能",
+                difficulty=3,
+                tags_json=[],
+                content_md="同一知识点的另一条来源记录。",
+                source_title="Python 文档",
+                license_note="官方文档",
+                status="published",
+            )
+        )
+        _resources["lecture"].sources_json = [
+            {"knowledge_id": "knowledge_lecture"},
+            {"knowledge_id": "knowledge_lecture"},
+            {"knowledge_id": "knowledge_lecture_duplicate"},
+        ]
+        db.commit()
+
+        payload = serialize_package(db, task)
+
+    assert payload["resources"][0]["source_details"] == [
+        {"knowledge_id": "knowledge_lecture", "name": "异步 API 调用"}
+    ]
 
 
 def test_partial_refresh_composes_new_package_with_inherited_resource() -> None:

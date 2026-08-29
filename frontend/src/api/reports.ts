@@ -54,6 +54,7 @@ export interface LearningReport {
       resource_type_label: string
       title: string
       difficulty: number
+      difficulty_match_score?: number | null
       review_status: string
       source_count: number
       generation_task_id?: string | null

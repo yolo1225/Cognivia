@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC
+from collections.abc import Mapping
 from typing import Any
 
 from sqlalchemy import select
@@ -22,7 +23,26 @@ def _iso(value: Any) -> str | None:
 def serialize_resource(
     resource: LearningResource,
     generation_task: GenerationTask | None = None,
+    knowledge_names: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
+    source_details = []
+    source_detail_keys: set[str] = set()
+    for stored_source in resource.sources_json or []:
+        source = dict(stored_source)
+        knowledge_id = str(source.get("knowledge_id") or "").strip()
+        source["name"] = (
+            str(source.get("name") or "").strip()
+            or (knowledge_names or {}).get(knowledge_id)
+            or "关联知识点"
+        )
+        # A resource can cite several chunks from one knowledge item. Learners only
+        # need to see each knowledge point once, while the raw sources remain stored
+        # for review and export.
+        source_key = f"name:{source['name'].casefold()}" if source["name"] != "关联知识点" else f"id:{knowledge_id}"
+        if source_key in source_detail_keys:
+            continue
+        source_detail_keys.add(source_key)
+        source_details.append(source)
     return {
         "resource_id": resource.public_id,
         "resource_type": resource.resource_type,
@@ -32,7 +52,7 @@ def serialize_resource(
         "learner_profile_type": resource.learner_profile_type,
         "review_status": resource.review_status,
         "sources": [item.get("knowledge_id") for item in (resource.sources_json or [])],
-        "source_details": resource.sources_json or [],
+        "source_details": source_details,
         "version": resource.version,
         "generation_task_id": generation_task.public_id if generation_task else None,
         "generation_task_status": generation_task.status if generation_task else None,

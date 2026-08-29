@@ -305,8 +305,8 @@ onMounted(loadAll)
 <style scoped>
 .mistake-page { max-width: 1080px; margin: 0 auto; gap: 20px; }
 .context-label { display: inline-block; margin-top: 8px; color: var(--muted); font-size: 12px; }
-.review-overview { display: grid; grid-template-columns: minmax(280px, 1.25fr) minmax(340px, 1fr); overflow: hidden; border: 1px solid #e2e8f2; border-radius: 16px; background: linear-gradient(135deg, #eef3ff 0%, #f8fafc 55%, #eef8f3 100%); }
-.progress-summary { padding: 24px 26px; border-right: 1px solid #e2e8f2; }
+.review-overview { display: grid; grid-template-columns: minmax(280px, 1.25fr) minmax(340px, 1fr); overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-raised); }
+.progress-summary { padding: 24px 26px; border-right: 1px solid var(--line); }
 .overview-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }.overview-kicker { color: var(--blue); font-size: 12px; font-weight: 750; }.overview-heading h2 { margin-top: 6px; color: var(--ink); font-size: 22px; }.overview-heading p { margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.7; }.overview-heading strong { color: var(--ink); font-size: 26px; line-height: 1; }
 .progress-track { height: 8px; overflow: hidden; margin-top: 14px; border-radius: 999px; background: var(--track); }
 .progress-track i { display: block; height: 100%; border-radius: inherit; background: var(--blue); transition: width 220ms cubic-bezier(.22, 1, .36, 1); }
@@ -320,7 +320,7 @@ onMounted(loadAll)
 .filter-heading > div { display: grid; gap: 3px; }.filter-heading strong { font-size: 15px; }.filter-heading span,.filter-heading small { color: var(--muted); font-size: 11px; }
 .filter-group { display: flex; gap: 4px; flex-wrap: wrap; margin-right: auto; }
 .filter-button { min-height: 36px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--body); padding: 6px 11px; transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast); }
-.filter-button:hover { background: var(--soft); }.filter-button.active { border-color: #cddaff; background: var(--blue2); color: #244eae; font-weight: 700; }
+.filter-button:hover { background: var(--soft); }.filter-button.active { border-color: var(--line-info); background: var(--blue2); color: var(--text-info-strong); font-weight: 700; }
 .filter-bar label { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }.filter-bar select { min-height: 34px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); padding: 4px 28px 4px 9px; }
 .clear-filter { flex: 0 0 auto; }
 .mistake-layout { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(340px, .92fr); gap: 14px; align-items: start; }
@@ -335,16 +335,16 @@ onMounted(loadAll)
 .filter-button:focus-visible,.mistake-main:focus-visible,.answer-options button:focus-visible,.panel-close:focus-visible { outline: 3px solid var(--visual-ring); outline-offset: 2px; }
 
 /* 深色主题：概览、筛选与答题交互状态使用同一套语义色。 */
-.app.theme-dark .review-overview { border-color: #3e5878; background: #1a2b41; }
-.app.theme-dark .progress-summary { border-color: #3e5878; }
+.app.theme-dark .review-overview { border-color: var(--line); background: var(--surface-raised); }
+.app.theme-dark .progress-summary { border-color: var(--line); }
 .app.theme-dark .status-summary div { border-color: var(--line); background: var(--panel); }
-.app.theme-dark .filter-button.active { border-color: #4b6fa9; color: #d8e7ff; }
-.app.theme-dark .mistake-row:hover { border-color: #597093; }
-.app.theme-dark .mistake-row.selected { border-color: #4b6fa9; }
+.app.theme-dark .filter-button.active { border-color: var(--line-info); color: var(--text-info-strong); }
+.app.theme-dark .mistake-row:hover { border-color: var(--line-strong); }
+.app.theme-dark .mistake-row.selected { border-color: var(--line-info); }
 .app.theme-dark .mistake-meta span + span::before { color: var(--muted); }
 .app.theme-dark .answer-options button:hover,
 .app.theme-dark .answer-options button.selected,
-.app.theme-dark .quick-prompts button:hover { border-color: #4b6fa9; }
+.app.theme-dark .quick-prompts button:hover { border-color: var(--line-info); }
 .app.theme-dark .answer-options i { border-color: var(--muted); }
 @media (max-width: 980px) { .review-overview { grid-template-columns: 1fr; }.progress-summary { border-right: 0; border-bottom: 1px solid var(--line); }.mistake-layout { grid-template-columns: 1fr; }.review-panel { position: static; max-height: none; } }
 @media (max-width: 680px) { .status-summary div { padding: 14px; }.filter-group { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }.filter-button { white-space: nowrap; }.filter-bar label { width: calc(50% - 5px); display: grid; gap: 4px; }.filter-bar select { width: 100%; }.clear-filter { width: 100%; }.row-actions .btn { flex: 1; }.review-panel { padding: 16px; } }
@@ -401,4 +401,10 @@ onMounted(loadAll)
 .tutoring-messages { align-content: start; }.tutoring-messages article { border: 1px solid var(--line); background: var(--panel); }.tutoring-messages article.user { margin-left: 36px; border-color: #cbd9f4; background: var(--blue2); }.tutor-message-meta { display: flex; align-items: center; gap: 7px; }.tutor-avatar { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 6px; background: var(--blue2); color: var(--blue); font-size: 10px; font-weight: 800; }.user .tutor-avatar { background: var(--blue); color: #fff; }.tutor-message-meta strong { font-size: 12px; }.tutoring-messages article > p { font-size: 13px; line-height: 1.7; }
 .tutor-form { display: grid; grid-template-columns: minmax(0, 1fr) 38px; align-items: end; gap: 8px; }.tutor-composer { position: relative; }.tutor-composer textarea { width: 100%; min-height: 76px; resize: none; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); padding: 9px 10px 22px; outline: none; }.tutor-composer textarea:focus { border-color: var(--blue); box-shadow: var(--focus); }.tutor-composer small { position: absolute; right: 8px; bottom: 6px; color: var(--muted); font-size: 10px; }.tutor-send { width: 38px; height: 38px; display: grid; place-items: center; border: 0; border-radius: 8px; background: var(--blue); color: #fff; font-size: 17px; }.tutor-send:disabled { cursor: not-allowed; opacity: .55; }
 .tutor-footer-tools { display: flex; margin-bottom: 9px; }.tutor-footer-tools .btn { width: 100%; justify-content: center; }.tutoring-messages article > small { display: block; margin-top: 7px; color: var(--muted); }
+
+/* Current node and drawer interactions share the semantic status palette. */
+.source-tabs button.active { border-color: var(--line-info); color: var(--text-info-strong); }
+.quick-prompts button:hover,.answer-options button:hover,.answer-options button.selected { border-color: var(--line-info); }
+.tutor-suggestions button,.tutoring-messages article.user { border-color: var(--line-info); }
+.tutor-composer textarea:focus { box-shadow: var(--focus); }
 </style>

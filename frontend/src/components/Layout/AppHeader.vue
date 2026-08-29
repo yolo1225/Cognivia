@@ -39,7 +39,7 @@
             <span>{{ authStore.role === 'admin' ? '管理员' : '学习者' }}</span>
           </div>
           <button v-if="authStore.role === 'admin'" type="button" role="menuitem" class="menu-item" @click="goTo('/learners')">用户管理</button>
-          <button v-else-if="reportAvailable" type="button" role="menuitem" class="menu-item" @click="goTo('/report')">学习报告</button>
+          <button v-else-if="reportAvailable" type="button" role="menuitem" class="menu-item" @click="goTo('/report')">学情画像</button>
           <div class="menu-divider"></div>
           <button type="button" role="menuitem" class="logout" @click="logout">退出登录</button>
         </div>
@@ -125,7 +125,7 @@ const pageLabel = computed(() => String(route.meta.title || '工作区'))
 .account-menu, .notification-menu { position: relative; }
 .top-icon-button { position: relative; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 18px; transition: background var(--transition-fast), color var(--transition-fast); }
 .top-icon-button:hover { background: var(--soft); color: var(--blue); }
-.notification-badge { position: absolute; top: 7px; right: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 2px #fff; }
+.notification-badge { position: absolute; top: 7px; right: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 2px var(--panel); }
 .top-profile { display: flex; align-items: center; gap: 8px; min-height: 42px; border: 0; border-radius: 10px; background: transparent; padding: 4px 7px 4px 5px; color: var(--ink); text-align: left; transition: background var(--transition-fast); }
 .top-profile:hover { background: var(--soft); }
 .top-profile .top-avatar { width: 32px; height: 32px; min-height: 32px; flex: 0 0 auto; border-radius: 9px; background: var(--blue2); color: var(--blue); font-size: 13px; }
@@ -134,7 +134,7 @@ const pageLabel = computed(() => String(route.meta.title || '工作区'))
 .profile-meta small { color: var(--muted); font-size: 10px; line-height: 1.35; }
 .profile-chevron { color: var(--muted); font-size: 16px; line-height: 1; transform: translateY(-2px); transition: transform var(--transition-fast); }
 .profile-chevron.open { transform: translateY(1px) rotate(180deg); }
-.account-dropdown, .notification-dropdown { position: absolute; top: calc(100% + 12px); right: 0; z-index: var(--z-dropdown); overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 8px 14px rgb(22 35 55 / .12); }
+.account-dropdown, .notification-dropdown { position: absolute; top: calc(100% + 12px); right: 0; z-index: var(--z-dropdown); overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow-hover); }
 .account-dropdown { width: 236px; }
 .notification-dropdown { width: min(368px, calc(100vw - 32px)); }
 .account-summary { display: grid; gap: 4px; padding: 16px; background: var(--soft); }
@@ -163,7 +163,7 @@ const pageLabel = computed(() => String(route.meta.title || '工作区'))
 .notification-item p { margin: 3px 0 0; color: var(--body); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .notification-item time { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
 .notification-empty { display: grid; justify-items: center; gap: 8px; padding: 36px 20px; color: var(--muted); text-align: center; }
-.notification-empty :deep(.app-icon) { color: #9caac0; font-size: 24px; }
+.notification-empty :deep(.app-icon) { color: var(--muted); font-size: 24px; }
 .notification-empty p { margin: 0; font-size: 12px; }
 @media (max-width: 640px) { .profile-meta, .profile-chevron { display: none; } .top-profile { padding: 4px; } }
 @media (max-width: 640px) { .notification-dropdown { position: fixed; top: 68px; right: 16px; } }

@@ -203,6 +203,21 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
     testing_session = build_test_session()
     with testing_session() as db:
         seed_resource(db)
+        db.add(
+            KnowledgeItem(
+                public_id="AIAPP-K029",
+                domain_code="ai_app_dev",
+                name="Python 异步并发",
+                category="实操技能",
+                difficulty=3,
+                tags_json=[],
+                content_md="asyncio 基础知识。",
+                source_title="Python 文档",
+                license_note="官方文档",
+                status="published",
+            )
+        )
+        db.commit()
     monkeypatch.setattr("app.api.v1.resources.run_generation_task", lambda task_id: None)
     monkeypatch.setattr("app.api.v1.tutoring.run_generation_task", lambda task_id: None)
     monkeypatch.setattr(
@@ -222,6 +237,9 @@ def test_resource_visibility_tutoring_and_feedback_contract(monkeypatch) -> None
     try:
         resources = client.get("/api/v1/resources").json()["data"]
         assert [item["resource_id"] for item in resources] == ["resource_visible"]
+        assert resources[0]["source_details"] == [
+            {"knowledge_id": "AIAPP-K029", "name": "Python 异步并发"}
+        ]
         admin_resources = client.get("/api/v1/resources?include_unpublished=true").json()["data"]
         assert {item["resource_id"] for item in admin_resources} == {
             "resource_visible",

@@ -1,15 +1,20 @@
 import type { KnowledgeItem, KnowledgeRelation } from '@/api/knowledge'
+import { lightChartTheme, type ChartTheme } from '@/composables/chartTheme'
 
 export const relationTypes = ['prerequisite', 'dependent', 'related'] as const
 export type RelationType = (typeof relationTypes)[number]
 
-export const relationMeta: Record<string, { label: string; color: string; lineType: 'solid' | 'dashed' | 'dotted' }> = {
-  prerequisite: { label: '显式前置', color: '#315fce', lineType: 'solid' },
-  dependent: { label: '教学顺序', color: '#138560', lineType: 'solid' },
-  related: { label: '关联关系', color: '#b96308', lineType: 'dashed' },
+export const relationMeta: Record<string, { label: string; lineType: 'solid' | 'dashed' | 'dotted' }> = {
+  prerequisite: { label: '显式前置', lineType: 'solid' },
+  dependent: { label: '教学顺序', lineType: 'solid' },
+  related: { label: '关联关系', lineType: 'dashed' },
 }
 
-const categoryColors = ['#315fce', '#138560', '#b96308', '#7c4d9e', '#007a8a', '#c44569']
+export function relationColor(type: string, theme: Pick<ChartTheme, 'primary' | 'success' | 'warning'> = lightChartTheme) {
+  if (type === 'prerequisite') return theme.primary
+  if (type === 'dependent') return theme.success
+  return theme.warning
+}
 
 export interface GraphNode {
   id: string
@@ -81,6 +86,7 @@ export function buildGraphModel(
   relations: KnowledgeRelation[],
   selectedId: string | null = null,
   searchQuery = '',
+  theme: ChartTheme = lightChartTheme,
 ): GraphModel {
   const categories = [...new Set(items.map((item) => item.category || '未分类'))]
   const categoryIndex = new Map(categories.map((category, index) => [category, index]))
@@ -90,7 +96,7 @@ export function buildGraphModel(
   return {
     categories: categories.map((name, index) => ({
       name,
-      itemStyle: { color: categoryColors[index % categoryColors.length] },
+      itemStyle: { color: theme.categoryColors[index % theme.categoryColors.length] },
     })),
     nodes: items.map((item) => {
       const isSelected = item.knowledge_id === selectedId
@@ -106,12 +112,12 @@ export function buildGraphModel(
         value: item.difficulty,
         symbolSize: isSelected ? 46 : 28 + item.difficulty * 3,
         itemStyle: {
-          color: categoryColors[category % categoryColors.length],
+          color: theme.categoryColors[category % theme.categoryColors.length],
           opacity: isNeighbor ? 1 : 0.18,
         },
         label: {
           show: isSelected || isMatched,
-          color: '#172231',
+          color: theme.text,
           fontWeight: isSelected ? 700 : undefined,
         },
       }
@@ -124,7 +130,7 @@ export function buildGraphModel(
         target: relation.target_id,
         value: meta.label,
         lineStyle: {
-          color: meta.color,
+          color: relationColor(relation.relation_type, theme),
           type: meta.lineType,
           width: isConnected ? 2 : 1,
           opacity: isConnected ? 0.72 : 0.1,

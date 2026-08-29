@@ -165,13 +165,13 @@ watch(html, () => nextTick(decorate))
   border-left: 3px solid var(--blue);
   border-radius: 0 6px 6px 0;
   background: var(--blue2);
-  color: #38506f;
+  color: var(--body);
 }
 .markdown-body :deep(code) {
   padding: 2px 5px;
   border-radius: 4px;
   background: var(--soft);
-  color: #b2333a;
+  color: var(--text-danger-strong);
   font-family: Consolas, "SF Mono", "Cascadia Mono", monospace;
   font-size: 12px;
 }
@@ -194,15 +194,15 @@ watch(html, () => nextTick(decorate))
 
 .markdown-body :deep(details.md-section) {
   margin: 0 0 12px;
-  border: 1px solid #e7edf4;
+  border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel);
-  box-shadow: 0 1px 2px rgb(16 24 40 / .03);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
   scroll-margin-top: 84px;
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
-.markdown-body :deep(details.md-section[open]) { box-shadow: 0 2px 8px rgb(16 24 40 / .06); }
+.markdown-body :deep(details.md-section[open]) { box-shadow: var(--shadow-hover); }
 .markdown-body :deep(details.md-section > summary) {
   cursor: pointer;
   list-style: none;
@@ -210,7 +210,7 @@ watch(html, () => nextTick(decorate))
   font-weight: 700;
   color: var(--ink);
   font-size: 15px;
-  background: linear-gradient(180deg, #f8fafc, #f2f5f9);
+  background: var(--soft);
   box-shadow: inset 3px 0 0 var(--blue);
   user-select: none;
 }
@@ -238,10 +238,10 @@ watch(html, () => nextTick(decorate))
   position: absolute;
   top: 8px;
   right: 8px;
-  border: 1px solid #2c3a4d;
+  border: 1px solid var(--chart-line);
   border-radius: 6px;
-  background: #1b2737;
-  color: #c6d4e8;
+  background: var(--chart-tooltip);
+  color: var(--chart-tooltip-text);
   padding: 3px 8px;
   font-size: 11px;
   opacity: 0;

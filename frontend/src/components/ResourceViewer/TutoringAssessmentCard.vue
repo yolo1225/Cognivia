@@ -77,14 +77,14 @@ const decisionDescription = computed(() => {
 </script>
 
 <style scoped>
-.tutor-assessment { margin-top: 4px; border: 1px solid #cbd9f4; border-radius: 9px; background: var(--blue2); padding: 12px; color: var(--info); font-size: 12px; line-height: 1.6; }
+.tutor-assessment { margin-top: 4px; border: 1px solid var(--line-info); border-radius: 9px; background: var(--blue2); padding: 12px; color: var(--info); font-size: 12px; line-height: 1.6; }
 .tutor-assessment p { margin: 5px 0; background: transparent; padding: 0; color: inherit; }
 .tutor-assessment small { color: var(--body); }
-.tutor-assessment.is-correct { border-color: #9ed8c1; background: var(--green2); color: #176a4f; }
-.tutor-assessment.is-incorrect { border-color: #edb4b4; background: #fff1f1; color: #9b2525; }
+.tutor-assessment.is-correct { border-color: var(--line-success); background: var(--green2); color: var(--text-success-strong); }
+.tutor-assessment.is-incorrect { border-color: var(--line-danger); background: var(--red2); color: var(--text-danger-strong); }
 .answer-outcome { display: block; margin-bottom: 4px; }
-.answer-correct { color: #176a4f; }
-.answer-incorrect { color: #9b2525; }
+.answer-correct { color: var(--text-success-strong); }
+.answer-incorrect { color: var(--text-danger-strong); }
 .correct-answer { font-weight: 650; }
 .answer-explanation { color: var(--body) !important; }
 .assessment-trigger { display: block; margin-bottom: 6px; color: var(--blue) !important; font-weight: 650; }

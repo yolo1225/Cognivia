@@ -233,8 +233,9 @@ def test_report_summarizes_resources_reviews_feedback_and_path_refresh() -> None
 
         db.add_all(
             [
-                ReviewReport(resource_id=resources[0].id, passed=True),
-                ReviewReport(resource_id=resources[1].id, passed=True),
+                ReviewReport(resource_id=resources[0].id, passed=False, difficulty_match_score=76.0),
+                ReviewReport(resource_id=resources[0].id, passed=True, difficulty_match_score=92.0),
+                ReviewReport(resource_id=resources[1].id, passed=True, difficulty_match_score=84.5),
                 Feedback(
                     resource_id=resources[0].id,
                     learner_id=learner.id,
@@ -273,6 +274,14 @@ def test_report_summarizes_resources_reviews_feedback_and_path_refresh() -> None
     assert data["loop_status"]["path_update"] == "refreshed"
     assert data["resource_summary"]["total"] == 2
     assert data["resource_summary"]["by_type"]["lecture"] == 1
+    difficulty_scores = {
+        resource["resource_id"]: resource["difficulty_match_score"]
+        for resource in data["resource_summary"]["recent"]
+    }
+    assert difficulty_scores == {
+        "res_report_practice": 84.5,
+        "res_report_lecture": 92.0,
+    }
     assert data["review_summary"]["passed"] == 2
     assert data["review_summary"]["source_coverage"] == 2
     assert data["feedback_summary"]["total"] == 1

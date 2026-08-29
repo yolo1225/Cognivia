@@ -58,7 +58,7 @@
           </strong>
           <p><b>参考答案：</b>{{ current.correct_answer }}</p>
           <p><b>解析：</b>{{ current.explanation }}</p>
-          <p class="q-source"><b>知识点：</b>{{ current.knowledge_id }} · <b>来源：</b>{{ current.source_ref_ids.join('、') }}</p>
+          <p class="q-source"><b>本题考查：</b>{{ knowledgeLabel(current) }}</p>
           <button
             v-if="!isReviewMode && !isObjective(current) && !stateOf(current).selfMarked"
             type="button"
@@ -127,6 +127,7 @@ const props = defineProps<{
   learnerId?: string
   resourceId?: string
   resourceVersion?: number
+  knowledgeLabels?: Record<string, string>
 }>()
 
 const LEVEL_ORDER: QuizLevel[] = ['foundation', 'improvement', 'challenge']
@@ -223,6 +224,10 @@ function stateOf(q: QuizQuestion): AnswerState {
 
 function levelLabel(level: QuizLevel): string {
   return LEVEL_LABELS[level]
+}
+
+function knowledgeLabel(question: QuizQuestion): string {
+  return props.knowledgeLabels?.[question.knowledge_id] || '当前学习知识点'
 }
 
 function typeLabel(type: string): string {
@@ -362,7 +367,7 @@ const weakPoints = computed(() => {
   const ids = new Set<string>()
   for (const q of orderedQuestions.value) {
     const s = stateOf(q)
-    if (s.checked && (s.correct === false || (!isObjective(q) && !s.selfMarked))) ids.add(q.knowledge_id)
+    if (s.checked && (s.correct === false || (!isObjective(q) && !s.selfMarked))) ids.add(knowledgeLabel(q))
   }
   return [...ids]
 })
@@ -392,44 +397,44 @@ function returnToSummary(): void {
 .qp-seg { flex: 1; height: 6px; border-radius: 999px; background: var(--track); transition: background .2s ease; }
 .qp-seg.done { background: var(--green); }
 .qp-seg.current { background: var(--blue); }
-.qp-seg.qp-foundation.done { background: #4f8a5d; }
-.qp-seg.qp-improvement.done { background: #6a8bc0; }
-.qp-seg.qp-challenge.done { background: #c08a4a; }
+.qp-seg.qp-foundation.done { background: var(--green); }
+.qp-seg.qp-improvement.done { background: var(--blue); }
+.qp-seg.qp-challenge.done { background: var(--amber); }
 
 /* 题目卡 */
-.quiz-card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 22px; box-shadow: 0 1px 2px rgb(16 24 40 / .03); }
+.quiz-card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 22px; box-shadow: var(--shadow-card); }
 .q-tags { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .q-level, .q-type, .q-diff { border-radius: 6px; padding: 3px 9px; font-size: 11px; font-weight: 650; }
-.q-level.ql-foundation { background: var(--green2); color: #2f6a48; }
-.q-level.ql-improvement { background: var(--blue2); color: #3a5a96; }
-.q-level.ql-challenge { background: var(--amber2); color: #a0641c; }
+.q-level.ql-foundation { background: var(--green2); color: var(--green); }
+.q-level.ql-improvement { background: var(--blue2); color: var(--blue); }
+.q-level.ql-challenge { background: var(--amber2); color: var(--amber); }
 .q-type { background: var(--soft); color: var(--muted); }
 .q-diff { color: var(--muted); background: var(--soft); }
 .q-prompt { margin: 0 0 16px; color: var(--ink); font-size: 16px; font-weight: 650; line-height: 1.6; }
 
 .q-options { display: grid; gap: 10px; }
 .q-option { display: flex; align-items: center; gap: 10px; width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 12px 14px; color: var(--ink); font-size: 14px; line-height: 1.6; text-align: left; cursor: pointer; transition: border-color .15s ease, background .15s ease, box-shadow .15s ease; }
-.q-option:hover:not(:disabled) { border-color: #b9c9e4; }
+.q-option:hover:not(:disabled) { border-color: var(--line-strong); }
 .q-option:disabled { cursor: default; }
-.q-option-dot { width: 16px; height: 16px; flex-shrink: 0; border: 2px solid #c6d0dd; border-radius: 50%; transition: all .15s ease; }
+.q-option-dot { width: 16px; height: 16px; flex-shrink: 0; border: 2px solid var(--line-strong); border-radius: 50%; transition: all .15s ease; }
 .q-option.is-selected { border-color: var(--blue); background: var(--blue2); }
-.q-option.is-selected .q-option-dot { border-color: var(--blue); background: var(--blue); box-shadow: inset 0 0 0 3px #fff; }
+.q-option.is-selected .q-option-dot { border-color: var(--blue); background: var(--blue); box-shadow: inset 0 0 0 3px var(--panel); }
 .q-option.is-correct { border-color: var(--green); background: var(--green2); }
-.q-option.is-correct .q-option-dot { border-color: var(--green); background: var(--green); box-shadow: inset 0 0 0 3px #fff; }
+.q-option.is-correct .q-option-dot { border-color: var(--green); background: var(--green); box-shadow: inset 0 0 0 3px var(--panel); }
 .q-option.is-wrong { border-color: var(--red); background: var(--red2); }
-.q-option.is-wrong .q-option-dot { border-color: var(--red); background: var(--red); box-shadow: inset 0 0 0 3px #fff; }
+.q-option.is-wrong .q-option-dot { border-color: var(--red); background: var(--red); box-shadow: inset 0 0 0 3px var(--panel); }
 
 .q-textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; color: var(--ink); font-size: 14px; line-height: 1.7; resize: vertical; }
-.q-textarea:focus { outline: 0; border-color: var(--blue); box-shadow: 0 0 0 3px rgb(49 95 206 / .12); }
+.q-textarea:focus { outline: 0; border-color: var(--blue); box-shadow: 0 0 0 3px var(--focus-ring); }
 
 .q-explanation { margin-top: 16px; border-radius: 10px; padding: 13px 15px; font-size: 13px; line-height: 1.7; }
 .q-explanation strong { display: block; font-size: 14px; margin-bottom: 4px; }
 .q-explanation p { margin: 6px 0 0; }
 .q-explanation b { font-weight: 650; }
 .q-explanation .q-source { color: var(--muted); font-size: 12px; }
-.q-explanation.is-ok { border: 1px solid #c8e6d6; background: var(--green2); color: #1f5c41; }
-.q-explanation.is-bad { border: 1px solid #f0cfcf; background: var(--red2); color: #7c3c3c; }
-.q-explanation.is-neutral { border: 1px solid #dfe6ef; background: var(--soft); color: var(--body); }
+.q-explanation.is-ok { border: 1px solid var(--line-success); background: var(--green2); color: var(--text-success-strong); }
+.q-explanation.is-bad { border: 1px solid var(--line-danger); background: var(--red2); color: var(--text-danger-strong); }
+.q-explanation.is-neutral { border: 1px solid var(--line); background: var(--soft); color: var(--body); }
 .q-explanation .btn { margin-top: 10px; }
 
 /* 底部导航 */
@@ -437,9 +442,9 @@ function returnToSummary(): void {
 .quiz-nav .btn { min-width: 110px; }
 
 /* 总结卡 */
-.quiz-summary { display: grid; gap: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 26px; box-shadow: 0 1px 2px rgb(16 24 40 / .03); }
+.quiz-summary { display: grid; gap: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 26px; box-shadow: var(--shadow-card); }
 .summary-hero { display: flex; align-items: center; gap: 20px; }
-.summary-ring { --pct: 0; width: 92px; height: 92px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: conic-gradient(var(--green) calc(var(--pct) * 1%), #e6ebf2 0); }
+.summary-ring { --pct: 0; width: 92px; height: 92px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: conic-gradient(var(--green) calc(var(--pct) * 1%), var(--track) 0); }
 .summary-ring span { display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; background: var(--panel); font-size: 24px; font-weight: 760; color: var(--ink); }
 .summary-ring small { font-size: 13px; font-weight: 650; color: var(--muted); }
 .summary-copy h3 { margin: 0 0 6px; color: var(--ink); font-size: 20px; }
