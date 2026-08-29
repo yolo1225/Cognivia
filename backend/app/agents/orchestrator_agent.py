@@ -1,4 +1,4 @@
-"""Standalone V4 Orchestrator Agent with deterministic task decisions."""
+"""Standalone V10 Orchestrator Agent with deterministic task decisions."""
 
 from __future__ import annotations
 
@@ -29,11 +29,11 @@ DETERMINISTIC_CONVERGENCE_MARKER = "[deterministic_convergence_v1]"
 
 
 class OrchestratorError(RuntimeError):
-    """Controlled error raised at the V3 orchestration boundary."""
+    """Controlled error raised at the orchestration boundary."""
 
 
 class OrchestratorAgent:
-    """V4 boundary for preparation and deterministic package decisions."""
+    """V10 boundary for preparation and deterministic package decisions."""
 
     name = ORCHESTRATOR_AGENT_NAME
     system_prompt = SYSTEM_PROMPT

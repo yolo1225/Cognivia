@@ -1,6 +1,6 @@
 # 部署说明
 
-> 最近同步：2026-08-27。默认演示环境为 Docker Compose；服务启动后不会自动构建真实
+> 最近同步：2026-08-29。默认演示环境为 Docker Compose；服务启动后不会自动构建真实
 > Candidate 索引，避免未授权的 embedding 调用。
 
 ## Docker Compose
@@ -36,6 +36,8 @@ docker compose exec backend python -m app.scripts.build_chroma_candidate_index -
 4. 前端工作台可完成首次建档；资源、报告、错题巩固和领域管理页面均可打开。
 5. 生成任务 SSE、诊断 SSE 与导学 SSE 使用真实任务/运行记录；Agent 运行摘要通过受控任务 API
    留痕，学习者页面不展示原始 Agent payload。
+6. 活动任务使用 `agent-contract-v10`；审核补检索为空不会单独导致任务失败，最终发布按整包三项
+   官方指标判定。
 
 重置会删除 MySQL、Chroma 和前端依赖卷，必须输入 `RESET` 二次确认：
 

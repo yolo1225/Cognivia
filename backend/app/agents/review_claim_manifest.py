@@ -14,6 +14,12 @@ from app.agents.contracts import (
     ReviewClaimKind,
     StructuredResourceContent,
 )
+from app.agents.claim_policy import (
+    ClaimCategory,
+    ReviewDisposition,
+    classify_claim,
+    split_policy_sentences,
+)
 
 
 _SENTENCE_RE = re.compile(r"(?<=[。！？!?；;])\s*")
@@ -60,6 +66,35 @@ def build_review_claims(
                 )
             )
 
+    def add_reviewable(
+        path: str,
+        text: str,
+        field_group: str,
+        source_ids: list[str],
+    ) -> None:
+        kind_by_category = {
+            ClaimCategory.OPERATIONAL_FACT: ReviewClaimKind.OPERATIONAL_FACT,
+            ClaimCategory.CODE_OR_COMMAND: ReviewClaimKind.CODE_BEHAVIOR,
+            ClaimCategory.FIXED_RESULT: ReviewClaimKind.EXPECTED_RESULT,
+            ClaimCategory.ERROR_HANDLING: ReviewClaimKind.ERROR_HANDLING,
+        }
+        for index, part in enumerate(split_policy_sentences(text)):
+            decision = classify_claim(field_group, part)
+            if decision.review_disposition is not ReviewDisposition.DUAL_REVIEW:
+                continue
+            claims.append(
+                ReviewClaim(
+                    claim_id=_claim_id(resource_type, f"{path}[{index}]", part),
+                    resource_type=resource_type,
+                    field_path=f"{path}[{index}]",
+                    claim_kind=kind_by_category.get(
+                        decision.category, ReviewClaimKind.PROFESSIONAL_FACT
+                    ),
+                    claim=part,
+                    source_ref_ids=list(dict.fromkeys(source_ids)),
+                )
+            )
+
     if isinstance(content, LectureContent):
         for index, block in enumerate(content.core_concepts):
             add(f"core_concepts[{index}].explanation", block.explanation, ReviewClaimKind.PROFESSIONAL_FACT, block.source_ref_ids)
@@ -75,11 +110,33 @@ def build_review_claims(
             )
     elif isinstance(content, PracticeGuideContent):
         for index, step in enumerate(content.steps):
+            add_reviewable(
+                f"steps[{index}].instruction",
+                step.instruction,
+                "instruction",
+                step.source_ref_ids,
+            )
             if step.code_or_command:
-                add(f"steps[{index}].code_or_command", step.code_or_command, ReviewClaimKind.CODE_BEHAVIOR, step.source_ref_ids, preserve=True)
-            add(f"steps[{index}].expected_result", step.expected_result, ReviewClaimKind.EXPECTED_RESULT, step.source_ref_ids)
+                add(
+                    f"steps[{index}].code_or_command",
+                    step.code_or_command,
+                    ReviewClaimKind.CODE_BEHAVIOR,
+                    step.source_ref_ids,
+                    preserve=True,
+                )
+            add_reviewable(
+                f"steps[{index}].expected_result",
+                step.expected_result,
+                "expected_result",
+                step.source_ref_ids,
+            )
             if step.troubleshooting:
-                add(f"steps[{index}].troubleshooting", step.troubleshooting, ReviewClaimKind.ERROR_HANDLING, step.source_ref_ids)
+                add(
+                    f"steps[{index}].troubleshooting",
+                    step.troubleshooting,
+                    ReviewClaimKind.ERROR_HANDLING,
+                    step.source_ref_ids,
+                )
     elif isinstance(content, GradedQuizContent):
         for index, question in enumerate(content.questions):
             add(

@@ -270,8 +270,8 @@
           "type": "array"
         },
         "confidence": {
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },
@@ -512,8 +512,8 @@
           "type": "integer"
         },
         "score_percent": {
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Score Percent",
           "type": "number"
         },
@@ -582,8 +582,8 @@
           "title": "Source Ref Id"
         },
         "confidence": {
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         },
@@ -852,8 +852,8 @@
         },
         "package_coverage_score": {
           "default": 0,
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Package Coverage Score",
           "type": "number"
         },
@@ -1155,14 +1155,14 @@
           "type": "integer"
         },
         "hallucination_rate": {
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Hallucination Rate",
           "type": "number"
         },
         "difficulty_match_score": {
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Difficulty Match Score",
           "type": "number"
         },
@@ -1177,8 +1177,8 @@
           "type": "integer"
         },
         "core_knowledge_coverage": {
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Core Knowledge Coverage",
           "type": "number"
         },
@@ -1256,15 +1256,15 @@
         },
         "package_coverage_threshold": {
           "default": 90,
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Package Coverage Threshold",
           "type": "number"
         },
         "resource_coverage_threshold": {
           "default": 100,
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Resource Coverage Threshold",
           "type": "number"
         },
@@ -1480,8 +1480,8 @@
         "score": {
           "anyOf": [
             {
-              "maximum": 1,
-              "minimum": 0,
+              "maximum": 1.0,
+              "minimum": 0.0,
               "type": "number"
             },
             {
@@ -1502,8 +1502,8 @@
           "type": "boolean"
         },
         "confidence": {
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Confidence",
           "type": "number"
         }
@@ -2348,14 +2348,14 @@
           "type": "integer"
         },
         "hallucination_rate": {
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Hallucination Rate",
           "type": "number"
         },
         "difficulty_match_score": {
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Difficulty Match Score",
           "type": "number"
         },
@@ -2370,8 +2370,8 @@
           "type": "integer"
         },
         "core_knowledge_coverage": {
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Core Knowledge Coverage",
           "type": "number"
         },
@@ -2697,8 +2697,8 @@
           "type": "string"
         },
         "similarity": {
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "title": "Similarity",
           "type": "number"
         },
@@ -2795,7 +2795,6 @@
           "type": "array"
         },
         "answer_key": {
-          "additionalProperties": true,
           "title": "Answer Key",
           "type": "object"
         },
@@ -2892,26 +2891,26 @@
       "additionalProperties": false,
       "properties": {
         "factual_accuracy": {
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Factual Accuracy",
           "type": "number"
         },
         "source_traceability": {
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Source Traceability",
           "type": "number"
         },
         "difficulty_match": {
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Difficulty Match",
           "type": "number"
         },
         "core_knowledge_coverage": {
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Core Knowledge Coverage",
           "type": "number"
         }
@@ -3224,8 +3223,8 @@
         },
         "package_coverage_score": {
           "default": 0,
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "title": "Package Coverage Score",
           "type": "number"
         },

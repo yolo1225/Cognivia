@@ -50,4 +50,5 @@ docker compose exec backend python -m app.scripts.evaluate_rag --split developme
 - [工程规范](docs/project-conventions.md)：开发、契约、测试与隐私约束。
 - [API v1](docs/api-v1.md)：当前接口、认证与 SSE 说明。
 - [部署说明](docs/deployment.md)：Docker 演示环境、健康检查与验证。
-- [Agent Contract V10](docs/agent-contract-v10.md)：活动 Agent 契约；V9 及更早版本仅作历史参考。
+- [Agent Contract V10](docs/agent-contract-v10.md)：唯一活动 Agent 契约与审核发布边界。
+- [系统设计](设计文档-人工智能应用开发实训多智能体个性化知识生成系统.md)：当前架构、RAG 输入输出与失败规则。

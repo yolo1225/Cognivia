@@ -4,7 +4,7 @@ from app.agents.contracts import (
     QUALITY_RULE_VERSION,
     ReviewReport as ContractReviewReport,
 )
-from app.agents.claim_policy import CLAIM_POLICY_VERSION, QUALITY_POLICY_VERSION
+from app.agents.claim_policy import CLAIM_POLICY_VERSION
 from app.agents.knowledge_coverage_policy import primary_owner_by_knowledge
 from app.agents.nodes import GRAPH_STATE, pop_convergence_audit
 from app.models import (
@@ -486,7 +486,7 @@ def persist_generated_resources(
                     ),
                 },
                 review_rule_version=CLAIM_POLICY_VERSION,
-                quality_rule_version=QUALITY_POLICY_VERSION,
+                quality_rule_version=report.quality_rule_version,
                 issues_json=[item.model_dump(mode="json") for item in report.issues],
                 suggestions_json=[item.suggested_revision for item in report.issues],
                 target_knowledge_ids_json=report.target_knowledge_ids,

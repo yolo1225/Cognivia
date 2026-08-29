@@ -674,6 +674,16 @@
             },
             "review_claims": [
               {
+                "claim_id": "clm_631c00277cca70ec12a4",
+                "resource_type": "practice_guide",
+                "field_path": "steps[0].instruction[0]",
+                "claim_kind": "operational_fact",
+                "claim": "使用学习目标构造查询并保留来源标识。",
+                "source_ref_ids": [
+                  "AIAPP-K029::chunk::0"
+                ]
+              },
+              {
                 "claim_id": "clm_8a39543ccad03b5415c4",
                 "resource_type": "practice_guide",
                 "field_path": "steps[0].code_or_command",
@@ -1085,6 +1095,16 @@
               ]
             },
             "review_claims": [
+              {
+                "claim_id": "clm_631c00277cca70ec12a4",
+                "resource_type": "practice_guide",
+                "field_path": "steps[0].instruction[0]",
+                "claim_kind": "operational_fact",
+                "claim": "使用学习目标构造查询并保留来源标识。",
+                "source_ref_ids": [
+                  "AIAPP-K029::chunk::0"
+                ]
+              },
               {
                 "claim_id": "clm_8a39543ccad03b5415c4",
                 "resource_type": "practice_guide",
@@ -1930,6 +1950,16 @@
               ]
             },
             "review_claims": [
+              {
+                "claim_id": "clm_631c00277cca70ec12a4",
+                "resource_type": "practice_guide",
+                "field_path": "steps[0].instruction[0]",
+                "claim_kind": "operational_fact",
+                "claim": "使用学习目标构造查询并保留来源标识。",
+                "source_ref_ids": [
+                  "AIAPP-K029::chunk::0"
+                ]
+              },
               {
                 "claim_id": "clm_8a39543ccad03b5415c4",
                 "resource_type": "practice_guide",

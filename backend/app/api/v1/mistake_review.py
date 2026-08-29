@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -50,6 +50,7 @@ def get_items(
     source_type: str | None = Query(None),
     knowledge_id: str | None = Query(None),
     difficulty: int | None = Query(None, ge=1, le=5),
+    priority_scope: Literal["current_node", "all"] | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -58,7 +59,8 @@ def get_items(
     learner = _learner(db, principal, learner_id)
     return ok(list_items(
         db, learner=learner, domain_code=domain_code, status=status, source_type=source_type,
-        knowledge_id=knowledge_id, difficulty=difficulty, page=page, page_size=page_size,
+        knowledge_id=knowledge_id, difficulty=difficulty, priority_scope=priority_scope,
+        page=page, page_size=page_size,
     ))
 
 

@@ -254,6 +254,9 @@ class DomainApiService:
             "capabilities": evidence_counts,
             "practice_generation_mode": practice_generation_mode_for_items(items),
         }
+        require_full_practice_evidence = bool(
+            (domain.config_json or {}).get("practice_evidence_required_for_all", False)
+        )
         quiz_question_bank = question_bank_coverage(
             self.db,
             domain_code=domain_code,
@@ -319,6 +322,26 @@ class DomainApiService:
             ("learning_directions", len(directions), 1, ">=", "学习方向"),
             ("missing_ability_weights", missing_weights, 0, "==", "缺失能力权重"),
             ("missing_sources", missing_sources, 0, "==", "缺失来源定位"),
+            *(
+                [
+                    (
+                        "practice_operation_coverage",
+                        evidence_counts[EvidenceCapability.OPERATION.value],
+                        len(items),
+                        "==",
+                        "实操操作证据覆盖",
+                    ),
+                    (
+                        "practice_expected_result_coverage",
+                        evidence_counts[EvidenceCapability.EXPECTED_RESULT.value],
+                        len(items),
+                        "==",
+                        "实操结果证据覆盖",
+                    ),
+                ]
+                if require_full_practice_evidence
+                else []
+            ),
             ("invalid_relations", cross_domain_relations, 0, "==", "无效或跨领域关系"),
             (
                 "prerequisite_cycles",

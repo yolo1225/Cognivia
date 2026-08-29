@@ -256,6 +256,70 @@ def test_admin_can_review_selected_learner_mistakes() -> None:
         app.dependency_overrides.clear()
 
 
+def test_summary_does_not_recommend_a_locked_node_mistake() -> None:
+    factory = session_factory()
+    seed(factory)
+    with factory() as db:
+        learner = db.scalar(select(Learner).where(Learner.public_id == "learner_mistake"))
+        path = db.scalar(select(LearningPath).where(LearningPath.learner_id == learner.id))
+        current_knowledge = KnowledgeItem(
+            public_id="knowledge_prompt",
+            domain_code="ai_app_dev",
+            name="Prompt 设计",
+            category="Prompt",
+            difficulty=1,
+            content_md="content",
+            source_title="source",
+        )
+        db.add(current_knowledge)
+        db.flush()
+        path.path_json = {
+            "current_node_id": "knowledge:knowledge_prompt",
+            "node_states": {
+                "knowledge:knowledge_prompt": {
+                    "knowledge_id": "knowledge_prompt",
+                    "status": "current",
+                    "path_order": 1,
+                },
+                "knowledge:knowledge_rag": {
+                    "knowledge_id": "knowledge_rag",
+                    "status": "locked",
+                    "path_order": 2,
+                },
+            },
+        }
+        db.commit()
+    app.dependency_overrides[get_db] = override_db(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "user", "learner", "learner_mistake"
+    )
+    client = TestClient(app)
+    try:
+        response = client.get("/api/v1/mistake-review/summary?domain_code=ai_app_dev")
+        assert response.status_code == 200
+        assert response.json()["data"]["focus_knowledge"] is None
+        assert response.json()["data"]["focus_scope"] == "current_node"
+        assert response.json()["data"]["current_priority_count"] == 0
+
+        priority = client.get(
+            "/api/v1/mistake-review/items"
+            "?domain_code=ai_app_dev&priority_scope=current_node"
+        )
+        assert priority.status_code == 200
+        assert priority.json()["data"]["items"] == []
+
+        all_items = client.get(
+            "/api/v1/mistake-review/items"
+            "?domain_code=ai_app_dev&priority_scope=all"
+        )
+        assert all_items.status_code == 200
+        assert len(all_items.json()["data"]["items"]) == 1
+        assert all_items.json()["data"]["items"][0]["path_node_status"] == "locked"
+        assert all_items.json()["data"]["items"][0]["is_current_priority"] is False
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_two_distinct_passes_are_evaluated_once(monkeypatch) -> None:
     factory = session_factory()
     seed(factory)

@@ -24,6 +24,9 @@ export interface MistakeReviewItem {
   review_count: number
   consolidated_at: string | null
   recommended_resource: RecommendedResource | null
+  is_current_priority: boolean
+  path_node_status: 'current' | 'locked' | 'completed' | null
+  path_order: number | null
   question?: { stem: string; options: string[] } | null
   scoring_comment?: string | null
   has_profile_evidence?: boolean
@@ -51,6 +54,9 @@ export interface MistakeSummary {
   verified: number
   consolidation_rate: number | null
   focus_knowledge: { knowledge_id: string; name: string } | null
+  focus_scope: 'current_node' | 'all_mistakes'
+  current_priority_count: number
+  current_node: { path_node_id: string; title: string } | null
 }
 
 export interface ConsolidationAttempt {
@@ -119,6 +125,7 @@ export function listMistakeItems(filters: {
   status?: string
   sourceType?: string
   difficulty?: number
+  priorityScope?: 'current_node' | 'all'
   page?: number
   pageSize?: number
 }) {
@@ -131,6 +138,7 @@ export function listMistakeItems(filters: {
   if (filters.status) params.set('status', filters.status)
   if (filters.sourceType) params.set('source_type', filters.sourceType)
   if (filters.difficulty) params.set('difficulty', String(filters.difficulty))
+  if (filters.priorityScope) params.set('priority_scope', filters.priorityScope)
   return getData<{ items: MistakeReviewItem[]; total: number; page: number; page_size: number }>(`/mistake-review/items?${params}`)
 }
 

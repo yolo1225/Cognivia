@@ -182,8 +182,10 @@ class SupplementalOnlyChannel:
 class StaticSupplementalRetriever:
     def __init__(self, evidence):
         self.evidence = evidence
+        self.calls = 0
 
     def retrieve(self, **_kwargs):
+        self.calls += 1
         return self.evidence
 
 
@@ -305,7 +307,11 @@ def test_v3_review_emits_dual_model_contract_report() -> None:
     assert report.primary_review.model_role == "primary_review_model"
     assert report.secondary_review.model_role == "secondary_review_model"
     assert report.decision in {ReviewDecision.PASSED, ReviewDecision.REVISION_REQUIRED}
-    assert not report.arbitration.required
+    assert report.arbitration.required == bool(
+        report.contradicted_claim_ids
+        or report.undetermined_claim_ids
+        or report.missing_knowledge_ids
+    )
 
 
 def test_evidence_not_mentioned_is_undetermined_without_factual_penalty() -> None:
@@ -314,9 +320,10 @@ def test_evidence_not_mentioned_is_undetermined_without_factual_penalty() -> Non
         chunk.model_copy(update={"content": "火星地质样本与本资源没有内容重叠。"})
         for chunk in request.evidence
     ]
-    output = ReviewValidationAgent(channel=DeterministicChannel()).execute(
-        request.model_copy(update={"evidence": unrelated})
-    )
+    retriever = StaticSupplementalRetriever([])
+    output = ReviewValidationAgent(
+        channel=DeterministicChannel(), evidence_retriever=retriever
+    ).execute(request.model_copy(update={"evidence": unrelated}))
 
     report = output.reports[0]
     assert report.decision is ReviewDecision.REVISION_REQUIRED
@@ -324,7 +331,10 @@ def test_evidence_not_mentioned_is_undetermined_without_factual_penalty() -> Non
     assert report.final_scores.source_traceability == 0
     assert report.undetermined_claim_ids
     assert not report.contradicted_claim_ids
-    assert not report.arbitration.required
+    assert report.arbitration.required
+    assert report.arbitration.retrieval_performed
+    assert report.arbitration.additional_source_ref_ids == []
+    assert retriever.calls == 1
     assert report.quality_metrics.evaluated_claim_count == sum(
         len(values)
         for values in (
@@ -350,7 +360,7 @@ def test_consensus_contradiction_requires_revision_not_manual_review() -> None:
     assert report.decision is ReviewDecision.REVISION_REQUIRED
     assert report.final_scores.factual_accuracy == 0
     assert report.contradicted_claim_ids
-    assert not report.arbitration.required
+    assert report.arbitration.required
 
 
 def test_resolved_claim_conflict_rechecks_only_the_disputed_claim() -> None:
@@ -570,7 +580,7 @@ def test_quiz_prompt_excludes_context_clause_with_automatic_review_wording() -> 
     assert "questions[0]" in paths
 
 
-def test_practice_instruction_excludes_conditional_request_for_reason() -> None:
+def test_practice_instruction_includes_conditional_operational_reasoning() -> None:
     request = _input()
     practice = resource_examples()[1]
     content = practice.structured_content.model_copy(deep=True)
@@ -597,7 +607,8 @@ def test_practice_instruction_excludes_conditional_request_for_reason() -> None:
 
     paths = {claim.field_path for claim in extract_atomic_claims(practice, practice_request)}
 
-    assert all(".instruction" not in path for path in paths)
+    assert "steps[0].instruction[0]" in paths
+    assert "steps[0].instruction[1]" not in paths
 
 
 def test_summary_excludes_meta_prose_but_preserves_factual_claims_and_ids() -> None:
@@ -1217,7 +1228,12 @@ def test_pedagogical_actions_are_excluded_but_mixed_technical_claims_remain() ->
             }
         ),
     ]
-    practice = practice.model_copy(update={"structured_content": content})
+    practice = practice.model_copy(
+        update={
+            "structured_content": content,
+            "review_claims": build_review_claims(ResourceType.PRACTICE_GUIDE, content),
+        }
+    )
     requirements = request.requirements.model_copy(
         update={
             "resource_types": [ResourceType.PRACTICE_GUIDE],
@@ -1330,14 +1346,11 @@ def test_practice_environment_and_acceptance_actions_are_not_factual_claims() ->
     assert "environment_requirements[1][0]" not in claims_by_path
     assert "acceptance_criteria[0][0]" not in claims_by_path
     assert "acceptance_criteria[1][0]" not in claims_by_path
-    assert claims_by_path["environment_requirements[2][0]"] == "API 默认 30 秒超时"
-    assert claims_by_path["acceptance_criteria[2][0]"] == "命令固定返回 JSON 字段"
-    assert "acceptance_criteria[3][0]" not in claims_by_path
-    assert "acceptance_criteria[4][0]" not in claims_by_path
-    assert claims_by_path["acceptance_criteria[5][0]"] == "在清单旁注明接口固定返回 JSON 字段"
+    assert not any(path.startswith("environment_requirements") for path in claims_by_path)
+    assert not any(path.startswith("acceptance_criteria") for path in claims_by_path)
 
 
-def test_practice_compound_observation_and_summary_actions_are_not_split_as_facts() -> None:
+def test_practice_expected_result_is_reviewed_and_acceptance_is_excluded() -> None:
     request = _input()
     practice = resource_examples()[1]
     content = practice.structured_content.model_copy(deep=True)
@@ -1365,11 +1378,12 @@ def test_practice_compound_observation_and_summary_actions_are_not_split_as_fact
 
     paths = {claim.field_path for claim in extract_atomic_claims(practice, practice_request)}
 
-    assert not any(path.startswith("steps[0].expected_result") for path in paths)
+    assert "steps[0].expected_result[0]" not in paths
+    assert "steps[0].expected_result[1]" in paths
     assert not any(path.startswith("acceptance_criteria[0]") for path in paths)
 
 
-def test_workflow_mapping_and_learning_record_are_pedagogical_actions() -> None:
+def test_workflow_mapping_teaching_instruction_and_acceptance_are_excluded() -> None:
     request = _input()
     practice = resource_examples()[1]
     content = practice.structured_content.model_copy(deep=True)
@@ -1382,7 +1396,12 @@ def test_workflow_mapping_and_learning_record_are_pedagogical_actions() -> None:
     content.acceptance_criteria = [
         "完成一份学习记录，包含所列七个环节的简要说明及对应来源核对结论"
     ]
-    practice = practice.model_copy(update={"structured_content": content})
+    practice = practice.model_copy(
+        update={
+            "structured_content": content,
+            "review_claims": build_review_claims(ResourceType.PRACTICE_GUIDE, content),
+        }
+    )
     requirements = request.requirements.model_copy(
         update={
             "resource_types": [ResourceType.PRACTICE_GUIDE],
@@ -1401,7 +1420,7 @@ def test_workflow_mapping_and_learning_record_are_pedagogical_actions() -> None:
     assert "acceptance_criteria[0][0]" not in paths
 
 
-def test_realistic_regression_shapes_extract_20_38_12_claims() -> None:
+def test_realistic_regression_shapes_extract_19_36_6_claims() -> None:
     request = _input()
     lecture, _, quiz = resource_examples()
     lecture_content = lecture.structured_content.model_copy(deep=True)
@@ -1418,7 +1437,12 @@ def test_realistic_regression_shapes_extract_20_38_12_claims() -> None:
     ]
     lecture_content.misconceptions = lecture_content.misconceptions[:1]
     lecture_content.summary = "总结受控证据范围。"
-    lecture = lecture.model_copy(update={"structured_content": lecture_content})
+    lecture = lecture.model_copy(
+        update={
+            "structured_content": lecture_content,
+            "review_claims": build_review_claims(ResourceType.LECTURE, lecture_content),
+        }
+    )
 
     practice_request = _long_practice_input()
     quiz_content = quiz.structured_content.model_copy(deep=True)
@@ -1433,17 +1457,22 @@ def test_realistic_regression_shapes_extract_20_38_12_claims() -> None:
         )
         for index in range(6)
     ]
-    quiz = quiz.model_copy(update={"structured_content": quiz_content})
+    quiz = quiz.model_copy(
+        update={
+            "structured_content": quiz_content,
+            "review_claims": build_review_claims(ResourceType.GRADED_QUIZ, quiz_content),
+        }
+    )
 
     assert len(extract_atomic_claims(lecture, request)) == 19
-    assert len(extract_atomic_claims(practice_request.resources[0], practice_request)) == 38
-    assert len(extract_atomic_claims(quiz, request)) == 12
+    assert len(extract_atomic_claims(practice_request.resources[0], practice_request)) == 36
+    assert len(extract_atomic_claims(quiz, request)) == 6
 
 
 def test_long_practice_uses_stable_budgeted_batches_for_both_models() -> None:
     request = _long_practice_input()
     resource = request.resources[0]
-    assert len(extract_atomic_claims(resource, request)) == 38
+    assert len(extract_atomic_claims(resource, request)) == 36
     batches = _plan_review_batches(
         resource=resource,
         request=request,
@@ -1486,7 +1515,6 @@ def test_long_practice_uses_stable_budgeted_batches_for_both_models() -> None:
     expected = {batch.claim_ids for batch in batches}
     assert len(primary_calls) == len(secondary_calls) == len(batches)
     assert set(primary_calls) == set(secondary_calls) == expected
-    assert any(recheck for _role, recheck, _ids in channel.calls)
 
 
 def test_review_batches_run_in_bounded_parallel_pairs() -> None:
@@ -1617,16 +1645,16 @@ def test_package_quality_uses_weighted_counts_after_partial_revision() -> None:
         revision_count=1,
     )
 
-    assert output.package_quality.verifiable_claim_count == 55
+    assert output.package_quality.verifiable_claim_count == 61
     assert output.package_quality.hallucinated_claim_count == 12
-    assert output.package_quality.hallucination_rate == 21.82
+    assert output.package_quality.hallucination_rate == 19.67
     assert output.package_quality.difficulty_match_score == 100
     assert output.package_quality.revision_count == 1
     assert not output.package_quality.passed
     assert not output.package_passed
 
 
-def test_package_quality_recomputes_after_removing_one_of_twenty_two_claims() -> None:
+def test_package_quality_recomputes_after_partial_revision() -> None:
     flow = initial_generation_flow_example()
     reports = []
     remaining_claim_counts = [10, 11, 6]
@@ -1668,7 +1696,7 @@ def test_package_quality_recomputes_after_removing_one_of_twenty_two_claims() ->
         revision_count=2,
     )
 
-    assert output.package_quality.evaluated_claim_count == 21
+    assert output.package_quality.evaluated_claim_count == 27
     assert output.package_quality.hallucinated_claim_count == 0
     assert output.package_quality.hallucination_rate == 0
     assert output.package_quality.passed

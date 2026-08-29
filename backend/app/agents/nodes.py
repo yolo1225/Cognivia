@@ -1,6 +1,6 @@
-"""V3 LangGraph node adapters.
+"""V10 LangGraph node adapters.
 
-The V3 state only carries contract models. Database sessions, model clients and
+The contract state only carries contract models. Database sessions, model clients and
 retrieval clients live in ``AgentRuntime`` and are captured by node closures.
 """
 
@@ -124,7 +124,7 @@ class AgentRuntime:
             profile_agent=ProfileAnalysisAgent(profile_config or _structural_profile_config()),
             tutoring_agent=TutoringAgent(domain_display_name=domain_display_name),
             retrieval_agent_factory=KnowledgeRetrievalAgent.production,
-            # Rendering is a composition concern.  The V3 generator only
+            # Rendering is a composition concern. The generator only
             # receives this deterministic callable and never imports adapters.
             generation_agent=ContentGenerationAgent(
                 renderer=render_resource_markdown,
@@ -395,10 +395,10 @@ def _safe_convergence_claims(
 
 def build_nodes(runtime: AgentRuntime) -> dict[str, NodeFunc]:
     def active_revision_plan(state: AgentGraphState):
-        """Read the last orchestrator decision without adding mutable V3 State.
+        """Read the last orchestrator decision without adding mutable contract State.
 
         ``revision_plan`` is intentionally a task input field, not owned by a
-        node patch.  After a finalize decision, its V3 output is therefore the
+        node patch. After a finalize decision, its output is therefore the
         authoritative source for the next retrieval/generation/review inputs.
         """
         previous = state.get("finalize_task")

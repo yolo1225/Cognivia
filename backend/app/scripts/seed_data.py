@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.domain_evidence_policy import classify_evidence_capabilities
 from app.agents.profile_analysis_config import MASTERY_BASELINES
 from app.core.db import SessionLocal
 from app.models import (
@@ -98,6 +99,31 @@ def _candidate_chunk_count(payload: dict[str, Any]) -> int:
     )
 
 
+def enriched_knowledge_payloads() -> list[dict[str, Any]]:
+    enrichments = {
+        str(item["knowledge_id"]): item
+        for item in load_json("knowledge_practice_enrichment.json")
+    }
+    payloads: list[dict[str, Any]] = []
+    for original in load_json("knowledge_items.json"):
+        payload = dict(original)
+        enrichment = enrichments.get(str(payload["knowledge_id"]))
+        if enrichment is not None:
+            payload["content"] = (
+                f"{str(payload['content']).rstrip()}\n\n"
+                f"## 应用任务\n{str(enrichment['operation']).strip()}\n\n"
+                f"## 预期结果\n{str(enrichment['expected_result']).strip()}"
+            )
+        payload["evidence_capabilities"] = classify_evidence_capabilities(
+            str(payload["content"])
+        )
+        payloads.append(payload)
+    known_ids = {str(item["knowledge_id"]) for item in payloads}
+    if set(enrichments) - known_ids:
+        raise ValueError("knowledge practice enrichment references unknown knowledge")
+    return payloads
+
+
 def upsert_by_field(
     db: Session,
     model: type,
@@ -133,6 +159,9 @@ def seed_domain(db: Session) -> Domain:
                 "ability_dimensions": payload.get("ability_dimensions", []),
                 "learning_directions": payload.get("learning_directions", []),
                 "mvp_targets": payload.get("mvp_targets", {}),
+                "practice_evidence_required_for_all": bool(
+                    payload.get("practice_evidence_required_for_all", False)
+                ),
                 "readiness_policy": {
                     "minimum_published_knowledge": 50,
                     "minimum_diagnostic_questions": 60,
@@ -163,7 +192,7 @@ def seed_domain(db: Session) -> Domain:
 
 
 def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
-    payloads = load_json("knowledge_items.json")
+    payloads = enriched_knowledge_payloads()
     seed_document = upsert_by_field(
         db,
         KnowledgeDocument,
@@ -197,7 +226,7 @@ def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
             "category": payload["category"],
             "difficulty": payload.get("difficulty", 1),
             "tags_json": payload.get("tags", []),
-            "evidence_capabilities_json": payload.get("evidence_capabilities", ["concept"]),
+            "evidence_capabilities_json": payload["evidence_capabilities"],
             "content_md": payload["content"],
             "source_title": payload.get("source_title", "自建 AI 应用开发实训知识库"),
             "source_url": payload.get("source_url"),
@@ -316,6 +345,16 @@ def seed_diagnostic_questions(
                     }
                 ],
                 "chunker_version": CHUNKER_VERSION,
+                "assessment_dimension": (
+                    str(payload["assessment_dimension"])
+                    if payload.get("assessment_dimension") in {"theory", "operation"}
+                    else (
+                        "operation"
+                        if "operation"
+                        in classify_evidence_capabilities(bound_chunk.embedding_text)
+                        else "theory"
+                    )
+                ),
             }
         )
         quiz_level = str(payload.get("quiz_level") or (

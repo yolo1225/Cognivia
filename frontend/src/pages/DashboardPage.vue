@@ -35,7 +35,7 @@
           <span class="stage-label">学习包已准备好</span><h2>{{ dashboardState.resource.title }}</h2><p>学习过程中可通过分阶测试、反馈和导学对话提供新的证据，系统会据此决定是否更新画像。</p><div class="resource-meta"><span>{{ resourceTypeLabel(dashboardState.resource.resource_type) }}</span><span>难度 {{ dashboardState.resource.difficulty }}/5</span><span>质量校验通过</span></div><div class="stage-actions"><button class="btn primary" type="button" @click="openResources()">开始学习</button><button class="btn" type="button" @click="openReport">查看学习报告</button></div>
         </template>
         <template v-else>
-          <span class="stage-label">需要重新处理</span><h2>学习包尚未达到发布标准</h2><p>{{ dashboardState.task.failure_reason || '本次生成未通过质量门槛，未向学习者发布。' }}</p><div class="stage-actions"><button class="btn primary" type="button" :disabled="retrying" @click="retryTask(dashboardState.task.task_id)">{{ retrying ? '正在重新生成...' : '重新生成' }}</button></div>
+          <span class="stage-label">本次资源生成失败</span><h2>{{ failedGenerationCopy.title }}</h2><p>{{ failedGenerationCopy.description }}</p><div class="stage-actions"><button class="btn primary" type="button" :disabled="retrying" @click="retryTask(dashboardState.task.task_id)">{{ retrying ? '正在重新生成...' : '重新生成' }}</button></div>
         </template>
       </div>
       <div class="stage-visual" aria-hidden="true"><div class="visual-mark"></div><span>{{ visualLabel }}</span></div>
@@ -46,7 +46,7 @@
     </section>
     <section v-if="report && pathNodes.length" class="home-route-card">
       <div class="home-route-head">
-        <div><span class="section-kicker">当前学习路线</span><h2>已完成 {{ completedPathNodeCount }}/{{ pathNodes.length }} 个节点</h2><p>{{ currentPathNode ? '当前学习：' + currentPathNode.title + '；仅展示当前节点附近的学习安排。' : '当前路线已完成，可在学习报告查看完整记录。' }}</p></div>
+        <div><span class="section-kicker">当前学习路线</span><h2>路线节点已完成 {{ completedPathNodeCount }}/{{ pathNodes.length }}</h2><p>{{ currentPathNode ? '当前学习：' + currentPathNode.title + '；节点完成不代表新节点资源已经生成成功。' : '当前路线已完成，可在学习报告查看完整记录。' }}</p></div>
         <button class="btn" type="button" @click="openReport">查看学习报告</button>
       </div>
       <div class="home-route-steps">
@@ -75,6 +75,7 @@ import { useProfileGateStore } from '@/stores/profileGateStore'
 import { useDomainStore } from '@/stores/domainStore'
 import { getDashboardState } from './dashboardState'
 import { formatKnowledgeName } from '@/utils/knowledgeName'
+import { generationFailureCopy } from '@/utils/generationFailure'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -97,6 +98,7 @@ const profileReady = computed(() => profile.value?.profile_status === 'ready')
 const dashboardState = computed(() => getDashboardState(activeTask.value, resources.value, recentTasks.value))
 const progressValue = computed(() => Math.min(100, Math.max(0, dashboardState.value.kind === 'preparing' ? dashboardState.value.task.progress ?? 0 : 0)))
 const visualLabel = computed(() => ({ assessment: '路线已就绪', preparing: '正在处理', resource: '可以开始', failed: '需要重试' })[dashboardState.value.kind])
+const failedGenerationCopy = computed(() => generationFailureCopy(dashboardState.value.kind === 'failed' ? dashboardState.value.task.failure_reason : null))
 const pathNodes = computed<LearningPathNode[]>(() => report.value?.learning_path?.nodes || [])
 const currentPathNode = computed(() => pathNodes.value.find(node => node.status === 'current'))
 const completedPathNodeCount = computed(() => pathNodes.value.filter(node => node.status === 'completed').length)

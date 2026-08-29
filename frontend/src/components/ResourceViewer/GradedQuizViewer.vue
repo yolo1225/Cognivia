@@ -60,7 +60,7 @@
           <p><b>解析：</b>{{ current.explanation }}</p>
           <p class="q-source"><b>知识点：</b>{{ current.knowledge_id }} · <b>来源：</b>{{ current.source_ref_ids.join('、') }}</p>
           <button
-            v-if="!isObjective(current) && !stateOf(current).selfMarked"
+            v-if="!isReviewMode && !isObjective(current) && !stateOf(current).selfMarked"
             type="button"
             class="btn text"
             @click="markSelfChecked(current)"
@@ -71,11 +71,12 @@
       <!-- 底部导航 -->
       <div class="quiz-nav">
         <button type="button" class="btn ghost" :disabled="currentIndex === 0" @click="currentIndex -= 1">上一题</button>
+        <button v-if="isReviewMode" type="button" class="btn ghost" @click="returnToSummary">查看结果</button>
         <button v-if="!stateOf(current).checked" type="button" class="btn primary" :disabled="!canCheck(current) || syncState === 'saving'" @click="submitAnswer(current)">
           {{ syncState === 'saving' ? '正在提交' : isObjective(current) ? '提交答案' : '查看参考答案' }}
         </button>
         <button v-else-if="currentIndex < orderedQuestions.length - 1" type="button" class="btn primary" @click="currentIndex += 1">下一题</button>
-        <button v-else type="button" class="btn primary" @click="showSummary = true">查看成绩</button>
+        <button v-else type="button" class="btn primary" @click="returnToSummary">{{ isReviewMode ? '返回结果' : '查看成绩' }}</button>
       </div>
     </template>
 
@@ -101,7 +102,7 @@
         </div>
         <div v-if="completionMessage" class="quiz-evidence-note">{{ completionMessage }}</div>
         <div class="summary-actions">
-          <button type="button" class="btn ghost" @click="restart">重新作答</button>
+          <button type="button" class="btn ghost" @click="enterReview">查看题目与解析</button>
         </div>
       </div>
     </template>
@@ -137,6 +138,7 @@ const orderedQuestions = computed(() =>
 
 const currentIndex = ref(0)
 const showSummary = ref(false)
+const isReviewMode = ref(false)
 const serverAttemptId = ref('')
 const syncState = ref<'ready' | 'saving' | 'pending'>('ready')
 const completionResult = ref<ResourceQuizAttempt | null>(null)
@@ -365,17 +367,15 @@ const weakPoints = computed(() => {
   return [...ids]
 })
 
-function restart(): void {
-  for (const q of orderedQuestions.value) {
-    const s = stateOf(q)
-    s.selected = []
-    s.text = ''
-    s.checked = false
-    s.correct = null
-    s.selfMarked = false
-  }
+function enterReview(): void {
   currentIndex.value = 0
   showSummary.value = false
+  isReviewMode.value = true
+}
+
+function returnToSummary(): void {
+  isReviewMode.value = false
+  showSummary.value = true
 }
 </script>
 

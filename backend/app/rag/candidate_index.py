@@ -246,7 +246,7 @@ class CandidateIndexBuilder:
             "difficulty": item.difficulty,
             "tags": ",".join(item.tags_json or []),
             "evidence_capabilities": ",".join(
-                classify_evidence_capabilities(chunk.content)
+                classify_evidence_capabilities(chunk.embedding_text)
             ),
             "source_title": item.source_title,
             "source_url": item.source_url or "",
@@ -492,9 +492,17 @@ class CandidateIndexBuilder:
         )
         snapshot = database_source_snapshot(self.db, items)
         source_version = source_data_version(snapshot)
-        # A reset must be able to recover when its manifest outlives the
-        # Chroma collection it points to. Do not validate stale state before
-        # creating the replacement collection.
+        # A reset does not reuse old vectors, but activation still needs the
+        # collection that was active when the build started as its CAS base.
+        # Ignore that base only when the recorded collection has disappeared.
+        recorded_manifest = self.manifests.load(domain_code)
+        reset_previous_collection = (
+            recorded_manifest.active_collection
+            if reset
+            and recorded_manifest is not None
+            and self._collection_exists(recorded_manifest.active_collection)
+            else None
+        )
         manifest = None if reset else self._load_manifest(domain_code)
 
         old_records: list[dict[str, Any]] = []
@@ -608,7 +616,11 @@ class CandidateIndexBuilder:
             new_manifest = CandidateIndexManifest(
                 schema_version=MANIFEST_SCHEMA_VERSION,
                 active_collection=collection_name,
-                previous_collection=(manifest.active_collection if manifest else None),
+                previous_collection=(
+                    reset_previous_collection
+                    if reset
+                    else (manifest.active_collection if manifest else None)
+                ),
                 domain_code=domain_code,
                 embedding_model=self.provider.model_name,
                 embedding_dimensions=dimensions,
@@ -639,7 +651,11 @@ class CandidateIndexBuilder:
             "source_data_version": source_version,
             "index_version": index_version,
             "active_collection": collection_name,
-            "previous_collection": manifest.active_collection if manifest else None,
+            "previous_collection": (
+                reset_previous_collection
+                if reset
+                else (manifest.active_collection if manifest else None)
+            ),
             "indexed_items": len(items),
             "indexed_chunks": collection.count(),
             "reused_chunks": len(reused_records),

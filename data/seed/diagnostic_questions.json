@@ -894,6 +894,7 @@
     "question_id": "dq_056",
     "knowledge_id": "python_api_basics",
     "question_type": "short_answer",
+    "assessment_dimension": "operation",
     "difficulty": 2,
     "stem": "调用一个 Python API 后，至少应检查哪些结果来确认请求成功且响应可用？",
     "answer_key": {
@@ -924,6 +925,7 @@
     "question_id": "dq_058",
     "knowledge_id": "knowledge_base_ingestion",
     "question_type": "short_answer",
+    "assessment_dimension": "operation",
     "difficulty": 2,
     "stem": "知识正文新增或修改后，向量知识库至少应执行哪些同步与验证动作？",
     "answer_key": {

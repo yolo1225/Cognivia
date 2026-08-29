@@ -1,6 +1,6 @@
 # API v1 契约
 
-> 最近同步：2026-08-27。此页描述当前 `develop` 运行接口的稳定入口；请求/响应字段以
+> 最近同步：2026-08-29。此页描述当前 V10 运行接口的稳定入口；请求/响应字段以
 > FastAPI OpenAPI（`/api/v1/openapi.json`）和 `frontend/src/api/` 类型为准。
 
 ## 通用约定与认证
@@ -61,8 +61,11 @@
 | POST | `/tutoring/sessions/{session_id}/mastery-check` | 请求当前节点掌握度验证 |
 | POST | `/learning-adjustments/{proposal_id}/resource-decision` | 对生成/跳过学习调整资源作出选择 |
 
-资源只有在三个资源类型齐全、双模型审核通过且包级质量门槛通过时才原子发布。反馈、自然语言导学和
+生成阶段将目标证据、证据能力和生成覆盖缺口记录为 warning，不作为接口失败；审核发现证据不足、
+明确矛盾、覆盖不足或双模型分歧时执行定向补检索。补检索为空仍形成审核报告。资源只有在请求的
+三个资源类型齐全且整包幻觉率、难度匹配和核心覆盖门槛通过时才原子发布。反馈、自然语言导学和
 服务端答题证据共同决定是否创建画像新版本；单次主观反馈只会形成证据或即时导学，不直接改写画像。
+创建会话时默认使用资源作用域；错题页传入 `context_type=mistake_review` 与 `context_id=<mistake_item_id>`，按学习者、资源和错题共同隔离并恢复消息。两个入口的掌握检查仍调用同一当前节点验证和正式证据门禁，不按页面另设判定规则。
 
 ## 学习包、报告与错题巩固
 
@@ -77,6 +80,10 @@
 | GET | `/mistake-review/summary`、`/items`、`/items/{item_id}` | 查询错题巩固摘要与项目 |
 | POST | `/mistake-review/items/{item_id}/start` | 基于正式题库开启同知识点巩固 |
 | POST | `/mistake-review/items/{item_id}/attempts/{attempt_id}/answer` | 服务端评分巩固题并保存来源证据 |
+
+`GET /mistake-review/items` 可使用 `priority_scope=current_node|all`。`current_node`
+与学习路径门禁采用同一套核心知识和未解决状态判定；后续节点错题仍保留在 `all` 中并允许提前巩固。
+摘要返回 `current_priority_count` 和当前节点信息，列表项返回路径位置及是否阻断当前节点。
 
 ## 领域与知识管理（管理员）
 

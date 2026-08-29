@@ -151,10 +151,10 @@ development agents implementing concrete Agents must treat these files as read-o
 - `docs/contracts/v10/`
 
 The V10 source of truth is `docs/agent-contract-v10.md` together with the executable Pydantic
-models and generated JSON Schema. V9 and earlier documents and Schema are historical compatibility
-artifacts only and must not be used for new runs. All Agent implementations import only from
-`app.agents.contracts` and `app.agents.state`. V1-V9 contracts, State and Agent implementations
-have been retired and must not be reintroduced into the active runtime.
+models and generated JSON Schema. Superseded contract documents and Schema are not retained in the
+active documentation tree and must not be reconstructed or used for new runs. Historical database
+records retain their stored version values. All Agent implementations import only from
+`app.agents.contracts` and `app.agents.state`.
 
 Concrete Agent developers must not change contract fields, enums, required/optional rules,
 defaults, State ownership, contract examples, or top-level graph structure to make their
@@ -195,7 +195,12 @@ Facts and source traceability must be checked by both model channels. If scores 
 3. If disagreement remains, count the claim as unresolved and send only the affected resource to automatic local revision.
 4. Do not show unresolved resources to learners; fail the package after two revisions.
 
-Every generated resource must include knowledge sources.
+Every generated resource must include knowledge sources. Evidence capability labels improve
+retrieval and knowledge governance but are not generation preconditions. Missing target evidence,
+missing capabilities and incomplete generated coverage are observable warnings; factual support
+and official coverage are decided by review. Evidence-insufficient, contradicted, missing-coverage
+or disputed claims trigger targeted re-retrieval and recheck. Empty supplemental retrieval does not
+fail a task by itself.
 
 ## Knowledge Update Rules
 

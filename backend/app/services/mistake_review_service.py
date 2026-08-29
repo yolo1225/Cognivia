@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -14,12 +14,14 @@ from app.models import (
     GenerationTask,
     KnowledgeItem,
     Learner,
+    LearningPath,
     LearningResource,
     MistakeReviewAttempt,
     MistakeReviewItem,
     PathNodeAssessment,
 )
 from app.services.knowledge_extraction_service import normalize_knowledge_name
+from app.services.node_mastery_service import UNRESOLVED_MISTAKE_STATUSES, node_core_knowledge_ids
 from app.services.question_bank_service import (
     QuestionBankError,
     select_mastery_question,
@@ -170,6 +172,58 @@ def _knowledge(db: Session, item: MistakeReviewItem) -> KnowledgeItem | None:
     return db.get(KnowledgeItem, item.knowledge_item_id)
 
 
+def _active_path_context(
+    db: Session, *, learner_id: int, domain_code: str
+) -> dict[str, Any]:
+    path = db.scalar(
+        select(LearningPath)
+        .where(
+            LearningPath.learner_id == learner_id,
+            LearningPath.domain_code == domain_code,
+            LearningPath.status == "active",
+        )
+        .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
+    )
+    payload = path.path_json or {} if path is not None else {}
+    states = payload.get("node_states") or {}
+    current_node_id = payload.get("current_node_id")
+    current_node = states.get(current_node_id) if current_node_id else None
+    current_core_ids = set(node_core_knowledge_ids(current_node or {}))
+    by_knowledge: dict[str, dict[str, Any]] = {}
+    for state in states.values():
+        if not isinstance(state, dict):
+            continue
+        knowledge_ids = state.get("knowledge_ids") or [state.get("knowledge_id")]
+        for knowledge_id in knowledge_ids:
+            if knowledge_id:
+                by_knowledge[str(knowledge_id)] = state
+    return {
+        "available": path is not None and isinstance(current_node, dict),
+        "current_node_id": current_node_id,
+        "current_node_title": str((current_node or {}).get("title") or "当前学习节点"),
+        "current_core_ids": current_core_ids,
+        "by_knowledge": by_knowledge,
+    }
+
+
+def _path_metadata(
+    item: MistakeReviewItem,
+    knowledge: KnowledgeItem | None,
+    path_context: dict[str, Any],
+) -> dict[str, Any]:
+    knowledge_id = knowledge.public_id if knowledge else None
+    state = path_context["by_knowledge"].get(knowledge_id) if knowledge_id else None
+    is_priority = bool(
+        knowledge_id in path_context["current_core_ids"]
+        and item.status in UNRESOLVED_MISTAKE_STATUSES
+    )
+    return {
+        "is_current_priority": is_priority,
+        "path_node_status": str(state.get("status")) if state else None,
+        "path_order": int(state.get("path_order")) if state and state.get("path_order") else None,
+    }
+
+
 def _recommended_resource(db: Session, item: MistakeReviewItem) -> LearningResource | None:
     if item.source_resource_id:
         resource = db.get(LearningResource, item.source_resource_id)
@@ -201,10 +255,19 @@ def _recommended_resource(db: Session, item: MistakeReviewItem) -> LearningResou
     return None
 
 
-def serialize_item(db: Session, item: MistakeReviewItem, *, include_detail: bool = False) -> dict[str, Any]:
+def serialize_item(
+    db: Session,
+    item: MistakeReviewItem,
+    *,
+    include_detail: bool = False,
+    path_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     knowledge = _knowledge(db, item)
     resource = _recommended_resource(db, item)
     summary = dict(item.error_summary_json or {})
+    path_context = path_context or _active_path_context(
+        db, learner_id=item.learner_id, domain_code=item.domain_code
+    )
     data = {
         "item_id": item.public_id,
         "knowledge_id": knowledge.public_id if knowledge else None,
@@ -224,6 +287,7 @@ def serialize_item(db: Session, item: MistakeReviewItem, *, include_detail: bool
             if resource
             else None
         ),
+        **_path_metadata(item, knowledge, path_context),
     }
     if include_detail:
         question_id = summary.get("question_id")
@@ -263,10 +327,27 @@ def summary(db: Session, *, learner: Learner, domain_code: str) -> dict[str, Any
     verified = sum(item.status in VERIFIED_STATUSES for item in items)
     pending = sum(item.status in {"pending", "verification_pending", "needs_more_practice"} for item in items)
     in_progress = sum(item.status == "reviewing" for item in items)
+    path_context = _active_path_context(
+        db, learner_id=learner.id, domain_code=domain_code
+    )
+    current_knowledge_ids = path_context["current_core_ids"]
+    current_knowledge_db_ids = set(
+        db.scalars(
+            select(KnowledgeItem.id).where(
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.public_id.in_(current_knowledge_ids),
+            )
+        )
+    ) if current_knowledge_ids else set()
+
+    eligible_items = [
+        item for item in items
+        if item.status in UNRESOLVED_MISTAKE_STATUSES
+        and item.knowledge_item_id in current_knowledge_db_ids
+    ]
     counts: dict[int, int] = {}
-    for item in items:
-        if item.status != "consolidated":
-            counts[item.knowledge_item_id] = counts.get(item.knowledge_item_id, 0) + 1
+    for item in eligible_items:
+        counts[item.knowledge_item_id] = counts.get(item.knowledge_item_id, 0) + 1
     focus = db.get(KnowledgeItem, max(counts, key=counts.get)) if counts else None
     return {
         "total": len(items),
@@ -276,6 +357,12 @@ def summary(db: Session, *, learner: Learner, domain_code: str) -> dict[str, Any
         "verified": verified,
         "consolidation_rate": round(consolidated / verified * 100, 1) if verified else None,
         "focus_knowledge": ({"knowledge_id": focus.public_id, "name": normalize_knowledge_name(focus.name)} if focus else None),
+        "focus_scope": "current_node" if path_context["available"] else "all_mistakes",
+        "current_priority_count": len(eligible_items),
+        "current_node": ({
+            "path_node_id": path_context["current_node_id"],
+            "title": path_context["current_node_title"],
+        } if path_context["available"] else None),
     }
 
 
@@ -288,13 +375,25 @@ def list_items(
     source_type: str | None,
     knowledge_id: str | None,
     difficulty: int | None,
+    priority_scope: str | None,
     page: int,
     page_size: int,
 ) -> dict[str, Any]:
-    statement = select(MistakeReviewItem).where(
+    path_context = _active_path_context(
+        db, learner_id=learner.id, domain_code=domain_code
+    )
+    current_core_ids = path_context["current_core_ids"]
+    statement = select(MistakeReviewItem).join(
+        KnowledgeItem, KnowledgeItem.id == MistakeReviewItem.knowledge_item_id
+    ).where(
         MistakeReviewItem.learner_id == learner.id,
         MistakeReviewItem.domain_code == domain_code,
     )
+    if priority_scope == "current_node":
+        statement = statement.where(
+            KnowledgeItem.public_id.in_(current_core_ids),
+            MistakeReviewItem.status.in_(UNRESOLVED_MISTAKE_STATUSES),
+        )
     if status:
         statement = statement.where(MistakeReviewItem.status == status)
     if source_type:
@@ -302,16 +401,32 @@ def list_items(
     if difficulty is not None:
         statement = statement.where(MistakeReviewItem.difficulty == difficulty)
     if knowledge_id:
-        statement = statement.join(KnowledgeItem).where(KnowledgeItem.public_id == knowledge_id)
+        statement = statement.where(KnowledgeItem.public_id == knowledge_id)
     count = db.scalar(select(func.count()).select_from(statement.subquery())) or 0
     rows = list(
         db.scalars(
-            statement.order_by(MistakeReviewItem.last_wrong_at.desc(), MistakeReviewItem.id.desc())
+            statement.order_by(
+                case(
+                    (
+                        KnowledgeItem.public_id.in_(current_core_ids)
+                        & MistakeReviewItem.status.in_(UNRESOLVED_MISTAKE_STATUSES),
+                        0,
+                    ),
+                    else_=1,
+                ),
+                MistakeReviewItem.last_wrong_at.desc(),
+                MistakeReviewItem.id.desc(),
+            )
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
     )
-    return {"items": [serialize_item(db, item) for item in rows], "total": count, "page": page, "page_size": page_size}
+    return {
+        "items": [serialize_item(db, item, path_context=path_context) for item in rows],
+        "total": count,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 def require_item(db: Session, *, learner: Learner, item_id: str) -> MistakeReviewItem:

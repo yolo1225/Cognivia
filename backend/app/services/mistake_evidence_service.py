@@ -298,6 +298,19 @@ def evaluate_mistake_evidence(
             result=result,
         )
         return result
+    # Profile evidence may remain conflicted while the independently computed
+    # node gate is already satisfied. Route progression must not be skipped.
+    if _advance_ready_node_without_profile_revision(
+        db,
+        learner=learner,
+        item=item,
+        record=record,
+        profile=profile,
+        path=path,
+        resource=resource,
+        result=result,
+    ):
+        return result
     directions = {bool(candidate.is_correct) for candidate in candidates}
     if len(directions) != 1:
         reason = "CONFLICTING_FORMAL_EVIDENCE"

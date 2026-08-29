@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.db import get_db
 from app.core.errors import api_error_response
 from app.core.security import Principal, get_current_user, principal_learner, require_resource, require_tutoring
-from app.models import Learner, TutoringMessage, TutoringSession
+from app.models import Learner, MistakeReviewItem, TutoringMessage, TutoringSession
 from app.schemas.common import ApiResponse, ok
 from app.services.learner_service import get_or_create_demo_learner
 from app.services.learning_adjustment_service import request_mastery_assessment
@@ -42,6 +42,14 @@ def start_tutoring_session(
     payload = payload or {}
     resource_id = payload.get("resource_id")
     resource = require_resource(db,principal,resource_id)
+    context_type = str(payload.get("context_type") or "resource")
+    context_id = str(payload.get("context_id") or "").strip() or None
+    if context_type not in {"resource", "mistake_review"}:
+        raise HTTPException(status_code=422, detail="invalid tutoring context_type")
+    if context_type == "resource" and context_id is not None:
+        raise HTTPException(status_code=422, detail="resource context cannot include context_id")
+    if context_type == "mistake_review" and context_id is None:
+        raise HTTPException(status_code=422, detail="mistake_review context requires context_id")
     requested_learner = payload.get("learner_id")
     if principal.role == "admin" and not requested_learner:
         from app.models import GenerationTask
@@ -55,7 +63,21 @@ def start_tutoring_session(
         raise HTTPException(status_code=404, detail="A published resource is required")
     if resource.review_status != "passed" or not resource.is_current:
         raise HTTPException(status_code=409, detail="Only a current passed resource can be tutored")
-    session = create_session(db, learner=learner, resource=resource)
+    if context_type == "mistake_review":
+        mistake = db.scalar(
+            select(MistakeReviewItem).where(MistakeReviewItem.public_id == context_id)
+        )
+        if mistake is None or mistake.learner_id != learner.id:
+            raise HTTPException(status_code=404, detail="Mistake review item not found")
+        if mistake.domain_code != learner.target_domain:
+            raise HTTPException(status_code=409, detail="Mistake review context is stale")
+    session = create_session(
+        db,
+        learner=learner,
+        resource=resource,
+        context_type=context_type,
+        context_ref_id=context_id,
+    )
     db.commit()
     db.refresh(session)
     return ok(serialize_session(db, session))

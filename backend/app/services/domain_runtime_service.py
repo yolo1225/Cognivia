@@ -265,10 +265,13 @@ def load_domain_runtime(db: Session, domain_code: str) -> DomainRuntime:
     practice_generation_mode = practice_generation_mode_for_items(items)
     if practice_generation_mode == "evidence_backed":
         buckets = {key: 0 for key in DIAGNOSTIC_DISTRIBUTION}
-        for question, item in valid_questions:
+        for question, _item in valid_questions:
+            assessment_dimension = str(
+                (question.answer_key_json or {}).get("assessment_dimension") or ""
+            )
             key = (
                 question.question_type,
-                "operation" in (item.evidence_capabilities_json or []),
+                assessment_dimension == "operation",
             )
             if key in buckets:
                 buckets[key] += 1

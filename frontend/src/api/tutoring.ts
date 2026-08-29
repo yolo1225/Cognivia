@@ -2,6 +2,8 @@ import { getData, postData } from './client'
 
 export interface TutoringSession {
   session_id: string
+  context_type: 'resource' | 'mistake_review'
+  context_id: string | null
   status: string
   turn_count: number
   node_adjustment_state: 'collecting' | 'pending_validation' | 'confirmed' | 'none'
@@ -107,11 +109,12 @@ export interface TutoringDecision {
   evidence_reason?: string | null
 }
 
-export function createTutoringSession(resourceId: string, learnerId?: string) {
+export function createTutoringSession(resourceId: string, learnerId?: string, context?: { type: 'mistake_review'; id: string }) {
   const body: Record<string, unknown> = {
     resource_id: resourceId,
   }
   if (learnerId) body.learner_id = learnerId
+  if (context) { body.context_type = context.type; body.context_id = context.id }
   return postData<TutoringSession>('/tutoring/sessions', body)
 }
 

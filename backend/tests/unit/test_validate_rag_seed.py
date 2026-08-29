@@ -89,6 +89,19 @@ def test_validated_seed_loads_through_existing_database_seed_path() -> None:
             .select_from(DiagnosticQuestion)
             .where(DiagnosticQuestion.certification_status == "certified")
         ) == 264
+        dimensions: dict[tuple[str, str | None], int] = {}
+        for question_type, answer_key in db.execute(
+            select(
+                DiagnosticQuestion.question_type,
+                DiagnosticQuestion.answer_key_json,
+            )
+        ):
+            key = (question_type, answer_key.get("assessment_dimension"))
+            dimensions[key] = dimensions.get(key, 0) + 1
+        assert dimensions[("single_choice", "theory")] >= 3
+        assert dimensions[("single_choice", "operation")] >= 3
+        assert dimensions[("short_answer", "theory")] >= 2
+        assert dimensions[("short_answer", "operation")] >= 2
 
 
 @pytest.mark.parametrize(

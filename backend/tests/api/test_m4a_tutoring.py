@@ -24,6 +24,7 @@ from app.models import (
     LearningPath,
     LearningAdjustmentProposal,
     LearningResource,
+    MistakeReviewItem,
 )
 from app.api.v1.generation_tasks import _semantic_events
 from app.services.learning_path_service import unit_node_id_for
@@ -378,6 +379,58 @@ def test_manual_mastery_check_reports_when_current_node_has_no_choice_question()
             "message": "当前知识点缺少可判分的单选验证题，请联系管理员补题后重试。",
             "details": None,
         }
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_mistake_tutoring_session_is_isolated_and_restored() -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+        learner = db.query(Learner).filter_by(public_id="learner_001").one()
+        knowledge = db.query(KnowledgeItem).filter_by(public_id="rag_pipeline_overview").one()
+        resource = db.query(LearningResource).filter_by(public_id="resource_m4a").one()
+        db.add(
+            MistakeReviewItem(
+                public_id="mistake_m4a",
+                learner_id=learner.id,
+                domain_code="ai_app_dev",
+                knowledge_item_id=knowledge.id,
+                source_type="graded_quiz",
+                source_record_id="quiz:m4a:0",
+                source_resource_id=resource.id,
+                question_type="single_choice",
+                difficulty=3,
+                status="pending",
+                error_summary_json={},
+            )
+        )
+        db.commit()
+    app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
+    client = TestClient(app)
+    try:
+        resource_session = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_m4a"}
+        ).json()["data"]
+        mistake_payload = {
+            "resource_id": "resource_m4a",
+            "context_type": "mistake_review",
+            "context_id": "mistake_m4a",
+        }
+        mistake_session = client.post(
+            "/api/v1/tutoring/sessions", json=mistake_payload
+        ).json()["data"]
+        restored = client.post(
+            "/api/v1/tutoring/sessions", json=mistake_payload
+        ).json()["data"]
+
+        assert resource_session["session_id"] != mistake_session["session_id"]
+        assert restored["session_id"] == mistake_session["session_id"]
+        assert restored["context_type"] == "mistake_review"
+        assert restored["context_id"] == "mistake_m4a"
     finally:
         app.dependency_overrides.clear()
 

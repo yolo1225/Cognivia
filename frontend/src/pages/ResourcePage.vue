@@ -19,11 +19,11 @@
       <span>必要前置知识：{{ prerequisiteNames }}</span>
       <span>适配画像 V{{ generationBasis.profile_version }}</span>
     </section>
-    <section v-if="nodeGate && !nodeGate.can_advance" class="generation-basis" aria-label="当前节点掌握进度">
-      <strong>节点掌握进度</strong>
+    <section v-if="nodeGate" class="generation-basis" :class="{ 'gate-complete': nodeGate.can_advance }" aria-label="当前节点掌握进度">
+      <strong>{{ nodeGate.can_advance ? '当前节点已达标' : '节点掌握进度' }}</strong>
       <span>核心知识 {{ nodeGate.mastered_knowledge_count || 0 }} / {{ nodeGate.core_knowledge_count || 0 }}</span>
       <span>{{ nodeGate.quiz_completed ? '分阶测验已完成' : '分阶测验待完成' }}</span>
-      <span>阻断性错题 {{ nodeGate.blocking_mistake_count }} 道</span>
+      <span>{{ nodeGate.blocking_mistake_count ? `阻断性错题 ${nodeGate.blocking_mistake_count} 道` : '阻断性错题已完成' }}</span>
     </section>
 
     <div v-if="isShowingProgress" class="panel generation-state">

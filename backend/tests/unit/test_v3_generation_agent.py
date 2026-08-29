@@ -25,21 +25,16 @@ from app.agents.generation_agent import (
     RevisionPatchResponse,
     _apply_revision_patches,
     _sanitize_revision_patches,
-    _stabilize_lecture_summary,
     _generation_payload,
     _quiz_blueprint,
     _quiz_blueprint_violations,
     _fixture_response,
-    _ground_practice_revision_fallbacks,
-    _apply_content_policy_fallback,
-    _apply_practice_evidence_fallback,
     _content_policy_violations,
-    _evidence_depth_violations,
-    _merge_coverage_additions,
     _merge_revision_candidate,
     _normalize_revision_path,
     _revision_field_fingerprints,
     _strip_audited_claims_after_repairs,
+    normalize_generated_content,
 )
 from app.agents.observability import collect_model_calls
 from app.agents.review_claim_manifest import build_review_claims
@@ -167,6 +162,23 @@ class UnrepairedPracticeEvidenceGenerator:
         return candidate
 
 
+class UnrepairedPracticeResultGenerator:
+    repair_calls = 0
+
+    def generate(self, request, resource_type, allowed_sources):
+        response = _fixture_response(request, resource_type, allowed_sources)
+        content = response.structured_content.model_copy(deep=True)
+        assert isinstance(content, PracticeGuideContent)
+        content.steps[0].expected_result = "接口固定返回成功状态"
+        return response.model_copy(update={"structured_content": content})
+
+    def repair_content_policy(
+        self, _request, _resource_type, _allowed_sources, candidate, _violations
+    ):
+        self.repair_calls += 1
+        return candidate
+
+
 class UnrepairedPracticeProvenanceGenerator:
     repair_calls = 0
 
@@ -262,6 +274,20 @@ class InvalidStructuredOutputGenerator:
                 "duration_ms": 10,
             },
         )
+
+
+class ResourceRetryGenerator:
+    def __init__(self, *, persistent_failure: bool = False) -> None:
+        self.calls = {ResourceType.LECTURE: 0, ResourceType.PRACTICE_GUIDE: 0}
+        self.persistent_failure = persistent_failure
+
+    def generate(self, request, resource_type, allowed_sources):
+        self.calls[resource_type] += 1
+        if resource_type is ResourceType.PRACTICE_GUIDE and (
+            self.persistent_failure or self.calls[resource_type] == 1
+        ):
+            raise GenerationError("practice_structure_invalid")
+        return _fixture_response(request, resource_type, allowed_sources)
 
 
 class InvalidLocalStructureGenerator:
@@ -526,6 +552,80 @@ def test_v3_generation_rejects_non_contract_input() -> None:
         ).execute({})  # type: ignore[arg-type]
 
 
+def _lecture_and_practice_input() -> GenerateResourceInput:
+    request = _input()
+    resource_types = [ResourceType.LECTURE, ResourceType.PRACTICE_GUIDE]
+    targets = request.requirements.required_knowledge_ids
+    return request.model_copy(
+        update={
+            "context": request.context.model_copy(
+                update={"requested_resource_types": resource_types}
+            ),
+            "requirements": request.requirements.model_copy(
+                update={
+                    "resource_types": resource_types,
+                    "resource_knowledge_targets": {
+                        resource_type: targets for resource_type in resource_types
+                    },
+                }
+            ),
+        }
+    )
+
+
+def test_parallel_generation_retries_only_failed_resource() -> None:
+    generator = ResourceRetryGenerator()
+
+    output = ContentGenerationAgent(
+        generator=generator, renderer=render_resource_markdown
+    ).execute(_lecture_and_practice_input())
+
+    assert [item.resource_type for item in output.resources] == [
+        ResourceType.LECTURE,
+        ResourceType.PRACTICE_GUIDE,
+    ]
+    assert generator.calls == {
+        ResourceType.LECTURE: 1,
+        ResourceType.PRACTICE_GUIDE: 2,
+    }
+
+
+def test_parallel_generation_records_persistent_failed_resource(caplog) -> None:
+    generator = ResourceRetryGenerator(persistent_failure=True)
+
+    with pytest.raises(GenerationError, match="practice_structure_invalid"):
+        ContentGenerationAgent(
+            generator=generator, renderer=render_resource_markdown
+        ).execute(_lecture_and_practice_input())
+
+    assert generator.calls == {
+        ResourceType.LECTURE: 1,
+        ResourceType.PRACTICE_GUIDE: 2,
+    }
+    assert "generation_resource_failed" in caplog.text
+    assert "practice_guide" in caplog.text
+
+
+def test_missing_target_evidence_is_observable_but_does_not_block_review(caplog) -> None:
+    request = _input()
+    retained = request.retrieved_chunks[0]
+    request = request.model_copy(
+        update={
+            "retrieved_chunks": [retained],
+            "requirements": request.requirements.model_copy(
+                update={"source_whitelist": [retained.source.source_ref_id]}
+            ),
+        }
+    )
+
+    output = ContentGenerationAgent(
+        generator=StubGenerator(), renderer=render_resource_markdown
+    ).execute(request)
+
+    assert output.resources
+    assert "generation_missing_target_evidence" in caplog.text
+
+
 def test_v3_generation_rejects_sources_outside_whitelist() -> None:
     with pytest.raises(GenerationError, match="generated_source_outside_whitelist"):
         ContentGenerationAgent(
@@ -533,142 +633,39 @@ def test_v3_generation_rejects_sources_outside_whitelist() -> None:
         ).execute(_input())
 
 
-def test_generation_repairs_forbidden_source_meta_claim_once() -> None:
+def test_generation_normalizes_forbidden_source_meta_claim_without_model_repair() -> None:
     generator = ContentPolicyRepairGenerator()
     output = ContentGenerationAgent(generator=generator, renderer=render_resource_markdown).execute(
         _input()
     )
 
-    assert generator.repair_calls == 1
+    assert generator.repair_calls == 0
     content = output.resources[0].structured_content
-    assert content.summary == _input().retrieved_chunks[0].content
+    assert content.summary == "请结合本讲义的核心概念，梳理关键要点并记录自己的理解。"
     assert not _content_policy_violations(content)
 
 
-def test_generation_downgrades_unrepaired_source_meta_claim() -> None:
+def test_generation_downgrades_source_meta_claim_without_model_repair() -> None:
     generator = UnrepairedContentPolicyGenerator()
     output = ContentGenerationAgent(
         generator=generator, renderer=render_resource_markdown
     ).execute(_input())
 
-    assert generator.repair_calls == 1
+    assert generator.repair_calls == 0
     content = output.resources[0].structured_content
     assert isinstance(content, LectureContent)
     assert content.summary == "请结合本讲义的核心概念，梳理关键要点并记录自己的理解。"
     assert not _content_policy_violations(content)
 
 
-def test_content_policy_fallback_keeps_valid_text_around_provenance_claim() -> None:
-    request = _input()
-    response = _fixture_response(request, ResourceType.LECTURE, [request.retrieved_chunks[0].source])
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, LectureContent)
-    content.summary = "RAG 将检索结果作为生成上下文。所有结论均源自所列官方文档。"
-
-    sanitized = _apply_content_policy_fallback(
-        content,
-        [{"path": "summary", "code": "forbidden_meta_claim"}],
-    )
-
-    assert isinstance(sanitized, LectureContent)
-    assert sanitized.summary == "RAG 将检索结果作为生成上下文"
-    assert not _content_policy_violations(sanitized)
 
 
-def test_unified_policy_removes_misplaced_expected_result_action() -> None:
-    request = _input()
-    response = _fixture_response(
-        request,
-        ResourceType.PRACTICE_GUIDE,
-        [request.retrieved_chunks[0].source],
-    )
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.steps[0].expected_result = "处理完成后返回任务标识。请记录实际观察结果。"
-
-    violations = _content_policy_violations(content)
-    once = _apply_content_policy_fallback(content, violations)
-    twice = _apply_content_policy_fallback(once, _content_policy_violations(once))
-
-    assert any(
-        item == {
-            "path": "steps[0].expected_result",
-            "code": "misplaced_field_content",
-        }
-        for item in violations
-    )
-    assert isinstance(once, PracticeGuideContent)
-    assert once.steps[0].expected_result == "处理完成后返回任务标识"
-    assert twice == once
-    assert not _content_policy_violations(once)
 
 
-def test_content_policy_replaces_sole_implementation_meta_claim_safely() -> None:
-    request = _input()
-    response = _fixture_response(
-        request,
-        ResourceType.PRACTICE_GUIDE,
-        [request.retrieved_chunks[0].source],
-    )
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.steps[0].expected_result = "标注由代码落实的安全与校验项。"
-
-    sanitized = _apply_content_policy_fallback(
-        content,
-        _content_policy_violations(content),
-    )
-
-    assert isinstance(sanitized, PracticeGuideContent)
-    assert sanitized.steps[0].expected_result == (
-        "记录实际结果，并与引用材料中的描述进行核对。"
-    )
-    assert not _content_policy_violations(sanitized)
 
 
-def test_content_policy_removes_directive_misplaced_in_expected_result() -> None:
-    request = _input()
-    response = _fixture_response(
-        request,
-        ResourceType.PRACTICE_GUIDE,
-        [request.retrieved_chunks[0].source],
-    )
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.steps[0].expected_result = (
-        "校验通过表示响应符合当前契约；"
-        "校验失败时应暴露具体缺失或类型不符的字段，而非忽略或强转；"
-        "检查记录包含实际响应与契约的差异。"
-    )
-
-    violations = _content_policy_violations(content)
-    sanitized = _apply_content_policy_fallback(content, violations)
-
-    assert any(
-        item == {
-            "path": "steps[0].expected_result",
-            "code": "misplaced_field_content",
-        }
-        for item in violations
-    )
-    assert isinstance(sanitized, PracticeGuideContent)
-    assert sanitized.steps[0].expected_result == "校验通过表示响应符合当前契约"
-    assert not _content_policy_violations(sanitized)
 
 
-def test_lecture_summary_drops_facts_not_taught_by_core_concepts() -> None:
-    request = _input()
-    response = _fixture_response(
-        request, ResourceType.LECTURE, [request.retrieved_chunks[0].source]
-    )
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, LectureContent)
-    content.core_concepts[0].explanation = "API 调用前应限制输入大小。"
-    content.summary = "API 调用前应限制输入大小。调用后需校验未讲授的固定响应字段。"
-
-    stabilized = _stabilize_lecture_summary(content)
-
-    assert stabilized.summary == "API 调用前应限制输入大小。"
 
 
 def test_quiz_content_policy_removes_internal_source_ids_from_all_fact_fields() -> None:
@@ -696,7 +693,7 @@ def test_quiz_content_policy_removes_internal_source_ids_from_all_fact_fields() 
     content.questions[0].explanation = "AIAPP-K029::chunk::0 明确支持该答案。"
 
     violations = _content_policy_violations(content)
-    sanitized = _apply_content_policy_fallback(content, violations)
+    sanitized = normalize_generated_content(content)
 
     assert {item["path"] for item in violations} >= {
         "questions[0].prompt",
@@ -734,7 +731,7 @@ def test_quiz_content_policy_drops_absence_based_distractor_reasoning() -> None:
     )
 
     violations = _content_policy_violations(content)
-    sanitized = _apply_content_policy_fallback(content, violations)
+    sanitized = normalize_generated_content(content)
 
     assert any(item["code"] == "unsupported_distractor_rationale" for item in violations)
     assert sanitized.questions[0].explanation == "HTTP 请求包含方法和目标 URI；"
@@ -759,7 +756,7 @@ def test_lecture_explanation_is_not_treated_as_a_quiz_distractor_rationale() -> 
     )
 
 
-def test_generation_deterministically_downgrades_unsupported_practice_fields() -> None:
+def test_generation_leaves_fixed_practice_result_for_semantic_review() -> None:
     request = _input()
     requirements = request.requirements.model_copy(
         update={
@@ -772,111 +769,26 @@ def test_generation_deterministically_downgrades_unsupported_practice_fields() -
     context = request.context.model_copy(
         update={"resource_types": [ResourceType.PRACTICE_GUIDE]}
     )
-    generator = UnrepairedPracticeEvidenceGenerator()
+    generator = UnrepairedPracticeResultGenerator()
 
     output = ContentGenerationAgent(
         generator=generator, renderer=render_resource_markdown
     ).execute(request.model_copy(update={"context": context, "requirements": requirements}))
 
+    assert generator.repair_calls == 0
     content = output.resources[0].structured_content
     assert isinstance(content, PracticeGuideContent)
-    assert generator.repair_calls == 0
-    assert content.environment_requirements == ["准备练习所需的材料与受控环境。"]
-    assert content.steps[0].instruction == "阅读、比较并分析引用材料中的概念说明。"
-    assert content.steps[0].expected_result == "记录实际结果，并与引用材料中的描述进行核对。"
-    assert content.steps[0].code_or_command is None
-    assert content.steps[0].troubleshooting is None
-    assert content.acceptance_criteria[0] == "形成学习记录并标注所依据的材料。"
-    assert content.steps[0].source_ref_ids
-    assert not _evidence_depth_violations(
-        content, request.model_copy(update={"context": context, "requirements": requirements}),
-        [request.retrieved_chunks[0].source],
-    )
+    assert content.steps[0].expected_result == "接口固定返回成功状态"
 
 
-def test_concept_evidence_cannot_support_executable_practice_code() -> None:
-    request = _input()
-    source = request.retrieved_chunks[0].source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    content.environment_requirements[0] = "安装并配置指定版本的 Python 环境"
-    content.steps[0].instruction = "执行 Git 提交并调用 HTTP 接口"
-    content.steps[0].code_or_command = "python app.py"
-    content.steps[0].expected_result = "接口固定返回成功状态"
-
-    violations = _evidence_depth_violations(content, request, [source])
-
-    assert {
-        "path": "steps[0].code_or_command",
-        "code": "executable_evidence_missing",
-    } in violations
-    assert {
-        "path": "steps[0].instruction",
-        "code": "operation_evidence_missing",
-    } in violations
-    assert {
-        "path": "steps[0].expected_result",
-        "code": "expected_result_evidence_missing",
-    } in violations
-    assert any(item["code"] == "environment_evidence_missing" for item in violations)
 
 
-def test_practice_fallback_separates_git_commands_glued_by_revision() -> None:
-    request = _input()
-    source = request.retrieved_chunks[0].source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    content.steps[0].code_or_command = 'git diffgit commit -m "describe intent"'
-
-    sanitized = _apply_practice_evidence_fallback(content, [])
-
-    assert sanitized.steps[0].code_or_command == 'git diff\ngit commit -m "describe intent"'
 
 
-def test_direct_code_evidence_allows_practice_code() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={"content": "代码示例：```python\nimport json\n```"}
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = chunk.source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    content.steps[0].code_or_command = "import json"
-
-    violations = _evidence_depth_violations(content, request, [source])
-
-    assert not any(item["code"] == "executable_evidence_missing" for item in violations)
 
 
-def test_operation_and_expected_result_evidence_supports_practice_steps() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={
-            "content": (
-                "操作步骤：执行受控验证。代码示例：```python\nimport json\n```。"
-                "预期结果：完成后输出验证记录。"
-            )
-        }
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = chunk.source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
 
-    violations = _evidence_depth_violations(
-        response.structured_content, request, [source]
-    )
 
-    assert not any(
-        item["code"]
-        in {
-            "environment_evidence_missing",
-            "operation_evidence_missing",
-            "executable_evidence_missing",
-            "expected_result_evidence_missing",
-        }
-        for item in violations
-    )
 
 
 def test_revision_path_normalizes_atomic_claim_suffixes() -> None:
@@ -956,31 +868,9 @@ def test_typed_revision_patch_preserves_structure_and_unrelated_fields() -> None
     assert revised.difficulty == original.difficulty
 
 
-def test_practice_provenance_fallback_covers_every_step_and_is_idempotent() -> None:
-    request = _input()
-    source = request.retrieved_chunks[0].source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    second = content.steps[0].model_copy(
-        update={
-            "order": 2,
-            "instruction": "比较两个方案。所有结论均源自所列官方文档。",
-        }
-    )
-    content.steps.append(second)
-
-    violations = _content_policy_violations(content)
-    once = _apply_content_policy_fallback(content, violations)
-    twice = _apply_content_policy_fallback(once, _content_policy_violations(once))
-
-    assert isinstance(once, PracticeGuideContent)
-    assert once.steps[1].instruction == "比较两个方案"
-    assert not _content_policy_violations(once)
-    assert twice == once
 
 
-def test_unrepaired_second_practice_step_converges_without_task_failure() -> None:
+def test_unrepaired_meta_claim_is_sanitized_without_rejecting_teaching_step() -> None:
     request = _input()
     requirements = request.requirements.model_copy(
         update={
@@ -999,100 +889,16 @@ def test_unrepaired_second_practice_step_converges_without_task_failure() -> Non
         generator=generator, renderer=render_resource_markdown
     ).execute(request.model_copy(update={"context": context, "requirements": requirements}))
 
+    assert generator.repair_calls == 0
     content = output.resources[0].structured_content
     assert isinstance(content, PracticeGuideContent)
-    assert generator.repair_calls == 0
-    assert content.steps[1].instruction == "阅读、比较并分析引用材料中的概念说明。"
-    assert not _content_policy_violations(content)
+    assert content.steps[1].instruction == "整理差异"
 
 
-def test_knowledge_level_capabilities_cannot_authorize_unstructured_chunk() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={"knowledge_id": "marine_valve", "content": "Calibrate the valve against the reference card."}
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = chunk.source.model_copy(update={"knowledge_id": "marine_valve"})
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.steps[0].instruction = "执行阀门校准。"
-    content.steps[0].code_or_command = "CALIBRATE VALVE A"
-    content.steps[0].expected_result = "显示校准完成状态。"
-    content.steps[0].troubleshooting = "失败时检查阀门位置。"
-    declared = {
-        "marine_valve": [
-            "operation",
-            "command",
-            "expected_result",
-            "error_handling",
-        ]
-    }
-
-    violations = _evidence_depth_violations(content, request, [source], declared)
-
-    assert any(item["code"] == "operation_evidence_missing" for item in violations)
-    assert any(item["code"] == "expected_result_evidence_missing" for item in violations)
 
 
-def test_chunk_body_can_prove_capabilities_despite_stale_item_aggregate() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={"content": "操作步骤：执行命令。预期结果：返回成功状态。"}
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = chunk.source
-    content = _fixture_response(
-        request, ResourceType.PRACTICE_GUIDE, [source]
-    ).structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.steps[0].instruction = "执行命令并提交请求。"
-
-    violations = _evidence_depth_violations(
-        content,
-        request,
-        [source],
-        {chunk.knowledge_id: ["concept"]},
-    )
-
-    assert not any(item["code"] == "operation_evidence_missing" for item in violations)
 
 
-def test_concept_only_four_step_guide_safely_downgrades_every_step() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={"content": "概念说明：比较不同材料中的定义、范围与关系。"}
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = chunk.source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    prototype = content.steps[0]
-    content.steps = [
-        prototype.model_copy(
-            update={
-                "order": index,
-                "instruction": f"执行第 {index} 个固定操作。",
-                "code_or_command": f"tool run --step {index}",
-                "expected_result": f"固定输出 success-{index}",
-                "troubleshooting": "失败时重启服务。",
-            }
-        )
-        for index in range(1, 5)
-    ]
-
-    violations = _evidence_depth_violations(content, request, [source])
-    downgraded = _apply_practice_evidence_fallback(content, violations)
-
-    assert not _evidence_depth_violations(downgraded, request, [source])
-    assert all(
-        step.instruction == "阅读、比较并分析引用材料中的概念说明。"
-        and step.code_or_command is None
-        and step.expected_result == "记录实际结果，并与引用材料中的描述进行核对。"
-        and step.troubleshooting is None
-        for step in downgraded.steps
-    )
 
 
 def test_capability_normalization_accepts_only_canonical_domain_neutral_values() -> None:
@@ -1112,29 +918,6 @@ def test_capability_normalization_accepts_only_canonical_domain_neutral_values()
         )
     }
 
-def test_environment_fact_without_operation_evidence_is_rewritten_as_preparation() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={"content": "概念说明：输入案例可用于比较学习材料。"}
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = chunk.source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    content.environment_requirements[0] = "支持对同一组输入案例反复测试不同提示词变体"
-
-    violations = _evidence_depth_violations(content, request, [source])
-    sanitized = _apply_practice_evidence_fallback(content, violations)
-
-    assert {
-        "path": "environment_requirements[0]",
-        "code": "environment_evidence_missing",
-    } in violations
-    assert sanitized.environment_requirements[0] == "准备练习所需的材料与受控环境。"
-    assert not any(
-        item["code"] == "environment_evidence_missing"
-        for item in _evidence_depth_violations(sanitized, request, [source])
-    )
 
 
 def test_practice_revision_keeps_valid_field_patches_instead_of_cleaned_baseline() -> None:
@@ -1202,45 +985,6 @@ def test_practice_revision_preserves_replacement_for_followup_review() -> None:
     assert revised.structured_content.steps[0].instruction == (
         "仅当状态码为 2xx 且内容类型为 JSON 时才解析响应体"
     )
-
-
-def test_practice_revision_claim_free_instruction_is_grounded_in_cited_evidence() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={
-            "content": (
-                "操作步骤：发送请求后读取响应状态码和响应体。\n"
-                "预期结果：记录实际返回的状态码和响应结构。"
-            )
-        }
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = request.retrieved_chunks[0].source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.environment_requirements = ["练习前请确认所需材料与受控环境已经准备妥当。"]
-    content.acceptance_criteria = ["完成练习后，提交学习记录并标注核对依据。"]
-    content.steps = [
-        step.model_copy(
-            update={
-                "instruction": "阅读引用材料，整理其中明确描述的处理流程。",
-                "code_or_command": None,
-                "expected_result": "记录实际结果，并与引用材料中的描述进行核对。",
-                "troubleshooting": None,
-            }
-        )
-        for step in content.steps
-    ]
-
-    grounded = _ground_practice_revision_fallbacks(
-        response.model_copy(update={"structured_content": content}), request
-    )
-
-    assert isinstance(grounded.structured_content, PracticeGuideContent)
-    assert grounded.structured_content.steps[0].instruction != content.steps[0].instruction
-    assert "发送请求后读取响应状态码和响应体" in grounded.structured_content.steps[0].instruction
-    assert grounded.structured_content.steps[1:] == content.steps[1:]
 
 
 @pytest.mark.parametrize(
@@ -1461,7 +1205,7 @@ def test_deterministic_convergence_removes_atomic_claim_without_model_call() -> 
     assert collector.snapshot() == []
 
 
-def test_claim_free_practice_convergence_adds_one_grounded_anchor_only() -> None:
+def test_claim_free_practice_convergence_does_not_inject_source_sentence() -> None:
     request = _input()
     chunk = request.retrieved_chunks[0].model_copy(
         update={
@@ -1508,7 +1252,7 @@ def test_claim_free_practice_convergence_adds_one_grounded_anchor_only() -> None
     content.steps = [
         step.model_copy(
             update={
-                "instruction": "阅读引用材料，整理其中明确描述的处理流程。",
+                "instruction": "发送请求后读取响应状态码和响应体；再整理处理流程。",
                 "code_or_command": None,
                 "expected_result": "记录实际结果，并与引用材料中的描述进行核对。",
                 "troubleshooting": None,
@@ -1532,13 +1276,13 @@ def test_claim_free_practice_convergence_adds_one_grounded_anchor_only() -> None
 
     revised = output.resources[0].structured_content
     assert isinstance(revised, PracticeGuideContent)
-    assert "发送请求后读取响应状态码和响应体" in revised.steps[0].instruction
+    assert revised.steps[0].instruction == "发送请求后读取响应状态码和响应体；再整理处理流程。"
     assert revised.environment_requirements == content.environment_requirements
     assert revised.acceptance_criteria == content.acceptance_criteria
     assert revised.steps[1:] == content.steps[1:]
 
 
-def test_claim_free_practice_revision_fails_at_generation_without_groundable_evidence() -> None:
+def test_claim_free_practice_revision_preserves_structured_claims_for_review() -> None:
     request = _input()
     chunk = request.retrieved_chunks[0].model_copy(
         update={"content": "概念说明：比较不同材料中的定义、范围与关系。"}
@@ -1580,7 +1324,7 @@ def test_claim_free_practice_revision_fails_at_generation_without_groundable_evi
     content.steps = [
         step.model_copy(
             update={
-                "instruction": "阅读、比较并分析引用材料中的概念说明。",
+                "instruction": "不同材料中的定义、范围与关系可能存在差异；请比较并分析。",
                 "code_or_command": None,
                 "expected_result": "记录实际结果，并与引用材料中的描述进行核对。",
                 "troubleshooting": None,
@@ -1598,16 +1342,16 @@ def test_claim_free_practice_revision_fails_at_generation_without_groundable_evi
         knowledge_coverage={source.knowledge_id: [source.source_ref_id]},
     )
 
-    with pytest.raises(
-        GenerationError,
-        match="revision_claim_set_empty_after_repair",
-    ):
-        ContentGenerationAgent(
-            generator=object(), renderer=render_resource_markdown
-        ).converge(request, [previous], {})
+    output = ContentGenerationAgent(
+        generator=object(), renderer=render_resource_markdown
+    ).converge(request, [previous], {})
+
+    claims = output.resources[0].review_claims
+    assert any(claim.field_path.startswith("steps[0].instruction") for claim in claims)
+    assert not any(claim.field_path.startswith("steps[0].expected_result") for claim in claims)
 
 
-def test_generation_agent_revises_previous_candidate_instead_of_regenerating() -> None:
+def test_generation_agent_accepts_pedagogical_revision_without_field_capability() -> None:
     request = _input()
     source = request.retrieved_chunks[0].source
     target_ids = [source.knowledge_id]
@@ -1647,17 +1391,13 @@ def test_generation_agent_revises_previous_candidate_instead_of_regenerating() -
         generator=generator, renderer=render_resource_markdown
     ).revise(request, [previous])
 
-    revised = output.resources[0]
     assert generator.revise_calls == 1
-    assert revised.structured_content.title == previous.structured_content.title
-    assert (
-        revised.structured_content.steps[0].expected_result
-        == "记录实际结果并与引用材料核对。"
-    )
-    assert revised.difficulty == previous.difficulty
+    revised = output.resources[0].structured_content
+    assert isinstance(revised, PracticeGuideContent)
+    assert revised.steps[0].expected_result == "记录实际结果并与引用材料核对。"
 
 
-def test_revision_structure_failure_uses_valid_candidate_and_audited_fallback() -> None:
+def test_revision_structure_failure_replaces_rejected_practice_field() -> None:
     request = _input()
     source = request.retrieved_chunks[0].source
     target_ids = [source.knowledge_id]
@@ -1707,12 +1447,12 @@ def test_revision_structure_failure_uses_valid_candidate_and_audited_fallback() 
             },
         )
 
+    assert generator.revise_calls == 1
     revised = output.resources[0].structured_content
     assert isinstance(revised, PracticeGuideContent)
-    assert generator.revise_calls == 1
-    assert "记录实际结果" in revised.steps[0].expected_result
-    assert "引用材料" in revised.steps[0].expected_result
-    assert rejected_claim not in revised.steps[0].expected_result
+    assert rejected_claim != revised.steps[0].expected_result
+    assert revised.steps[0].expected_result == "形成与本步骤相关的学习检查表，列出关键观察项和核对结论。"
+    assert not _content_policy_violations(revised)
     assert collector.snapshot()[0]["correction_kind"] == (
         "field_revision_structure_fallback"
     )
@@ -1721,62 +1461,26 @@ def test_revision_structure_failure_uses_valid_candidate_and_audited_fallback() 
     ]
 
 
-def test_coverage_merge_only_appends_supported_missing_knowledge() -> None:
-    request = _input()
-    original_chunk = request.retrieved_chunks[0]
-    missing_chunk = original_chunk.model_copy(
-        update={
-            "chunk_id": "AIAPP-K030::chunk::0",
-            "knowledge_id": "AIAPP-K030",
-            "source": original_chunk.source.model_copy(
-                update={
-                    "source_ref_id": "AIAPP-K030::chunk::0",
-                    "knowledge_id": "AIAPP-K030",
-                }
-            ),
-        }
-    )
-    request = request.model_copy(
-        update={"retrieved_chunks": [original_chunk, missing_chunk]}
-    )
-    original = _fixture_response(
-        request, ResourceType.LECTURE, [original_chunk.source]
-    )
-    original_payload = original.structured_content.model_dump(mode="python")
-    proposed_content = original.structured_content.model_copy(deep=True)
-    assert isinstance(proposed_content, LectureContent)
-    proposed_content.title = "不应接受的重写标题"
-    proposed_content.summary = "不应接受的重写摘要"
-    proposed_content.core_concepts[0].explanation = "不应接受的原章节重写"
-    proposed_content.core_concepts.append(
-        ConceptBlock(
-            title="缺失知识点补充",
-            explanation="仅追加有来源支持的缺失知识点内容。",
-            source_ref_ids=[missing_chunk.source.source_ref_id],
-        )
-    )
-    proposed = original.model_copy(update={"structured_content": proposed_content})
-
-    merged = _merge_coverage_additions(
-        original, proposed, {missing_chunk.knowledge_id}, request
-    )
-
-    merged_content = merged.structured_content
-    assert isinstance(merged_content, LectureContent)
-    assert merged_content.model_dump(mode="python") | {
-        "core_concepts": original_payload["core_concepts"]
-    } == original_payload
-    assert merged_content.core_concepts[0].model_dump(mode="python") == original_payload[
-        "core_concepts"
-    ][0]
-    assert len(merged_content.core_concepts) == 2
-    assert merged_content.core_concepts[1].source_ref_ids == [
-        missing_chunk.source.source_ref_id
-    ]
 
 
 def test_v3_generation_fixture_supports_all_resource_types() -> None:
     request = _input()
+    request = request.model_copy(
+        update={
+            "retrieved_chunks": [
+                chunk.model_copy(
+                    update={
+                        "content": (
+                            f"{chunk.content}\n\n## 应用任务\n"
+                            "读取检索结果并按知识点标识核对来源。\n\n"
+                            "## 预期结果\n形成包含知识点标识和来源标识的核对记录。"
+                        )
+                    }
+                )
+                for chunk in request.retrieved_chunks
+            ]
+        }
+    )
     resource_types = list(ResourceType)
     context = request.context.model_copy(update={"resource_types": resource_types})
     requirements = GenerationRequirements(
@@ -1796,7 +1500,7 @@ def test_v3_generation_fixture_supports_all_resource_types() -> None:
     assert all(resource.content_md for resource in output.resources)
 
 
-def test_v3_generation_repairs_missing_coverage_once_and_preserves_existing() -> None:
+def test_v3_generation_reports_missing_coverage_without_model_repair(caplog) -> None:
     request = _input()
     original = request.retrieved_chunks[0]
     second = original.model_copy(
@@ -1830,9 +1534,10 @@ def test_v3_generation_repairs_missing_coverage_once_and_preserves_existing() ->
         expanded
     )
 
-    assert generator.repair_calls == 1
-    assert set(output.resources[0].knowledge_coverage) == {"AIAPP-K029", "AIAPP-K030"}
-    assert len(output.resources[0].structured_content.core_concepts) == 2
+    assert generator.repair_calls == 0
+    assert set(output.resources[0].knowledge_coverage) == {"AIAPP-K029"}
+    assert len(output.resources[0].structured_content.core_concepts) == 1
+    assert "generated_coverage_incomplete" in caplog.text
 
 
 def test_v3_generation_module_has_no_legacy_dependency() -> None:

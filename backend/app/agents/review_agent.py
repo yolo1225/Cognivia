@@ -1,4 +1,4 @@
-"""V6 review Agent with evidence-aware competition-quality metrics."""
+"""V10 review Agent with evidence-aware competition-quality metrics."""
 
 from __future__ import annotations
 
@@ -214,7 +214,7 @@ class ReviewBatch:
 
 
 class _CompactFactCheck(BaseModel):
-    """Provider-facing minimum; V3 FactCheck fields are restored locally."""
+    """Provider-facing minimum; complete FactCheck fields are restored locally."""
 
     claim_id: str = Field(min_length=8, max_length=64)
     verdict: EvidenceVerdict
@@ -392,7 +392,7 @@ def _difficulty_rubric(resource_type: ResourceType) -> list[str]:
 
 
 class ReviewError(RuntimeError):
-    """Controlled error raised at the V3 review boundary."""
+    """Controlled error raised at the review boundary."""
 
 
 ReviewRole = Literal["primary_review_model", "secondary_review_model"]
@@ -641,8 +641,8 @@ def extract_atomic_claims(
         )
     return manifest_claims
 
-    # V9 extraction is intentionally unreachable for V10 runs. It remains below so
-    # historical review snapshots can still be interpreted by compatibility tooling.
+    # Legacy extraction is unreachable for V10 runs and remains only for reading
+    # immutable historical review snapshots.
     all_sources = tuple(source.source_ref_id for source in resource.source_refs)
     claims: list[AtomicClaim] = []
     excluded: dict[str, list[str]] = {}
@@ -1734,10 +1734,42 @@ class ReviewValidationAgent:
         primary, secondary = self._review_pair(resource, request, recheck=False)
         disputed = _disputed_claim_ids(primary, secondary)
         disagreement = _reviews_disagree(primary, secondary)
-        claims_to_refresh = disputed
+        declared_ids = {source.source_ref_id for source in resource.source_refs}
+        initial_statuses = _resolved_claim_statuses(
+            claims, primary, secondary, declared_ids
+        )
+        insufficient_or_contradicted = {
+            claim_id
+            for claim_id, verdict in initial_statuses.items()
+            if verdict
+            in {
+                EvidenceVerdict.CONTRADICTED,
+                EvidenceVerdict.EVIDENCE_INSUFFICIENT,
+            }
+        }
+        initially_supported = {
+            claim_id
+            for claim_id, verdict in initial_statuses.items()
+            if verdict is EvidenceVerdict.SUPPORTED
+        }
+        initial_targets, initial_covered = _deterministic_coverage(
+            resource,
+            request,
+            claims=claims,
+            supported_claim_ids=initially_supported,
+        )
+        initially_missing = initial_targets - initial_covered
+        coverage_claims = {
+            claim.claim_id
+            for claim in claims
+            if set(claim.knowledge_ids).intersection(initially_missing)
+        }
+        claims_to_refresh = disputed | insufficient_or_contradicted | coverage_claims
         if disagreement and not claims_to_refresh:
             claims_to_refresh = {claim.claim_id for claim in claims}
-        evidence_refresh_required = disagreement
+        evidence_refresh_required = bool(
+            disagreement or insufficient_or_contradicted or initially_missing
+        )
         final_primary, final_secondary = primary, secondary
         primary_recheck: ModelReview | None = None
         secondary_recheck: ModelReview | None = None
@@ -1748,6 +1780,9 @@ class ReviewValidationAgent:
             query_terms = _arbitration_query_terms(
                 resource, request, claims, claims_to_refresh
             )
+            query_terms = _ordered_unique(
+                [*query_terms, *sorted(initially_missing)]
+            )[:30]
             refreshed_evidence = self._evidence_retriever.retrieve(
                 query_terms=query_terms, request=request, resource=resource
             )
@@ -1765,7 +1800,6 @@ class ReviewValidationAgent:
         canonical_claim_ids = {claim.claim_id for claim in claims}
         final_disputed = _disputed_claim_ids(final_primary, final_secondary) & canonical_claim_ids
         disagreement_remains = bool(final_disputed)
-        declared_ids = {source.source_ref_id for source in resource.source_refs}
         statuses = _resolved_claim_statuses(claims, final_primary, final_secondary, declared_ids)
         supported_ids = sorted(
             claim_id

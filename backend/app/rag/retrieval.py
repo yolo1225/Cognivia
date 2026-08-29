@@ -782,6 +782,59 @@ class CandidateRetriever:
         if len(explicit_order) > request.retrieval_plan.n_results:
             self._warn(warnings, "explicit_plan_exceeds_output_budget")
 
+        if practice_requested:
+            # A practice guide needs both an action and an observable result.
+            # Keep capability-completing chunks from the same explicit target
+            # ahead of unrelated-topic diversity whenever the Top-K budget
+            # permits it.
+            required_capabilities = (
+                EvidenceCapability.OPERATION,
+                EvidenceCapability.EXPECTED_RESULT,
+            )
+            for knowledge_id in explicit_order:
+                selected_capabilities = {
+                    capability
+                    for record in selected
+                    if record.knowledge_id == knowledge_id
+                    for capability in _record_capabilities(
+                        record, request.context.domain_code
+                    )
+                }
+                for capability in required_capabilities:
+                    if capability in selected_capabilities:
+                        continue
+                    supplement = next(
+                        (
+                            record
+                            for record in ranked
+                            if record.knowledge_id == knowledge_id
+                            and record.chunk_id not in selected_ids
+                            and capability
+                            in _record_capabilities(
+                                record, request.context.domain_code
+                            )
+                        ),
+                        None,
+                    )
+                    if supplement is None:
+                        self._warn(
+                            warnings,
+                            f"practice_{capability.value}_evidence_missing:{knowledge_id}",
+                        )
+                        continue
+                    if len(selected) >= request.retrieval_plan.n_results:
+                        self._warn(
+                            warnings,
+                            f"practice_{capability.value}_evidence_budget_exhausted:"
+                            f"{knowledge_id}",
+                        )
+                        continue
+                    selected.append(supplement)
+                    selected_ids.add(supplement.chunk_id)
+                    selected_capabilities.update(
+                        _record_capabilities(supplement, request.context.domain_code)
+                    )
+
         def append_ranked(*, allow_same_knowledge: bool) -> None:
             selected_knowledge = {record.knowledge_id for record in selected}
             for record in ranked:

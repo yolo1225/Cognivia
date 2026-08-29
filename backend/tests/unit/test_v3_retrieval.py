@@ -371,6 +371,36 @@ def test_practice_retrieval_keeps_late_operational_explicit_chunk(tmp_path: Path
     assert not any("practice_operation_evidence_missing" in item for item in result.warnings)
 
 
+def test_practice_retrieval_keeps_operation_and_expected_result_for_same_target(
+    tmp_path: Path,
+) -> None:
+    sessions = _session()
+    concept = _record("practice-target", 0, [1.0, 0.0, 0.0])
+    concept["document"] = "概念说明：向量嵌入用于表示文本语义。"
+    operation = _record("practice-target", 1, [0.8, 0.0, 0.0])
+    operation["document"] = "## 操作步骤\n1. 执行最小调用并记录响应。"
+    expected = _record("practice-target", 2, [0.7, 0.0, 0.0])
+    expected["document"] = "## 预期结果\n返回可用于后续检索的向量表示。"
+    records = [concept, operation, expected]
+    with sessions() as db:
+        db.add(_item("practice-target"))
+        db.commit()
+        retriever, _ = _retriever(tmp_path, db, records)
+        result = retriever.execute(
+            _input(
+                priority=["practice-target"],
+                n_results=2,
+                resource_types=["practice_guide"],
+            )
+        )
+
+    assert [chunk.chunk_id for chunk in result.chunks] == [
+        "practice-target::chunk::1",
+        "practice-target::chunk::2",
+    ]
+    assert not any("practice_expected_result_evidence_missing" in item for item in result.warnings)
+
+
 def test_practice_supplement_prefers_related_evidence_over_unrelated_labels(
     tmp_path: Path,
 ) -> None:

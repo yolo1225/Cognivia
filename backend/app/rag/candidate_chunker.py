@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 
 
-CHUNKER_VERSION = "candidate-heading-v3"
+CHUNKER_VERSION = "candidate-heading-v4"
 DEFAULT_MAX_CHARS = 800
 DEFAULT_OVERLAP_CHARS = 100
 

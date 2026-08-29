@@ -20,6 +20,7 @@ from app.agents.orchestrator_agent import (
     OrchestratorAgent,
     OrchestratorError,
 )
+from app.agents.review_agent import build_review_resource_output
 
 
 def _generation_finalize_input() -> FinalizeTaskInput:
@@ -47,13 +48,44 @@ def _report_with_decision(report, decision: ReviewDecision, resource_type=Resour
                 update={
                     "evaluated_claim_count": 20,
                     "verifiable_claim_count": 20,
-                    "contradicted_claim_count": 0 if passed else 1,
-                    "hallucinated_claim_count": 0 if passed else 1,
-                    "hallucination_rate": 0 if passed else 5,
+                    "contradicted_claim_count": 0 if passed else 5,
+                    "hallucinated_claim_count": 0 if passed else 5,
+                    "hallucination_rate": 0 if passed else 25,
                     "passed": passed,
                 }
             ),
             "issues": [] if decision == ReviewDecision.PASSED else [_revision_issue()],
+        }
+    )
+
+
+def _with_recomputed_package(
+    request: FinalizeTaskInput,
+    reports,
+    *,
+    revision_count: int | None = None,
+) -> FinalizeTaskInput:
+    current_count = request.revision_count if revision_count is None else revision_count
+    required_ids = list(
+        dict.fromkeys(
+            knowledge_id
+            for report in reports
+            for knowledge_id in report.target_knowledge_ids
+        )
+    )
+    review_output = build_review_resource_output(
+        task_id=request.task_id,
+        reports=reports,
+        expected_resource_types=[resource.resource_type for resource in request.resources],
+        required_knowledge_ids=required_ids,
+        revision_count=current_count,
+    )
+    return request.model_copy(
+        update={
+            "review_reports": reports,
+            "package_quality": review_output.package_quality,
+            "package_passed": review_output.package_passed,
+            "revision_count": current_count,
         }
     )
 
@@ -149,11 +181,10 @@ def test_finalize_enforces_two_revision_limit(
         request.review_reports[0], ReviewDecision.REVISION_REQUIRED
     )
     output = OrchestratorAgent().execute(
-        request.model_copy(
-            update={
-                "review_reports": [revision_report, *request.review_reports[1:]],
-                "revision_count": current_count,
-            }
+        _with_recomputed_package(
+            request,
+            [revision_report, *request.review_reports[1:]],
+            revision_count=current_count,
         )
     )
 
@@ -172,29 +203,33 @@ def test_finalize_enforces_two_revision_limit(
 def test_finalize_allows_one_deterministic_convergence_after_two_revisions() -> None:
     request = _generation_finalize_input()
     report = request.review_reports[0]
+    undetermined_id = report.supported_claim_ids[0]
+    evaluated_count = report.quality_metrics.evaluated_claim_count
     unresolved = report.model_copy(
         update={
             "decision": ReviewDecision.REVISION_REQUIRED,
             "passed": False,
             "issues": [],
             "contradicted_claim_ids": [],
-            "undetermined_claim_ids": ["claim_low_risk"],
+            "supported_claim_ids": report.supported_claim_ids[1:],
+            "undetermined_claim_ids": [undetermined_id],
             "unresolved_claim_ids": [],
             "missing_knowledge_ids": [],
             "quality_metrics": report.quality_metrics.model_copy(
                 update={
                     "evidence_insufficient_claim_count": 1,
+                    "hallucinated_claim_count": 1,
+                    "hallucination_rate": round(100 / evaluated_count, 2),
                     "passed": False,
                     "revision_count": 2,
                 }
             ),
         }
     )
-    attempt = request.model_copy(
-        update={
-            "review_reports": [unresolved, *request.review_reports[1:]],
-            "revision_count": 2,
-        }
+    attempt = _with_recomputed_package(
+        request,
+        [unresolved, *request.review_reports[1:]],
+        revision_count=2,
     )
 
     convergence = OrchestratorAgent().execute(attempt)
@@ -221,33 +256,21 @@ def test_finalize_revises_only_resource_causing_package_coverage_failure() -> No
             "covered_core_knowledge_count": len(covered_ids),
             "target_core_knowledge_count": len(target_ids),
             "core_knowledge_coverage": round(100 * len(covered_ids) / len(target_ids), 2),
-            "passed": True,
+            "passed": False,
         }
     )
     report = report.model_copy(
         update={
+            "decision": ReviewDecision.REVISION_REQUIRED,
+            "passed": False,
             "quality_metrics": resource_quality,
             "covered_knowledge_ids": covered_ids,
             "missing_knowledge_ids": [missing_id],
         }
     )
-    package_target_count = request.package_quality.target_core_knowledge_count
-    package_covered_count = package_target_count - 1
-    package_quality = request.package_quality.model_copy(
-        update={
-            "covered_core_knowledge_count": package_covered_count,
-            "core_knowledge_coverage": round(
-                100 * package_covered_count / package_target_count, 2
-            ),
-            "passed": False,
-        }
-    )
-    failing = request.model_copy(
-        update={
-            "review_reports": [report, *request.review_reports[1:]],
-            "package_passed": False,
-            "package_quality": package_quality,
-        }
+    failing = _with_recomputed_package(
+        request,
+        [report, *request.review_reports[1:]],
     )
 
     output = OrchestratorAgent().execute(failing)
@@ -269,8 +292,9 @@ def test_finalize_preserves_passed_types_and_revises_only_failed_type() -> None:
         ReviewDecision.REVISION_REQUIRED,
         resource_type=ResourceType.PRACTICE_GUIDE,
     )
-    request = base.model_copy(
-        update={"resources": resources, "review_reports": [passed, revision]}
+    request = _with_recomputed_package(
+        base.model_copy(update={"resources": resources}),
+        [passed, revision],
     )
 
     output = OrchestratorAgent().execute(request)
@@ -278,6 +302,35 @@ def test_finalize_preserves_passed_types_and_revises_only_failed_type() -> None:
     assert ResourceType.LECTURE in output.passed_resource_types
     assert output.revision_plan is not None
     assert output.revision_plan.resource_types == [ResourceType.PRACTICE_GUIDE]
+
+
+def test_finalize_publishes_when_supplemental_retrieval_is_empty_but_package_passes() -> None:
+    request = _generation_finalize_input()
+    report = request.review_reports[0]
+    report = report.model_copy(
+        update={
+            "arbitration": report.arbitration.model_copy(
+                update={
+                    "required": True,
+                    "retrieval_performed": True,
+                    "query_terms": ["补充核验"],
+                    "additional_source_ref_ids": [],
+                    "primary_recheck": report.primary_review,
+                    "secondary_recheck": report.secondary_review,
+                    "disagreement_remains": False,
+                }
+            )
+        }
+    )
+    completed = OrchestratorAgent().execute(
+        _with_recomputed_package(
+            request,
+            [report, *request.review_reports[1:]],
+        )
+    )
+
+    assert completed.decision is TaskDecision.COMPLETED
+    assert set(completed.passed_resource_types) == set(ResourceType)
 
 
 def test_finalize_returns_no_change_for_non_generation_tutoring_result() -> None:

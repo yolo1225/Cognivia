@@ -3,6 +3,7 @@
   "name": "人工智能应用开发实训",
   "domain_schema_version": "1.0",
   "resource_types": ["lecture", "practice_guide", "graded_quiz"],
+  "practice_evidence_required_for_all": true,
   "ability_dimensions": ["theory", "practice", "problem_solving", "breadth", "learning_speed"],
   "learning_directions": [
     {"value": "llm_application", "label": "大模型应用开发", "description": "模型调用、接口与应用流程", "match_tags": ["llm", "model", "api", "workflow", "overview"]},

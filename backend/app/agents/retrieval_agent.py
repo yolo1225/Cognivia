@@ -17,7 +17,7 @@ SYSTEM_PROMPT = get_prompt("retrieval")
 
 
 class KnowledgeRetrievalAgent:
-    """Standalone V3 retrieval boundary; it deliberately does not inherit legacy BaseAgent."""
+    """Standalone V10 retrieval boundary with no legacy base dependency."""
 
     name = RETRIEVAL_AGENT_NAME
     system_prompt = SYSTEM_PROMPT

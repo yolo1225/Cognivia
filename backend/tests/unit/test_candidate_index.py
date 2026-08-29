@@ -21,8 +21,9 @@ from app.scripts.validate_rag_seed import source_data_version
 
 
 EXPECTED_SOURCE_VERSION = (
-    "sha256:945e074f791339085f672815a1a5b008b883a9f3cdad2cfc5aec569012eb0b00"
+    "sha256:43e22ac6a2b6ef0d67b895548157bc35496796b574c5f3bc820c5dbe64c59cfe"
 )
+from app.agents.domain_evidence_policy import classify_evidence_capabilities
 
 
 class FakeProvider:
@@ -181,6 +182,27 @@ def test_git_operation_chunk_contains_staging_and_commit_commands() -> None:
     assert 'git commit -m "<intent-based message>"' in operation_text
 
 
+def test_heading_context_preserves_expected_result_evidence() -> None:
+    chunks = chunk_knowledge_item(
+        knowledge_id="embedding_basics",
+        name="Embedding 基础",
+        category="RAG",
+        difficulty=2,
+        tags=["embedding"],
+        content_md=(
+            "Embedding 只提供相似性信号。\n\n"
+            "## 应用任务\n记录建库和查询的模型与维度。\n\n"
+            "## 预期结果\n形成向量兼容性检查表。"
+        ),
+    )
+
+    expected_chunk = next(chunk for chunk in chunks if "预期结果" in chunk.heading_path)
+
+    assert "expected_result" in classify_evidence_capabilities(
+        expected_chunk.embedding_text
+    )
+
+
 def test_reseeding_unchanged_items_does_not_require_reembedding() -> None:
     sessions = _session_factory()
     with sessions() as db:
@@ -300,6 +322,36 @@ def test_unchanged_incremental_build_does_not_call_provider(tmp_path: Path) -> N
 
         assert result["status"] == "unchanged"
         assert second_provider.calls == []
+
+
+def test_reset_rebuild_uses_healthy_active_collection_as_activation_base(
+    tmp_path: Path,
+) -> None:
+    sessions = _session_factory()
+    client = FakeChromaClient()
+    store = CandidateManifestStore(root=tmp_path)
+    with sessions() as db:
+        db.add(_item("item-a", "需要全量重建的知识内容。" * 30))
+        db.commit()
+        first = CandidateIndexBuilder(
+            db=db,
+            chroma_client=client,
+            embedding_provider=FakeProvider(),
+            manifest_store=store,
+        ).build(reset=True)
+
+        second = CandidateIndexBuilder(
+            db=db,
+            chroma_client=client,
+            embedding_provider=FakeProvider(),
+            manifest_store=store,
+        ).build(reset=True)
+
+        manifest = store.load("ai_app_dev")
+        assert manifest is not None
+        assert second["status"] == "built"
+        assert manifest.active_collection == second["active_collection"]
+        assert manifest.previous_collection == first["active_collection"]
 
 
 def test_candidate_build_does_not_activate_or_clear_markers(tmp_path: Path) -> None:

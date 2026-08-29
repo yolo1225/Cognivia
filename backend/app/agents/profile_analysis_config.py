@@ -1,6 +1,6 @@
-"""Versioned, deterministic configuration for the V3 profile-analysis algorithm.
+"""Versioned, deterministic configuration for profile analysis.
 
-This module intentionally contains configuration only.  The V3 Profile Analysis
+This module intentionally contains configuration only. The Profile Analysis
 Agent will consume it in a later phase; no V1 runtime path imports this module.
 """
 

@@ -11,6 +11,8 @@ class TutoringSession(TimestampMixin, Base):
     public_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     learner_id: Mapped[int] = mapped_column(ForeignKey("learners.id"))
     resource_id: Mapped[int | None] = mapped_column(ForeignKey("learning_resources.id"), nullable=True)
+    context_type: Mapped[str] = mapped_column(String(32), default="resource", index=True)
+    context_ref_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="active")
     turn_count: Mapped[int] = mapped_column(default=0)
 

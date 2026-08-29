@@ -4,6 +4,10 @@ export interface GenerationFailureCopy {
 }
 
 const FAILURE_COPY: Record<string, GenerationFailureCopy> = {
+  revision_required_practice_field_empty: {
+    title: '实操指南步骤不完整',
+    description: '实操指南有步骤缺少可核验的预期结果，自动修复后仍未补全。本次学习包未发布，可重新生成。',
+  },
   revision_claim_set_empty_after_repair: {
     title: '实操指南修订后缺少可核验内容',
     description: '系统已停止发布仅剩教学占位语的实操指南。请重新生成；若仍失败，需要为当前知识点补充可核验的实操来源。',
@@ -25,8 +29,8 @@ const FAILURE_COPY: Record<string, GenerationFailureCopy> = {
     description: '资源完成审核后仍未满足最终发布条件，可重新生成。',
   },
   generated_content_policy_invalid: {
-    title: '实训内容缺少可核对的知识库证据',
-    description: '系统未发布包含无依据命令、固定结果或排错结论的资源，三类资源仍按完整包规则统一处理。',
+    title: '实训内容包含未验证的技术断言',
+    description: '系统未发布包含无依据命令行为、固定技术结果、版本或排错结论的资源，教学动作本身不会触发该限制。',
   },
 }
 

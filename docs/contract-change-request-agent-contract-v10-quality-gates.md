@@ -1,6 +1,9 @@
 # Agent Contract V10 Change Request: Official Quality Gates
 
-- Status: pending contract-maintainer approval
+> 历史治理记录：本文记录 V10 获批前的版本迁移与兼容性决策，不是当前实现规范。当前行为以
+> `docs/agent-contract-v10.md`、可执行契约和测试为准。
+
+- Status: approved and applied on 2026-08-28
 - Requested version: `agent-contract-v10`
 - Requested quality rule: `quality-v8-official-gates`
 - Supersedes for new runs: `agent-contract-v9` / `quality-v6-20260818`

@@ -1250,7 +1250,9 @@ const rebuildResultLabel = computed(() =>
 );
 const rebuildMessageTitle = computed(() =>
   currentIndexState.value === "needs_rebuild"
-    ? "活动索引尚未同步"
+    ? validationResult.value?.rag?.reason?.startsWith("question_")
+      ? "正式题库尚未就绪"
+      : "活动索引尚未同步"
     : rebuildStatus.value?.status === "running"
     ? "正在重建索引"
     : rebuildStatus.value?.status === "success"
@@ -1262,7 +1264,9 @@ const rebuildMessageTitle = computed(() =>
 const rebuildMessageBody = computed(
   () =>
     (currentIndexState.value === "needs_rebuild"
-      ? `当前 Candidate RAG 校验未通过（${validationResult.value?.rag?.reason || "索引版本或数据版本不一致"}），请重建索引。`
+      ? validationResult.value?.rag?.reason?.startsWith("question_")
+        ? `当前阻断项来自正式题库（${validationResult.value.rag.reason}），无需重建向量索引。`
+        : `当前 Candidate RAG 校验未通过（${validationResult.value?.rag?.reason || "索引版本或数据版本不一致"}），请重建索引。`
       : rebuildStatus.value?.message) ||
     (rebuildStatus.value?.result?.status === "unchanged"
       ? "知识库没有变化，未重复向量化。"
@@ -1272,6 +1276,15 @@ const rebuildMessageBody = computed(
 );
 const validationRows = computed(() => {
   const result = validationResult.value;
+  if (result?.checks?.length) {
+    return result.checks.map((check) => ({
+      key: check.key,
+      label: check.label,
+      actual: check.actual,
+      target: check.target,
+      passed: check.passed,
+    }));
+  }
   if (!result?.counts || !result.targets) return [];
   const labels: Record<string, string> = {
     knowledge_items: "知识点",
@@ -1924,8 +1937,14 @@ async function validate() {
   validating.value = true;
   try {
     validationResult.value = await getDomainReadiness(selectedCode.value);
-  } catch {
-    showToast("领域校验失败，请检查向量数据库状态");
+  } catch (error: any) {
+    const detail = error?.response?.data?.detail;
+    showToast(
+      typeof detail === "string"
+        ? detail
+        : detail?.message || detail?.code || "领域校验请求失败，请检查后端服务状态",
+      "error",
+    );
   } finally {
     validating.value = false;
   }
