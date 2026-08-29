@@ -54,7 +54,7 @@ def test_choice_fingerprint_rejects_option_order_as_new_assessment() -> None:
     assert question_assessment_fingerprint(first) != question_assessment_fingerprint(different_knowledge)
 
 
-def test_mastery_retry_stays_on_unmet_knowledge_and_reuses_only_failed_question() -> None:
+def test_mastery_check_stays_on_unmet_knowledge_without_reusing_failed_question() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
@@ -82,7 +82,9 @@ def test_mastery_retry_stays_on_unmet_knowledge_and_reuses_only_failed_question(
 
         completed_question = question("completed_question", completed)
         failed_question = question("failed_question", unmet)
-        db.add_all([completed_question, failed_question])
+        fresh_question = question("fresh_question", unmet)
+        fresh_question.options_json = ["E", "F", "G", "H"]
+        db.add_all([completed_question, failed_question, fresh_question])
         db.flush()
         db.add(AnswerRecord(
             learner_id=learner.id,
@@ -110,7 +112,7 @@ def test_mastery_retry_stays_on_unmet_knowledge_and_reuses_only_failed_question(
         )
 
         assert knowledge.public_id == "unmet"
-        assert selected.public_id == "failed_question"
+        assert selected.public_id == "fresh_question"
 
 
 def test_advanced_profile_can_receive_no_foundation_question() -> None:

@@ -45,6 +45,11 @@ SOFT_GAP_HARD_FAILURES = (
     "generation_missing_target_evidence error",
     "generated_coverage_incomplete error",
 )
+SUPERSEDED_QUESTION_BANK_RULES = (
+    "诊断、资源测验、错题巩固和掌握检查只使用",
+    "诊断、资源测试、错题巩固和掌握检查只使用",
+    "基于正式题库开启同知识点巩固",
+)
 REMOVED_DOCUMENT_PATHS = (
     *(PROJECT_ROOT / "docs" / f"agent-contract-v{version}.md" for version in (3, 5, 6, 7, 8, 9)),
     *(PROJECT_ROOT / "docs" / "contracts" / f"v{version}" for version in (3, 5, 6, 7, 8, 9)),
@@ -67,6 +72,17 @@ def test_active_documentation_uses_only_v10_runtime_rules() -> None:
             assert removed not in content, (path, removed)
         for invalid_rule in SOFT_GAP_HARD_FAILURES:
             assert invalid_rule not in content, (path, invalid_rule)
+        for invalid_rule in SUPERSEDED_QUESTION_BANK_RULES:
+            assert invalid_rule not in content, (path, invalid_rule)
+
+
+def test_active_documentation_states_three_question_pool_invariants() -> None:
+    combined = "\n".join(_read(path) for path in ACTIVE_DOCUMENTS)
+    assert "`diagnosis`、`graded_quiz`、`mastery_validation`" in combined
+    assert "错题巩固不是题目用途" in combined
+    assert "直接重做原题" in combined
+    assert "不作为独立掌握证据" in combined
+    assert "不需要重建 Candidate 索引" in combined
 
 
 def test_active_documentation_states_graph_and_publication_invariants() -> None:

@@ -83,13 +83,13 @@ def build_db(*, knowledge_count: int = 10, question_count: int = 10) -> Session:
     if question_count >= 10:
         for item in items:
             for slot in range(1, 9):
-                question_type = "single_choice" if slot <= 5 else "short_answer"
+                question_type = "single_choice" if slot <= 6 else "short_answer"
                 question_bank_uses = (
-                    ["diagnosis", "graded_quiz"]
-                    if slot <= 3
-                    else ["mastery_validation", "mistake_consolidation"]
-                    if question_type == "single_choice"
-                    else ["diagnosis", "graded_quiz"]
+                    ["diagnosis"]
+                    if slot in {1, 7, 8}
+                    else ["graded_quiz"]
+                    if slot in {2, 3, 4}
+                    else ["mastery_validation"]
                 )
                 db.add(
                     DiagnosticQuestion(
@@ -111,6 +111,11 @@ def build_db(*, knowledge_count: int = 10, question_count: int = 10) -> Session:
                             "source_ref_ids": [item.public_id],
                             "question_slot": slot,
                             "question_bank_uses": question_bank_uses,
+                            "assessment_dimension": (
+                                "operation"
+                                if "operation" in item.evidence_capabilities_json
+                                else "theory"
+                            ),
                             "quiz_level": (
                                 "foundation"
                                 if slot <= 2

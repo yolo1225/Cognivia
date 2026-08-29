@@ -51,6 +51,7 @@ def _payload(*, level: str = "challenge") -> dict:
         "rubric": [],
         "explanation": "来源要求异常时先检查输入参数。",
         "difficulty": 4,
+        "question_bank_uses": ["graded_quiz"],
         "source_chunks": source_chunks,
         "related_knowledge_candidate_ids": ["candidate_related"],
         "source_content_hash": source_hash,

@@ -31,7 +31,7 @@ export interface QuestionBankItem {
   related_knowledge_ids: string[]
   question_slot: number | null
   question_bank_uses: Array<
-    'diagnosis' | 'graded_quiz' | 'mastery_validation' | 'mistake_consolidation'
+    'diagnosis' | 'graded_quiz' | 'mastery_validation'
   >
   reserve_role: 'consolidation' | 'mastery_transfer' | null
   assessment_focus: string | null
@@ -65,8 +65,10 @@ export interface QuestionBankResponse {
   coverage: {
     total_items: number
     ready_items: number
+    ready_knowledge_ids: string[]
     missing_knowledge_ids: string[]
     missing_quiz_knowledge_ids: string[]
+    missing_diagnosis_knowledge_ids: string[]
     missing_mastery_reserve_knowledge_ids: string[]
     counts_by_knowledge: Record<
       string,
@@ -74,7 +76,9 @@ export interface QuestionBankResponse {
         single_choice: number
         short_answer: number
         total: number
+        diagnosis: number
         graded_quiz: number
+        mastery_validation: number
         mastery_reserve: number
       }
     >

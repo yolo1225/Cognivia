@@ -40,6 +40,9 @@ def build_test_session() -> sessionmaker[Session]:
 
 
 def certified_question(**values) -> DiagnosticQuestion:
+    answer_key = dict(values.get("answer_key_json") or {})
+    answer_key.setdefault("question_bank_uses", ["diagnosis"])
+    values["answer_key_json"] = answer_key
     return DiagnosticQuestion(
         status="active",
         certification_status="certified",

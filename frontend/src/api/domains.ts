@@ -83,17 +83,21 @@ export interface DomainValidationResult {
     ready_items: number;
     ready_knowledge_ids: string[];
     missing_knowledge_ids: string[];
+    missing_diagnosis_knowledge_ids: string[];
     missing_quiz_knowledge_ids: string[];
     missing_mastery_reserve_knowledge_ids: string[];
     counts_by_knowledge: Record<string, {
       single_choice: number;
       short_answer: number;
       total: number;
+      diagnosis: number;
       graded_quiz: number;
+      mastery_validation: number;
       mastery_reserve: number;
     }>;
     requirements: {
       primary_total: number;
+      diagnosis_per_knowledge: number;
       graded_quiz_per_knowledge: number;
       mastery_reserve_per_knowledge: number;
       domain_total: number;

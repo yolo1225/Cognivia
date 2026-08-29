@@ -1503,27 +1503,23 @@ def _quiz_blueprint(
 ) -> list[dict[str, object]]:
     """Fix quiz slots deterministically from the published formal question bank."""
     if request.reference_questions:
-        try:
-            content = build_graded_quiz_from_question_bank(
-                request,
-                allowed_sources,
-                excluded_question_ids=excluded_question_ids or (),
-            )
-        except QuestionBankError:
-            content = None
-        if content is not None:
-            return [
-                {
-                    "question_id": question.question_id,
-                    "level": question.level.value,
-                    "question_type": question.question_type.value,
-                    "knowledge_id": question.knowledge_id,
-                    "difficulty": question.difficulty,
-                    "allowed_source_ref_ids": list(question.source_ref_ids),
-                    "reference_question_ids": list(question.reference_question_ids),
-                }
-                for question in content.questions
-            ]
+        content = build_graded_quiz_from_question_bank(
+            request,
+            allowed_sources,
+            excluded_question_ids=excluded_question_ids or (),
+        )
+        return [
+            {
+                "question_id": question.question_id,
+                "level": question.level.value,
+                "question_type": question.question_type.value,
+                "knowledge_id": question.knowledge_id,
+                "difficulty": question.difficulty,
+                "allowed_source_ref_ids": list(question.source_ref_ids),
+                "reference_question_ids": list(question.reference_question_ids),
+            }
+            for question in content.questions
+        ]
     raise QuestionBankError("graded_quiz_question_bank_insufficient")
 
 

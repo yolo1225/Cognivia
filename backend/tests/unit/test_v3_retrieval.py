@@ -565,6 +565,7 @@ def test_related_question_under_minimum_density_stops_before_generation(tmp_path
                 options_json=["正确选项", "错误选项一", "错误选项二", "错误选项三"],
                 answer_key_json={
                     "correct_option": 0,
+                    "question_bank_uses": ["graded_quiz"],
                     "explanation": "解析来自题目主知识点的精确来源。",
                     "source_ref_ids": [exact_source_locator],
                     "quiz_level": "improvement",
@@ -613,6 +614,7 @@ def test_lecture_only_retrieval_does_not_include_question_bank_sources(
                 options_json=["A", "B", "C", "D"],
                 answer_key_json={
                     "correct_option": 0,
+                    "question_bank_uses": ["graded_quiz"],
                     "explanation": "可信解析。",
                     "source_ref_ids": ["question-primary::chunk::0"],
                     "quiz_level": "foundation",
@@ -665,6 +667,7 @@ def test_two_questions_on_same_primary_knowledge_are_density_insufficient(
                     options_json=["A", "B", "C", "D"],
                     answer_key_json={
                         "correct_option": 0,
+                        "question_bank_uses": ["graded_quiz"],
                         "explanation": "可信解析。",
                         "source_ref_ids": [f"shared-primary::chunk::{index}"],
                         "quiz_level": "improvement",
@@ -734,6 +737,7 @@ def test_quiz_source_supplements_expand_within_v9_chunk_budget(tmp_path: Path) -
                     options_json=["A", "B", "C", "D"],
                     answer_key_json={
                         "correct_option": 0,
+                        "question_bank_uses": ["graded_quiz"],
                         "explanation": "可信解析。",
                         "source_ref_ids": [f"{primary_id}::chunk::0"],
                         "quiz_level": quiz_level,
@@ -811,6 +815,7 @@ def test_six_knowledge_unit_and_six_external_quiz_sources_fit_chunk_budget(
                     options_json=["A", "B", "C", "D"],
                     answer_key_json={
                         "correct_option": 0,
+                        "question_bank_uses": ["graded_quiz"],
                         "explanation": "可信解析。",
                         "source_ref_ids": [f"{primary_id}::chunk::0"],
                         "quiz_level": quiz_level,

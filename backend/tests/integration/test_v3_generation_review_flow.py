@@ -114,6 +114,7 @@ class FlowRetriever:
                             "explanation": "依据知识库材料作答。",
                             "source_ref_ids": [f"{knowledge_id}::chunk::0"],
                             "source_locator": f"knowledge:{knowledge_id}#chunk=0",
+                            "question_bank_uses": ["graded_quiz"],
                             "question_slot": slot,
                             "quiz_level": (
                                 "foundation"

@@ -29,6 +29,7 @@ ALLOWED_EVIDENCE = {
     "error_handling",
     "version_boundary",
 }
+QUESTION_PURPOSES = {"diagnosis", "graded_quiz", "mastery_validation"}
 
 
 def _is_blank(value: object) -> bool:
@@ -88,6 +89,13 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
                 errors.append("知识点重复")
             names.add(normalized)
         elif item.candidate_type == "diagnostic_question":
+            purposes = payload.get("question_bank_uses")
+            if (
+                not isinstance(purposes, list)
+                or len(purposes) != 1
+                or str(purposes[0]) not in QUESTION_PURPOSES
+            ):
+                errors.append("活动题目必须声明且只能声明一个合法用途")
             if payload.get("knowledge_candidate_id") not in by_id:
                 errors.append("关联知识候选不存在")
             if (
@@ -174,9 +182,27 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
                 for question in questions_by_knowledge.get(item.public_id, [])
                 if not question.validation_errors_json
             ]
-            if not questions:
+            purpose_counts = defaultdict(int)
+            mastery_roles: set[str] = set()
+            for question in questions:
+                question_payload = question.payload_json or {}
+                purposes = list(question_payload.get("question_bank_uses") or [])
+                if len(purposes) == 1:
+                    purpose_counts[str(purposes[0])] += 1
+                if purposes == ["mastery_validation"]:
+                    mastery_roles.add(str(question_payload.get("reserve_role") or ""))
+            missing_requirements = []
+            if purpose_counts["diagnosis"] < 1:
+                missing_requirements.append("诊断题至少1道")
+            if purpose_counts["graded_quiz"] < 3:
+                missing_requirements.append("分阶测验题至少3道")
+            if purpose_counts["mastery_validation"] < 2:
+                missing_requirements.append("掌握检查题至少2道")
+            if not {"consolidation", "mastery_transfer"}.issubset(mastery_roles):
+                missing_requirements.append("掌握检查必须包含基础检查和迁移检查")
+            if missing_requirements:
                 item.validation_errors_json = list(item.validation_errors_json or []) + [
-                    "正式题库必须至少包含1道以该知识点为主要归因的题目"
+                    "正式题库用途密度不足：" + "；".join(missing_requirements)
                 ]
                 item.status = "needs_edit"
     visiting: set[str] = set()

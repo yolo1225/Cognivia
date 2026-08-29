@@ -15,8 +15,8 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SEED_DIR = PROJECT_ROOT / "data" / "seed"
 OUTPUT_PATH = SEED_DIR / "question_bank_expansion.json"
-QUIZ_USES = ["diagnosis", "graded_quiz"]
-RESERVE_USES = ["mastery_validation", "mistake_consolidation"]
+QUIZ_USES = ["graded_quiz"]
+RESERVE_USES = ["mastery_validation"]
 
 
 def _load(name: str) -> list[dict[str, Any]]:
@@ -40,6 +40,7 @@ def _variant_stem(name: str, heading: str, slot: int) -> str:
         3: "团队正在执行“{name}”的“{heading}”步骤。下列哪项做法与资料一致？",
         4: "对“{name}”进行排查时，若重点检查“{heading}”，应优先确认哪项事实或处理？",
         5: "为通过“{name}”的“{heading}”验收，下列哪项结论最能作为可追溯依据？",
+        6: "在“{name}”的综合应用中，围绕“{heading}”作出判断时应坚持哪项要求？",
     }
     return templates[slot].format(name=name, heading=heading)
 
@@ -89,6 +90,7 @@ def _fact_indexes(facts: list[tuple[str, str]]) -> dict[int, int]:
     choose(3, ("操作", "步骤", "实现", "流程", "实践"))
     choose(4, ("错误", "失败", "边界", "风险", "处理", "安全"))
     choose(5, ("验收", "预期", "评测", "结果", "监控"))
+    selected[6] = selected[3]
     return selected
 
 
@@ -119,7 +121,8 @@ def _scenario_options(
         # exactly four facts still produce distinct, scenario-specific choices.
         ordered = distractors
         position = (slot - 1) % 4
-        ordered.insert(position, f"应落实：{correct}")
+        prefix = "综合判断应落实：" if slot == 6 else "应落实："
+        ordered.insert(position, f"{prefix}{correct}")
         fingerprint = tuple(sorted(ordered))
         if fingerprint not in used_option_sets:
             used_option_sets.add(fingerprint)
@@ -134,7 +137,7 @@ def build_records() -> list[dict[str, Any]]:
         knowledge_id = str(item["knowledge_id"])
         facts = _section_facts(str(item["content"]))
         indexes = _fact_indexes(facts)
-        slots = [2, 4, 5] if knowledge_id == "python_async_concurrency" else [2, 3, 4, 5]
+        slots = [2, 3, 4, 5, 6]
         used_option_sets: set[tuple[str, ...]] = set()
         for slot in slots:
             fact_index = indexes[slot]
@@ -142,8 +145,8 @@ def build_records() -> list[dict[str, Any]]:
             variant_options, answer = _scenario_options(
                 facts, fact_index, slot, used_option_sets
             )
-            uses = QUIZ_USES if slot in {3, 5} else RESERVE_USES
-            difficulty = slot
+            uses = QUIZ_USES if slot in {3, 5, 6} else RESERVE_USES
+            difficulty = 4 if slot == 6 else slot
             reserve_role = (
                 "consolidation" if slot == 2 else "mastery_transfer" if slot == 4 else None
             )
@@ -170,6 +173,7 @@ def build_records() -> list[dict[str, Any]]:
                             3: "constrained_application",
                             4: "diagnosis_and_transfer",
                             5: "integrated_tradeoff",
+                            6: "integrated_tradeoff",
                         }[slot],
                         "source_quote": _source_quote(str(item["content"]), correct_text),
                     },
@@ -181,8 +185,8 @@ def build_records() -> list[dict[str, Any]]:
 
 
 def validate_records(records: list[dict[str, Any]], *, knowledge_ids: list[str]) -> None:
-    if len(records) != 199:
-        raise ValueError(f"expected_199_records:{len(records)}")
+    if len(records) != 250:
+        raise ValueError(f"expected_250_records:{len(records)}")
     ids = [str(record["question_id"]) for record in records]
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate_question_id")
@@ -200,10 +204,8 @@ def validate_records(records: list[dict[str, Any]], *, knowledge_ids: list[str])
     )
     expected_uses = Counter(
         {
-            "diagnosis": 99,
-            "graded_quiz": 99,
+            "graded_quiz": 150,
             "mastery_validation": 100,
-            "mistake_consolidation": 100,
         }
     )
     if uses != expected_uses:
@@ -211,7 +213,7 @@ def validate_records(records: list[dict[str, Any]], *, knowledge_ids: list[str])
     by_knowledge = Counter(str(record["knowledge_id"]) for record in records)
     if set(by_knowledge) != set(knowledge_ids):
         raise ValueError("knowledge_coverage_mismatch")
-    if any(count not in {3, 4} for count in by_knowledge.values()):
+    if any(count != 5 for count in by_knowledge.values()):
         raise ValueError(f"invalid_knowledge_density:{dict(by_knowledge)}")
     for record in records:
         answer_key = dict(record["answer_key"])

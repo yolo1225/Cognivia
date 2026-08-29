@@ -12,6 +12,11 @@
 活动 Agent 契约为 `agent-contract-v10`；运行时仅使用已发布领域的 active Candidate index 和
 `active + certified` 正式题库。
 
+正式题库按唯一用途分为 `diagnosis`、`graded_quiz`、`mastery_validation` 三个互斥题池。
+错题巩固不是第四类题目：首次诊断和分阶测验的错题保存原题 ID，巩固时直接重做原题；通过只
+关闭错题项，并作为画像更新信号，但不作为独立掌握证据。掌握状态由独立掌握检查题验证。题目直接从 MySQL 认证题库
+筛选，只有知识正文或 Chunk 变化才需要重建 Candidate 向量索引。
+
 ## Docker 启动
 
 ```powershell

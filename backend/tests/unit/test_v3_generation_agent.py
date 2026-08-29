@@ -359,6 +359,7 @@ def _with_formal_question_bank(request: GenerateResourceInput) -> GenerateResour
                             )
                         ],
                         "source_locator": source_locator,
+                        "question_bank_uses": ["graded_quiz"],
                         "question_slot": slot,
                         "quiz_level": (
                             "foundation"
@@ -391,6 +392,7 @@ def test_formal_short_answer_accepts_detailed_source_backed_rubric() -> None:
         "source_ref_ids": ["knowledge::chunk::0"],
         "quiz_level": "challenge",
         "rubric": [f"评分点 {index}" for index in range(8)],
+        "question_bank_uses": ["graded_quiz"],
     }
 
     assert _eligible_question_values("short_answer", [], answer_key)

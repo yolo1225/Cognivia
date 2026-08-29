@@ -123,7 +123,7 @@ def _seed(db: Session) -> None:
                 options_json=["正确", "错误"],
                 answer_key_json={
                     "correct_option": 0,
-                    "question_bank_uses": ["mastery_validation", "mistake_consolidation"],
+                    "question_bank_uses": ["mastery_validation"],
                 },
                 difficulty=3,
                 status="active",

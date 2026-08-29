@@ -29,10 +29,10 @@ def test_expansion_is_deterministic_and_matches_checked_in_data() -> None:
         knowledge_ids=[str(item["knowledge_id"]) for item in knowledge],
     )
     assert records == _load("question_bank_expansion.json")
-    assert len(records) == 199
+    assert len(records) == 250
     assert Counter(
         tuple(record["answer_key"]["question_bank_uses"]) for record in records
-    ) == Counter({tuple(QUIZ_USES): 99, tuple(RESERVE_USES): 100})
+    ) == Counter({tuple(QUIZ_USES): 150, tuple(RESERVE_USES): 100})
 
 
 def test_combined_static_question_bank_has_three_quiz_and_two_reserve_questions() -> None:
@@ -51,13 +51,14 @@ def test_combined_static_question_bank_has_three_quiz_and_two_reserve_questions(
     quiz_counts: Counter[str] = Counter()
     reserve_counts: Counter[str] = Counter()
     for question in combined:
-        uses = set(question.get("answer_key", {}).get("question_bank_uses") or QUIZ_USES)
+        default_uses = ["diagnosis"] if question in existing else []
+        uses = set(question.get("answer_key", {}).get("question_bank_uses") or default_uses)
         if "graded_quiz" in uses:
             quiz_counts[str(question["knowledge_id"])] += 1
         if uses & set(RESERVE_USES):
             reserve_counts[str(question["knowledge_id"])] += 1
 
-    assert len(combined) == 250
+    assert len(combined) == 301
     assert len({question["question_id"] for question in combined}) == len(combined)
     assert all(quiz_counts[knowledge_id] == 3 for knowledge_id in knowledge_ids)
     assert all(reserve_counts[knowledge_id] == 2 for knowledge_id in knowledge_ids)
@@ -65,11 +66,11 @@ def test_combined_static_question_bank_has_three_quiz_and_two_reserve_questions(
     for question in combined:
         by_knowledge[str(question["knowledge_id"])].append(question)
     for knowledge_id, questions in by_knowledge.items():
-        assert sorted(question["difficulty"] for question in questions) == [1, 2, 3, 4, 5]
+        assert len(questions) >= 6
         quiz_difficulties = sorted(
             question["difficulty"]
             for question in questions
-            if "graded_quiz" in set(question.get("answer_key", {}).get("question_bank_uses") or QUIZ_USES)
+            if "graded_quiz" in set(question.get("answer_key", {}).get("question_bank_uses") or [])
         )
         reserve_difficulties = sorted(
             question["difficulty"]
@@ -77,5 +78,5 @@ def test_combined_static_question_bank_has_three_quiz_and_two_reserve_questions(
             if set(question.get("answer_key", {}).get("question_bank_uses") or [])
             & set(RESERVE_USES)
         )
-        assert quiz_difficulties == [1, 3, 5], knowledge_id
+        assert quiz_difficulties == [3, 4, 5], knowledge_id
         assert reserve_difficulties == [2, 4], knowledge_id

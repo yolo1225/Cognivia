@@ -51,6 +51,7 @@ from app.services.mistake_review_service import sync_existing_mistakes
 from app.services.question_certification_service import (
     QUESTION_CERTIFICATION_RULE_VERSION,
 )
+from app.services.question_bank_service import question_supports_use
 from app.services.profile_service import (
     build_learning_path_from_snapshot,
     default_profile_for_learner,
@@ -210,8 +211,13 @@ def _question_payload(question: DiagnosticQuestion) -> dict[str, Any]:
     }
 
 
-def _is_practice_knowledge(knowledge: KnowledgeItem) -> bool:
-    return "operation" in (knowledge.evidence_capabilities_json or [])
+def _is_practice_question(
+    question: DiagnosticQuestion, knowledge: KnowledgeItem | None = None
+) -> bool:
+    dimension = str((question.answer_key_json or {}).get("assessment_dimension") or "")
+    if dimension:
+        return dimension == "operation"
+    return bool(knowledge and "operation" in (knowledge.evidence_capabilities_json or []))
 
 
 def _direction_score(
@@ -294,7 +300,7 @@ def _sample_diagnostic_questions(
         knowledge = knowledge_rows.get(question.knowledge_item_id)
         if knowledge is None or question.question_type not in {"single_choice", "short_answer"}:
             continue
-        evidence_buckets[(question.question_type, _is_practice_knowledge(knowledge))].append(
+        evidence_buckets[(question.question_type, _is_practice_question(question, knowledge))].append(
             (question, knowledge, _direction_score(knowledge, direction_tags, runtime))
         )
 
@@ -517,6 +523,11 @@ def create_diagnostic_session(
             .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.public_id)
         )
     )
+    available_questions = [
+        question
+        for question in available_questions
+        if question_supports_use(question, "diagnosis")
+    ]
     knowledge_rows = {
         item.id: item
         for item in db.scalars(
@@ -541,7 +552,7 @@ def create_diagnostic_session(
     practice_count = sum(
         1
         for question in questions
-        if _is_practice_knowledge(knowledge_rows[question.knowledge_item_id])
+        if _is_practice_question(question, knowledge_rows[question.knowledge_item_id])
     )
     selection_summary = {
         "algorithm_version": "diagnostic-selection-v2",

@@ -36,6 +36,7 @@ from app.rag.database_manifest_store import DatabaseManifestStore
 from app.rag.embedding_provider import EmbeddingProvider, EmbeddingProviderError
 from app.services.question_bank_service import (
     is_question_bank_eligible,
+    question_supports_use,
     quiz_revision_question_indexes,
     select_graded_quiz_candidates,
 )
@@ -879,6 +880,7 @@ class CandidateRetriever:
                 row
                 for row in question_rows
                 if is_question_bank_eligible(row[0])
+                and question_supports_use(row[0], "graded_quiz")
                 and (
                     row[1] in question_scope
                     or set(row[0].related_knowledge_ids_json or []).intersection(

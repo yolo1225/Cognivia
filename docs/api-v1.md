@@ -37,7 +37,10 @@
 | POST | `/learning-paths/{path_id}/nodes/{node_id}/verify` | 用服务端已确认答题记录验证节点 |
 | POST | `/learning-paths/{path_id}/nodes/{node_id}/complete` | 以已验证证据完成节点并解锁后继 |
 
-诊断、分阶测试、错题巩固与导学掌握检查只使用 `active + certified` 正式题库。题目不足不会跨领域或用临时题静默补齐；节点推进只接受这些服务端已确认的正式证据。
+首次诊断从 `diagnosis` 池抽题，分阶测试从 `graded_quiz` 池组卷，导学掌握检查从
+`mastery_validation` 池选择未见题；三者都只接受 `active + certified`。错题巩固不重新选题，
+而是按错题项中的原始题目 ID 重做认证原题。题目不足不会跨领域或用临时题静默补齐；节点推进
+只接受服务端确认且具备掌握证据资格的记录，错题修正记录不单独推进节点。
 
 ## 生成、资源、导学与调整
 
@@ -78,12 +81,16 @@
 | GET | `/reports/learners/{learner_id}` | 学习报告：画像、知识状态、路径、调整提案与效果对比 |
 | GET | `/reports/learners/{learner_id}/learning-journey` | 学习历程与学习包继承关系 |
 | GET | `/mistake-review/summary`、`/items`、`/items/{item_id}` | 查询错题巩固摘要与项目 |
-| POST | `/mistake-review/items/{item_id}/start` | 基于正式题库开启同知识点巩固 |
-| POST | `/mistake-review/items/{item_id}/attempts/{attempt_id}/answer` | 服务端评分巩固题并保存来源证据 |
+| POST | `/mistake-review/items/{item_id}/start` | 使用错题项保存的原始题目ID开启原题重做 |
+| POST | `/mistake-review/items/{item_id}/attempts/{attempt_id}/answer` | 单选确定性评分或简答AI评分，并保存错题修正证据 |
 
 `GET /mistake-review/items` 可使用 `priority_scope=current_node|all`。`current_node`
 与学习路径门禁采用同一套核心知识和未解决状态判定；后续节点错题仍保留在 `all` 中并允许提前巩固。
 摘要返回 `current_priority_count` 和当前节点信息，列表项返回路径位置及是否阻断当前节点。
+首次诊断和分阶测验错误可创建错题项；掌握检查错误不创建错题项。原题重做通过后错题项变为
+`consolidated`，但 `mistake_correction` 不作为独立掌握证据，也不直接推进学习节点。
+该记录会与其他正式答题证据共同进入画像分析；路线推进另外要求当前节点相关错题全部解决、
+分阶测验完成且独立掌握证据达到门槛。
 
 ## 领域与知识管理（管理员）
 
@@ -104,8 +111,8 @@
 | GET | `/knowledge/rebuild-index/status` | 查询索引构建状态 |
 
 领域发布依赖 Candidate manifest、数据/模型版本一致性、检索冒烟、知识关系、题库密度与来源认证等
-readiness 门禁。正式题目生命周期为 `pending | certified | rejected | stale`，诊断和运行时测验仅使用
-`active + certified` 题目。
+readiness 门禁。正式题目生命周期为 `pending | certified | rejected | stale`，活动题必须唯一声明
+`diagnosis | graded_quiz | mastery_validation` 用途；各业务只读取对应用途的 `active + certified` 题目。
 
 ## 运维与评测接口
 

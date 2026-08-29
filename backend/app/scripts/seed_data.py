@@ -364,7 +364,7 @@ def seed_diagnostic_questions(
         ))
         answer_key.setdefault("quiz_level", quiz_level)
         answer_key.setdefault(
-            "question_bank_uses", ["diagnosis", "graded_quiz"]
+            "question_bank_uses", ["diagnosis"]
         )
         if payload["question_type"] == "short_answer":
             rubric = [str(value).strip() for value in answer_key.get("rubric") or []]

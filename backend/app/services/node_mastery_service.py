@@ -23,12 +23,10 @@ REQUIRED_EVIDENCE_COUNT = 2
 FORMAL_EVIDENCE_CONFIDENCE_FLOOR = 0.899
 FORMAL_EVIDENCE_TYPES = {
     "graded_quiz",
-    "mistake_consolidation",
     "path_validation",
     "tutoring_validation",
 }
 CORROBORATING_EVIDENCE_TYPES = {
-    "mistake_consolidation",
     "path_validation",
     "tutoring_validation",
 }

@@ -69,15 +69,15 @@ def test_validated_seed_loads_through_existing_database_seed_path() -> None:
         db.flush()
 
         assert len(seeded) == 50
-        assert len(questions) == 264
+        assert len(questions) == 315
         assert db.scalar(select(func.count()).select_from(KnowledgeItem)) == 50
         assert db.scalar(select(func.count()).select_from(KnowledgeRelation)) == 81
-        assert db.scalar(select(func.count()).select_from(DiagnosticQuestion)) == 264
+        assert db.scalar(select(func.count()).select_from(DiagnosticQuestion)) == 315
         assert db.scalar(
             select(func.count())
             .select_from(DiagnosticQuestion)
             .where(DiagnosticQuestion.question_type == "single_choice")
-        ) == 250
+        ) == 301
         assert db.scalar(
             select(func.count())
             .select_from(DiagnosticQuestion)
@@ -88,7 +88,17 @@ def test_validated_seed_loads_through_existing_database_seed_path() -> None:
             select(func.count())
             .select_from(DiagnosticQuestion)
             .where(DiagnosticQuestion.certification_status == "certified")
-        ) == 264
+        ) == 315
+        purpose_counts: dict[str, int] = {}
+        for answer_key in db.scalars(select(DiagnosticQuestion.answer_key_json)):
+            purposes = list((answer_key or {}).get("question_bank_uses") or [])
+            assert len(purposes) == 1
+            purpose_counts[purposes[0]] = purpose_counts.get(purposes[0], 0) + 1
+        assert purpose_counts == {
+            "diagnosis": 65,
+            "graded_quiz": 150,
+            "mastery_validation": 100,
+        }
         dimensions: dict[tuple[str, str | None], int] = {}
         for question_type, answer_key in db.execute(
             select(

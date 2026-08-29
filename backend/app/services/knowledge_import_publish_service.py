@@ -273,6 +273,8 @@ def activate_import_candidate(
                 "question_slot": payload.get("question_slot"),
                 "quiz_level": payload.get("quiz_level"),
                 "question_bank_uses": list(payload.get("question_bank_uses") or []),
+                "reserve_role": payload.get("reserve_role"),
+                "assessment_dimension": payload.get("assessment_dimension"),
                 "source_ref_ids": source_ref_ids,
                 "source_locators": {
                     source_ref_id: exact_sources[source_ref_id]["source_locator"]

@@ -626,9 +626,11 @@ def test_question_generation_splits_each_knowledge_into_tier_pairs(
     db.add_all([run, knowledge])
     db.flush()
     payloads = []
+    prompts = []
 
     def fake_execute(_batch_id, **kwargs):
         payloads.append(kwargs["payload"])
+        prompts.append(kwargs["system_prompt"])
         return {"questions": []}
 
     monkeypatch.setattr(
@@ -650,7 +652,20 @@ def test_question_generation_splits_each_knowledge_into_tier_pairs(
     assert [
         payload["knowledge"][0]["required_question_slots"] for payload in payloads
     ] == [[1], [2], [3], [4], [5], [6]]
+    assert [
+        payload["knowledge"][0]["required_question_purpose"] for payload in payloads
+    ] == [
+        "diagnosis",
+        "graded_quiz",
+        "graded_quiz",
+        "graded_quiz",
+        "mastery_validation",
+        "mastery_validation",
+    ]
     assert all(len(payload["knowledge"][0]["source_chunks"]) == 1 for payload in payloads)
+    assert all("question_bank_use" in prompt for prompt in prompts)
+    assert all("错题巩固不是题目用途" in prompt for prompt in prompts)
+    assert all("题槽1至3用于诊断和分阶测验" not in prompt for prompt in prompts)
     batch_keys = list(
         db.scalars(
             select(KnowledgeImportBatch.batch_key).where(
@@ -762,8 +777,7 @@ def test_model_import_run_blocks_incomplete_formal_question_bank(tmp_path, monke
         )
     )
     assert all(
-            "正式题库必须至少包含1道以该知识点为主要归因的题目"
-            in "".join(item.validation_errors_json)
+        "正式题库用途密度不足" in "".join(item.validation_errors_json)
         for item in knowledge_candidates
     )
 

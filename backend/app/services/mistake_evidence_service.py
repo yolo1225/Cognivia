@@ -86,7 +86,7 @@ def _eligible_records(
                 AnswerRecord.scoring_status == "scored",
                 AnswerRecord.confidence >= 0.9,
             )
-            .order_by(AnswerRecord.created_at, AnswerRecord.id)
+            .order_by(AnswerRecord.created_at.desc(), AnswerRecord.id.desc())
             .with_for_update()
         )
     )
@@ -98,9 +98,14 @@ def _eligible_records(
             continue
         if summary.get("governance_status") in {"no_change", "rejected"}:
             continue
-        if summary.get("contract_evidence_type") != "scored_quiz":
-            continue
-        if summary.get("confirmed") is not True:
+        evidence_type = str(summary.get("evidence_type") or "")
+        contract_type = str(summary.get("contract_evidence_type") or "")
+        is_formal = contract_type == "scored_quiz"
+        is_correction = (
+            contract_type == "correction_only"
+            and evidence_type == "mistake_correction"
+        )
+        if not (is_formal or is_correction) or summary.get("confirmed") is not True:
             continue
         if candidate.question_id in seen_questions:
             continue
@@ -157,7 +162,7 @@ def _advance_ready_node_without_profile_revision(
     feedback = Feedback(
         resource_id=resource.id,
         learner_id=learner.id,
-        feedback_type="mistake_consolidation",
+        feedback_type="mistake_correction",
         feedback_summary_json={
             "mistake_item_id": item.public_id,
             "evidence_ids": evidence_ids,
@@ -185,7 +190,7 @@ def _advance_ready_node_without_profile_revision(
         source_resource_id=resource.id,
         hypothesis_type="mastery_up",
         status="resource_pending",
-        trigger_source="mistake_consolidation",
+        trigger_source="mistake_correction",
         source_feedback_ids_json=[feedback.id],
         evidence_summary_json={"evidence_ids": evidence_ids},
         resulting_profile_id=profile.id,
@@ -276,7 +281,8 @@ def evaluate_mistake_evidence(
     candidates = _eligible_records(db, learner=learner, record=record, profile=profile)
     result["evidence"]["eligible_evidence_count"] = len(candidates)
     has_mistake = any(
-        (candidate.answer_summary_json or {}).get("evidence_type") == "mistake_consolidation"
+        (candidate.answer_summary_json or {}).get("evidence_type")
+        in {"mistake_correction", "mistake_consolidation"}
         for candidate in candidates
     )
     if len(candidates) < REQUIRED_EVIDENCE_COUNT or not has_mistake:
@@ -298,28 +304,6 @@ def evaluate_mistake_evidence(
             result=result,
         )
         return result
-    # Profile evidence may remain conflicted while the independently computed
-    # node gate is already satisfied. Route progression must not be skipped.
-    if _advance_ready_node_without_profile_revision(
-        db,
-        learner=learner,
-        item=item,
-        record=record,
-        profile=profile,
-        path=path,
-        resource=resource,
-        result=result,
-    ):
-        return result
-    directions = {bool(candidate.is_correct) for candidate in candidates}
-    if len(directions) != 1:
-        reason = "CONFLICTING_FORMAL_EVIDENCE"
-        result["evidence"].update(
-            {"governance_status": "conflicted", "governance_reason": reason}
-        )
-        for candidate in candidates:
-            _save_governance(candidate, status="conflicted", reason=reason, result=result)
-        return result
     if resource is None or path is None:
         reason = "RELATED_RESOURCE_OR_ACTIVE_PATH_REQUIRED"
         result["evidence"]["governance_reason"] = reason
@@ -328,7 +312,7 @@ def evaluate_mistake_evidence(
 
     from app.services.learning_adjustment_service import _analyze_profile
 
-    mastered = directions == {True}
+    mastered = bool(record.is_correct)
     current_node_id = (path.path_json or {}).get("current_node_id")
     knowledge = db.get(KnowledgeItem, item.knowledge_item_id)
     question = db.get(DiagnosticQuestion, record.question_id)
@@ -342,13 +326,13 @@ def evaluate_mistake_evidence(
     feedback = Feedback(
         resource_id=resource.id,
         learner_id=learner.id,
-        feedback_type="mistake_consolidation",
+        feedback_type="mistake_correction",
         feedback_summary_json={
             "mistake_item_id": item.public_id,
             "evidence_ids": [f"answer_record:{candidate.id}" for candidate in candidates],
         },
         triggered_action="profile_evidence_evaluation",
-        comment="错题巩固组合证据达到画像分析门槛",
+        comment="错题修正与正式测验证据达到画像分析门槛",
         feedback_intent="too_easy" if mastered else "too_hard",
         recommended_action="challenge" if mastered else "explain",
         profile_update_required=False,
@@ -370,7 +354,7 @@ def evaluate_mistake_evidence(
         source_resource_id=resource.id,
         hypothesis_type="mastery_up" if mastered else "support_down",
         status="confirmed",
-        trigger_source="mistake_consolidation",
+        trigger_source="mistake_correction",
         source_feedback_ids_json=[feedback.id],
         evidence_summary_json={
             "evidence_ids": [f"answer_record:{candidate.id}" for candidate in candidates]

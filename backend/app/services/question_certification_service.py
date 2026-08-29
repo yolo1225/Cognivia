@@ -242,6 +242,14 @@ def deterministic_certification_issues(
         failed.append("difficulty")
     if quiz_level not in {"foundation", "improvement", "challenge"}:
         failed.append("quiz_level")
+    purposes = payload.get("question_bank_uses")
+    if (
+        not isinstance(purposes, list)
+        or len(purposes) != 1
+        or str(purposes[0])
+        not in {"diagnosis", "graded_quiz", "mastery_validation"}
+    ):
+        failed.append("question_bank_uses")
     if question_type == "single_choice":
         if (
             len(options) != 4

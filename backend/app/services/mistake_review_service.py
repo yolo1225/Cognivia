@@ -22,10 +22,8 @@ from app.models import (
 )
 from app.services.knowledge_extraction_service import normalize_knowledge_name
 from app.services.node_mastery_service import UNRESOLVED_MISTAKE_STATUSES, node_core_knowledge_ids
-from app.services.question_bank_service import (
-    QuestionBankError,
-    select_mastery_question,
-)
+from app.services.diagnostic_scoring_service import score_short_answer_batch
+from app.services.mistake_evidence_service import evaluate_mistake_evidence
 
 
 VERIFIED_STATUSES = {"consolidated", "needs_more_practice"}
@@ -459,35 +457,13 @@ def start_attempt(db: Session, *, learner: Learner, item_id: str) -> dict[str, A
                 "recommended_resource": serialize_item(db, item).get("recommended_resource"),
             }
     original_question_id = (item.error_summary_json or {}).get("question_id")
-    original_id = db.scalar(
-        select(DiagnosticQuestion.id).where(
+    question = db.scalar(
+        select(DiagnosticQuestion).where(
             DiagnosticQuestion.public_id == str(original_question_id)
         )
     )
-    knowledge = db.get(KnowledgeItem, item.knowledge_item_id)
-    if knowledge is None:
+    if question is None or question.knowledge_item_id != item.knowledge_item_id:
         raise ValueError("CONSOLIDATION_QUESTION_UNAVAILABLE")
-    package_task = None
-    if item.source_resource_id is not None:
-        source_resource = db.get(LearningResource, item.source_resource_id)
-        if source_resource is not None:
-            package_task = db.get(GenerationTask, source_resource.generation_task_id)
-    try:
-        question, _knowledge = select_mastery_question(
-            db,
-            learner_id=learner.id,
-            domain_code=item.domain_code,
-            knowledge_ids=[knowledge.public_id],
-            target_difficulty=int(item.difficulty or 1),
-            use="mistake_consolidation",
-            package_task=package_task,
-            preferred_knowledge_ids=[knowledge.public_id],
-            additional_excluded_question_ids=(
-                [original_id] if original_id is not None else []
-            ),
-        )
-    except QuestionBankError as exc:
-        raise ValueError(exc.code) from exc
     attempt = MistakeReviewAttempt(
         public_id=f"consolidation_{uuid4().hex[:12]}",
         mistake_item_id=item.id,
@@ -525,7 +501,7 @@ def answer_attempt(
     if attempt is None or attempt.mistake_item_id != item.id:
         raise ValueError("CONSOLIDATION_ATTEMPT_NOT_FOUND")
     question = db.get(DiagnosticQuestion, attempt.question_id)
-    if question is None or question.question_type != "single_choice":
+    if question is None or question.question_type not in {"single_choice", "short_answer"}:
         raise ValueError("CONSOLIDATION_QUESTION_UNAVAILABLE")
     if attempt.status in {"passed", "failed", "uncertain"}:
         from app.services.mistake_evidence_service import stored_governance_result
@@ -538,36 +514,53 @@ def answer_attempt(
             or "请结合关联资源继续巩固。",
             **(stored_governance_result(stored_record) or {}),
         }
-    try:
-        selected = int(answer)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("INVALID_SINGLE_CHOICE_ANSWER") from exc
-    if selected < 0 or selected >= len(question.options_json or []):
-        raise ValueError("INVALID_SINGLE_CHOICE_ANSWER")
-    correct = int((question.answer_key_json or {}).get("correct_option", -1))
-    score = 1.0 if selected == correct else 0.0
-    passed = score >= attempt.threshold
+    if question.question_type == "single_choice":
+        try:
+            normalized_answer = str(int(answer))
+            selected = int(normalized_answer)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("INVALID_SINGLE_CHOICE_ANSWER") from exc
+        if selected < 0 or selected >= len(question.options_json or []):
+            raise ValueError("INVALID_SINGLE_CHOICE_ANSWER")
+        correct = int((question.answer_key_json or {}).get("correct_option", -1))
+        score = 1.0 if selected == correct else 0.0
+        confidence = 1.0
+        scoring_method = "deterministic"
+        scoring_detail: dict[str, Any] = {}
+    else:
+        normalized_answer = str(answer or "").strip()
+        if not normalized_answer:
+            raise ValueError("INVALID_SHORT_ANSWER")
+        scored, _metadata = score_short_answer_batch([(question, normalized_answer)])
+        scoring_detail = dict(scored.get(question.public_id) or {})
+        if not scoring_detail:
+            raise ValueError("SHORT_ANSWER_SCORING_UNAVAILABLE")
+        score = float(scoring_detail["total_score"])
+        confidence = float(scoring_detail["confidence"])
+        scoring_method = str(scoring_detail["scoring_method"])
+    passed = bool(scoring_detail.get("is_correct", score >= attempt.threshold))
     record = AnswerRecord(
         learner_id=learner.id,
         question_id=question.id,
         knowledge_item_id=question.knowledge_item_id,
         session_id=attempt.public_id,
-        answer_text=str(selected),
+        answer_text=normalized_answer,
         score=score,
         is_correct=passed,
         scoring_status="scored",
-        scoring_method="deterministic",
-        confidence=1.0,
+        scoring_method=scoring_method,
+        confidence=confidence,
         answer_summary_json={
-            "evidence_type": "mistake_consolidation",
-            "contract_evidence_type": "scored_quiz",
+            "evidence_type": "mistake_correction",
+            "contract_evidence_type": "correction_only",
             "mistake_item_id": item.public_id,
             "confirmed": True,
-            "confidence": 1.0,
-            "governance_status": "pending",
-            "governance_reason": "WAITING_FOR_CORROBORATING_EVIDENCE",
-            "evaluated_at": None,
+            "confidence": confidence,
+            "governance_status": "not_applicable",
+            "governance_reason": "CORRECTION_IS_NOT_MASTERY_EVIDENCE",
+            "evaluated_at": datetime.now(UTC).isoformat(),
             "consumed_by_profile_id": None,
+            "scoring_detail": scoring_detail,
         },
     )
     db.add(record)
@@ -576,14 +569,12 @@ def answer_attempt(
     attempt.answer_record_id = record.id
     attempt.status = "passed" if passed else "failed"
     attempt.score = score
-    attempt.confidence = 1.0
-    attempt.scoring_method = "deterministic"
+    attempt.confidence = confidence
+    attempt.scoring_method = scoring_method
     attempt.evidence_ref = evidence_ref
     attempt.completed_at = datetime.now(UTC)
     item.status = "consolidated" if passed else "needs_more_practice"
     item.consolidated_at = datetime.now(UTC) if passed else None
-    from app.services.mistake_evidence_service import evaluate_mistake_evidence
-
     governance = evaluate_mistake_evidence(
         db,
         learner=learner,
@@ -598,8 +589,8 @@ def answer_attempt(
         "score": score,
         "threshold": attempt.threshold,
         "passed": passed,
-        "confidence": 1.0,
-        "scoring_method": "deterministic",
+        "confidence": confidence,
+        "scoring_method": scoring_method,
         "evidence_ref": evidence_ref,
         "explanation": (question.answer_key_json or {}).get("explanation") or "请结合关联资源继续巩固。",
         **governance,

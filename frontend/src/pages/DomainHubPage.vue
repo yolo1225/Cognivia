@@ -334,13 +334,14 @@
         <div v-else-if="assetView === 'questions'" class="asset-body">
           <div class="experimental-note">
             <span>正式题库</span>
-            <p>每个知识点保留 3 道分阶测验题和 2 道独立掌握验证题；全部绑定精确来源并通过认证，运行时不临时生成。</p>
+            <p>题库按首次诊断、分阶测验和掌握检查三种互斥用途管理；全部绑定精确来源并通过认证，运行时不临时生成。</p>
           </div>
           <p class="knowledge-results" aria-live="polite">
             已覆盖 {{ questionCoverage?.ready_items || 0 }} / {{ questionCoverage?.total_items || 0 }} 个知识点，
               当前显示 {{ questionBank.length }} 道题，其中已认证 {{ certifiedQuestionCount }} 道；
+              缺少诊断题的知识点 {{ questionCoverage?.missing_diagnosis_knowledge_ids.length || 0 }} 个，
               缺少测验题的知识点 {{ questionCoverage?.missing_quiz_knowledge_ids.length || 0 }} 个，
-              缺少验证预留题的知识点 {{ questionCoverage?.missing_mastery_reserve_knowledge_ids.length || 0 }} 个
+              缺少掌握检查题的知识点 {{ questionCoverage?.missing_mastery_reserve_knowledge_ids.length || 0 }} 个
           </p>
           <div v-if="questionBank.length === 0" class="empty-view">
             <strong>当前领域暂无正式题目</strong>
@@ -1774,12 +1775,9 @@ function quizLevelLabel(level: QuestionBankItem["quiz_level"]) {
 }
 
 function questionPoolLabel(question: QuestionBankItem) {
-  if (!question.question_bank_uses.includes('mastery_validation')) return '诊断 / 动态分阶测验'
-  return question.reserve_role === 'consolidation'
-    ? '错题巩固预留'
-    : question.reserve_role === 'mastery_transfer'
-      ? '掌握验证预留'
-      : '验证 / 巩固预留'
+  if (question.question_bank_uses.includes('diagnosis')) return '首次诊断题'
+  if (question.question_bank_uses.includes('graded_quiz')) return '分阶测验题'
+  return '掌握检查题'
 }
 const certifiedQuestionCount = computed(
   () => questionBank.value.filter((item) => item.certification_status === "certified").length,

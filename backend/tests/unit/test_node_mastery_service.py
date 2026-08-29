@@ -220,7 +220,7 @@ def test_node_gate_uses_current_core_scope_and_requires_all_conditions() -> None
                 learner=learner,
                 knowledge=knowledge,
                 question_id=f"{knowledge.public_id}_validation",
-                evidence_type="mistake_consolidation",
+                evidence_type="path_validation",
             ))
         db.flush()
 
@@ -247,7 +247,7 @@ def test_node_gate_uses_current_core_scope_and_requires_all_conditions() -> None
             learner=learner,
             knowledge=current_a,
             question_id="current_a_final_mistake_check",
-            evidence_type="mistake_consolidation",
+            evidence_type="mistake_correction",
         )
         db.flush()
         result = evaluate_mistake_evidence(

@@ -215,7 +215,10 @@ def build_learning_progress_comparison(
     ]
     for record in confirmed_records:
         governance = dict((record.answer_summary_json or {}).get("governance_result") or {})
-        if (record.answer_summary_json or {}).get("evidence_type") != "mistake_consolidation":
+        if (record.answer_summary_json or {}).get("evidence_type") not in {
+            "mistake_correction",
+            "mistake_consolidation",
+        }:
             continue
         evidence = dict(governance.get("evidence") or {})
         profile_result = dict(governance.get("profile_result") or {})
@@ -223,7 +226,7 @@ def build_learning_progress_comparison(
         timeline.append(
             {
                 "type": "mistake_consolidation",
-                "title": "错题巩固正式验证",
+                "title": "错题原题修正",
                 "occurred_at": record.created_at.isoformat(),
                 "profile_version": profile_result.get("resulting_profile_version"),
                 "confidence": record.confidence,

@@ -185,8 +185,9 @@ def test_v3_generation_and_review_collect_safe_model_call_metadata() -> None:
                     "explanation": "依据知识库材料作答。",
                     "source_ref_ids": [source_ref_id],
                     "source_locator": source_locator,
-                    "question_slot": slot,
-                    "quiz_level": (
+                        "question_slot": slot,
+                        "question_bank_uses": ["graded_quiz"],
+                        "quiz_level": (
                         "foundation"
                         if slot <= 2
                         else "improvement"

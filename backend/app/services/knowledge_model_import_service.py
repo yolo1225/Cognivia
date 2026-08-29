@@ -112,6 +112,7 @@ class GeneratedQuestion(BaseModel):
     # Slots are import-batch identities only. They are not a global six-question
     # template and carry no pedagogical meaning.
     question_slot: int = Field(ge=1, le=99)
+    question_bank_use: Literal["diagnosis", "graded_quiz", "mastery_validation"]
     quiz_level: Literal["foundation", "improvement", "challenge"]
     question_type: Literal["single_choice", "short_answer"]
     stem: str
@@ -122,12 +123,6 @@ class GeneratedQuestion(BaseModel):
     diagnostic_dimension: Literal["概念理解", "机制与因果", "实操场景选择", "错误诊断与修复"]
     evidence_quotes: list[GeneratedEvidenceQuote] = Field(min_length=1, max_length=3)
     difficulty: int = Field(ge=1, le=5)
-
-
-def question_bank_uses_for_slot(question_slot: int) -> list[str]:
-    if question_slot in {4, 5}:
-        return ["mastery_validation", "mistake_consolidation"]
-    return ["diagnosis", "graded_quiz"]
 
 
 class QuestionOutput(BaseModel):
@@ -263,6 +258,9 @@ def _adapt_question_output(result: object) -> dict:
         questions.append({
             "knowledge_id": knowledge_id,
             "question_slot": question_slot,
+            "question_bank_use": str(
+                item.get("question_bank_use") or item.get("purpose") or ""
+            ),
             "quiz_level": quiz_level,
             "question_type": question_type,
             "stem": str(stem),
@@ -707,6 +705,13 @@ def _generate_question_records(
                 "evidence_capabilities": payload.get("evidence_capabilities") or [],
                 "source_chunks": source_chunks,
                 "required_question_slots": [slot],
+                "required_question_purpose": (
+                    "diagnosis"
+                    if slot == 1
+                    else "mastery_validation"
+                    if slot in {5, 6}
+                    else "graded_quiz"
+                ),
                 "required_question_type": "single_choice",
                 "existing_question_ids": (existing_question_ids_by_knowledge or {}).get(
                     item.public_id, []
@@ -744,6 +749,7 @@ def _generate_question_records(
             model=model_name,
             system_prompt=(
                 "你是正式题库生成器。只生成每个 knowledge 记录中 required_question_slots 指定的本批次题目；"
+                "每题必须显式返回 question_bank_use，且必须与输入 required_question_purpose 完全一致；"
                 "题槽仅用于幂等去重，不代表固定的题型、层级或全局六题模板。不得考查标题记忆，只能使用 source_chunks，"
                 "不得补充外部事实。基础题只使用给定的主知识点 Chunk；提升题可综合1到2个给定 Chunk；"
                 "挑战题可综合1到3个给定 Chunk。每题必须返回 evidence_quotes，包含1到3个"
@@ -753,8 +759,8 @@ def _generate_question_records(
                 "single_choice，rubric必须返回空数组；不得返回简答题或空 questions 数组。"
                 "difficulty必须按题目实际认知操作标注1到5，"
                 "不得因教学层级直接抬高难度。已有题目 ID 仅用于去重。只有包含"
-                "题槽1至3用于诊断和分阶测验，题槽4至5专用于掌握验证和错题巩固；不同题槽必须使用"
-                "不同情境或认知操作，不能只替换措辞。"
+                "diagnosis 只用于首次诊断，graded_quiz 只用于分阶测验，mastery_validation 只用于"
+                "独立掌握检查；错题巩固不是题目用途。不同题槽必须使用不同情境或认知操作，不能只替换措辞。"
                 "operation或troubleshooting证据能力时才能生成实操或排错题。"
                 "questions 数组的题槽集合必须与 required_question_slots 完全一致；证据不足以支撑提升或挑战题时，"
                 "降低认知复杂度并基于当前 Chunk 生成不同情境的可判分单选题，不得伪造外部事实或省略题目。"
@@ -780,6 +786,8 @@ def _generate_question_records(
         source_chunks = [dict(value) for value in record["source_chunks"]]
         for question in result.get("questions") or []:
             if question.get("question_type") != record["required_question_type"]:
+                continue
+            if question.get("question_bank_use") != record["required_question_purpose"]:
                 continue
             output.append({**question, **{
                 "source_chunks": source_chunks,
@@ -872,7 +880,12 @@ def _persist_questions(
             payload_json={
                 "knowledge_candidate_id": knowledge_id,
                 "question_slot": question_slot,
-                "question_bank_uses": question_bank_uses_for_slot(question_slot),
+                "question_bank_uses": [str(record.get("question_bank_use") or "")],
+                "reserve_role": (
+                    "consolidation" if question_slot == 5
+                    else "mastery_transfer" if question_slot == 6
+                    else None
+                ),
                 "quiz_level": record.get("quiz_level"),
                 "question_type": question_type,
                 "stem": str(record.get("stem") or "").strip(),
@@ -882,6 +895,12 @@ def _persist_questions(
                 "explanation": explanation,
                 "difficulty": int(record.get("difficulty") or payload.get("difficulty") or 2),
                 "diagnostic_dimension": record.get("diagnostic_dimension"),
+                "assessment_dimension": (
+                    "operation"
+                    if record.get("diagnostic_dimension")
+                    in {"实操场景选择", "错误诊断与修复"}
+                    else "theory"
+                ),
                 "source_quote": evidence_quotes[0]["quote"],
                 "evidence_quotes": evidence_quotes,
                 "source_ref_ids": source_ref_ids,
@@ -950,10 +969,10 @@ def generate_model_questions(
         knowledge,
         key=lambda item: (-degree[item.public_id], item.public_id),
     )
-    # Slots 1-3 are the formal quiz pool; slots 4-5 are an isolated validation
-    # reserve. This density is a publish-readiness invariant for every item.
+    # Import slots are stable identities. Purpose density is one diagnostic,
+    # three graded-quiz, and two independent mastery-check questions.
     target_slots: dict[str, set[int]] = {
-        item.public_id: {1, 2, 3, 4, 5} for item in ordered
+        item.public_id: {1, 2, 3, 4, 5, 6} for item in ordered
     }
     existing_slots: dict[str, set[int]] = defaultdict(set)
     existing_ids: dict[str, list[str]] = defaultdict(list)
@@ -979,8 +998,16 @@ def generate_model_questions(
         if not candidate_id:
             continue
         answer_key = question.answer_key_json or {}
-        uses = set(answer_key.get("question_bank_uses") or ["diagnosis", "graded_quiz"])
-        allowed_slots = [4, 5] if "mastery_validation" in uses else [1, 2, 3]
+        uses = set(answer_key.get("question_bank_uses") or [])
+        allowed_slots = (
+            [1]
+            if uses == {"diagnosis"}
+            else [5, 6]
+            if uses == {"mastery_validation"}
+            else [2, 3, 4]
+            if uses == {"graded_quiz"}
+            else []
+        )
         declared_slot = int(answer_key.get("question_slot") or 0)
         slot = declared_slot if declared_slot in allowed_slots else next(
             (value for value in allowed_slots if value not in existing_slots[candidate_id]),

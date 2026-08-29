@@ -17,8 +17,7 @@
       "explanation": "正确选项是“把一个 AI 应用需求拆成可验证的工程环节，并记录每个环节的输入、输出、失败边界和指标。”。它满足“AI 应用开发全流程”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -44,7 +43,6 @@
       "explanation": "正确选项是“创建一份流程清单，依次列出任务定义、知识准备、模型接入、编排、输出校验、离线评测和运行监控。”。它满足“AI 应用开发全流程”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -71,8 +69,7 @@
       "explanation": "正确选项是“只记录正常路径、没有定义失败边界，或只展示一次成功调用而没有固定评测输入。”。它满足“AI 应用开发全流程”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -98,12 +95,37 @@
       "explanation": "正确选项是“形成一份覆盖完整工程过程的风险与验证清单；清单不把单次模型输出视为最终业务结果。”。它满足“AI 应用开发全流程”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "形成一份覆盖完整工程过程的风险与验证清单；清单不把单次模型输出视为最终业务结果。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_1ad11ca834e7b382",
+    "knowledge_id": "ai_app_dev_overview",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“AI 应用开发全流程”的综合应用中，围绕“操作步骤”作出判断时应坚持哪项要求？",
+    "options": [
+      "把一个 AI 应用需求拆成可验证的工程环节，并记录每个环节的输入、输出、失败边界和指标。",
+      "综合判断应落实：创建一份流程清单，依次列出任务定义、知识准备、模型接入、编排、输出校验、离线评测和运行监控。",
+      "只记录正常路径、没有定义失败边界，或只展示一次成功调用而没有固定评测输入。",
+      "清单能够把每个环节映射到明确证据、可观察结果、失败处理和至少一项可量化指标。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“创建一份流程清单，依次列出任务定义、知识准备、模型接入、编排、输出校验、离线评测和运行监控。”。它满足“AI 应用开发全流程”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "创建一份流程清单，依次列出任务定义、知识准备、模型接入、编排、输出校验、离线评测和运行监控。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -125,8 +147,7 @@
       "explanation": "正确选项是“Python 调用外部 API 时，应明确请求方法、URL、查询参数或 JSON 请求体，并通过请求头传递认证信息。”。它满足“Python API 调用基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -152,7 +173,6 @@
       "explanation": "正确选项是“创建一个最小 Python 脚本，从环境变量读取目标 URL 和认证信息。”。它满足“Python API 调用基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -179,8 +199,7 @@
       "explanation": "正确选项是“网络调用必须设置连接和读取超时，区分超时、连接失败、HTTP 错误和响应解析错误，避免无限等待或把错误页面当作正常 JSON。”。它满足“Python API 调用基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -206,12 +225,37 @@
       "explanation": "正确选项是“脚本输出实际 HTTP 状态和响应内容类型；具体状态、字段和值以目标服务文档和当次响应为准。”。它满足“Python API 调用基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "脚本输出实际 HTTP 状态和响应内容类型；具体状态、字段和值以目标服务文档和当次响应为准。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_f8c3b9c88d3f1546",
+    "knowledge_id": "python_api_basics",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Python API 调用基础”的综合应用中，围绕“操作步骤”作出判断时应坚持哪项要求？",
+    "options": [
+      "Python 调用外部 API 时，应明确请求方法、URL、查询参数或 JSON 请求体，并通过请求头传递认证信息。",
+      "综合判断应落实：创建一个最小 Python 脚本，从环境变量读取目标 URL 和认证信息。",
+      "调用完成后应先确认 HTTP 状态和响应内容类型，再解析 JSON 并校验业务必需字段。",
+      "代码从环境读取配置、设置超时，并在解析业务内容前检查 HTTP 状态和内容类型。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“创建一个最小 Python 脚本，从环境变量读取目标 URL 和认证信息。”。它满足“Python API 调用基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "创建一个最小 Python 脚本，从环境变量读取目标 URL 和认证信息。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -233,8 +277,7 @@
       "explanation": "正确选项是“面向资源的 API 通常让 GET 获取表示且保持安全语义，让 POST 提交处理或创建资源，让 PUT 替换已知资源，让 PATCH 表达部分修改，让 DELETE 请求删除资源。”。它满足“HTTP 与 REST 基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -260,7 +303,6 @@
       "explanation": "正确选项是“选择一份真实 API 文档，记录一个请求的方法、目标 URI、头字段和可选消息内容。”。它满足“HTTP 与 REST 基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -287,8 +329,7 @@
       "explanation": "正确选项是“服务端应使用合适的 2xx、4xx、5xx 状态码，并用稳定 JSON 错误结构提供 request_id 和可处理的错误信息。”。它满足“HTTP 与 REST 基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -314,12 +355,37 @@
       "explanation": "正确选项是“形成一份请求与响应检查表，能够区分通用 HTTP 语义和目标服务明确声明的行为。”。它满足“HTTP 与 REST 基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "形成一份请求与响应检查表，能够区分通用 HTTP 语义和目标服务明确声明的行为。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_4fb5d828b15a3272",
+    "knowledge_id": "http_rest_basics",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“HTTP 与 REST 基础”的综合应用中，围绕“操作步骤”作出判断时应坚持哪项要求？",
+    "options": [
+      "HTTP 请求由方法、目标 URI、头字段和可选消息内容组成，响应使用状态码表达处理结果。",
+      "综合判断应落实：选择一份真实 API 文档，记录一个请求的方法、目标 URI、头字段和可选消息内容。",
+      "服务端应使用合适的 2xx、4xx、5xx 状态码，并用稳定 JSON 错误结构提供 request_id 和可处理的错误信息。",
+      "检查表包含方法、URI、头字段、消息内容、状态类别、错误结构、幂等性和重试判断。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“选择一份真实 API 文档，记录一个请求的方法、目标 URI、头字段和可选消息内容。”。它满足“HTTP 与 REST 基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "选择一份真实 API 文档，记录一个请求的方法、目标 URI、头字段和可选消息内容。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -341,8 +407,7 @@
       "explanation": "正确选项是“在一个已初始化且不含敏感密钥的 Git 仓库中进行练习。”。它满足“Git 协作与变更管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -368,7 +433,6 @@
       "explanation": "正确选项是“运行 git status 确认当前分支和工作区变化。”。它满足“Git 协作与变更管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -395,8 +459,7 @@
       "explanation": "正确选项是“把敏感密钥或大型运行产物加入版本库，或在不了解双方修改时用覆盖方式解决冲突。”。它满足“Git 协作与变更管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -422,12 +485,37 @@
       "explanation": "正确选项是“git status 显示当前工作区状态，git diff 显示未暂存差异，git diff --cached 显示已暂存差异，git log --oneline 显示提交历史摘要。”。它满足“Git 协作与变更管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "git status 显示当前工作区状态，git diff 显示未暂存差异，git diff --cached 显示已暂存差异，git log --oneline 显示提交历史摘要。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_ff2533afffaf3d1f",
+    "knowledge_id": "git_collaboration",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Git 协作与变更管理”的综合应用中，围绕“操作步骤”作出判断时应坚持哪项要求？",
+    "options": [
+      "在一个已初始化且不含敏感密钥的 Git 仓库中进行练习。",
+      "综合判断应落实：运行 git status 确认当前分支和工作区变化。",
+      "把敏感密钥或大型运行产物加入版本库，或在不了解双方修改时用覆盖方式解决冲突。",
+      "提交只包含一个可解释变化，提交说明描述意图，并且变更前已检查实际差异和测试结果。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“运行 git status 确认当前分支和工作区变化。”。它满足“Git 协作与变更管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "运行 git status 确认当前分支和工作区变化。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -449,8 +537,7 @@
       "explanation": "正确选项是“应用数据结构应把需要稳定查询和关联的对象建模为具有明确主键、字段类型、约束和关系的实体。”。它满足“应用数据结构设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -476,7 +563,6 @@
       "explanation": "正确选项是“经常参与筛选、排序、唯一性判断或外键连接的数据应使用可索引字段，变化较快且通常整体读取的附加属性才适合放入 JSON。”。它满足“应用数据结构设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -503,8 +589,7 @@
       "explanation": "正确选项是“模型还要明确空值、默认值、级联行为和时间字段，避免同一业务状态出现多种表示。”。它满足“应用数据结构设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -530,12 +615,37 @@
       "explanation": "正确选项是“AI 应用额外需要保存模型、数据和评测版本等可追踪元数据，但运行时契约与持久化模型应通过显式转换隔离，不能把 ORM 对象直接作为跨组件协议。”。它满足“应用数据结构设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "AI 应用额外需要保存模型、数据和评测版本等可追踪元数据，但运行时契约与持久化模型应通过显式转换隔离，不能把 ORM 对象直接作为跨组件协议。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_70c65c34b913e47f",
+    "knowledge_id": "data_schema_design",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“应用数据结构设计”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "应用数据结构应把需要稳定查询和关联的对象建模为具有明确主键、字段类型、约束和关系的实体。",
+      "综合判断应落实：经常参与筛选、排序、唯一性判断或外键连接的数据应使用可索引字段，变化较快且通常整体读取的附加属性才适合放入 JSON。",
+      "模型还要明确空值、默认值、级联行为和时间字段，避免同一业务状态出现多种表示。",
+      "AI 应用额外需要保存模型、数据和评测版本等可追踪元数据，但运行时契约与持久化模型应通过显式转换隔离，不能把 ORM 对象直接作为跨组件协议。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“经常参与筛选、排序、唯一性判断或外键连接的数据应使用可索引字段，变化较快且通常整体读取的附加属性才适合放入 JSON。”。它满足“应用数据结构设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "经常参与筛选、排序、唯一性判断或外键连接的数据应使用可索引字段，变化较快且通常整体读取的附加属性才适合放入 JSON。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -557,8 +667,7 @@
       "explanation": "正确选项是“把一个模糊生成要求改写成可判断、可复现的提示与评测条件。”。它满足“Prompt 工程基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -584,7 +693,6 @@
       "explanation": "正确选项是“写明角色职责、输入材料、允许使用的事实范围和禁止事项。”。它满足“Prompt 工程基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -611,8 +719,7 @@
       "explanation": "正确选项是“只要求模型提高质量，没有可判断条件；或把权限检查、数据验证和事实核验完全交给提示词。”。它满足“Prompt 工程基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -638,12 +745,37 @@
       "explanation": "正确选项是“形成一份包含任务、上下文、约束、示例、输出格式和评测条件的提示词版本。”。它满足“Prompt 工程基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "形成一份包含任务、上下文、约束、示例、输出格式和评测条件的提示词版本。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_3b1c38a6ed0fc36b",
+    "knowledge_id": "prompt_basic",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Prompt 工程基础”的综合应用中，围绕“操作步骤”作出判断时应坚持哪项要求？",
+    "options": [
+      "把一个模糊生成要求改写成可判断、可复现的提示与评测条件。",
+      "综合判断应落实：写明角色职责、输入材料、允许使用的事实范围和禁止事项。",
+      "只要求模型提高质量，没有可判断条件；或把权限检查、数据验证和事实核验完全交给提示词。",
+      "固定案例能够重复执行，并可比较提示修改前后的正确性、覆盖率和格式遵循率。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“写明角色职责、输入材料、允许使用的事实范围和禁止事项。”。它满足“Prompt 工程基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "写明角色职责、输入材料、允许使用的事实范围和禁止事项。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -665,8 +797,7 @@
       "explanation": "正确选项是“收集任务说明、必要用户上下文、证据片段和输出约束，并为每类材料标记来源与边界。”。它满足“Prompt 上下文设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -692,7 +823,6 @@
       "explanation": "正确选项是“形成一份去重、带来源边界且结构分区清晰的上下文包。”。它满足“Prompt 上下文设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -719,8 +849,7 @@
       "explanation": "正确选项是“无限累积完整历史、重复发送相同片段，或没有区分指令和引用文本。”。它满足“Prompt 上下文设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -746,12 +875,37 @@
       "explanation": "正确选项是“上下文包中的每个事实片段都有来源，冲突证据被标记，并且各部分未超出预留预算。”。它满足“Prompt 上下文设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "上下文包中的每个事实片段都有来源，冲突证据被标记，并且各部分未超出预留预算。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_d22575bd360464b0",
+    "knowledge_id": "prompt_context_design",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Prompt 上下文设计”的综合应用中，围绕“预期结果”作出判断时应坚持哪项要求？",
+    "options": [
+      "收集任务说明、必要用户上下文、证据片段和输出约束，并为每类材料标记来源与边界。",
+      "综合判断应落实：形成一份去重、带来源边界且结构分区清晰的上下文包。",
+      "无限累积完整历史、重复发送相同片段，或没有区分指令和引用文本。",
+      "上下文包中的每个事实片段都有来源，冲突证据被标记，并且各部分未超出预留预算。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“形成一份去重、带来源边界且结构分区清晰的上下文包。”。它满足“Prompt 上下文设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "形成一份去重、带来源边界且结构分区清晰的上下文包。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -773,8 +927,7 @@
       "explanation": "正确选项是“输出格式约束要求模型按照 JSON Schema、固定字段或约定的 Markdown 结构返回结果，使下游程序能够可靠解析。”。它满足“Prompt 输出格式约束”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -800,7 +953,6 @@
       "explanation": "正确选项是“字段应明确类型、是否必填、枚举范围和嵌套边界，并避免让同一个字段承担多种语义。”。它满足“Prompt 输出格式约束”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -827,8 +979,7 @@
       "explanation": "正确选项是“支持 Structured Outputs 的模型可以按 schema 约束生成，但应用仍要执行 Pydantic 等运行时校验，处理拒答、截断、缺字段和业务规则不满足等情况。”。它满足“Prompt 输出格式约束”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -854,12 +1005,37 @@
       "explanation": "正确选项是“格式正确不代表事实正确，来源和内容质量仍需单独审核。”。它满足“Prompt 输出格式约束”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "格式正确不代表事实正确，来源和内容质量仍需单独审核。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_9b442803c6998496",
+    "knowledge_id": "prompt_output_format",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Prompt 输出格式约束”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "输出格式约束要求模型按照 JSON Schema、固定字段或约定的 Markdown 结构返回结果，使下游程序能够可靠解析。",
+      "综合判断应落实：字段应明确类型、是否必填、枚举范围和嵌套边界，并避免让同一个字段承担多种语义。",
+      "支持 Structured Outputs 的模型可以按 schema 约束生成，但应用仍要执行 Pydantic 等运行时校验，处理拒答、截断、缺字段和业务规则不满足等情况。",
+      "格式正确不代表事实正确，来源和内容质量仍需单独审核。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“字段应明确类型、是否必填、枚举范围和嵌套边界，并避免让同一个字段承担多种语义。”。它满足“Prompt 输出格式约束”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "字段应明确类型、是否必填、枚举范围和嵌套边界，并避免让同一个字段承担多种语义。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -881,8 +1057,7 @@
       "explanation": "正确选项是“Prompt 评估需要先固定代表性输入、期望行为、评分规则和数据版本，再批量运行候选提示词。”。它满足“Prompt 效果评估”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -908,7 +1083,6 @@
       "explanation": "正确选项是“指标可以覆盖事实正确性、任务完成度、知识覆盖、格式合法率、拒答行为和延迟，并应同时报告分子、分母与失败 case ID。”。它满足“Prompt 效果评估”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -935,8 +1109,7 @@
       "explanation": "正确选项是“开发集用于调试，冻结验收集用于验证泛化，不能在看到验收答案后逐例修补同一版本。”。它满足“Prompt 效果评估”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -962,12 +1135,37 @@
       "explanation": "正确选项是“模型输出具有随机性时应重复采样或固定可控参数，并对失败案例按提示、数据、检索、模型和评审规则归因。”。它满足“Prompt 效果评估”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "模型输出具有随机性时应重复采样或固定可控参数，并对失败案例按提示、数据、检索、模型和评审规则归因。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_92964b17c086c876",
+    "knowledge_id": "prompt_evaluation",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Prompt 效果评估”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "Prompt 评估需要先固定代表性输入、期望行为、评分规则和数据版本，再批量运行候选提示词。",
+      "综合判断应落实：指标可以覆盖事实正确性、任务完成度、知识覆盖、格式合法率、拒答行为和延迟，并应同时报告分子、分母与失败 case ID。",
+      "开发集用于调试，冻结验收集用于验证泛化，不能在看到验收答案后逐例修补同一版本。",
+      "模型输出具有随机性时应重复采样或固定可控参数，并对失败案例按提示、数据、检索、模型和评审规则归因。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“指标可以覆盖事实正确性、任务完成度、知识覆盖、格式合法率、拒答行为和延迟，并应同时报告分子、分母与失败 case ID。”。它满足“Prompt 效果评估”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "指标可以覆盖事实正确性、任务完成度、知识覆盖、格式合法率、拒答行为和延迟，并应同时报告分子、分母与失败 case ID。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -989,8 +1187,7 @@
       "explanation": "正确选项是“大模型 API 调用需要显式配置服务地址、模型、消息或输入、最大输出长度以及超时策略。”。它满足“大模型 API 调用”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -1016,7 +1213,6 @@
       "explanation": "正确选项是“对照目标服务当前文档，列出服务地址、模型、输入、最大输出长度和超时等必需配置。”。它满足“大模型 API 调用”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -1043,8 +1239,7 @@
       "explanation": "正确选项是“对限流、服务不可用和网络超时可进行有上限的退避重试，对认证失败、无效参数等确定性错误应立即失败。”。它满足“大模型 API 调用”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -1070,12 +1265,37 @@
       "explanation": "正确选项是“调用后校验结束原因、结构化字段和业务约束。”。它满足“大模型 API 调用”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "调用后校验结束原因、结构化字段和业务约束。这些要求不构成某个具体 SDK、端点、模型名或响应字段的代码示例；实际实现必须依据目标服务当前文档。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_c21cd7f644e6aa07",
+    "knowledge_id": "llm_api_calling",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“大模型 API 调用”的综合应用中，围绕“操作步骤”作出判断时应坚持哪项要求？",
+    "options": [
+      "大模型 API 调用需要显式配置服务地址、模型、消息或输入、最大输出长度以及超时策略。",
+      "综合判断应落实：对照目标服务当前文档，列出服务地址、模型、输入、最大输出长度和超时等必需配置。",
+      "对限流、服务不可用和网络超时可进行有上限的退避重试，对认证失败、无效参数等确定性错误应立即失败。",
+      "形成一份基于目标服务当前文档和实际响应的调用验证记录，不包含自行补充的端点、模型名、错误码或响应字段。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“对照目标服务当前文档，列出服务地址、模型、输入、最大输出长度和超时等必需配置。”。它满足“大模型 API 调用”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "对照目标服务当前文档，列出服务地址、模型、输入、最大输出长度和超时等必需配置。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -1097,8 +1317,7 @@
       "explanation": "正确选项是“OpenAI 兼容接口通常复用模型列表、聊天生成、Responses 或 Embeddings 等请求形态，让应用通过配置切换兼容服务。”。它满足“OpenAI 兼容接口”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -1124,7 +1343,6 @@
       "explanation": "正确选项是“从目标服务当前文档记录其明确支持的端点形态、模型和鉴权配置。”。它满足“OpenAI 兼容接口”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -1151,8 +1369,7 @@
       "explanation": "正确选项是“应用应集中管理 base_url、api_key、chat model、review model 与 embedding model，启动时验证必需配置。”。它满足“OpenAI 兼容接口”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -1178,12 +1395,37 @@
       "explanation": "正确选项是“形成一份当前服务的兼容能力矩阵；矩阵只记录文档和实际调用能够确认的能力。”。它满足“OpenAI 兼容接口”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "形成一份当前服务的兼容能力矩阵；矩阵只记录文档和实际调用能够确认的能力。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_63804cdb30b2f5c6",
+    "knowledge_id": "openai_compatible_api",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“OpenAI 兼容接口”的综合应用中，围绕“操作步骤”作出判断时应坚持哪项要求？",
+    "options": [
+      "OpenAI 兼容接口通常复用模型列表、聊天生成、Responses 或 Embeddings 等请求形态，让应用通过配置切换兼容服务。",
+      "综合判断应落实：从目标服务当前文档记录其明确支持的端点形态、模型和鉴权配置。",
+      "真实调用后应使用本地 Pydantic 契约检查响应。",
+      "配置检查、真实调用标记、本地契约校验和兼容能力矩阵均可追溯到目标服务当前文档或实际响应。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“从目标服务当前文档记录其明确支持的端点形态、模型和鉴权配置。”。它满足“OpenAI 兼容接口”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "从目标服务当前文档记录其明确支持的端点形态、模型和鉴权配置。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -1205,8 +1447,7 @@
       "explanation": "正确选项是“模型上下文窗口同时容纳系统指令、对话历史、用户上下文、检索片段、工具结果和待生成输出，因此不能把标称窗口全部用于输入。”。它满足“Token 与上下文预算”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -1232,7 +1473,6 @@
       "explanation": "正确选项是“预算规划应先为输出和工具交互预留空间，再按任务价值给证据片段分配额度。”。它满足“Token 与上下文预算”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -1259,8 +1499,7 @@
       "explanation": "正确选项是“超出预算时优先删除重复和低相关材料，压缩历史为带来源 ID 的摘要，或把复杂任务拆成检索、生成、审核多个阶段。”。它满足“Token 与上下文预算”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -1286,12 +1525,37 @@
       "explanation": "正确选项是“截断必须在语义边界进行并保留引用标识，不能从字符串尾部任意裁切导致事实和限定条件分离。”。它满足“Token 与上下文预算”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "截断必须在语义边界进行并保留引用标识，不能从字符串尾部任意裁切导致事实和限定条件分离。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_0a8ff999aa092bff",
+    "knowledge_id": "token_context_budget",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Token 与上下文预算”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "模型上下文窗口同时容纳系统指令、对话历史、用户上下文、检索片段、工具结果和待生成输出，因此不能把标称窗口全部用于输入。",
+      "综合判断应落实：预算规划应先为输出和工具交互预留空间，再按任务价值给证据片段分配额度。",
+      "超出预算时优先删除重复和低相关材料，压缩历史为带来源 ID 的摘要，或把复杂任务拆成检索、生成、审核多个阶段。",
+      "截断必须在语义边界进行并保留引用标识，不能从字符串尾部任意裁切导致事实和限定条件分离。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“预算规划应先为输出和工具交互预留空间，再按任务价值给证据片段分配额度。”。它满足“Token 与上下文预算”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "预算规划应先为输出和工具交互预留空间，再按任务价值给证据片段分配额度。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -1313,8 +1577,7 @@
       "explanation": "正确选项是“流式响应让服务端在完整结果生成前逐步发送增量内容或状态，从而减少用户感知等待时间。”。它满足“流式响应与进度反馈”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -1340,7 +1603,6 @@
       "explanation": "正确选项是“Server-Sent Events 使用持久 HTTP 连接，以 text/event-stream 格式从服务端单向推送命名事件、数据、ID 和重试建议，适合任务进度与 Agent 状态。”。它满足“流式响应与进度反馈”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -1367,8 +1629,7 @@
       "explanation": "正确选项是“实现时要发送心跳或可观察状态，区分中间事件、错误事件和最终完成事件，并在断开后关闭服务端资源。”。它满足“流式响应与进度反馈”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -1394,12 +1655,37 @@
       "explanation": "正确选项是“前端不能把连接关闭自动解释为成功，而要依据终态事件或后续任务查询确认结果。”。它满足“流式响应与进度反馈”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "前端不能把连接关闭自动解释为成功，而要依据终态事件或后续任务查询确认结果。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_314b3b5f41f19386",
+    "knowledge_id": "streaming_responses",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“流式响应与进度反馈”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "流式响应让服务端在完整结果生成前逐步发送增量内容或状态，从而减少用户感知等待时间。",
+      "综合判断应落实：Server-Sent Events 使用持久 HTTP 连接，以 text/event-stream 格式从服务端单向推送命名事件、数据、ID 和重试建议，适合任务进度与 Agent 状态。",
+      "实现时要发送心跳或可观察状态，区分中间事件、错误事件和最终完成事件，并在断开后关闭服务端资源。",
+      "前端不能把连接关闭自动解释为成功，而要依据终态事件或后续任务查询确认结果。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“Server-Sent Events 使用持久 HTTP 连接，以 text/event-stream 格式从服务端单向推送命名事件、数据、ID 和重试建议，适合任务进度与 Agent 状态。”。它满足“流式响应与进度反馈”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "Server-Sent Events 使用持久 HTTP 连接，以 text/event-stream 格式从服务端单向推送命名事件、数据、ID 和重试建议，适合任务进度与 Agent 状态。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -1421,8 +1707,7 @@
       "explanation": "正确选项是“函数调用让模型输出工具名称和结构化参数，由应用决定是否执行检索、计算、数据库查询等外部能力。”。它满足“函数调用与工具使用”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -1448,7 +1733,6 @@
       "explanation": "正确选项是“每个工具应使用窄而清晰的 schema，描述参数类型、必填条件和作用范围；服务端必须再次验证参数、权限和资源归属，不能因为参数来自模型就直接信任。”。它满足“函数调用与工具使用”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -1475,8 +1759,7 @@
       "explanation": "正确选项是“工具结果以明确角色和调用 ID 回传，使模型能够继续推理。”。它满足“函数调用与工具使用”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -1502,12 +1785,37 @@
       "explanation": "正确选项是“执行失败、超时或返回空结果时，应提供受控错误并限制循环次数，避免 Agent 无限重复调用或越权访问。”。它满足“函数调用与工具使用”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "执行失败、超时或返回空结果时，应提供受控错误并限制循环次数，避免 Agent 无限重复调用或越权访问。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_624591394331aeeb",
+    "knowledge_id": "function_calling_tools",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“函数调用与工具使用”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "函数调用让模型输出工具名称和结构化参数，由应用决定是否执行检索、计算、数据库查询等外部能力。",
+      "综合判断应落实：每个工具应使用窄而清晰的 schema，描述参数类型、必填条件和作用范围；服务端必须再次验证参数、权限和资源归属，不能因为参数来自模型就直接信任。",
+      "工具结果以明确角色和调用 ID 回传，使模型能够继续推理。",
+      "执行失败、超时或返回空结果时，应提供受控错误并限制循环次数，避免 Agent 无限重复调用或越权访问。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“每个工具应使用窄而清晰的 schema，描述参数类型、必填条件和作用范围；服务端必须再次验证参数、权限和资源归属，不能因为参数来自模型就直接信任。”。它满足“函数调用与工具使用”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "每个工具应使用窄而清晰的 schema，描述参数类型、必填条件和作用范围；服务端必须再次验证参数、权限和资源归属，不能因为参数来自模型就直接信任。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -1529,8 +1837,7 @@
       "explanation": "正确选项是“结构化输出校验用于确认模型返回字段齐全、类型正确、枚举合法，并满足字段之间的业务约束。”。它满足“结构化输出校验”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -1556,7 +1863,6 @@
       "explanation": "正确选项是“JSON 能被解析只是第一层，应用还需通过 Pydantic 模型执行长度、范围、默认值和嵌套结构检查，并拒绝未知或不安全的数据形态。”。它满足“结构化输出校验”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -1583,8 +1889,7 @@
       "explanation": "正确选项是“校验失败后可根据错误类型进行有限重试：可修复格式问题可以把精简错误反馈给模型，缺少证据或权限问题则不应靠重试伪造结果。”。它满足“结构化输出校验”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -1610,12 +1915,37 @@
       "explanation": "正确选项是“连续失败要转为明确失败、降级输出或人工复核，同时记录错误类别而非完整敏感载荷。”。它满足“结构化输出校验”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "连续失败要转为明确失败、降级输出或人工复核，同时记录错误类别而非完整敏感载荷。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_2e88125b72419178",
+    "knowledge_id": "structured_output_validation",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“结构化输出校验”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "结构化输出校验用于确认模型返回字段齐全、类型正确、枚举合法，并满足字段之间的业务约束。",
+      "综合判断应落实：JSON 能被解析只是第一层，应用还需通过 Pydantic 模型执行长度、范围、默认值和嵌套结构检查，并拒绝未知或不安全的数据形态。",
+      "校验失败后可根据错误类型进行有限重试：可修复格式问题可以把精简错误反馈给模型，缺少证据或权限问题则不应靠重试伪造结果。",
+      "连续失败要转为明确失败、降级输出或人工复核，同时记录错误类别而非完整敏感载荷。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“JSON 能被解析只是第一层，应用还需通过 Pydantic 模型执行长度、范围、默认值和嵌套结构检查，并拒绝未知或不安全的数据形态。”。它满足“结构化输出校验”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "JSON 能被解析只是第一层，应用还需通过 Pydantic 模型执行长度、范围、默认值和嵌套结构检查，并拒绝未知或不安全的数据形态。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -1637,8 +1967,7 @@
       "explanation": "正确选项是“Embedding 模型把文本映射为固定维度的数值向量，相关文本通常在该向量空间中距离更近。”。它满足“Embedding 基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -1664,7 +1993,6 @@
       "explanation": "正确选项是“建库向量和查询向量必须来自同一模型与兼容预处理流程，否则维度可能不一致，或即使维度相同也失去可比性。”。它满足“Embedding 基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -1691,8 +2019,7 @@
       "explanation": "正确选项是“应用应记录模型名、维度和索引版本，并对空文本、批处理数量、限流和异常响应进行校验。”。它满足“Embedding 基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -1718,12 +2045,37 @@
       "explanation": "正确选项是“Embedding 只提供相似性信号，不证明事实正确；检索结果还要经过领域过滤、来源校验和任务策略排序。”。它满足“Embedding 基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "Embedding 只提供相似性信号，不证明事实正确；检索结果还要经过领域过滤、来源校验和任务策略排序。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_70878c24676f5179",
+    "knowledge_id": "embedding_basics",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Embedding 基础”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "Embedding 模型把文本映射为固定维度的数值向量，相关文本通常在该向量空间中距离更近。",
+      "综合判断应落实：建库向量和查询向量必须来自同一模型与兼容预处理流程，否则维度可能不一致，或即使维度相同也失去可比性。",
+      "应用应记录模型名、维度和索引版本，并对空文本、批处理数量、限流和异常响应进行校验。",
+      "Embedding 只提供相似性信号，不证明事实正确；检索结果还要经过领域过滤、来源校验和任务策略排序。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“建库向量和查询向量必须来自同一模型与兼容预处理流程，否则维度可能不一致，或即使维度相同也失去可比性。”。它满足“Embedding 基础”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "建库向量和查询向量必须来自同一模型与兼容预处理流程，否则维度可能不一致，或即使维度相同也失去可比性。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -1745,8 +2097,7 @@
       "explanation": "正确选项是“向量检索使用余弦距离、内积或欧氏距离比较查询与文档向量，并按距离返回 Top-K 候选。”。它满足“向量相似度检索”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -1772,7 +2123,6 @@
       "explanation": "正确选项是“距离含义取决于 collection 的度量配置，使用 cosine distance 时可以在确认范围后换算为 similarity = 1 - distance，但不能把不同度量的值混用。”。它满足“向量相似度检索”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -1799,8 +2149,7 @@
       "explanation": "正确选项是“候选数量过小会降低召回，过大则增加排序和上下文成本。”。它满足“向量相似度检索”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -1826,12 +2175,37 @@
       "explanation": "正确选项是“最终结果应结合 domain_code 等元数据过滤、显式知识 ID、关系扩展、难度和来源完整性，避免语义相似但跨领域或缺乏证据的片段进入生成上下文。”。它满足“向量相似度检索”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "最终结果应结合 domain_code 等元数据过滤、显式知识 ID、关系扩展、难度和来源完整性，避免语义相似但跨领域或缺乏证据的片段进入生成上下文。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_0cc4f19940835d09",
+    "knowledge_id": "vector_similarity",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“向量相似度检索”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "向量检索使用余弦距离、内积或欧氏距离比较查询与文档向量，并按距离返回 Top-K 候选。",
+      "综合判断应落实：距离含义取决于 collection 的度量配置，使用 cosine distance 时可以在确认范围后换算为 similarity = 1 - distance，但不能把不同度量的值混用。",
+      "候选数量过小会降低召回，过大则增加排序和上下文成本。",
+      "最终结果应结合 domain_code 等元数据过滤、显式知识 ID、关系扩展、难度和来源完整性，避免语义相似但跨领域或缺乏证据的片段进入生成上下文。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“距离含义取决于 collection 的度量配置，使用 cosine distance 时可以在确认范围后换算为 similarity = 1 - distance，但不能把不同度量的值混用。”。它满足“向量相似度检索”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "距离含义取决于 collection 的度量配置，使用 cosine distance 时可以在确认范围后换算为 similarity = 1 - distance，但不能把不同度量的值混用。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -1853,8 +2227,7 @@
       "explanation": "正确选项是“检索增强生成（RAG）先把可信文档解析、清洗并切成可检索片段，再使用 embedding 建立向量索引。”。它满足“RAG 流程总览”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -1880,7 +2253,6 @@
       "explanation": "正确选项是“运行时将用户目标与任务上下文构造成查询，通过显式 ID、知识关系或语义相似度召回候选，经过过滤、去重和排序后，把有限证据连同来源交给生成模型。”。它满足“RAG 流程总览”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -1907,8 +2279,7 @@
       "explanation": "正确选项是“生成结果必须保留片段或知识 ID，审核环节再逐条核对事实与来源。”。它满足“RAG 流程总览”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -1934,12 +2305,37 @@
       "explanation": "正确选项是“RAG 能降低脱离资料的回答，但不会自动消除幻觉；数据质量、召回覆盖、上下文构造和审核缺一不可。”。它满足“RAG 流程总览”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "RAG 能降低脱离资料的回答，但不会自动消除幻觉；数据质量、召回覆盖、上下文构造和审核缺一不可。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_5ecb3e8efb8367af",
+    "knowledge_id": "rag_pipeline_overview",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“RAG 流程总览”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "检索增强生成（RAG）先把可信文档解析、清洗并切成可检索片段，再使用 embedding 建立向量索引。",
+      "综合判断应落实：运行时将用户目标与任务上下文构造成查询，通过显式 ID、知识关系或语义相似度召回候选，经过过滤、去重和排序后，把有限证据连同来源交给生成模型。",
+      "生成结果必须保留片段或知识 ID，审核环节再逐条核对事实与来源。",
+      "RAG 能降低脱离资料的回答，但不会自动消除幻觉；数据质量、召回覆盖、上下文构造和审核缺一不可。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“运行时将用户目标与任务上下文构造成查询，通过显式 ID、知识关系或语义相似度召回候选，经过过滤、去重和排序后，把有限证据连同来源交给生成模型。”。它满足“RAG 流程总览”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "运行时将用户目标与任务上下文构造成查询，通过显式 ID、知识关系或语义相似度召回候选，经过过滤、去重和排序后，把有限证据连同来源交给生成模型。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -1961,8 +2357,7 @@
       "explanation": "正确选项是“文档切片要同时平衡语义完整性、召回粒度、向量表达质量和上下文成本。”。它满足“RAG 文档切片策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -1988,7 +2383,6 @@
       "explanation": "正确选项是“Markdown 文档应识别标题层级，让正文继承最近的有效标题上下文。”。它满足“RAG 文档切片策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -2015,8 +2409,7 @@
       "explanation": "正确选项是“相邻片段保留适量重叠，可以减少定义和结论恰好落在边界两侧的问题。”。它满足“RAG 文档切片策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -2042,12 +2435,37 @@
       "explanation": "正确选项是“每个片段使用稳定的 `{knowledge_id}::chunk::{index}` 标识，并保存 domain_code、knowledge_id、名称、分类、难度、标签、来源、许可、切片位置和 embedding 模型。”。它满足“RAG 文档切片策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "每个片段使用稳定的 `{knowledge_id}::chunk::{index}` 标识，并保存 domain_code、knowledge_id、名称、分类、难度、标签、来源、许可、切片位置和 embedding 模型。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_5b32b1b530371118",
+    "knowledge_id": "rag_chunking",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“RAG 文档切片策略”的综合应用中，围绕“标题和段落感知”作出判断时应坚持哪项要求？",
+    "options": [
+      "文档切片要同时平衡语义完整性、召回粒度、向量表达质量和上下文成本。",
+      "综合判断应落实：Markdown 文档应识别标题层级，让正文继承最近的有效标题上下文。",
+      "每个片段使用稳定的 `{knowledge_id}::chunk::{index}` 标识，并保存 domain_code、knowledge_id、名称、分类、难度、标签、来源、许可、切片位置和 embedding 模型。",
+      "切片单元测试至少覆盖标题继承、短段落合并、超长句段拆分、空文本、中文标点、稳定 ID 和重叠边界。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“Markdown 文档应识别标题层级，让正文继承最近的有效标题上下文。”。它满足“RAG 文档切片策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "Markdown 文档应识别标题层级，让正文继承最近的有效标题上下文。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -2069,8 +2487,7 @@
       "explanation": "正确选项是“元数据过滤在向量相似度之外限定候选范围，例如按 domain_code、知识 ID、分类、难度或标签筛选。”。它满足“检索元数据过滤”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -2096,7 +2513,6 @@
       "explanation": "正确选项是“过滤条件应使用建库时已保存且类型稳定的 metadata 字段，并在查询前确认 collection 支持对应操作。”。它满足“检索元数据过滤”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -2123,8 +2539,7 @@
       "explanation": "正确选项是“领域过滤属于正确性边界，不能仅依赖查询文本暗示领域；个性化难度则既可以先过滤，也可以保留更宽候选后参与排序。”。它满足“检索元数据过滤”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -2150,12 +2565,37 @@
       "explanation": "正确选项是“过滤过严会造成空结果，因此系统应返回明确 warning 和缺失知识 ID，而不是自动移除关键条件或跨领域补齐。”。它满足“检索元数据过滤”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "过滤过严会造成空结果，因此系统应返回明确 warning 和缺失知识 ID，而不是自动移除关键条件或跨领域补齐。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_cf2b7b9e82b5a40f",
+    "knowledge_id": "metadata_filtering",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“检索元数据过滤”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "元数据过滤在向量相似度之外限定候选范围，例如按 domain_code、知识 ID、分类、难度或标签筛选。",
+      "综合判断应落实：过滤条件应使用建库时已保存且类型稳定的 metadata 字段，并在查询前确认 collection 支持对应操作。",
+      "领域过滤属于正确性边界，不能仅依赖查询文本暗示领域；个性化难度则既可以先过滤，也可以保留更宽候选后参与排序。",
+      "过滤过严会造成空结果，因此系统应返回明确 warning 和缺失知识 ID，而不是自动移除关键条件或跨领域补齐。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“过滤条件应使用建库时已保存且类型稳定的 metadata 字段，并在查询前确认 collection 支持对应操作。”。它满足“检索元数据过滤”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "过滤条件应使用建库时已保存且类型稳定的 metadata 字段，并在查询前确认 collection 支持对应操作。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -2177,8 +2617,7 @@
       "explanation": "正确选项是“重排在初步召回后，使用更丰富的任务信号重新评估候选片段。”。它满足“检索重排”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -2204,7 +2643,6 @@
       "explanation": "正确选项是“简单实现可以组合召回路径、向量相似度、目标难度和来源质量，并使用稳定 tie-break 保证相同输入得到相同顺序；更复杂的 Cross-Encoder 或 LLM reranker 虽可能提升相关性，也会增加延迟、成本和不可重复性。”。它满足“检索重排”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -2231,8 +2669,7 @@
       "explanation": "正确选项是“MVP 应先用开发评测集验证确定性排序，分别报告 semantic-only 与 full 策略的结果。”。它满足“检索重排”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -2258,12 +2695,37 @@
       "explanation": "正确选项是“显式 priority 和 prerequisite 知识需要预留覆盖位置，不能在普通重排中因语义分数略低而静默消失。”。它满足“检索重排”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "显式 priority 和 prerequisite 知识需要预留覆盖位置，不能在普通重排中因语义分数略低而静默消失。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_e4ec945c2bb1ce57",
+    "knowledge_id": "retrieval_reranking",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“检索重排”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "重排在初步召回后，使用更丰富的任务信号重新评估候选片段。",
+      "综合判断应落实：简单实现可以组合召回路径、向量相似度、目标难度和来源质量，并使用稳定 tie-break 保证相同输入得到相同顺序；更复杂的 Cross-Encoder 或 LLM reranker 虽可能提升相关性，也会增加延迟、成本和不可重复性。",
+      "MVP 应先用开发评测集验证确定性排序，分别报告 semantic-only 与 full 策略的结果。",
+      "显式 priority 和 prerequisite 知识需要预留覆盖位置，不能在普通重排中因语义分数略低而静默消失。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“简单实现可以组合召回路径、向量相似度、目标难度和来源质量，并使用稳定 tie-break 保证相同输入得到相同顺序；更复杂的 Cross-Encoder 或 LLM reranker 虽可能提升相关性，也会增加延迟、成本和不可重复性。”。它满足“检索重排”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "简单实现可以组合召回路径、向量相似度、目标难度和来源质量，并使用稳定 tie-break 保证相同输入得到相同顺序；更复杂的 Cross-Encoder 或 LLM reranker 虽可能提升相关性，也会增加延迟、成本和不可重复性。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -2285,8 +2747,7 @@
       "explanation": "正确选项是“引用与来源追溯要求生成内容中的关键事实能够定位到实际使用的证据，而不是只在文末附上一组无对应关系的链接。”。它满足“引用与来源可追溯”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -2312,7 +2773,6 @@
       "explanation": "正确选项是“证据记录应包含稳定标识、来源标题、位置或片段、URL、获取时间以及必要的许可信息，生成结果再声明哪些结论使用了哪些证据。”。它满足“引用与来源可追溯”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -2339,8 +2799,7 @@
       "explanation": "正确选项是“审核时要检查来源是否真实存在、引用范围是否支持对应结论、版本是否过期，以及转换和切片过程是否改变原意。”。它满足“引用与来源可追溯”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -2366,12 +2825,37 @@
       "explanation": "正确选项是“采用统一的来源实体和派生关系，可以从结果反查检索片段与原始文档，也能在来源更新时识别需要复核的内容。”。它满足“引用与来源可追溯”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "采用统一的来源实体和派生关系，可以从结果反查检索片段与原始文档，也能在来源更新时识别需要复核的内容。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_c7f4c55f8a9e9b6d",
+    "knowledge_id": "citation_traceability",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“引用与来源可追溯”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "引用与来源追溯要求生成内容中的关键事实能够定位到实际使用的证据，而不是只在文末附上一组无对应关系的链接。",
+      "综合判断应落实：证据记录应包含稳定标识、来源标题、位置或片段、URL、获取时间以及必要的许可信息，生成结果再声明哪些结论使用了哪些证据。",
+      "审核时要检查来源是否真实存在、引用范围是否支持对应结论、版本是否过期，以及转换和切片过程是否改变原意。",
+      "采用统一的来源实体和派生关系，可以从结果反查检索片段与原始文档，也能在来源更新时识别需要复核的内容。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“证据记录应包含稳定标识、来源标题、位置或片段、URL、获取时间以及必要的许可信息，生成结果再声明哪些结论使用了哪些证据。”。它满足“引用与来源可追溯”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "证据记录应包含稳定标识、来源标题、位置或片段、URL、获取时间以及必要的许可信息，生成结果再声明哪些结论使用了哪些证据。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -2393,8 +2877,7 @@
       "explanation": "正确选项是“生成式 AI 的事实错误不能只靠一条禁止编造的提示消除。”。它满足“幻觉防护策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -2420,7 +2903,6 @@
       "explanation": "正确选项是“有效防护要覆盖数据、检索、生成、验证和发布：限定可信来源并保留引用；要求模型在证据不足时说明不确定性；对结构、权限和高风险结论执行确定性校验；使用代表性案例测量事实错误；对高影响或争议结果保留人工监督。”。它满足“幻觉防护策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -2447,8 +2929,7 @@
       "explanation": "正确选项是“评审模型本身也可能出错，因此不能把模型评分当作绝对真值，应使用人工标注样例校准规则并持续抽查。”。它满足“幻觉防护策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -2474,12 +2955,37 @@
       "explanation": "正确选项是“风险措施还应与使用场景和后果相匹配，避免用同一阈值处理所有任务。”。它满足“幻觉防护策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "风险措施还应与使用场景和后果相匹配，避免用同一阈值处理所有任务。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_25b9af0cc9786705",
+    "knowledge_id": "hallucination_guardrails",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“幻觉防护策略”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "生成式 AI 的事实错误不能只靠一条禁止编造的提示消除。",
+      "综合判断应落实：有效防护要覆盖数据、检索、生成、验证和发布：限定可信来源并保留引用；要求模型在证据不足时说明不确定性；对结构、权限和高风险结论执行确定性校验；使用代表性案例测量事实错误；对高影响或争议结果保留人工监督。",
+      "评审模型本身也可能出错，因此不能把模型评分当作绝对真值，应使用人工标注样例校准规则并持续抽查。",
+      "风险措施还应与使用场景和后果相匹配，避免用同一阈值处理所有任务。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“有效防护要覆盖数据、检索、生成、验证和发布：限定可信来源并保留引用；要求模型在证据不足时说明不确定性；对结构、权限和高风险结论执行确定性校验；使用代表性案例测量事实错误；对高影响或争议结果保留人工监督。”。它满足“幻觉防护策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "有效防护要覆盖数据、检索、生成、验证和发布：限定可信来源并保留引用；要求模型在证据不足时说明不确定性；对结构、权限和高风险结论执行确定性校验；使用代表性案例测量事实错误；对高影响或争议结果保留人工监督。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -2501,8 +3007,7 @@
       "explanation": "正确选项是“知识库导入应先解析并规范化文本，再校验稳定文档标识、正文、元数据和来源，拒绝重复标识、空内容以及无法解释的字段。”。它满足“知识库导入流程”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -2528,7 +3033,6 @@
       "explanation": "正确选项是“写入向量库时，文档、元数据、ID 和 embedding 必须保持一一对应；更新已有内容要同步替换受影响片段和向量，删除内容则清理孤立记录。”。它满足“知识库导入流程”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -2555,8 +3059,7 @@
       "explanation": "正确选项是“批量操作需要检查输入数组长度和模型维度，成功后再记录索引版本与条目数量。”。它满足“知识库导入流程”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -2582,12 +3085,37 @@
       "explanation": "正确选项是“导入流程应具备幂等性和机器可读摘要，使同一数据版本重复执行不会产生重复 chunk，并能通过条数核对和代表性查询验证索引可用。”。它满足“知识库导入流程”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "导入流程应具备幂等性和机器可读摘要，使同一数据版本重复执行不会产生重复 chunk，并能通过条数核对和代表性查询验证索引可用。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_9e8ba886d9dede82",
+    "knowledge_id": "knowledge_base_ingestion",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“知识库导入流程”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "知识库导入应先解析并规范化文本，再校验稳定文档标识、正文、元数据和来源，拒绝重复标识、空内容以及无法解释的字段。",
+      "综合判断应落实：写入向量库时，文档、元数据、ID 和 embedding 必须保持一一对应；更新已有内容要同步替换受影响片段和向量，删除内容则清理孤立记录。",
+      "批量操作需要检查输入数组长度和模型维度，成功后再记录索引版本与条目数量。",
+      "导入流程应具备幂等性和机器可读摘要，使同一数据版本重复执行不会产生重复 chunk，并能通过条数核对和代表性查询验证索引可用。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“写入向量库时，文档、元数据、ID 和 embedding 必须保持一一对应；更新已有内容要同步替换受影响片段和向量，删除内容则清理孤立记录。”。它满足“知识库导入流程”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "写入向量库时，文档、元数据、ID 和 embedding 必须保持一一对应；更新已有内容要同步替换受影响片段和向量，删除内容则清理孤立记录。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -2609,8 +3137,7 @@
       "explanation": "正确选项是“文档解析要尽可能保留标题层级、段落、列表、表格、代码块和页码等结构，并移除重复页眉页脚、导航、乱码和不可见控制字符。”。它满足“文档解析与清洗”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -2636,7 +3163,6 @@
       "explanation": "正确选项是“扫描 PDF 可能需要 OCR，表格或多栏版式不能简单按阅读流拼接，否则字段和值会错位。”。它满足“文档解析与清洗”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -2663,8 +3189,7 @@
       "explanation": "正确选项是“清洗后应保留原文定位信息和来源元数据，便于引用回查。”。它满足“文档解析与清洗”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -2690,12 +3215,37 @@
       "explanation": "正确选项是“解析结果为空、字符异常或重复率过高时应拒绝入库并报告原因；错误清洗会同时污染 embedding、召回和最终事实审核。”。它满足“文档解析与清洗”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "解析结果为空、字符异常或重复率过高时应拒绝入库并报告原因；错误清洗会同时污染 embedding、召回和最终事实审核。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_4a232eed08d56735",
+    "knowledge_id": "document_parsing",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“文档解析与清洗”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "文档解析要尽可能保留标题层级、段落、列表、表格、代码块和页码等结构，并移除重复页眉页脚、导航、乱码和不可见控制字符。",
+      "综合判断应落实：扫描 PDF 可能需要 OCR，表格或多栏版式不能简单按阅读流拼接，否则字段和值会错位。",
+      "清洗后应保留原文定位信息和来源元数据，便于引用回查。",
+      "解析结果为空、字符异常或重复率过高时应拒绝入库并报告原因；错误清洗会同时污染 embedding、召回和最终事实审核。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“扫描 PDF 可能需要 OCR，表格或多栏版式不能简单按阅读流拼接，否则字段和值会错位。”。它满足“文档解析与清洗”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "扫描 PDF 可能需要 OCR，表格或多栏版式不能简单按阅读流拼接，否则字段和值会错位。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -2717,8 +3267,7 @@
       "explanation": "正确选项是“FastAPI 接口应按业务资源组织 APIRouter 和路径，使用类型标注与 Pydantic 模型描述请求参数、请求体和响应。”。它满足“FastAPI 接口设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -2744,7 +3293,6 @@
       "explanation": "正确选项是“依赖注入适合提供数据库会话、认证上下文和共享服务，业务逻辑则放在 service 层，避免路由函数承担完整流程。”。它满足“FastAPI 接口设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -2771,8 +3319,7 @@
       "explanation": "正确选项是“公共响应可以包含 schema_version、request_id，以及 data 或 error；HTTP 状态码与错误对象应保持一致。”。它满足“FastAPI 接口设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -2798,12 +3345,37 @@
       "explanation": "正确选项是“修改端点字段时必须同步客户端类型，并为成功、空结果、校验失败和服务异常添加聚焦测试。”。它满足“FastAPI 接口设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "修改端点字段时必须同步客户端类型，并为成功、空结果、校验失败和服务异常添加聚焦测试。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_9722fe8601ac7361",
+    "knowledge_id": "fastapi_endpoint_design",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“FastAPI 接口设计”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "FastAPI 接口应按业务资源组织 APIRouter 和路径，使用类型标注与 Pydantic 模型描述请求参数、请求体和响应。",
+      "综合判断应落实：依赖注入适合提供数据库会话、认证上下文和共享服务，业务逻辑则放在 service 层，避免路由函数承担完整流程。",
+      "公共响应可以包含 schema_version、request_id，以及 data 或 error；HTTP 状态码与错误对象应保持一致。",
+      "修改端点字段时必须同步客户端类型，并为成功、空结果、校验失败和服务异常添加聚焦测试。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“依赖注入适合提供数据库会话、认证上下文和共享服务，业务逻辑则放在 service 层，避免路由函数承担完整流程。”。它满足“FastAPI 接口设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "依赖注入适合提供数据库会话、认证上下文和共享服务，业务逻辑则放在 service 层，避免路由函数承担完整流程。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -2825,8 +3397,7 @@
       "explanation": "正确选项是“Pydantic BaseModel 用类型标注定义请求、响应和 Agent 内部结构，并在构造模型时解析和验证输入。”。它满足“Pydantic 数据校验”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -2852,7 +3423,6 @@
       "explanation": "正确选项是“Field 可声明范围、长度、默认值和描述，field_validator 与 model_validator 处理字段或跨字段规则。”。它满足“Pydantic 数据校验”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -2879,8 +3449,7 @@
       "explanation": "正确选项是“对稳定公共契约，应明确 extra 字段策略、枚举、可空性和序列化格式，并通过 JSON Schema 与示例测试保持文档一致。”。它满足“Pydantic 数据校验”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -2906,12 +3475,37 @@
       "explanation": "正确选项是“Pydantic 能保证结构合法，但不能自行判断知识事实是否正确，因此契约校验与来源审核必须分开。”。它满足“Pydantic 数据校验”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "Pydantic 能保证结构合法，但不能自行判断知识事实是否正确，因此契约校验与来源审核必须分开。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_18fb34e4272c97b6",
+    "knowledge_id": "pydantic_schema_validation",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Pydantic 数据校验”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "Pydantic BaseModel 用类型标注定义请求、响应和 Agent 内部结构，并在构造模型时解析和验证输入。",
+      "综合判断应落实：Field 可声明范围、长度、默认值和描述，field_validator 与 model_validator 处理字段或跨字段规则。",
+      "对稳定公共契约，应明确 extra 字段策略、枚举、可空性和序列化格式，并通过 JSON Schema 与示例测试保持文档一致。",
+      "Pydantic 能保证结构合法，但不能自行判断知识事实是否正确，因此契约校验与来源审核必须分开。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“Field 可声明范围、长度、默认值和描述，field_validator 与 model_validator 处理字段或跨字段规则。”。它满足“Pydantic 数据校验”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "Field 可声明范围、长度、默认值和描述，field_validator 与 model_validator 处理字段或跨字段规则。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -2933,8 +3527,7 @@
       "explanation": "正确选项是“SQLAlchemy Declarative 模型使用 mapped_column 定义列、类型、默认值、索引和外键，并通过 Session 管理对象生命周期和事务。”。它满足“SQLAlchemy 模型设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -2960,7 +3553,6 @@
       "explanation": "正确选项是“稳定业务 ID 应设置唯一约束，关联关系使用数据库外键保持引用完整性，经常过滤的 domain_code、public_id 和状态字段需要索引。”。它满足“SQLAlchemy 模型设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -2987,8 +3579,7 @@
       "explanation": "正确选项是“JSON 列适合整体读写的灵活结构，但需要关系查询、唯一性或统计的关键字段应保留为普通列。”。它满足“SQLAlchemy 模型设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -3014,12 +3605,37 @@
       "explanation": "正确选项是“事务中应先 flush 获取主键，所有相关写入成功后再 commit，异常时 rollback 并避免返回未持久化状态。”。它满足“SQLAlchemy 模型设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "事务中应先 flush 获取主键，所有相关写入成功后再 commit，异常时 rollback 并避免返回未持久化状态。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_3888709cce879355",
+    "knowledge_id": "sqlalchemy_modeling",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“SQLAlchemy 模型设计”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "SQLAlchemy Declarative 模型使用 mapped_column 定义列、类型、默认值、索引和外键，并通过 Session 管理对象生命周期和事务。",
+      "综合判断应落实：稳定业务 ID 应设置唯一约束，关联关系使用数据库外键保持引用完整性，经常过滤的 domain_code、public_id 和状态字段需要索引。",
+      "JSON 列适合整体读写的灵活结构，但需要关系查询、唯一性或统计的关键字段应保留为普通列。",
+      "事务中应先 flush 获取主键，所有相关写入成功后再 commit，异常时 rollback 并避免返回未持久化状态。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“稳定业务 ID 应设置唯一约束，关联关系使用数据库外键保持引用完整性，经常过滤的 domain_code、public_id 和状态字段需要索引。”。它满足“SQLAlchemy 模型设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "稳定业务 ID 应设置唯一约束，关联关系使用数据库外键保持引用完整性，经常过滤的 domain_code、public_id 和状态字段需要索引。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -3041,8 +3657,7 @@
       "explanation": "正确选项是“Alembic 使用有序 revision 脚本记录数据库 schema 变化，并在 alembic_version 中保存当前版本。”。它满足“Alembic 数据库迁移”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -3068,7 +3683,6 @@
       "explanation": "正确选项是“自动生成迁移只能作为初稿，开发者仍需检查列类型、默认值、约束、索引和数据迁移逻辑。”。它满足“Alembic 数据库迁移”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -3095,8 +3709,7 @@
       "explanation": "正确选项是“迁移应小步、可审查，并在空数据库升级和已有数据升级两种路径上测试；生产或演示数据变更前应具备备份与回退策略。”。它满足“Alembic 数据库迁移”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -3122,12 +3735,37 @@
       "explanation": "正确选项是“SQLAlchemy 模型修改与迁移脚本必须一起提交，不能只改 ORM 后依赖 create_all 修补正式数据库。”。它满足“Alembic 数据库迁移”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "SQLAlchemy 模型修改与迁移脚本必须一起提交，不能只改 ORM 后依赖 create_all 修补正式数据库。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_8b6b4795587fb1fa",
+    "knowledge_id": "alembic_migrations",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Alembic 数据库迁移”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "Alembic 使用有序 revision 脚本记录数据库 schema 变化，并在 alembic_version 中保存当前版本。",
+      "综合判断应落实：自动生成迁移只能作为初稿，开发者仍需检查列类型、默认值、约束、索引和数据迁移逻辑。",
+      "迁移应小步、可审查，并在空数据库升级和已有数据升级两种路径上测试；生产或演示数据变更前应具备备份与回退策略。",
+      "SQLAlchemy 模型修改与迁移脚本必须一起提交，不能只改 ORM 后依赖 create_all 修补正式数据库。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“自动生成迁移只能作为初稿，开发者仍需检查列类型、默认值、约束、索引和数据迁移逻辑。”。它满足“Alembic 数据库迁移”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "自动生成迁移只能作为初稿，开发者仍需检查列类型、默认值、约束、索引和数据迁移逻辑。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -3149,8 +3787,7 @@
       "explanation": "正确选项是“MySQL 索引通过有序结构减少扫描范围，适用于 public_id、domain_code、状态、时间戳和外键等高频过滤或连接字段。”。它满足“MySQL 索引与查询”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -3176,7 +3813,6 @@
       "explanation": "正确选项是“联合索引的列顺序应匹配实际查询的等值条件、范围条件和排序需求，不能因为字段经常出现就盲目建立多个重叠索引。”。它满足“MySQL 索引与查询”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -3203,8 +3839,7 @@
       "explanation": "正确选项是“唯一索引还能表达业务唯一性，但索引会增加写入和存储成本。”。它满足“MySQL 索引与查询”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -3230,12 +3865,37 @@
       "explanation": "正确选项是“优化前应使用 EXPLAIN 查看访问类型、候选索引和估算行数，并用代表性数据验证，而不是仅凭小型开发库的响应时间判断。”。它满足“MySQL 索引与查询”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "优化前应使用 EXPLAIN 查看访问类型、候选索引和估算行数，并用代表性数据验证，而不是仅凭小型开发库的响应时间判断。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_046d783d4fb828d6",
+    "knowledge_id": "mysql_indexing",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“MySQL 索引与查询”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "MySQL 索引通过有序结构减少扫描范围，适用于 public_id、domain_code、状态、时间戳和外键等高频过滤或连接字段。",
+      "综合判断应落实：联合索引的列顺序应匹配实际查询的等值条件、范围条件和排序需求，不能因为字段经常出现就盲目建立多个重叠索引。",
+      "唯一索引还能表达业务唯一性，但索引会增加写入和存储成本。",
+      "优化前应使用 EXPLAIN 查看访问类型、候选索引和估算行数，并用代表性数据验证，而不是仅凭小型开发库的响应时间判断。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“联合索引的列顺序应匹配实际查询的等值条件、范围条件和排序需求，不能因为字段经常出现就盲目建立多个重叠索引。”。它满足“MySQL 索引与查询”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "联合索引的列顺序应匹配实际查询的等值条件、范围条件和排序需求，不能因为字段经常出现就盲目建立多个重叠索引。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -3257,8 +3917,7 @@
       "explanation": "正确选项是“Chroma collection 将 ID、embedding、文档和 metadata 组织为可查询集合。”。它满足“ChromaDB Collection 管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -3284,7 +3943,6 @@
       "explanation": "正确选项是“创建 collection 时应固定名称、embedding 模型、向量维度和距离度量，并在后续写入与查询中保持一致；同一集合混入不同模型的向量会导致维度错误或无意义距离。”。它满足“ChromaDB Collection 管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -3311,8 +3969,7 @@
       "explanation": "正确选项是“upsert 适合按稳定 chunk ID 更新，知识删除或重新切片时还要清理旧 ID。”。它满足“ChromaDB Collection 管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -3338,12 +3995,37 @@
       "explanation": "正确选项是“开发候选索引应与 V1 演示索引隔离，通过 manifest 指向已完成条数、维度、来源和 smoke query 校验的活动 collection，构建失败不能覆盖上一有效版本。”。它满足“ChromaDB Collection 管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "开发候选索引应与 V1 演示索引隔离，通过 manifest 指向已完成条数、维度、来源和 smoke query 校验的活动 collection，构建失败不能覆盖上一有效版本。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_c070fd57ca523d6f",
+    "knowledge_id": "chromadb_collections",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“ChromaDB Collection 管理”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "Chroma collection 将 ID、embedding、文档和 metadata 组织为可查询集合。",
+      "综合判断应落实：创建 collection 时应固定名称、embedding 模型、向量维度和距离度量，并在后续写入与查询中保持一致；同一集合混入不同模型的向量会导致维度错误或无意义距离。",
+      "upsert 适合按稳定 chunk ID 更新，知识删除或重新切片时还要清理旧 ID。",
+      "开发候选索引应与 V1 演示索引隔离，通过 manifest 指向已完成条数、维度、来源和 smoke query 校验的活动 collection，构建失败不能覆盖上一有效版本。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“创建 collection 时应固定名称、embedding 模型、向量维度和距离度量，并在后续写入与查询中保持一致；同一集合混入不同模型的向量会导致维度错误或无意义距离。”。它满足“ChromaDB Collection 管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "创建 collection 时应固定名称、embedding 模型、向量维度和距离度量，并在后续写入与查询中保持一致；同一集合混入不同模型的向量会导致维度错误或无意义距离。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -3365,8 +4047,7 @@
       "explanation": "正确选项是“Vue 3 使用响应式状态驱动组件渲染，跨页面共享的用户、任务、资源和 Agent 状态可集中到 Pinia store。”。它满足“Vue 前端状态管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -3392,7 +4073,6 @@
       "explanation": "正确选项是“store 应按业务边界划分 state、getters 和 actions，组件只消费所需状态，避免把临时表单值和所有服务端数据堆进单一全局对象。”。它满足“Vue 前端状态管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -3419,8 +4099,7 @@
       "explanation": "正确选项是“异步 action 要显式维护 loading、error 和 empty 状态，并以 task_id 合并轮询或 SSE 更新，防止旧请求覆盖新任务。”。它满足“Vue 前端状态管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -3446,12 +4125,37 @@
       "explanation": "正确选项是“需要持久化的最小导航状态与敏感业务载荷应分开，刷新后优先从后端重新获取真实状态。”。它满足“Vue 前端状态管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "需要持久化的最小导航状态与敏感业务载荷应分开，刷新后优先从后端重新获取真实状态。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_c72a2caf5aa9ae03",
+    "knowledge_id": "frontend_vue_state",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Vue 前端状态管理”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "Vue 3 使用响应式状态驱动组件渲染，跨页面共享的用户、任务、资源和 Agent 状态可集中到 Pinia store。",
+      "综合判断应落实：store 应按业务边界划分 state、getters 和 actions，组件只消费所需状态，避免把临时表单值和所有服务端数据堆进单一全局对象。",
+      "异步 action 要显式维护 loading、error 和 empty 状态，并以 task_id 合并轮询或 SSE 更新，防止旧请求覆盖新任务。",
+      "需要持久化的最小导航状态与敏感业务载荷应分开，刷新后优先从后端重新获取真实状态。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“store 应按业务边界划分 state、getters 和 actions，组件只消费所需状态，避免把临时表单值和所有服务端数据堆进单一全局对象。”。它满足“Vue 前端状态管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "store 应按业务边界划分 state、getters 和 actions，组件只消费所需状态，避免把临时表单值和所有服务端数据堆进单一全局对象。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -3473,8 +4177,7 @@
       "explanation": "正确选项是“前端 API 客户端应集中配置 baseURL、超时和必要请求头，并使用 TypeScript 类型描述服务端响应。”。它满足“前端 API 客户端封装”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -3500,7 +4203,6 @@
       "explanation": "正确选项是“响应拦截器可以提取 request_id、规范化网络错误与服务端 error，但不能吞掉原始状态码或把失败转换成空成功。”。它满足“前端 API 客户端封装”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -3527,8 +4229,7 @@
       "explanation": "正确选项是“每个业务模块封装清晰方法，页面负责加载、空、失败和成功展示。”。它满足“前端 API 客户端封装”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -3554,12 +4255,37 @@
       "explanation": "正确选项是“取消过期请求或比较 task_id 可以避免快速切换页面时发生竞态；SSE 连接与普通 Axios 请求分开管理，并在组件卸载或任务结束时释放。”。它满足“前端 API 客户端封装”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "取消过期请求或比较 task_id 可以避免快速切换页面时发生竞态；SSE 连接与普通 Axios 请求分开管理，并在组件卸载或任务结束时释放。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_6340bf2cd109d148",
+    "knowledge_id": "frontend_api_client",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“前端 API 客户端封装”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "前端 API 客户端应集中配置 baseURL、超时和必要请求头，并使用 TypeScript 类型描述服务端响应。",
+      "综合判断应落实：响应拦截器可以提取 request_id、规范化网络错误与服务端 error，但不能吞掉原始状态码或把失败转换成空成功。",
+      "每个业务模块封装清晰方法，页面负责加载、空、失败和成功展示。",
+      "取消过期请求或比较 task_id 可以避免快速切换页面时发生竞态；SSE 连接与普通 Axios 请求分开管理，并在组件卸载或任务结束时释放。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“响应拦截器可以提取 request_id、规范化网络错误与服务端 error，但不能吞掉原始状态码或把失败转换成空成功。”。它满足“前端 API 客户端封装”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "响应拦截器可以提取 request_id、规范化网络错误与服务端 error，但不能吞掉原始状态码或把失败转换成空成功。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -3581,8 +4307,7 @@
       "explanation": "正确选项是“多智能体设计应依据任务边界、工具权限和可验证输出拆分角色，而不是为同一次调用添加多个名称。”。它满足“多智能体角色划分”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -3608,7 +4333,6 @@
       "explanation": "正确选项是“一个 Agent 可以负责明确领域任务，使用受限工具并把结构化结果交给下游；需要协调时，可由管理 Agent 选择下一角色，或通过 handoff 把控制权交给专门 Agent。”。它满足“多智能体角色划分”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -3635,8 +4359,7 @@
       "explanation": "正确选项是“角色说明要清楚描述职责、输入、输出和不能执行的动作，工具参数仍由应用校验。”。它满足“多智能体角色划分”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -3662,12 +4385,37 @@
       "explanation": "正确选项是“拆分只有在能减少上下文混杂、隔离权限或提高评测可解释性时才有价值；简单任务应避免不必要的 Agent 数量和额外延迟。”。它满足“多智能体角色划分”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "拆分只有在能减少上下文混杂、隔离权限或提高评测可解释性时才有价值；简单任务应避免不必要的 Agent 数量和额外延迟。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_fcdfac94e564a96b",
+    "knowledge_id": "agent_role_design",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“多智能体角色划分”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "多智能体设计应依据任务边界、工具权限和可验证输出拆分角色，而不是为同一次调用添加多个名称。",
+      "综合判断应落实：一个 Agent 可以负责明确领域任务，使用受限工具并把结构化结果交给下游；需要协调时，可由管理 Agent 选择下一角色，或通过 handoff 把控制权交给专门 Agent。",
+      "角色说明要清楚描述职责、输入、输出和不能执行的动作，工具参数仍由应用校验。",
+      "拆分只有在能减少上下文混杂、隔离权限或提高评测可解释性时才有价值；简单任务应避免不必要的 Agent 数量和额外延迟。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“一个 Agent 可以负责明确领域任务，使用受限工具并把结构化结果交给下游；需要协调时，可由管理 Agent 选择下一角色，或通过 handoff 把控制权交给专门 Agent。”。它满足“多智能体角色划分”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "一个 Agent 可以负责明确领域任务，使用受限工具并把结构化结果交给下游；需要协调时，可由管理 Agent 选择下一角色，或通过 handoff 把控制权交给专门 Agent。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -3689,8 +4437,7 @@
       "explanation": "正确选项是“LangGraph StateGraph 以共享状态 schema、节点函数和边描述有状态工作流。”。它满足“LangGraph StateGraph”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -3716,7 +4463,6 @@
       "explanation": "正确选项是“节点接收当前状态并返回受控更新，普通边表达固定顺序，条件边根据状态选择下一节点；编译后的图可以使用 thread_id 和 checkpointer 保存可恢复执行。”。它满足“LangGraph StateGraph”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -3743,8 +4489,7 @@
       "explanation": "正确选项是“状态字段应有明确所有者和合并语义，数据库会话、客户端和不可序列化对象不能进入 State。”。它满足“LangGraph StateGraph”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -3770,12 +4515,37 @@
       "explanation": "正确选项是“项目只保留一个 build_learning_graph() 顶层构建函数，首次生成与反馈调整复用相同 task_id/thread_id；进程中断时通过 checkpoint 沿原任务自动恢复一次，审核未通过时沿同一线程进入有限局部修订。”。它满足“LangGraph StateGraph”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "项目只保留一个 build_learning_graph() 顶层构建函数，首次生成与反馈调整复用相同 task_id/thread_id；进程中断时通过 checkpoint 沿原任务自动恢复一次，审核未通过时沿同一线程进入有限局部修订。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_aad7886f02b59701",
+    "knowledge_id": "langgraph_stategraph",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“LangGraph StateGraph”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "LangGraph StateGraph 以共享状态 schema、节点函数和边描述有状态工作流。",
+      "综合判断应落实：节点接收当前状态并返回受控更新，普通边表达固定顺序，条件边根据状态选择下一节点；编译后的图可以使用 thread_id 和 checkpointer 保存可恢复执行。",
+      "状态字段应有明确所有者和合并语义，数据库会话、客户端和不可序列化对象不能进入 State。",
+      "项目只保留一个 build_learning_graph() 顶层构建函数，首次生成与反馈调整复用相同 task_id/thread_id；进程中断时通过 checkpoint 沿原任务自动恢复一次，审核未通过时沿同一线程进入有限局部修订。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“节点接收当前状态并返回受控更新，普通边表达固定顺序，条件边根据状态选择下一节点；编译后的图可以使用 thread_id 和 checkpointer 保存可恢复执行。”。它满足“LangGraph StateGraph”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "节点接收当前状态并返回受控更新，普通边表达固定顺序，条件边根据状态选择下一节点；编译后的图可以使用 thread_id 和 checkpointer 保存可恢复执行。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -3797,8 +4567,7 @@
       "explanation": "正确选项是“编排工作流把复杂任务分成可观察节点，并根据共享状态和节点结果选择下一步。”。它满足“编排智能体工作流”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -3824,7 +4593,6 @@
       "explanation": "正确选项是“顺序流程适合固定阶段，条件边适合按结构化判断分支，并行节点适合彼此独立的工作；需要循环时必须设置终止条件和最大次数。”。它满足“编排智能体工作流”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -3851,8 +4619,7 @@
       "explanation": "正确选项是“编排层负责路由、状态推进、错误边界和恢复，不应代替专业节点生成其业务结果。”。它满足“编排智能体工作流”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -3878,12 +4645,37 @@
       "explanation": "正确选项是“状态只保存后续节点确实需要的数据，外部客户端和数据库会话留在执行边界。”。它满足“编排智能体工作流”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "状态只保存后续节点确实需要的数据，外部客户端和数据库会话留在执行边界。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_e32acad8148fb2fb",
+    "knowledge_id": "orchestrator_workflow",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“编排智能体工作流”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "编排工作流把复杂任务分成可观察节点，并根据共享状态和节点结果选择下一步。",
+      "综合判断应落实：顺序流程适合固定阶段，条件边适合按结构化判断分支，并行节点适合彼此独立的工作；需要循环时必须设置终止条件和最大次数。",
+      "状态只保存后续节点确实需要的数据，外部客户端和数据库会话留在执行边界。",
+      "关键路由、失败和人工暂停点应能够从状态快照解释，使任务重试不会丢失已有进度或无限循环。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“顺序流程适合固定阶段，条件边适合按结构化判断分支，并行节点适合彼此独立的工作；需要循环时必须设置终止条件和最大次数。”。它满足“编排智能体工作流”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "顺序流程适合固定阶段，条件边适合按结构化判断分支，并行节点适合彼此独立的工作；需要循环时必须设置终止条件和最大次数。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -3905,12 +4697,37 @@
       "explanation": "正确选项是“asyncio 使用事件循环调度协程，适合同时等待多个网络或文件 I/O 的程序。”。它满足“Python 异步与并发”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
       "source_quote": "asyncio 使用事件循环调度协程，适合同时等待多个网络或文件 I/O 的程序。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_7f669f08ce978131",
+    "knowledge_id": "python_async_concurrency",
+    "question_type": "single_choice",
+    "difficulty": 3,
+    "quiz_level": "improvement",
+    "stem": "团队正在执行“Python 异步与并发”的“资料要点 2”步骤。下列哪项做法与资料一致？",
+    "options": [
+      "并发任务应通过 TaskGroup 等结构化方式创建和等待，明确异常传播、取消和清理规则。",
+      "调用模型 API 时还要限制并发量、设置超时并处理取消，避免瞬时创建过多请求触发限流。",
+      "应落实：协程只有在 await 可等待对象时才会把控制权交回事件循环，因此在协程中执行长时间同步计算或阻塞 I/O 会拖慢所有任务。",
+      "CPU 密集工作应转移到进程、线程或专用工作队列，而不是直接堵塞事件循环。"
+    ],
+    "answer_key": {
+      "correct_option": 2,
+      "explanation": "正确选项是“协程只有在 await 可等待对象时才会把控制权交回事件循环，因此在协程中执行长时间同步计算或阻塞 I/O 会拖慢所有任务。”。它满足“Python 异步与并发”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 3,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "constrained_application",
+      "source_quote": "协程只有在 await 可等待对象时才会把控制权交回事件循环，因此在协程中执行长时间同步计算或阻塞 I/O 会拖慢所有任务。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -3932,8 +4749,7 @@
       "explanation": "正确选项是“并发任务应通过 TaskGroup 等结构化方式创建和等待，明确异常传播、取消和清理规则。”。它满足“Python 异步与并发”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -3959,12 +4775,37 @@
       "explanation": "正确选项是“调用模型 API 时还要限制并发量、设置超时并处理取消，避免瞬时创建过多请求触发限流。”。它满足“Python 异步与并发”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "调用模型 API 时还要限制并发量、设置超时并处理取消，避免瞬时创建过多请求触发限流。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_58dae8a8e768766a",
+    "knowledge_id": "python_async_concurrency",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Python 异步与并发”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "asyncio 使用事件循环调度协程，适合同时等待多个网络或文件 I/O 的程序。",
+      "综合判断应落实：协程只有在 await 可等待对象时才会把控制权交回事件循环，因此在协程中执行长时间同步计算或阻塞 I/O 会拖慢所有任务。",
+      "调用模型 API 时还要限制并发量、设置超时并处理取消，避免瞬时创建过多请求触发限流。",
+      "CPU 密集工作应转移到进程、线程或专用工作队列，而不是直接堵塞事件循环。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“协程只有在 await 可等待对象时才会把控制权交回事件循环，因此在协程中执行长时间同步计算或阻塞 I/O 会拖慢所有任务。”。它满足“Python 异步与并发”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "协程只有在 await 可等待对象时才会把控制权交回事件循环，因此在协程中执行长时间同步计算或阻塞 I/O 会拖慢所有任务。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -3986,8 +4827,7 @@
       "explanation": "正确选项是“检索智能体把用户问题和任务上下文转换为查询，从受控知识源中找出证据并返回带来源的片段。”。它满足“知识检索智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -4013,7 +4853,6 @@
       "explanation": "正确选项是“查询可以包含用户目标、关键实体、时间或产品范围等约束。”。它满足“知识检索智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -4040,8 +4879,7 @@
       "explanation": "正确选项是“返回结果至少应包含片段标识、文档标识、正文、相关度、来源标题和可定位原文的位置。”。它满足“知识检索智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -4067,12 +4905,37 @@
       "explanation": "正确选项是“候选片段需要按稳定标识去重，避免相同正文或同一文档的相邻片段占满上下文。”。它满足“知识检索智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "候选片段需要按稳定标识去重，避免相同正文或同一文档的相邻片段占满上下文。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_60361613656147bf",
+    "knowledge_id": "knowledge_retrieval_agent",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“知识检索智能体”的综合应用中，围绕“查询与召回”作出判断时应坚持哪项要求？",
+    "options": [
+      "检索智能体把用户问题和任务上下文转换为查询，从受控知识源中找出证据并返回带来源的片段。",
+      "综合判断应落实：查询可以包含用户目标、关键实体、时间或产品范围等约束。",
+      "返回结果至少应包含片段标识、文档标识、正文、相关度、来源标题和可定位原文的位置。",
+      "检索质量应通过固定问题和相关文档标注评估，分别观察召回覆盖、排序、来源完整率和延迟。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“查询可以包含用户目标、关键实体、时间或产品范围等约束。”。它满足“知识检索智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "查询可以包含用户目标、关键实体、时间或产品范围等约束。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -4094,8 +4957,7 @@
       "explanation": "正确选项是“内容生成智能体接收明确任务、目标受众、允许使用的证据和输出结构，再生成讲解、操作步骤、摘要或测验等内容。”。它满足“内容生成智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -4121,7 +4983,6 @@
       "explanation": "正确选项是“系统提示应划定职责和禁止事项，用户输入提供本次目标，检索材料以可区分的数据块传入。”。它满足“内容生成智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -4148,8 +5009,7 @@
       "explanation": "正确选项是“关键事实只能来自给定证据；资料不足时应缩小回答范围、提出需要补充的信息或明确无法判断。”。它满足“内容生成智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -4175,12 +5035,37 @@
       "explanation": "正确选项是“输出采用稳定结构并保留证据标识，便于程序校验和后续审核。”。它满足“内容生成智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "输出采用稳定结构并保留证据标识，便于程序校验和后续审核。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_a80ae2f6d21587c5",
+    "knowledge_id": "content_generation_agent",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“内容生成智能体”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "内容生成智能体接收明确任务、目标受众、允许使用的证据和输出结构，再生成讲解、操作步骤、摘要或测验等内容。",
+      "综合判断应落实：系统提示应划定职责和禁止事项，用户输入提供本次目标，检索材料以可区分的数据块传入。",
+      "输出采用稳定结构并保留证据标识，便于程序校验和后续审核。",
+      "生成模型不应自行调用未授权工具，内容即使格式正确，也必须在发布前进行事实和安全检查。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“系统提示应划定职责和禁止事项，用户输入提供本次目标，检索材料以可区分的数据块传入。”。它满足“内容生成智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "系统提示应划定职责和禁止事项，用户输入提供本次目标，检索材料以可区分的数据块传入。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -4202,8 +5087,7 @@
       "explanation": "正确选项是“评审智能体根据明确的评分标准检查生成结果，而不是因为语言流畅或格式完整就判定正确。”。它满足“评审与校验智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -4229,7 +5113,6 @@
       "explanation": "正确选项是“可自动判断的字段、枚举、长度、引用 ID 和数值范围优先使用确定性代码校验。”。它满足“评审与校验智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -4256,8 +5139,7 @@
       "explanation": "正确选项是“多个评审通道出现分歧时，系统应先确认输入证据、评分规则和输出解析是否一致，再针对争议点重新检索并独立仲裁。”。它满足“评审与校验智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -4283,12 +5165,37 @@
       "explanation": "正确选项是“# 评审与校验智能体设计 ## 独立评审 评审智能体根据明确的评分标准检查生成结果，而不是因为语言流畅或格式完整就判定正确。”。它满足“评审与校验智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "# 评审与校验智能体设计 ## 独立评审 评审智能体根据明确的评分标准检查生成结果，而不是因为语言流畅或格式完整就判定正确。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_17ec6de44d9b52be",
+    "knowledge_id": "review_validation_agent",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“评审与校验智能体”的综合应用中，围绕“评分规则”作出判断时应坚持哪项要求？",
+    "options": [
+      "评审智能体根据明确的评分标准检查生成结果，而不是因为语言流畅或格式完整就判定正确。",
+      "综合判断应落实：可自动判断的字段、枚举、长度、引用 ID 和数值范围优先使用确定性代码校验。",
+      "多个评审通道出现分歧时，系统应先确认输入证据、评分规则和输出解析是否一致，再针对争议点重新检索并独立仲裁。",
+      "评分输出采用结构化格式，保存维度分数、问题列表、证据位置和结论。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“可自动判断的字段、枚举、长度、引用 ID 和数值范围优先使用确定性代码校验。”。它满足“评审与校验智能体”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "可自动判断的字段、枚举、长度、引用 ID 和数值范围优先使用确定性代码校验。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -4310,8 +5217,7 @@
       "explanation": "正确选项是“自动化测试把可重复的行为验证写成代码，使重构和依赖升级后能够快速发现回归。”。它满足“自动化测试与测试分层”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -4337,7 +5243,6 @@
       "explanation": "正确选项是“单元测试聚焦纯函数、校验和排序等小范围逻辑，使用替身隔离网络和数据库；集成测试检查数据库、向量库或模型适配器之间的真实边界；端到端测试只覆盖少量关键用户流程。”。它满足“自动化测试与测试分层”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -4364,8 +5269,7 @@
       "explanation": "正确选项是“测试应采用确定输入和明确断言，失败信息指出哪个行为偏离预期。”。它满足“自动化测试与测试分层”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -4391,12 +5295,37 @@
       "explanation": "正确选项是“外部模型调用默认使用可控替身，真实网络测试必须显式标记，不能把缺少密钥后的 mock 结果报告为 live 验收。”。它满足“自动化测试与测试分层”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "外部模型调用默认使用可控替身，真实网络测试必须显式标记，不能把缺少密钥后的 mock 结果报告为 live 验收。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_bde920b62e849697",
+    "knowledge_id": "automated_testing",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“自动化测试与测试分层”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "自动化测试把可重复的行为验证写成代码，使重构和依赖升级后能够快速发现回归。",
+      "综合判断应落实：单元测试聚焦纯函数、校验和排序等小范围逻辑，使用替身隔离网络和数据库；集成测试检查数据库、向量库或模型适配器之间的真实边界；端到端测试只覆盖少量关键用户流程。",
+      "测试应采用确定输入和明确断言，失败信息指出哪个行为偏离预期。",
+      "外部模型调用默认使用可控替身，真实网络测试必须显式标记，不能把缺少密钥后的 mock 结果报告为 live 验收。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“单元测试聚焦纯函数、校验和排序等小范围逻辑，使用替身隔离网络和数据库；集成测试检查数据库、向量库或模型适配器之间的真实边界；端到端测试只覆盖少量关键用户流程。”。它满足“自动化测试与测试分层”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "单元测试聚焦纯函数、校验和排序等小范围逻辑，使用替身隔离网络和数据库；集成测试检查数据库、向量库或模型适配器之间的真实边界；端到端测试只覆盖少量关键用户流程。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -4418,8 +5347,7 @@
       "explanation": "正确选项是“Docker 镜像把应用代码、运行时和依赖打包成可重复分发的只读层，容器则是镜像的运行实例。”。它满足“Docker 容器化部署”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -4445,7 +5373,6 @@
       "explanation": "正确选项是“Dockerfile 应固定合适的基础镜像、先复制依赖清单以利用缓存，再复制应用代码，并使用非 root 用户和明确启动命令。”。它满足“Docker 容器化部署”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -4472,8 +5399,7 @@
       "explanation": "正确选项是“配置和密钥在运行时注入，不写入镜像层。”。它满足“Docker 容器化部署”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -4499,12 +5425,37 @@
       "explanation": "正确选项是“多服务开发环境可用 Compose 描述应用、数据库和向量库的网络、端口、健康检查与持久卷。”。它满足“Docker 容器化部署”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "多服务开发环境可用 Compose 描述应用、数据库和向量库的网络、端口、健康检查与持久卷。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_d56b189e03b17d47",
+    "knowledge_id": "docker_containerization",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Docker 容器化部署”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "Docker 镜像把应用代码、运行时和依赖打包成可重复分发的只读层，容器则是镜像的运行实例。",
+      "综合判断应落实：Dockerfile 应固定合适的基础镜像、先复制依赖清单以利用缓存，再复制应用代码，并使用非 root 用户和明确启动命令。",
+      "多服务开发环境可用 Compose 描述应用、数据库和向量库的网络、端口、健康检查与持久卷。",
+      "镜像构建成功不代表服务可用，启动后仍需检查迁移、健康端点和依赖服务状态。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“Dockerfile 应固定合适的基础镜像、先复制依赖清单以利用缓存，再复制应用代码，并使用非 root 用户和明确启动命令。”。它满足“Docker 容器化部署”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "Dockerfile 应固定合适的基础镜像、先复制依赖清单以利用缓存，再复制应用代码，并使用非 root 用户和明确启动命令。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -4526,8 +5477,7 @@
       "explanation": "正确选项是“API 密钥、数据库口令和签名凭据不应写入源码、镜像、前端包或普通日志。”。它满足“密钥与配置管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -4553,7 +5503,6 @@
       "explanation": "正确选项是“开发环境可以从受版本控制忽略的环境文件注入配置，部署环境应使用专用密钥存储或平台 Secret，并按服务最小权限授权。”。它满足“密钥与配置管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -4580,8 +5529,7 @@
       "explanation": "正确选项是“应用启动时只验证必需配置是否存在和格式是否合法，不回显具体值。”。它满足“密钥与配置管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -4607,12 +5555,37 @@
       "explanation": "正确选项是“密钥需要可轮换、可吊销并记录访问审计；发生泄漏时应立即撤销而不是只删除 Git 中的文件。”。它满足“密钥与配置管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "密钥需要可轮换、可吊销并记录访问审计；发生泄漏时应立即撤销而不是只删除 Git 中的文件。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_f9ddcbd02b0a79f3",
+    "knowledge_id": "secret_management",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“密钥与配置管理”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "API 密钥、数据库口令和签名凭据不应写入源码、镜像、前端包或普通日志。",
+      "综合判断应落实：开发环境可以从受版本控制忽略的环境文件注入配置，部署环境应使用专用密钥存储或平台 Secret，并按服务最小权限授权。",
+      "密钥需要可轮换、可吊销并记录访问审计；发生泄漏时应立即撤销而不是只删除 Git 中的文件。",
+      "示例配置只保留变量名和安全占位符，测试使用独立低权限凭据。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“开发环境可以从受版本控制忽略的环境文件注入配置，部署环境应使用专用密钥存储或平台 Secret，并按服务最小权限授权。”。它满足“密钥与配置管理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "开发环境可以从受版本控制忽略的环境文件注入配置，部署环境应使用专用密钥存储或平台 Secret，并按服务最小权限授权。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -4634,8 +5607,7 @@
       "explanation": "正确选项是“可观测性通过日志、指标和链路追踪解释系统正在发生什么。”。它满足“日志、指标与链路追踪”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -4661,7 +5633,6 @@
       "explanation": "正确选项是“日志记录离散事件和错误类别，指标聚合请求量、延迟、失败率、token 用量等时间序列，trace 则使用统一上下文连接一次请求经过的 API、检索、模型和工具调用。”。它满足“日志、指标与链路追踪”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -4688,8 +5659,7 @@
       "explanation": "正确选项是“每个任务应传播稳定 request_id 或 trace_id，并让 span 标注组件、状态和耗时，而不是保存完整敏感输入。”。它满足“日志、指标与链路追踪”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -4715,12 +5685,37 @@
       "explanation": "正确选项是“监控要同时覆盖成功率和质量信号，设置可行动的告警，并通过采样控制成本。”。它满足“日志、指标与链路追踪”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "监控要同时覆盖成功率和质量信号，设置可行动的告警，并通过采样控制成本。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_d98383a025fc89a2",
+    "knowledge_id": "observability_tracing",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“日志、指标与链路追踪”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "可观测性通过日志、指标和链路追踪解释系统正在发生什么。",
+      "综合判断应落实：日志记录离散事件和错误类别，指标聚合请求量、延迟、失败率、token 用量等时间序列，trace 则使用统一上下文连接一次请求经过的 API、检索、模型和工具调用。",
+      "监控要同时覆盖成功率和质量信号，设置可行动的告警，并通过采样控制成本。",
+      "排障时从异常指标定位 trace，再查看经过脱敏的相关日志。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“日志记录离散事件和错误类别，指标聚合请求量、延迟、失败率、token 用量等时间序列，trace 则使用统一上下文连接一次请求经过的 API、检索、模型和工具调用。”。它满足“日志、指标与链路追踪”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "日志记录离散事件和错误类别，指标聚合请求量、延迟、失败率、token 用量等时间序列，trace 则使用统一上下文连接一次请求经过的 API、检索、模型和工具调用。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -4742,8 +5737,7 @@
       "explanation": "正确选项是“Prompt Injection 是攻击者把恶意指令放入用户消息、网页、文件、邮件或工具结果，诱导模型忽略原始任务、泄漏数据或执行越权操作。”。它满足“Prompt Injection 防护”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -4769,7 +5763,6 @@
       "explanation": "正确选项是“应用应把系统和开发者指令与不可信内容放入结构清晰的不同区域，并明确外部材料只能作为数据引用。”。它满足“Prompt Injection 防护”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -4796,8 +5789,7 @@
       "explanation": "正确选项是“测试集应覆盖直接注入、间接文档注入、编码混淆、角色冒充、数据外泄、跨用户访问和工具滥用，并检查系统是否在证据不足时安全失败。”。它满足“Prompt Injection 防护”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -4823,12 +5815,37 @@
       "explanation": "正确选项是“工具采用最小权限、窄参数和服务端校验。”。它满足“Prompt Injection 防护”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "工具采用最小权限、窄参数和服务端校验。身份、资源归属、金额、收件人以及写入、发送、删除等高影响动作必须由确定性代码验证，不能因为参数来自模型就直接执行。敏感操作可要求用户确认或人工审批，并设置调用次数、时间和数据范围限制。密钥只在工具执行边界使用，不放入模型上下文。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_1c91b6f7831cef18",
+    "knowledge_id": "prompt_injection_defense",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“Prompt Injection 防护”的综合应用中，围绕“指令与数据隔离”作出判断时应坚持哪项要求？",
+    "options": [
+      "Prompt Injection 是攻击者把恶意指令放入用户消息、网页、文件、邮件或工具结果，诱导模型忽略原始任务、泄漏数据或执行越权操作。",
+      "综合判断应落实：应用应把系统和开发者指令与不可信内容放入结构清晰的不同区域，并明确外部材料只能作为数据引用。",
+      "输入输出过滤、危险模式检测和内容分类可以降低已知攻击风险，但都可能误报或漏报。",
+      "测试集应覆盖直接注入、间接文档注入、编码混淆、角色冒充、数据外泄、跨用户访问和工具滥用，并检查系统是否在证据不足时安全失败。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“应用应把系统和开发者指令与不可信内容放入结构清晰的不同区域，并明确外部材料只能作为数据引用。”。它满足“Prompt Injection 防护”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "应用应把系统和开发者指令与不可信内容放入结构清晰的不同区域，并明确外部材料只能作为数据引用。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -4850,8 +5867,7 @@
       "explanation": "正确选项是“模型 API 调用必须设置连接与读取超时，并区分限流、临时服务不可用、网络中断、认证失败和请求参数错误。”。它满足“模型 API 限流、重试与故障处理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -4877,7 +5893,6 @@
       "explanation": "正确选项是“只有可能恢复且操作可安全重复的失败适合重试；认证或校验错误应立即返回。”。它满足“模型 API 限流、重试与故障处理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -4904,8 +5919,7 @@
       "explanation": "正确选项是“重试采用有上限的指数退避并加入随机抖动，遵守服务端 Retry-After 等提示，避免多个客户端同时再次冲击服务。”。它满足“模型 API 限流、重试与故障处理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -4931,12 +5945,37 @@
       "explanation": "正确选项是“并发调用使用信号量或队列限制在服务配额内。”。它满足“模型 API 限流、重试与故障处理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "并发调用使用信号量或队列限制在服务配额内。连续失败后应进入明确降级或失败状态，保留 request_id、尝试次数、错误类型和耗时，不把空响应伪装成成功结果。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_8c88f000c6e94fde",
+    "knowledge_id": "api_resilience_retry",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“模型 API 限流、重试与故障处理”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "模型 API 调用必须设置连接与读取超时，并区分限流、临时服务不可用、网络中断、认证失败和请求参数错误。",
+      "综合判断应落实：只有可能恢复且操作可安全重复的失败适合重试；认证或校验错误应立即返回。",
+      "并发调用使用信号量或队列限制在服务配额内。",
+      "连续失败后应进入明确降级或失败状态，保留 request_id、尝试次数、错误类型和耗时，不把空响应伪装成成功结果。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“只有可能恢复且操作可安全重复的失败适合重试；认证或校验错误应立即返回。”。它满足“模型 API 限流、重试与故障处理”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "只有可能恢复且操作可安全重复的失败适合重试；认证或校验错误应立即返回。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -4958,8 +5997,7 @@
       "explanation": "正确选项是“离线评测先固定任务定义、代表性案例、参考答案或评分 rubric、数据版本和模型配置，再批量运行被测系统。”。它满足“离线评测指标”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -4985,7 +6023,6 @@
       "explanation": "正确选项是“指标必须对应实际失败风险，例如任务完成率、事实正确率、检索召回、引用支持率、格式合法率、延迟和成本，并同时报告分子、分母、不可判定样例和失败 case ID。”。它满足“离线评测指标”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -5012,8 +6049,7 @@
       "explanation": "正确选项是“开发集用于分析错误和调整实现，独立验收集只用于判断版本是否达到门槛，不能针对验收样例逐条调参。”。它满足“离线评测指标”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -5039,12 +6075,37 @@
       "explanation": "正确选项是“模型输出存在随机性时要固定可控参数或重复运行，并把提示、检索、生成、工具和评分器分别归因。”。它满足“离线评测指标”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "模型输出存在随机性时要固定可控参数或重复运行，并把提示、检索、生成、工具和评分器分别归因。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_ce532be51b0a4a90",
+    "knowledge_id": "evaluation_metrics",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“离线评测指标”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "离线评测先固定任务定义、代表性案例、参考答案或评分 rubric、数据版本和模型配置，再批量运行被测系统。",
+      "综合判断应落实：指标必须对应实际失败风险，例如任务完成率、事实正确率、检索召回、引用支持率、格式合法率、延迟和成本，并同时报告分子、分母、不可判定样例和失败 case ID。",
+      "开发集用于分析错误和调整实现，独立验收集只用于判断版本是否达到门槛，不能针对验收样例逐条调参。",
+      "模型输出存在随机性时要固定可控参数或重复运行，并把提示、检索、生成、工具和评分器分别归因。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“指标必须对应实际失败风险，例如任务完成率、事实正确率、检索召回、引用支持率、格式合法率、延迟和成本，并同时报告分子、分母、不可判定样例和失败 case ID。”。它满足“离线评测指标”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "指标必须对应实际失败风险，例如任务完成率、事实正确率、检索召回、引用支持率、格式合法率、延迟和成本，并同时报告分子、分母、不可判定样例和失败 case ID。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -5066,8 +6127,7 @@
       "explanation": "正确选项是“日志遵循数据最小化原则，只记录排障和审计必需的信息。”。它满足“隐私与日志策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -5093,7 +6153,6 @@
       "explanation": "正确选项是“普通日志可以保存 request_id、task_id、模型名、状态、耗时、重试次数、分数和非敏感 warning 摘要，不应保存真实姓名、完整答题文本、完整学习者画像、知识正文、生成资源、API 密钥或 embedding 向量。”。它满足“隐私与日志策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -5120,8 +6179,7 @@
       "explanation": "正确选项是“错误处理要避免把请求对象和响应正文自动格式化进日志。”。它满足“隐私与日志策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -5147,12 +6205,37 @@
       "explanation": "正确选项是“需要完整载荷的调试模式必须显式开启、限制环境和访问权限，并设置清理期限；展示或导出前还要脱敏。”。它满足“隐私与日志策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "需要完整载荷的调试模式必须显式开启、限制环境和访问权限，并设置清理期限；展示或导出前还要脱敏。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_f3e0a0ae52605a6b",
+    "knowledge_id": "privacy_log_policy",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“隐私与日志策略”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "日志遵循数据最小化原则，只记录排障和审计必需的信息。",
+      "综合判断应落实：普通日志可以保存 request_id、task_id、模型名、状态、耗时、重试次数、分数和非敏感 warning 摘要，不应保存真实姓名、完整答题文本、完整学习者画像、知识正文、生成资源、API 密钥或 embedding 向量。",
+      "错误处理要避免把请求对象和响应正文自动格式化进日志。",
+      "需要完整载荷的调试模式必须显式开启、限制环境和访问权限，并设置清理期限；展示或导出前还要脱敏。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“普通日志可以保存 request_id、task_id、模型名、状态、耗时、重试次数、分数和非敏感 warning 摘要，不应保存真实姓名、完整答题文本、完整学习者画像、知识正文、生成资源、API 密钥或 embedding 向量。”。它满足“隐私与日志策略”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "普通日志可以保存 request_id、task_id、模型名、状态、耗时、重试次数、分数和非敏感 warning 摘要，不应保存真实姓名、完整答题文本、完整学习者画像、知识正文、生成资源、API 密钥或 embedding 向量。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -5174,8 +6257,7 @@
       "explanation": "正确选项是“SSE 进度事件使用标准化 event 和 data 字段传递 task_id、处理节点、运行状态、时间戳与非敏感摘要。”。它满足“SSE 进度事件设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -5201,7 +6283,6 @@
       "explanation": "正确选项是“事件应来自真实任务或持久化运行状态变化，而不是前端硬编码步骤；每个节点至少区分等待、运行、完成和失败，最终事件明确任务终态。”。它满足“SSE 进度事件设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -5228,8 +6309,7 @@
       "explanation": "正确选项是“服务端设置 text/event-stream、禁用不合适的缓冲并处理客户端断开，前端按事件 ID 或状态版本去重。”。它满足“SSE 进度事件设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -5255,12 +6335,37 @@
       "explanation": "正确选项是“断线后可重连并通过任务查询补齐状态，不能把重放事件重复计为新的运行。”。它满足“SSE 进度事件设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "断线后可重连并通过任务查询补齐状态，不能把重放事件重复计为新的运行。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_7813cdfb89e485b3",
+    "knowledge_id": "sse_progress_events",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“SSE 进度事件设计”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "SSE 进度事件使用标准化 event 和 data 字段传递 task_id、处理节点、运行状态、时间戳与非敏感摘要。",
+      "综合判断应落实：事件应来自真实任务或持久化运行状态变化，而不是前端硬编码步骤；每个节点至少区分等待、运行、完成和失败，最终事件明确任务终态。",
+      "服务端设置 text/event-stream、禁用不合适的缓冲并处理客户端断开，前端按事件 ID 或状态版本去重。",
+      "断线后可重连并通过任务查询补齐状态，不能把重放事件重复计为新的运行。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“事件应来自真实任务或持久化运行状态变化，而不是前端硬编码步骤；每个节点至少区分等待、运行、完成和失败，最终事件明确任务终态。”。它满足“SSE 进度事件设计”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "事件应来自真实任务或持久化运行状态变化，而不是前端硬编码步骤；每个节点至少区分等待、运行、完成和失败，最终事件明确任务终态。"
     },
     "certification_method": "curated_seed_exact_evidence"
   },
@@ -5282,8 +6387,7 @@
       "explanation": "正确选项是“使用大模型评分时，评审提示必须提供清晰 rubric、待评内容和必要参考资料，要求输出结构化分数与理由。”。它满足“模型评审的可靠性与校准”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 2,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "consolidation",
       "assessment_focus": "common_misconception_correction",
@@ -5309,7 +6413,6 @@
       "explanation": "正确选项是“评分器可能受答案顺序、长度、措辞和自身知识偏差影响，因此需要用人工标注样例校准，并分别测量误通过和误拒绝。”。它满足“模型评审的可靠性与校准”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 3,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
@@ -5336,8 +6439,7 @@
       "explanation": "正确选项是“能够通过代码判断的格式、数值和引用存在性不应交给模型。”。它满足“模型评审的可靠性与校准”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 4,
       "question_bank_uses": [
-        "mastery_validation",
-        "mistake_consolidation"
+        "mastery_validation"
       ],
       "reserve_role": "mastery_transfer",
       "assessment_focus": "diagnosis_and_transfer",
@@ -5363,12 +6465,37 @@
       "explanation": "正确选项是“评审失败时先检查输入和 rubric，再进行有限重试；多个评分器不一致也不能简单多数表决。”。它满足“模型评审的可靠性与校准”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
       "question_slot": 5,
       "question_bank_uses": [
-        "diagnosis",
         "graded_quiz"
       ],
       "reserve_role": null,
       "assessment_focus": "integrated_tradeoff",
       "source_quote": "评审失败时先检查输入和 rubric，再进行有限重试；多个评分器不一致也不能简单多数表决。"
+    },
+    "certification_method": "curated_seed_exact_evidence"
+  },
+  {
+    "question_id": "dq_qb_ab9ff0d5bd53ec06",
+    "knowledge_id": "llm_judge_reliability",
+    "question_type": "single_choice",
+    "difficulty": 4,
+    "quiz_level": "challenge",
+    "stem": "在“模型评审的可靠性与校准”的综合应用中，围绕“资料要点 2”作出判断时应坚持哪项要求？",
+    "options": [
+      "使用大模型评分时，评审提示必须提供清晰 rubric、待评内容和必要参考资料，要求输出结构化分数与理由。",
+      "综合判断应落实：评分器可能受答案顺序、长度、措辞和自身知识偏差影响，因此需要用人工标注样例校准，并分别测量误通过和误拒绝。",
+      "评审失败时先检查输入和 rubric，再进行有限重试；多个评分器不一致也不能简单多数表决。",
+      "高风险或持续分歧样例应进入人工复核，并把人工推翻结果加入后续评测集。"
+    ],
+    "answer_key": {
+      "correct_option": 1,
+      "explanation": "正确选项是“评分器可能受答案顺序、长度、措辞和自身知识偏差影响，因此需要用人工标注样例校准，并分别测量误通过和误拒绝。”。它满足“模型评审的可靠性与校准”资料中的核心要求，其余选项忽略了必要约束、验证步骤或风险控制。",
+      "question_slot": 6,
+      "question_bank_uses": [
+        "graded_quiz"
+      ],
+      "reserve_role": null,
+      "assessment_focus": "integrated_tradeoff",
+      "source_quote": "评分器可能受答案顺序、长度、措辞和自身知识偏差影响，因此需要用人工标注样例校准，并分别测量误通过和误拒绝。"
     },
     "certification_method": "curated_seed_exact_evidence"
   }

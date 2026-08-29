@@ -32,7 +32,10 @@ def _question(
         question_type=question_type,
         stem=f"题目 {index}",
         options_json=[],
-        answer_key_json={},
+        answer_key_json={
+            "question_bank_uses": ["diagnosis"],
+            "assessment_dimension": "operation" if practice else "theory",
+        },
         difficulty=2,
     )
     return question, knowledge

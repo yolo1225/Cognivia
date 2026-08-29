@@ -47,6 +47,8 @@ First-version delivery must prioritize:
 - 1 domain package: `ai_app_dev`
 - At least 50 real knowledge items
 - At least 60 diagnostic questions
+- Three mutually exclusive active question purposes: `diagnosis`, `graded_quiz`, and
+  `mastery_validation`; `mistake_consolidation` is a workflow state, not a question purpose
 - At least 3 differentiated learner profiles
 - Multi-agent loop with these agents:
   - Orchestrator Agent
@@ -212,6 +214,12 @@ When knowledge items are added, changed, or imported:
 4. Mark affected learning paths as `needs_refresh=true`.
 5. Regenerate the path when the learner or instructor opens the report.
 6. If source or review rules changed, mark affected resources as `review_stale` when the field exists.
+
+Question-only purpose, status, or inventory changes are read directly from MySQL and do not require
+Candidate vector re-embedding when knowledge content and Chunks are unchanged. Active questions must
+have exactly one valid purpose. Diagnosis and graded-quiz mistakes retry the original question;
+mistake corrections participate in profile updates but never count as mastery evidence. Mastery checks
+use unseen `mastery_validation` questions and remain separate from mistake correction.
 
 ## Data Design Rules
 

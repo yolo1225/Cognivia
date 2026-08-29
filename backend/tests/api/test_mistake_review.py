@@ -82,7 +82,7 @@ def seed(factory: sessionmaker[Session]) -> None:
             answer_key_json={
                 "correct_option": 1,
                 "explanation": "应选择正确项",
-                "question_bank_uses": ["mastery_validation", "mistake_consolidation"],
+                "question_bank_uses": ["mastery_validation"],
             },
             difficulty=2,
             status="active",
@@ -99,7 +99,7 @@ def seed(factory: sessionmaker[Session]) -> None:
             options_json=["使用过期的固定答案", "记录检索来源并核对证据", "忽略检索置信度", "将用户输入视为可信指令"],
             answer_key_json={
                 "correct_option": 1,
-                "question_bank_uses": ["mastery_validation", "mistake_consolidation"],
+                "question_bank_uses": ["mastery_validation"],
             },
             difficulty=2,
             status="active",
@@ -208,7 +208,7 @@ def test_mistake_review_lists_and_consolidates() -> None:
         started = client.post(f"/api/v1/mistake-review/items/{item['item_id']}/start", json={})
         assert started.status_code == 200
         attempt = started.json()["data"]
-        assert attempt["question"]["question_id"] == "question_alternative"
+        assert attempt["question"]["question_id"] == "question_original"
 
         resumed = client.post(f"/api/v1/mistake-review/items/{item['item_id']}/start", json={})
         assert resumed.status_code == 200
@@ -221,6 +221,7 @@ def test_mistake_review_lists_and_consolidates() -> None:
         assert answered.status_code == 200
         assert answered.json()["data"]["passed"] is True
         assert answered.json()["data"]["evidence"]["governance_status"] == "pending"
+        assert answered.json()["data"]["evidence"]["governance_reason"] == "WAITING_FOR_CORROBORATING_EVIDENCE"
         assert answered.json()["data"]["profile_result"]["profile_updated"] is False
         repeated = client.post(
             f"/api/v1/mistake-review/items/{item['item_id']}/attempts/{attempt['attempt_id']}/answer",
@@ -232,6 +233,65 @@ def test_mistake_review_lists_and_consolidates() -> None:
 
         summary = client.get("/api/v1/mistake-review/summary?domain_code=ai_app_dev")
         assert summary.json()["data"]["consolidation_rate"] == 100.0
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_short_answer_mistake_retries_original_and_uses_rubric_scoring(monkeypatch) -> None:
+    factory = session_factory()
+    seed(factory)
+    with factory() as db:
+        question = db.scalar(
+            select(DiagnosticQuestion).where(
+                DiagnosticQuestion.public_id == "question_original"
+            )
+        )
+        question.question_type = "short_answer"
+        question.options_json = []
+        question.answer_key_json = {
+            "answer": "检索后核对来源",
+            "rubric": ["检索", "来源核对"],
+            "explanation": "应先检索并核对来源。",
+            "question_bank_uses": ["diagnosis"],
+        }
+        db.commit()
+
+    monkeypatch.setattr(
+        "app.services.mistake_review_service.score_short_answer_batch",
+        lambda items: (
+            {
+                items[0][0].public_id: {
+                    "total_score": 0.9,
+                    "confidence": 0.95,
+                    "is_correct": True,
+                    "scoring_method": "ai_rubric",
+                }
+            },
+            {},
+        ),
+    )
+    app.dependency_overrides[get_db] = override_db(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "user", "learner", "learner_mistake"
+    )
+    client = TestClient(app)
+    try:
+        item = client.get(
+            "/api/v1/mistake-review/items?domain_code=ai_app_dev"
+        ).json()["data"]["items"][0]
+        attempt = client.post(
+            f"/api/v1/mistake-review/items/{item['item_id']}/start", json={}
+        ).json()["data"]
+        assert attempt["question"]["question_id"] == "question_original"
+        assert attempt["question"]["question_type"] == "short_answer"
+        result = client.post(
+            f"/api/v1/mistake-review/items/{item['item_id']}/attempts/{attempt['attempt_id']}/answer",
+            json={"answer": "先检索，再核对来源"},
+        )
+        assert result.status_code == 200
+        assert result.json()["data"]["passed"] is True
+        assert result.json()["data"]["scoring_method"] == "ai_rubric"
+        assert result.json()["data"]["evidence"]["governance_status"] == "pending"
     finally:
         app.dependency_overrides.clear()
 
@@ -320,7 +380,7 @@ def test_summary_does_not_recommend_a_locked_node_mistake() -> None:
         app.dependency_overrides.clear()
 
 
-def test_two_distinct_passes_are_evaluated_once(monkeypatch) -> None:
+def test_repeated_correction_of_same_original_is_not_double_counted(monkeypatch) -> None:
     factory = session_factory()
     seed(factory)
     calls = 0
@@ -350,14 +410,84 @@ def test_two_distinct_passes_are_evaluated_once(monkeypatch) -> None:
                 json={"answer": 1},
             ).json()["data"])
         assert results[0]["evidence"]["governance_status"] == "pending"
-        assert results[1]["evidence"]["governance_status"] == "no_change"
-        assert results[1]["profile_result"]["evaluated"] is True
+        assert results[1]["evidence"]["governance_status"] == "pending"
+        assert results[1]["profile_result"]["evaluated"] is False
         repeated = client.post(
             f"/api/v1/mistake-review/items/{item['item_id']}/attempts/{attempt['attempt_id']}/answer",
             json={"answer": 1},
         ).json()["data"]
         assert repeated["evidence"] == results[1]["evidence"]
+        assert calls == 0
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_correction_combines_with_formal_evidence_for_profile_analysis(monkeypatch) -> None:
+    factory = session_factory()
+    seed(factory)
+    calls = 0
+
+    def fake_analyze(db, *, profile, path, evidence_records, **kwargs):
+        nonlocal calls
+        calls += 1
+        assert {
+            (record.answer_summary_json or {}).get("evidence_type")
+            for record in evidence_records
+        } == {"graded_quiz", "mistake_correction"}
+        return profile, None, SimpleNamespace(decision_reason="错题修正已参与画像复核"), {}
+
+    monkeypatch.setattr("app.services.learning_adjustment_service._analyze_profile", fake_analyze)
+    with factory() as db:
+        learner = db.scalar(select(Learner).where(Learner.public_id == "learner_mistake"))
+        knowledge = db.scalar(select(KnowledgeItem).where(KnowledgeItem.public_id == "knowledge_rag"))
+        question = db.scalar(
+            select(DiagnosticQuestion).where(
+                DiagnosticQuestion.public_id == "question_corroborating"
+            )
+        )
+        db.add(
+            AnswerRecord(
+                learner_id=learner.id,
+                question_id=question.id,
+                knowledge_item_id=knowledge.id,
+                session_id="graded_quiz_evidence",
+                answer_text="1",
+                score=1,
+                is_correct=True,
+                scoring_status="scored",
+                scoring_method="deterministic",
+                confidence=1,
+                answer_summary_json={
+                    "evidence_type": "graded_quiz",
+                    "contract_evidence_type": "scored_quiz",
+                    "confirmed": True,
+                    "consumed_by_profile_id": None,
+                },
+            )
+        )
+        db.commit()
+
+    app.dependency_overrides[get_db] = override_db(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "user", "learner", "learner_mistake"
+    )
+    client = TestClient(app)
+    try:
+        item = client.get(
+            "/api/v1/mistake-review/items?domain_code=ai_app_dev"
+        ).json()["data"]["items"][0]
+        attempt = client.post(
+            f"/api/v1/mistake-review/items/{item['item_id']}/start", json={}
+        ).json()["data"]
+        result = client.post(
+            f"/api/v1/mistake-review/items/{item['item_id']}/attempts/{attempt['attempt_id']}/answer",
+            json={"answer": 1},
+        ).json()["data"]
+
         assert calls == 1
+        assert result["profile_result"]["evaluated"] is True
+        assert result["profile_result"]["profile_updated"] is False
+        assert result["path_result"]["completed_node_id"] is None
     finally:
         app.dependency_overrides.clear()
 
