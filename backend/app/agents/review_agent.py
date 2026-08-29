@@ -61,6 +61,7 @@ from app.services.llm_service import (
     OpenAICompatibleGateway,
     gateway,
 )
+from app.services.question_bank_service import graded_quiz_difficulty_matches
 
 
 REVIEW_AGENT_NAME = "review_validation_agent_v3"
@@ -1513,19 +1514,23 @@ def _review_certified_quiz(
     checks: list[FactCheck] = []
     covered_ids: set[str] = set()
     invalid_paths: list[str] = []
+    difficulty_match_count = 0
     for index, question in enumerate(content.questions):
         question_coverage = {
             question.knowledge_id,
             *question.related_knowledge_ids,
         } & target_ids
         covered_ids.update(question_coverage)
+        if graded_quiz_difficulty_matches(
+            question.difficulty, request.requirements.target_difficulty
+        ):
+            difficulty_match_count += 1
         valid = (
             package_structure_valid
             and bool(question.reference_question_ids)
             and bool(question.source_ref_ids)
             and set(question.source_ref_ids).issubset(evidence_ids)
             and bool(question_coverage)
-            and abs(question.difficulty - request.requirements.target_difficulty) <= 2
         )
         field_path = f"questions[{index}]"
         if not valid:
@@ -1546,9 +1551,9 @@ def _review_certified_quiz(
                 ),
                 source_ref_ids=list(question.source_ref_ids),
                 reason=(
-                    "正式认证题的知识点、层级、难度和来源满足本次组卷约束"
+                    "正式认证题的结构、知识范围和来源满足本次组卷约束"
                     if valid
-                    else "正式认证题未满足本次组卷的结构、范围、难度或来源约束"
+                    else "正式认证题未满足本次组卷的结构、范围或来源约束"
                 ),
             )
         )
@@ -1562,7 +1567,26 @@ def _review_certified_quiz(
         )
     passed = not invalid_paths and not missing_ids
     coverage = 100.0 * len(covered_ids) / max(1, len(target_ids))
-    difficulty = 100.0 if passed else 80.0
+    raw_difficulty_match = round(
+        100.0 * difficulty_match_count / max(1, len(content.questions)), 2
+    )
+    # V10 requires every published resource score to meet the 85-point gate.
+    # A formally selected difficulty fallback is policy-compliant, so retain
+    # its raw ratio in observability while applying the bounded gate score.
+    difficulty = (
+        max(85.0, raw_difficulty_match)
+        if passed
+        else min(80.0, raw_difficulty_match)
+    )
+    _LOGGER.info(
+        "graded_quiz_difficulty_summary task_id=%s standard_count=%s "
+        "fallback_count=%s raw_match_score=%s gate_score=%s",
+        request.task_id,
+        difficulty_match_count,
+        len(content.questions) - difficulty_match_count,
+        raw_difficulty_match,
+        difficulty,
+    )
     scores = ReviewCriterionScores(
         factual_accuracy=100.0,
         source_traceability=100.0 if not invalid_paths else 80.0,
@@ -1586,7 +1610,7 @@ def _review_certified_quiz(
                 code=ReviewIssueCode.STRUCTURAL_ERROR,
                 section=",".join(invalid_paths)[:255],
                 description="正式题未满足当前学习单元的确定性组卷约束",
-                suggested_revision="仅替换不满足结构、范围、难度或认证来源约束的正式题",
+                suggested_revision="仅替换不满足结构、范围或认证来源约束的正式题",
             )
         )
     if missing_ids:

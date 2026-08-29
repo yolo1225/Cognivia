@@ -159,6 +159,23 @@ def _cosine(left: list[float], right: list[float]) -> float | None:
     return _clamp(dot / (left_norm * right_norm))
 
 
+def _graded_quiz_question_scope(
+    request: RetrieveKnowledgeInput,
+    explicit_ids: Iterable[str],
+    covered_ids: Iterable[str],
+) -> list[str]:
+    """Keep formal quiz selection on its assigned resource knowledge targets."""
+
+    assigned = request.context.resource_knowledge_targets.get(
+        ResourceType.GRADED_QUIZ, []
+    )
+    return (
+        _ordered_unique(assigned)[:6]
+        or _ordered_unique(explicit_ids)[:6]
+        or _ordered_unique(covered_ids)
+    )
+
+
 class CandidateRetriever:
     """Deterministic V3 retrieval over the isolated real-embedding collection."""
 
@@ -855,7 +872,11 @@ class CandidateRetriever:
         missing = [value for value in _ordered_unique(missing) if value not in set(covered)]
         questions: list[tuple[DiagnosticQuestion, str]] = []
         if ResourceType.GRADED_QUIZ in request.retrieval_plan.resource_types:
-            question_scope = list(explicit_ids)[:6] or covered
+            question_scope = _graded_quiz_question_scope(
+                request,
+                explicit_ids,
+                covered,
+            )
             question_rows = list(
                 self.db.execute(
                     select(DiagnosticQuestion, KnowledgeItem.public_id)

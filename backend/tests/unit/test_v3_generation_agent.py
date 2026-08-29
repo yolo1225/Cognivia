@@ -509,6 +509,7 @@ def test_formal_quiz_revision_replaces_rejected_question_without_model_generatio
     previous = agent.execute(request).resources[0]
     previous_content = previous.structured_content
     assert isinstance(previous_content, GradedQuizContent)
+    accepted_ids = [question.question_id for question in previous_content.questions[:2]]
     rejected_id = previous_content.questions[2].question_id
     revision_plan = RevisionPlan(
         revision_count=1,
@@ -529,6 +530,7 @@ def test_formal_quiz_revision_replaces_rejected_question_without_model_generatio
 
     assert isinstance(revised, GradedQuizContent)
     assert len(revised.questions) == 3
+    assert [question.question_id for question in revised.questions[:2]] == accepted_ids
     assert rejected_id not in {question.question_id for question in revised.questions}
     assert all(question.reference_question_ids for question in revised.questions)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import logging
 import re
 from typing import Callable, Iterable, TypeVar
 
@@ -34,6 +35,7 @@ from app.services.question_certification_service import (
 
 
 QUESTION_PURPOSES = frozenset({"diagnosis", "graded_quiz", "mastery_validation"})
+_LOGGER = logging.getLogger(__name__)
 QUIZ_QUESTION_USES = frozenset({"graded_quiz"})
 MASTERY_QUESTION_USES = frozenset({"mastery_validation"})
 MIN_QUIZ_QUESTIONS_PER_KNOWLEDGE = 3
@@ -262,6 +264,12 @@ def _profile_level_score(profile_type: str, quiz_level: str) -> int:
     return preferred.get(profile_type, preferred["intermediate"]).get(quiz_level, 0)
 
 
+def graded_quiz_difficulty_matches(difficulty: int, target_difficulty: int) -> bool:
+    """Return whether a quiz question meets the normal difficulty band."""
+
+    return abs(int(difficulty) - int(target_difficulty)) <= 2
+
+
 def select_graded_quiz_candidates(
     candidates: Iterable[QuestionCandidate],
     target_ids: Iterable[str],
@@ -309,39 +317,79 @@ def select_graded_quiz_candidates(
         proximity = -abs(int(item_difficulty) - target_difficulty)
         scored.append((candidate, alignment, focus, proximity, level.value))
 
+    desired_count = expected_quiz_question_count(len(target_set))
+    standard = [
+        row
+        for row in scored
+        if graded_quiz_difficulty_matches(
+            difficulty(row[0]) if difficulty else target_difficulty,
+            target_difficulty,
+        )
+    ]
+    difficulty_fallback = [row for row in scored if row not in standard]
     selected: list[QuestionCandidate] = []
     covered: set[str] = set()
     selected_types: set[str] = set()
-    desired_count = expected_quiz_question_count(len(target_set))
-    remaining = list(scored)
-    while remaining and len(selected) < desired_count:
-        def rank(value: tuple[QuestionCandidate, int, int, int, str]) -> tuple:
-            item, alignment, focus, proximity, level = value
-            primary_id = str(knowledge_id(item))
-            related_ids = {str(part) for part in related_knowledge_ids(item)}
-            expands_coverage = int(bool(({primary_id, *related_ids} & target_set) - covered))
-            kind = question_type(item) if question_type else ""
-            balances_type = int(bool(kind) and kind not in selected_types)
-            item_id = question_id(item) if question_id else str(id(item))
-            return (
-                alignment,
-                focus,
-                proximity,
-                expands_coverage,
-                balances_type,
-                _profile_level_score(profile_type, level),
-                # Keep primary targets and stable IDs deterministic on ties.
-                -len(related_ids),
-                item_id,
-            )
 
-        chosen_row = max(remaining, key=rank)
-        remaining.remove(chosen_row)
-        chosen = chosen_row[0]
-        selected.append(chosen)
-        covered.update({str(knowledge_id(chosen)), *(str(value) for value in related_knowledge_ids(chosen))})
-        if question_type:
-            selected_types.add(question_type(chosen))
+    def select_from(
+        remaining: list[tuple[QuestionCandidate, int, int, int, str]],
+        limit: int,
+    ) -> None:
+        while remaining and len(selected) < limit:
+            def rank(value: tuple[QuestionCandidate, int, int, int, str]) -> tuple:
+                item, alignment, focus, proximity, level = value
+                primary_id = str(knowledge_id(item))
+                related_ids = {str(part) for part in related_knowledge_ids(item)}
+                expands_coverage = int(
+                    bool(({primary_id, *related_ids} & target_set) - covered)
+                )
+                kind = question_type(item) if question_type else ""
+                balances_type = int(bool(kind) and kind not in selected_types)
+                item_id = question_id(item) if question_id else str(id(item))
+                return (
+                    alignment,
+                    focus,
+                    proximity,
+                    expands_coverage,
+                    balances_type,
+                    _profile_level_score(profile_type, level),
+                    # Keep primary targets and stable IDs deterministic on ties.
+                    -len(related_ids),
+                    item_id,
+                )
+
+            chosen_row = max(remaining, key=rank)
+            remaining.remove(chosen_row)
+            chosen = chosen_row[0]
+            selected.append(chosen)
+            covered.update(
+                {
+                    str(knowledge_id(chosen)),
+                    *(str(value) for value in related_knowledge_ids(chosen)),
+                }
+            )
+            if question_type:
+                selected_types.add(question_type(chosen))
+
+    select_from(list(standard), desired_count)
+    if len(selected) < 3:
+        select_from(list(difficulty_fallback), 3)
+    selected_standard_count = sum(
+        graded_quiz_difficulty_matches(
+            difficulty(item) if difficulty else target_difficulty,
+            target_difficulty,
+        )
+        for item in selected
+    )
+    _LOGGER.info(
+        "graded_quiz_selection standard_candidates=%s fallback_candidates=%s "
+        "selected_standard=%s selected_fallback=%s target_difficulty=%s",
+        len(standard),
+        len(difficulty_fallback),
+        selected_standard_count,
+        len(selected) - selected_standard_count,
+        target_difficulty,
+    )
     if require_complete and len(selected) < 3:
         raise QuestionBankError(
             "graded_quiz_question_bank_insufficient",
@@ -611,7 +659,8 @@ def graded_quiz_preflight(
     missing_targets = sorted(set(target_ids) - primary_ids)
     required = expected_quiz_question_count(len(target_ids))
     matching_target_difficulty = sum(
-        abs(row[0].difficulty - target_difficulty) <= 1 for row in eligible
+        graded_quiz_difficulty_matches(row[0].difficulty, target_difficulty)
+        for row in eligible
     )
     return {
         "ready": (
@@ -657,6 +706,7 @@ def _select_reference_questions(
     request: GenerateResourceInput,
     *,
     excluded_question_ids: Iterable[str] = (),
+    require_complete: bool = True,
 ) -> list[tuple[str, QuizLevel, RetrievedQuestion]]:
     target_ids = list(
         request.requirements.resource_knowledge_targets.get(ResourceType.GRADED_QUIZ, [])
@@ -669,7 +719,7 @@ def _select_reference_questions(
         knowledge_id=lambda question: question.knowledge_id,
         related_knowledge_ids=lambda question: question.related_knowledge_ids,
         quiz_level=lambda question: str(question.answer_key.get("quiz_level") or ""),
-        require_complete=True,
+        require_complete=require_complete,
         question_id=lambda question: question.question_id,
         excluded_question_ids=excluded_question_ids,
         difficulty=lambda question: question.difficulty,
@@ -715,6 +765,68 @@ def build_graded_quiz_from_question_bank(
         request,
         excluded_question_ids=excluded_question_ids,
     )
+    questions = _build_quiz_questions(request, allowed_sources, selected)
+    node_title = (
+        request.current_path_node.title
+        if request.current_path_node is not None
+        else "当前学习节点"
+    )
+    return GradedQuizContent(
+        title=f"{node_title}分级测验",
+        target_audience=f"{request.profile.profile_type.value}学习者",
+        learning_objectives=[f"检验对{node_title}的理解、应用与迁移能力"],
+        questions=questions,
+    )
+
+
+def revise_graded_quiz_from_question_bank(
+    request: GenerateResourceInput,
+    allowed_sources: list[SourceRef],
+    previous: GradedQuizContent,
+    rejected_indexes: Iterable[int],
+) -> GradedQuizContent:
+    """Replace only rejected formal questions and preserve accepted positions."""
+
+    indexes = sorted(
+        {
+            int(index)
+            for index in rejected_indexes
+            if 0 <= int(index) < len(previous.questions)
+        }
+    )
+    if not indexes:
+        raise QuestionBankError("graded_quiz_revision_scope_invalid")
+    existing_ids = {question.question_id for question in previous.questions}
+    replacements = _select_reference_questions(
+        request,
+        excluded_question_ids=existing_ids,
+        require_complete=False,
+    )
+    if len(replacements) < len(indexes):
+        raise QuestionBankError(
+            "graded_quiz_question_bank_insufficient",
+            details={
+                "available_replacement_count": len(replacements),
+                "required_replacement_count": len(indexes),
+                "rejected_indexes": indexes,
+            },
+        )
+    replacement_questions = _build_quiz_questions(
+        request,
+        allowed_sources,
+        replacements[: len(indexes)],
+    )
+    questions = list(previous.questions)
+    for index, replacement in zip(indexes, replacement_questions, strict=True):
+        questions[index] = replacement
+    return previous.model_copy(update={"questions": questions})
+
+
+def _build_quiz_questions(
+    request: GenerateResourceInput,
+    allowed_sources: list[SourceRef],
+    selected: list[tuple[str, QuizLevel, RetrievedQuestion]],
+) -> list[QuizQuestion]:
     allowed_ids = {source.source_ref_id for source in allowed_sources}
     chunks_by_source_ref = {
         chunk.source.source_ref_id: chunk
@@ -772,14 +884,4 @@ def build_graded_quiz_from_question_bank(
                 reference_question_ids=[question.question_id],
             )
         )
-    node_title = (
-        request.current_path_node.title
-        if request.current_path_node is not None
-        else "当前学习节点"
-    )
-    return GradedQuizContent(
-        title=f"{node_title}分级测验",
-        target_audience=f"{request.profile.profile_type.value}学习者",
-        learning_objectives=[f"检验对{node_title}的理解、应用与迁移能力"],
-        questions=questions,
-    )
+    return questions

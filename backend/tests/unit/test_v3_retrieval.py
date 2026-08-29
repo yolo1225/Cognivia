@@ -23,6 +23,7 @@ from app.rag.retrieval import (
     CandidateRecord,
     CandidateRetriever,
     RetrievalError,
+    _graded_quiz_question_scope,
     _record_capabilities,
 )
 from app.rag.database_manifest_store import DatabaseManifestStore
@@ -242,6 +243,7 @@ def _input(
     purpose="remedial_explanation",
     n_results=8,
     resource_types=None,
+    resource_knowledge_targets=None,
 ) -> RetrieveKnowledgeInput:
     requested_types = resource_types or ["lecture"]
     return RetrieveKnowledgeInput.model_validate(
@@ -257,6 +259,7 @@ def _input(
                 "domain_code": "ai_app_dev",
                 "resource_types": requested_types,
                 "learning_goal": "Learn RAG retrieval",
+                "resource_knowledge_targets": resource_knowledge_targets or {},
             },
             "profile": {
                 "profile_id": "profile-v3",
@@ -293,6 +296,24 @@ def _input(
             "purpose": purpose,
         }
     )
+
+
+def test_graded_quiz_scope_prefers_assigned_resource_targets() -> None:
+    request = _input(
+        priority=["embedding_basics", "related-topic"],
+        resource_types=["lecture", "practice_guide", "graded_quiz"],
+        resource_knowledge_targets={
+            "lecture": ["embedding_basics", "related-topic"],
+            "practice_guide": ["embedding_basics"],
+            "graded_quiz": ["embedding_basics"],
+        },
+    )
+
+    assert _graded_quiz_question_scope(
+        request,
+        ["embedding_basics", "related-topic"],
+        ["embedding_basics", "related-topic"],
+    ) == ["embedding_basics"]
 
 
 def test_practice_retrieval_prefers_operational_chunk_for_same_knowledge(

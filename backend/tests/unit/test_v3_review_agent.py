@@ -1737,6 +1737,10 @@ def test_certified_quiz_allows_three_question_single_level_package() -> None:
         question.model_copy(update={"reference_question_ids": [question.question_id]})
         for question in quiz.structured_content.questions[:3]
     ]
+    questions = [
+        question.model_copy(update={"difficulty": difficulty})
+        for question, difficulty in zip(questions, [1, 2, 4], strict=True)
+    ]
     target_id = questions[0].knowledge_id
     short_quiz = quiz.model_copy(
         update={"structured_content": quiz.structured_content.model_copy(update={"questions": questions})}
@@ -1745,6 +1749,7 @@ def test_certified_quiz_allows_three_question_single_level_package() -> None:
         update={
             "requirements": request.requirements.model_copy(
                 update={
+                    "target_difficulty": 1,
                     "resource_knowledge_targets": {
                         ResourceType.GRADED_QUIZ: [target_id]
                     }
@@ -1757,6 +1762,8 @@ def test_certified_quiz_allows_three_question_single_level_package() -> None:
 
     assert report.passed
     assert report.decision is ReviewDecision.PASSED
+    assert report.quality_metrics.hallucination_rate == 0
+    assert report.quality_metrics.difficulty_match_score == 85.0
 
 
 @pytest.mark.parametrize("resource_count", [1, 2, 3])

@@ -43,6 +43,7 @@ from app.services.question_bank_service import (
     QuestionBankError,
     build_graded_quiz_from_question_bank,
     quiz_revision_question_indexes,
+    revise_graded_quiz_from_question_bank,
 )
 
 
@@ -380,6 +381,8 @@ class ContentGenerationAgent:
                 previous_candidate = candidates_by_type.get(resource_type)
                 if resource_type is ResourceType.GRADED_QUIZ:
                     excluded_question_ids: set[str] = set()
+                    rejected_indexes: list[int] = []
+                    targeted_quiz_revision = False
                     if previous_candidate is not None:
                         previous_content = previous_candidate.structured_content
                         if not isinstance(previous_content, GradedQuizContent):
@@ -387,23 +390,30 @@ class ContentGenerationAgent:
                         rejected_indexes = quiz_revision_question_indexes(
                             validated.requirements.revision_plan
                         )
-                        if not rejected_indexes:
-                            # A formal-bank quiz cannot be repaired with free-form text.
-                            # If review did not identify a position, force a genuinely new
-                            # paper or fail clearly when the bank has no alternative.
-                            rejected_indexes = list(range(len(previous_content.questions)))
-                        excluded_question_ids = {
-                            previous_content.questions[index].question_id
-                            for index in rejected_indexes
-                            if 0 <= index < len(previous_content.questions)
-                        }
                     try:
-                        response = GeneratedContentResponse(
-                            structured_content=build_graded_quiz_from_question_bank(
+                        if previous_candidate is not None and rejected_indexes:
+                            targeted_quiz_revision = True
+                            structured_content = revise_graded_quiz_from_question_bank(
+                                validated,
+                                allowed_sources,
+                                previous_content,
+                                rejected_indexes,
+                            )
+                        else:
+                            if previous_candidate is not None:
+                                # Without a rejected position the formal paper must be
+                                # replaced as a whole; free-form question edits are forbidden.
+                                excluded_question_ids = {
+                                    question.question_id
+                                    for question in previous_content.questions
+                                }
+                            structured_content = build_graded_quiz_from_question_bank(
                                 validated,
                                 allowed_sources,
                                 excluded_question_ids=excluded_question_ids,
-                            ),
+                            )
+                        response = GeneratedContentResponse(
+                            structured_content=structured_content,
                             difficulty=validated.requirements.target_difficulty,
                         )
                     except QuestionBankError as exc:
@@ -597,10 +607,14 @@ class ContentGenerationAgent:
                     raise GenerationError("generated_source_outside_whitelist_after_repair")
 
                 if resource_type == ResourceType.GRADED_QUIZ:
-                    blueprint = _quiz_blueprint(
-                        validated,
-                        allowed_sources,
-                        excluded_question_ids=excluded_question_ids,
+                    blueprint = (
+                        _quiz_blueprint_for_content(validated, response.structured_content)
+                        if targeted_quiz_revision
+                        else _quiz_blueprint(
+                            validated,
+                            allowed_sources,
+                            excluded_question_ids=excluded_question_ids,
+                        )
                     )
                     quiz_violations = _quiz_blueprint_violations(
                         response.structured_content,
@@ -1521,6 +1535,34 @@ def _quiz_blueprint(
             for question in content.questions
         ]
     raise QuestionBankError("graded_quiz_question_bank_insufficient")
+
+
+def _quiz_blueprint_for_content(
+    request: GenerateResourceInput,
+    content: StructuredResourceContent,
+) -> list[dict[str, object]]:
+    """Build a formal-bank blueprint for a locally revised quiz."""
+
+    if not isinstance(content, GradedQuizContent):
+        raise QuestionBankError("graded_quiz_content_type_invalid")
+    references = {question.question_id: question for question in request.reference_questions}
+    blueprint: list[dict[str, object]] = []
+    for question in content.questions:
+        reference = references.get(question.question_id)
+        if reference is None or not reference.answer_key.get("source_ref_ids"):
+            raise QuestionBankError("graded_quiz_question_bank_scope_invalid")
+        blueprint.append(
+            {
+                "question_id": reference.question_id,
+                "level": str(reference.answer_key.get("quiz_level") or ""),
+                "question_type": reference.question_type.value,
+                "knowledge_id": reference.knowledge_id,
+                "difficulty": reference.difficulty,
+                "allowed_source_ref_ids": list(reference.answer_key["source_ref_ids"]),
+                "reference_question_ids": [reference.question_id],
+            }
+        )
+    return blueprint
 
 
 def _quiz_blueprint_violations(

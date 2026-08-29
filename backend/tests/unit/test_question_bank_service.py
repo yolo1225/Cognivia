@@ -150,3 +150,37 @@ def test_fewer_than_three_matching_questions_returns_density_error() -> None:
 
     with pytest.raises(QuestionBankError, match="graded_quiz_question_bank_insufficient"):
         _select(rows, profile_type="beginner", target_difficulty=1)
+
+
+def test_graded_quiz_uses_only_standard_difficulty_when_supply_is_sufficient() -> None:
+    rows = [
+        {"id": "standard-a", "knowledge_id": "K1", "related": [], "level": "foundation", "difficulty": 1, "type": "single_choice"},
+        {"id": "standard-b", "knowledge_id": "K1", "related": [], "level": "improvement", "difficulty": 2, "type": "short_answer"},
+        {"id": "standard-c", "knowledge_id": "K1", "related": [], "level": "challenge", "difficulty": 3, "type": "single_choice"},
+        {"id": "fallback", "knowledge_id": "K1", "related": [], "level": "challenge", "difficulty": 5, "type": "short_answer"},
+    ]
+
+    selected = _select(rows, profile_type="beginner", target_difficulty=1)
+
+    assert {row["id"] for row in selected} == {
+        "standard-a",
+        "standard-b",
+        "standard-c",
+    }
+
+
+def test_graded_quiz_uses_nearest_difficulty_fallback_to_reach_minimum() -> None:
+    rows = [
+        {"id": "standard-a", "knowledge_id": "K1", "related": [], "level": "foundation", "difficulty": 1, "type": "single_choice"},
+        {"id": "standard-b", "knowledge_id": "K1", "related": [], "level": "improvement", "difficulty": 2, "type": "short_answer"},
+        {"id": "nearest-fallback", "knowledge_id": "K1", "related": [], "level": "challenge", "difficulty": 4, "type": "single_choice"},
+        {"id": "farther-fallback", "knowledge_id": "K1", "related": [], "level": "challenge", "difficulty": 5, "type": "short_answer"},
+    ]
+
+    selected = _select(rows, profile_type="beginner", target_difficulty=1)
+
+    assert [row["id"] for row in selected] == [
+        "standard-a",
+        "standard-b",
+        "nearest-fallback",
+    ]
