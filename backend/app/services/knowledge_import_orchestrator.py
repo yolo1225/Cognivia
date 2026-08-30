@@ -13,7 +13,6 @@ from sqlalchemy.orm import object_session
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models import (
-    DiagnosticQuestion,
     Domain,
     IndexBuildJob,
     KnowledgeDocument,
@@ -35,8 +34,8 @@ from app.services.knowledge_parser_service import parse_document, replace_chunks
 from app.services.knowledge_model_import_service import (
     complete_candidate_ability_weights,
     enrich_unstructured_sections,
+    generate_cross_document_relations,
     generate_model_relations,
-    generate_model_questions,
     repair_curriculum_relations,
     validate_model_candidates,
 )
@@ -87,6 +86,7 @@ def create_import_run(db, document: KnowledgeDocument) -> KnowledgeImportRun:
         public_id=f"kir_{uuid4().hex[:16]}",
         document_id=document.id,
         domain_code=document.domain_code,
+        change_set_id=document.change_set_id,
         current_step="queued",
         status="queued",
         input_version=_input_version(document),
@@ -177,8 +177,12 @@ def _candidate_graph_data(
         if item.candidate_type != "knowledge_relation" or item.validation_errors_json:
             continue
         payload = item.payload_json or {}
-        source = id_map.get(str(payload.get("source_candidate_id") or ""))
-        target = id_map.get(str(payload.get("target_candidate_id") or ""))
+        source = id_map.get(str(payload.get("source_candidate_id") or "")) or str(
+            payload.get("source_existing_knowledge_id") or ""
+        )
+        target = id_map.get(str(payload.get("target_candidate_id") or "")) or str(
+            payload.get("target_existing_knowledge_id") or ""
+        )
         if not source or not target:
             continue
         edges.append({
@@ -208,26 +212,27 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
         KnowledgeItem.domain_code == document.domain_code,
         KnowledgeItem.status == "staged",
     )))
-    existing_questions = list(db.scalars(
-        select(DiagnosticQuestion).where(
-            DiagnosticQuestion.domain_code == document.domain_code,
-            DiagnosticQuestion.status == "active",
-            DiagnosticQuestion.certification_status == "certified",
-        )
-    ))
-    existing_question_count = len(existing_questions)
-    certified_question_candidates = [
-        item
-        for item in candidates
-        if item.candidate_type == "diagnostic_question"
-        and (item.payload_json or {}).get("certification_status") == "certified"
-    ]
-    question_count = existing_question_count + len(certified_question_candidates)
     item_tags = {item.public_id: set(item.tags_json or []) for item in published_items}
+    projected_payloads = {
+        item.public_id: {
+            "external_id": item.external_id,
+            "name": item.name,
+            "category": item.category,
+            "tags": list(item.tags_json or []),
+        }
+        for item in published_items
+    }
     candidate_tags, graph_edges = _candidate_graph_data(
         candidates, use_target_public_ids=True
     )
     item_tags.update(candidate_tags)
+    for candidate in candidates:
+        if candidate.candidate_type != "knowledge_item":
+            continue
+        payload = candidate.payload_json or {}
+        target_id = str(payload.get("target_public_id") or "")
+        if target_id:
+            projected_payloads[target_id] = payload
     item_db_to_public = {item.id: item.public_id for item in published_items}
     for relation in db.scalars(
         select(KnowledgeRelation).where(
@@ -249,8 +254,22 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
     configured_directions = list(
         (domain.config_json if domain else {}).get("learning_directions") or []
     )
+    configured_tags = {
+        str(tag).casefold()
+        for direction in configured_directions
+        for tag in direction.get("match_tags") or []
+        if str(tag).strip()
+    }
+    uncovered_payloads = [
+        payload
+        for payload in projected_payloads.values()
+        if {
+            str(tag).casefold() for tag in payload.get("tags") or [] if str(tag).strip()
+        }.isdisjoint(configured_tags)
+    ]
     directions = _merge_learning_direction_mappings(
-        configured_directions, _suggest_learning_directions(candidates)
+        configured_directions,
+        _suggest_learning_directions_from_payloads(uncovered_payloads),
     )
     graph_quality = evaluate_graph_quality(
         item_tags=item_tags, edges=graph_edges, directions=directions
@@ -259,19 +278,10 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
     knowledge_candidate_ids = {
         item.public_id for item in candidates if item.candidate_type == "knowledge_item"
     }
-    covered_knowledge_ids = {
-        str((item.payload_json or {}).get("knowledge_candidate_id"))
-        for item in candidates
-        if item in certified_question_candidates
-        and (item.payload_json or {}).get("knowledge_candidate_id") in knowledge_candidate_ids
-    }
     imported_knowledge_count = len(knowledge_candidate_ids)
-    question_coverage = (
-        len(covered_knowledge_ids) / imported_knowledge_count if imported_knowledge_count else 0.0
-    )
     source_items = [
         item for item in candidates
-        if item.candidate_type in {"knowledge_item", "knowledge_relation", "diagnostic_question"}
+        if item.candidate_type in {"knowledge_item", "knowledge_relation"}
     ]
     source_traceability = (
         sum(
@@ -287,7 +297,6 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
 
     policy = readiness_policy(domain) if domain is not None else {
         "minimum_published_knowledge": 10,
-        "minimum_diagnostic_questions": 10,
     }
     weight_blockers = [
         str((item.payload_json or {}).get("target_public_id") or item.public_id)
@@ -299,9 +308,7 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
         "knowledge_items": len({
             item.public_id for item in [*published_items, *staged_items]
         }),
-        "diagnostic_questions": question_count,
         "path_coverage": graph_quality["path_participation_ratio"],
-        "question_knowledge_coverage": round(question_coverage, 4),
         "source_traceability": round(source_traceability, 4),
         "proposed_learning_directions": directions,
         **graph_quality,
@@ -316,44 +323,14 @@ def _projected_readiness(db, document: KnowledgeDocument) -> dict[str, object]:
             "count": len(weight_blockers),
             "knowledge_ids": weight_blockers[:50],
         })
-    if question_coverage < 1.0:
-        checks["blocking_issues"].append({
-            "code": "QUESTION_COVERAGE_INCOMPLETE",
-            "message": "存在没有有效诊断题的导入知识点",
-            "actual": round(question_coverage, 4),
-        })
     if source_traceability < 1.0:
         checks["blocking_issues"].append({
             "code": "SOURCE_TRACEABILITY_INCOMPLETE",
             "message": "存在无法定位来源的候选资产",
             "actual": round(source_traceability, 4),
         })
-    question_types = {
-        str((item.payload_json or {}).get("question_type") or "")
-        for item in certified_question_candidates
-    } | {question.question_type for question in existing_questions}
-    quiz_levels = {
-        str((item.payload_json or {}).get("quiz_level") or "")
-        for item in certified_question_candidates
-    } | {
-        str((question.answer_key_json or {}).get("quiz_level") or "")
-        for question in existing_questions
-    }
-    if not {"single_choice", "short_answer"}.issubset(question_types):
-        checks["blocking_issues"].append({
-            "code": "QUESTION_TYPES_INCOMPLETE",
-            "message": "认证题库必须同时包含选择题和简答题",
-            "actual": sorted(question_types),
-        })
-    if not {"foundation", "improvement", "challenge"}.issubset(quiz_levels):
-        checks["blocking_issues"].append({
-            "code": "QUESTION_LEVELS_INCOMPLETE",
-            "message": "认证题库必须覆盖基础、提升和挑战三个层级",
-            "actual": sorted(quiz_levels),
-        })
     checks["passed"] = bool(
         checks["knowledge_items"] >= policy["minimum_published_knowledge"]
-        and question_count >= policy["minimum_diagnostic_questions"]
         and not checks["blocking_issues"]
     )
     checks["quality_gate_passed"] = checks["passed"]
@@ -364,11 +341,19 @@ def _suggest_learning_directions(
     candidates: list[KnowledgeImportCandidate],
 ) -> list[dict[str, object]]:
     """Build deterministic direction proposals without requiring a model call."""
+    return _suggest_learning_directions_from_payloads([
+        item.payload_json or {}
+        for item in candidates
+        if item.candidate_type == "knowledge_item"
+    ])
+
+
+def _suggest_learning_directions_from_payloads(
+    payloads: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Build directions from the complete projected domain catalog."""
     grouped: dict[str, list[dict[str, object]]] = defaultdict(list)
-    for candidate in candidates:
-        if candidate.candidate_type != "knowledge_item":
-            continue
-        payload = candidate.payload_json or {}
+    for payload in payloads:
         category = str(payload.get("category") or "综合学习").strip() or "综合学习"
         grouped[category].append(payload)
     total = sum(len(values) for values in grouped.values())
@@ -454,7 +439,7 @@ def _merge_learning_direction_mappings(
     configured: list[dict[str, object]],
     suggested: list[dict[str, object]],
 ) -> list[dict[str, object]]:
-    """Preserve configured direction identity while supplementing tag mappings."""
+    """Preserve configured directions and add genuinely new domain topics."""
     if not configured:
         return [dict(direction) for direction in suggested]
     merged = [
@@ -476,20 +461,58 @@ def _merge_learning_direction_mappings(
             len(proposal_tags & {str(tag) for tag in item.get("match_tags") or []})
             for item in merged
         ]
+        if any(str(item.get("value")) == str(proposal.get("value")) for item in merged):
+            continue
         best_overlap = max(overlaps, default=0)
-        target_index = (
-            overlaps.index(best_overlap)
-            if best_overlap
-            else min(
-                range(len(merged)),
-                key=lambda index: (len(merged[index].get("match_tags") or []), index),
-            )
-        )
+        overlap_ratio = best_overlap / len(proposal_tags) if proposal_tags else 0.0
+        if not best_overlap or overlap_ratio < 0.35:
+            merged.append({**proposal, "match_tags": sorted(proposal_tags)})
+            continue
+        target_index = overlaps.index(best_overlap)
         current = list(merged[target_index].get("match_tags") or [])
         merged[target_index]["match_tags"] = list(
             dict.fromkeys([*current, *sorted(proposal_tags)])
         )
     return merged
+
+
+def refresh_import_readiness(
+    db,
+    run: KnowledgeImportRun,
+    document: KnowledgeDocument,
+    *,
+    manifest: dict[str, object],
+    smoke_test: dict[str, object],
+) -> dict[str, object]:
+    """Recompute graph readiness without re-parsing or rebuilding embeddings."""
+    readiness = _projected_readiness(db, document)
+    run.artifact_manifest_json = {
+        **(run.artifact_manifest_json or {}),
+        "candidate_manifest": manifest,
+        "smoke_test": smoke_test,
+        "projected_readiness": readiness,
+        "quality_baseline_version": "knowledge-import-gold-v1",
+    }
+    if readiness["passed"]:
+        run.status = "ready_to_publish"
+        run.current_step = "ready_to_publish"
+        run.error_code = None
+        run.error_summary = None
+        document.status = "ready_to_publish"
+        document.error_summary = None
+    else:
+        run.status = "needs_attention"
+        run.current_step = "needs_attention"
+        run.error_code = "PROJECTED_READINESS_FAILED"
+        run.error_summary = "预计领域 readiness 未通过"
+        document.status = "needs_attention"
+        document.error_summary = run.error_summary
+    run.lease_owner = None
+    run.lease_expires_at = None
+    run.finished_at = datetime.now(UTC)
+    db.commit()
+    _event(db, run, run.status, counts=readiness)
+    return readiness
 
 
 def _candidate_graph_quality(
@@ -607,22 +630,6 @@ def run_import(run_id: str) -> None:
                         db.delete(candidate)
                         candidates.remove(candidate)
 
-                _step(db, run, document, "question_generation")
-                _raise_if_cancel_requested(db, run_id)
-                generated_questions = generate_model_questions(
-                    db,
-                    document,
-                    candidates,
-                    run,
-                    certification_started=lambda: _step(
-                        db, run, document, "question_certification"
-                    ),
-                )
-                candidates = [
-                    item for item in candidates
-                    if item.candidate_type != "diagnostic_question"
-                ]
-                candidates.extend(generated_questions)
                 directions = _suggest_learning_directions(candidates)
                 candidates = _remove_cycle_forming_relations(db, candidates)
                 quality = _candidate_graph_quality(candidates, directions)
@@ -662,6 +669,10 @@ def run_import(run_id: str) -> None:
                     "repair_graph_quality": repair_quality,
                     "final_graph_quality": quality,
                 }
+            cross_document_relations = generate_cross_document_relations(
+                db, document, candidates
+            )
+            candidates.extend(cross_document_relations)
             db.commit()
             _event(db, run, "completed", counts={"candidates": len(candidates)})
 
@@ -711,30 +722,13 @@ def run_import(run_id: str) -> None:
                 "checks": {"import": retrieval["checks"], "domain": isolation["checks"]},
             }
             job.result_json = result
-            readiness = _projected_readiness(db, document)
-            run.artifact_manifest_json = {
-                **(run.artifact_manifest_json or {}),
-                "candidate_manifest": manifest,
-                "smoke_test": result["smoke_test"],
-                "projected_readiness": readiness,
-                "quality_baseline_version": "knowledge-import-gold-v1",
-            }
-            if not readiness["passed"]:
-                run.status = "needs_attention"
-                run.current_step = "needs_attention"
-                document.status = "needs_attention"
-                run.error_code = "PROJECTED_READINESS_FAILED"
-                run.error_summary = "预计领域 readiness 未通过"
-                document.error_summary = run.error_summary
-            else:
-                run.status = "ready_to_publish"
-                run.current_step = "ready_to_publish"
-                document.status = "ready_to_publish"
-            run.lease_owner = None
-            run.lease_expires_at = None
-            run.finished_at = datetime.now(UTC)
-            db.commit()
-            _event(db, run, run.status, counts=readiness)
+            refresh_import_readiness(
+                db,
+                run,
+                document,
+                manifest=manifest,
+                smoke_test=result["smoke_test"],
+            )
         except (ImportCancelled, KnowledgeImportBatchCancelled) as exc:
             db.rollback()
             run = db.scalar(select(KnowledgeImportRun).where(KnowledgeImportRun.public_id == run_id))
@@ -822,6 +816,7 @@ def serialize_run(run: KnowledgeImportRun) -> dict[str, object]:
         "run_id": run.public_id,
         "document_id": run.document_id,
         "domain_code": run.domain_code,
+        "change_set_id": run.change_set_id,
         "status": run.status,
         "current_step": run.current_step,
         "attempt": run.attempt_count,

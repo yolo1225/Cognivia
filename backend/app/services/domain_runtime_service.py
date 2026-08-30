@@ -15,20 +15,9 @@ from app.agents.profile_analysis_config import (
 from app.models import DiagnosticQuestion, Domain, KnowledgeItem, KnowledgeRelation
 from app.rag.readiness import candidate_rag_status
 from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
+    ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS,
 )
-
-
-DIAGNOSTIC_DISTRIBUTION = {
-    ("single_choice", False): 3,
-    ("single_choice", True): 3,
-    ("short_answer", False): 2,
-    ("short_answer", True): 2,
-}
-SAFE_CONCEPTUAL_DIAGNOSTIC_DISTRIBUTION = {
-    "single_choice": 6,
-    "short_answer": 4,
-}
+from app.services.question_bank_service import question_bank_coverage, question_bank_uses
 
 
 def practice_generation_mode_for_items(items: list[KnowledgeItem]) -> str:
@@ -70,6 +59,7 @@ class DomainRuntime:
     profile_config: ProfileAnalysisConfig | None
     profile_ready: bool
     diagnostic_ready: bool
+    question_bank_ready: bool
     rag_ready: bool
     generation_ready: bool
     reasons: tuple[str, ...]
@@ -82,6 +72,7 @@ class DomainRuntime:
             "status": self.status,
             "profile_ready": self.profile_ready,
             "diagnostic_ready": self.diagnostic_ready,
+            "question_bank_ready": self.question_bank_ready,
             "rag_ready": self.rag_ready,
             "generation_ready": self.generation_ready,
             "reasons": list(self.reasons),
@@ -240,7 +231,7 @@ def load_domain_runtime(db: Session, domain_code: str) -> DomainRuntime:
             .where(DiagnosticQuestion.certification_status == "certified")
             .where(
                 DiagnosticQuestion.certification_rule_version
-                == QUESTION_CERTIFICATION_RULE_VERSION
+                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS)
             )
         )
         or 0
@@ -254,7 +245,7 @@ def load_domain_runtime(db: Session, domain_code: str) -> DomainRuntime:
                 DiagnosticQuestion.status == "active",
                 DiagnosticQuestion.certification_status == "certified",
                 DiagnosticQuestion.certification_rule_version
-                == QUESTION_CERTIFICATION_RULE_VERSION,
+                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS),
                 KnowledgeItem.domain_code == domain_code,
                 KnowledgeItem.status == "published",
             )
@@ -263,40 +254,33 @@ def load_domain_runtime(db: Session, domain_code: str) -> DomainRuntime:
     if len(valid_questions) != total_questions:
         reasons.append("diagnostic_cross_domain_or_unpublished_knowledge")
     practice_generation_mode = practice_generation_mode_for_items(items)
-    if practice_generation_mode == "evidence_backed":
-        buckets = {key: 0 for key in DIAGNOSTIC_DISTRIBUTION}
-        for question, _item in valid_questions:
-            assessment_dimension = str(
-                (question.answer_key_json or {}).get("assessment_dimension") or ""
-            )
-            key = (
-                question.question_type,
-                assessment_dimension == "operation",
-            )
-            if key in buckets:
-                buckets[key] += 1
-        missing_buckets = [
-            f"{question_type}:{'operation' if operation else 'theory'}"
-            for (question_type, operation), required in DIAGNOSTIC_DISTRIBUTION.items()
-            if buckets[(question_type, operation)] < required
-        ]
-    else:
-        type_counts = {question_type: 0 for question_type in SAFE_CONCEPTUAL_DIAGNOSTIC_DISTRIBUTION}
-        for question, _item in valid_questions:
-            if question.question_type in type_counts:
-                type_counts[question.question_type] += 1
-        missing_buckets = [
-            f"{question_type}:overall"
-            for question_type, required in SAFE_CONCEPTUAL_DIAGNOSTIC_DISTRIBUTION.items()
-            if type_counts[question_type] < required
-        ]
-    if missing_buckets:
-        reasons.append(f"diagnostic_distribution_insufficient:{','.join(missing_buckets)}")
+    question_coverage = question_bank_coverage(
+        db, domain_code=domain_code, knowledge_ids=[item.public_id for item in items]
+    )
+    diagnosis_counts = {item.public_id: 0 for item in items}
+    for question, item in valid_questions:
+        if question_bank_uses(question) == {"diagnosis"}:
+            diagnosis_counts[item.public_id] += 1
+    missing_diagnosis_ids = sorted(
+        knowledge_id for knowledge_id, count in diagnosis_counts.items() if count < 1
+    )
+    if missing_diagnosis_ids:
+        reasons.append("diagnostic_coverage_incomplete")
+    question_bank_ready = (
+        bool(items)
+        and int(question_coverage["ready_items"]) == len(items)
+        and int(question_coverage["distribution"]["invalid_purpose_count"]) == 0
+        and int(question_coverage["distribution"]["invalid_question_count"]) == 0
+    )
+    if not question_bank_ready:
+        reasons.append("formal_question_bank_incomplete")
 
     rag = candidate_rag_status(domain_code)
     profile_ready = profile_config is not None
     diagnostic_ready = (
-        profile_ready and not missing_buckets and len(valid_questions) == total_questions
+        profile_ready
+        and not missing_diagnosis_ids
+        and len(valid_questions) == total_questions
     )
     rag_ready = bool(rag.get("ready"))
     return DomainRuntime(
@@ -311,8 +295,9 @@ def load_domain_runtime(db: Session, domain_code: str) -> DomainRuntime:
         profile_config=profile_config,
         profile_ready=profile_ready,
         diagnostic_ready=diagnostic_ready,
+        question_bank_ready=question_bank_ready,
         rag_ready=rag_ready,
-        generation_ready=profile_ready and rag_ready,
+        generation_ready=profile_ready and diagnostic_ready and question_bank_ready and rag_ready,
         reasons=tuple(
             dict.fromkeys(
                 reasons + ([] if rag_ready else [str(rag.get("reason") or "rag_not_ready")])

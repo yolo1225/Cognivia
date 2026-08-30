@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.models import DiagnosticQuestion, KnowledgeItem
 from app.rag.candidate_chunker import CHUNKER_VERSION, CandidateChunk, chunk_knowledge_item
 from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
+    ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS,
     knowledge_item_content_hash,
     normalize_evidence_text,
 )
@@ -232,7 +232,7 @@ def bind_domain_question_sources(
                     or question.source_content_hash != aggregate_hash
                     or answer.get("chunker_version") != CHUNKER_VERSION
                     or question.certification_rule_version
-                    != QUESTION_CERTIFICATION_RULE_VERSION
+                    not in ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS
                 ):
                     raise QuestionSourceBindingError(
                         f"question_source_hash_stale:{question.public_id}"

@@ -151,7 +151,7 @@ export function startConsolidation(itemId: string, learnerId?: string) {
   return postData<ConsolidationAttempt>(`/mistake-review/items/${itemId}/start`, { learner_id: learnerId })
 }
 
-export function answerConsolidation(itemId: string, attemptId: string, answer: number, learnerId?: string) {
+export function answerConsolidation(itemId: string, attemptId: string, answer: number | string, learnerId?: string) {
   return postData<ConsolidationResult>(`/mistake-review/items/${itemId}/attempts/${attemptId}/answer`, {
     learner_id: learnerId,
     answer,

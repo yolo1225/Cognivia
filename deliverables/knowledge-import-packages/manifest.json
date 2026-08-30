@@ -1,0 +1,14 @@
+[
+  {
+    "domain_code": "ai_app_dev",
+    "file": "ai_app_dev/01-ai-application-foundations.md",
+    "knowledge_count": 25,
+    "sha256": "a0c866970151301a4e653df83b8b829edc36bb28aba5046b340ec9050cb01b57"
+  },
+  {
+    "domain_code": "smart_manufacturing",
+    "file": "smart_manufacturing/01-smart-manufacturing-complete.md",
+    "knowledge_count": 67,
+    "sha256": "7e1ea33aa3a6f02ffd15d041beb0bb3725d8f22bebbf56d3c6cb572139c1c289"
+  }
+]

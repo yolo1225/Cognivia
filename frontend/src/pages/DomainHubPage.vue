@@ -211,7 +211,11 @@
             @click="openKnowledgeEditor()"
           >
             新增知识点</button
-          ><button
+          ><div v-else-if="assetView === 'questions'" class="row-actions">
+            <button class="btn" :disabled="questionImportActionLoading" @click="downloadQuestionBankTemplate">下载补题模板</button>
+            <button class="btn primary" :disabled="questionImportActionLoading" @click="openQuestionImport">导入题库</button>
+          </div>
+          <button
             v-else-if="assetView === 'documents'"
             class="btn primary"
             @click="uploadOpen = true"
@@ -348,6 +352,25 @@
         </div>
 
         <div v-else-if="assetView === 'questions'" class="asset-body">
+          <article v-if="activeChangeSet" class="upload-warning question-change-set">
+            <div>
+              <strong>待启用知识变更</strong>
+              <p>本次增量维护使用独立题库缺口模板，当前状态：{{ changeSetStatusLabel(activeChangeSet.status) }}。</p>
+            </div>
+            <button
+              v-if="activeChangeSet.status === 'ready_to_activate'"
+              class="btn primary"
+              :disabled="questionImportActionLoading"
+              @click="activateCurrentChangeSet"
+            >一次启用变更</button>
+            <button
+              v-else
+              class="btn"
+              type="button"
+              :disabled="pendingGraphLoading || !pendingChangeDocument"
+              @click="openPendingChangeGraph"
+            >查看待启用图谱</button>
+          </article>
           <div class="asset-summary-grid question-summary-grid">
             <article v-for="item in questionCoverageCards" :key="item.label" :class="{ 'has-gap': item.missing }">
               <span>{{ item.label }}</span>
@@ -370,7 +393,8 @@
           <p class="asset-results" aria-live="polite">显示 {{ filteredQuestionBank.length }} 道，共 {{ questionBank.length }} 道题</p>
           <div v-if="filteredQuestionBank.length === 0" class="empty-view">
             <strong>{{ questionBank.length ? '没有符合条件的题目' : '当前领域暂无正式题目' }}</strong>
-            <p>{{ questionBank.length ? '调整筛选条件后再试。' : '请通过来源文档导入并完成题目审核发布。' }}</p>
+            <p>{{ questionBank.length ? '调整筛选条件后再试。' : '下载缺口模板后填写并导入正式题目。' }}</p>
+            <button v-if="!questionBank.length" class="btn primary" type="button" @click="downloadQuestionBankTemplate">下载补题模板</button>
             <button v-if="questionBank.length" class="btn" type="button" @click="clearQuestionFilters">清除筛选</button>
           </div>
           <div v-else class="table-wrap asset-table-wrap">
@@ -479,23 +503,34 @@
         </div>
 
         <div v-else class="asset-body graph-body">
-          <div class="graph-summary" aria-live="polite">
-            <span><strong>{{ knowledgeItems.length }}</strong> 个知识点</span>
-            <span><strong>{{ relations.length }}</strong> 条关系</span>
-            <span>点击节点查看上下游关系与来源</span>
+          <div class="graph-summary graph-summary-with-view" aria-live="polite">
+            <div>
+              <span><strong>{{ displayedGraphItems.length }}</strong> 个知识点</span>
+              <span><strong>{{ displayedGraphRelations.length }}</strong> 条关系</span>
+              <span>{{ graphView === 'pending' ? '待启用预览，不影响当前学习任务' : '当前已启用图谱' }}</span>
+            </div>
+            <div v-if="activeChangeSet" class="graph-view-toggle" role="group" aria-label="图谱版本">
+              <button class="btn small" :class="{ active: graphView === 'active' }" type="button" @click="showActiveGraph">正式图谱</button>
+              <button class="btn small" :class="{ active: graphView === 'pending' }" type="button" :disabled="pendingGraphLoading || !pendingChangeDocument" @click="showPendingGraph">
+                {{ pendingGraphLoading ? '加载预览...' : '待启用变更' }}
+              </button>
+            </div>
           </div>
-          <div
-            v-if="!graphLoading && !knowledgeItems.length"
-            class="empty-view"
-          >
-            <strong>暂无可展示的知识关系</strong>
-            <p>新增知识点和关系后，这里将展示领域知识结构。</p>
+          <div v-if="graphView === 'pending'" class="pending-graph-notice">
+            <strong>{{ changeSetStatusLabel(activeChangeSet?.status || 'preparing') }}</strong>
+            <span>候选知识和关系将在题库缺口补齐、确认后一次启用。</span>
+            <span v-if="pendingGraphPathIsolatedCount">其中 {{ pendingGraphPathIsolatedCount }} 个节点尚未接入有向学习路径；关联关系不计作路径衔接。</span>
+          </div>
+          <div v-if="!graphLoading && !displayedGraphItems.length" class="empty-view">
+            <strong>{{ graphView === 'pending' ? '待启用变更尚未生成图谱候选' : '暂无可展示的知识关系' }}</strong>
+            <p>{{ graphView === 'pending' ? '请从导入任务中重新校验图谱，或等待导入完成。' : '新增知识点和关系后，这里将展示领域知识结构。' }}</p>
           </div>
           <KnowledgeGraph
             v-else
-            :items="knowledgeItems"
-            :relations="relations"
-            :loading="graphLoading"
+            :items="displayedGraphItems"
+            :relations="displayedGraphRelations"
+            :loading="graphView === 'active' && graphLoading"
+            :readonly="graphView === 'pending'"
             :selected-knowledge-id="selectedKnowledgeId"
             @select="selectedKnowledgeId = $event"
             @edit="returnToKnowledgeItem"
@@ -782,10 +817,11 @@
       v-model="uploadOpen"
       title="导入领域文档"
       :subtitle="`${selectedDomain?.name || selectedCode} · 生成候选后由管理员复核`"
+      size="wide"
       ><div class="upload-warning">
         <strong>结构化知识导入</strong>
         <p>
-          系统保留页码、标题或段落位置，并生成知识、关系和诊断题候选。
+          系统保留页码、标题或段落位置，并生成知识与关系候选；正式题目在题库管理中单独导入。
         </p>
       </div>
       <div
@@ -834,45 +870,36 @@
     >
 
     <AppDrawer
+      ref="importReviewDrawer"
       v-model="importReviewOpen"
       title="自动导入进度与发布"
       :subtitle="importSummary ? `${importSummary.import_id} · ${importSummary.status}` : ''"
+      size="wide"
     >
-      <div v-if="importLoading" class="empty-view"><strong>正在加载导入状态</strong></div>
+      <div v-if="importLoading && !importSummary" class="empty-view"><strong>正在加载导入状态</strong></div>
       <div v-else-if="!importSummary" class="empty-view"><strong>暂无导入运行</strong></div>
-      <div v-else class="candidate-list">
-        <article class="candidate-item">
-          <header><strong>当前阶段：{{ importSummary.current_step }}</strong><StatusBadge :label="importSummary.status" :type="importSummary.error_summary ? 'danger' : 'wait'" /></header>
-          <p>第 {{ importSummary.attempt }} 次执行 · 基线 {{ importSummary.quality_baseline_version || 'knowledge-import-gold-v1' }}</p>
+      <div v-else class="candidate-list import-review-content" :aria-busy="importLoading">
+        <article class="import-stage-card">
+          <div>
+            <span class="import-stage-label">当前阶段</span>
+            <strong>{{ importStepLabel(importSummary.current_step) }}</strong>
+            <p>第 {{ importSummary.attempt }} 次执行 · 基线 {{ importSummary.quality_baseline_version || 'knowledge-import-gold-v1' }}</p>
+          </div>
+          <StatusBadge :label="importStatusLabel(importSummary.status)" :type="importSummary.error_summary ? 'danger' : 'wait'" />
           <p v-if="importSummary.total_batches">
             模型批次 {{ importSummary.completed_batches || 0 }} / {{ importSummary.total_batches }}
             · 失败 {{ importSummary.failed_batches || 0 }}
             · 已耗时 {{ Math.round(Number(importSummary.elapsed_ms || 0) / 1000) }} 秒
             <span v-if="importSummary.eta_seconds">· 预计剩余 {{ importSummary.eta_seconds }} 秒</span>
           </p>
-          <p v-if="importSummary.empty_result_batches" class="document-error">
-            题目生成空结果 {{ importSummary.empty_result_batches }} 批；请补充对应知识点材料后重新导入。
-          </p>
           <p v-if="importSummary.error_summary" class="document-error">{{ importSummary.error_summary }}</p>
         </article>
-        <div class="metric-grid compact">
-          <article><span>知识点</span><strong>{{ importSummary.knowledge_items || 0 }}</strong></article>
-          <article><span>诊断题</span><strong>{{ importSummary.diagnostic_questions || 0 }}</strong></article>
-          <article><span>方向性关系</span><strong>{{ importSummary.directional_relations || 0 }}</strong></article>
-          <article><span>路径参与节点</span><strong>{{ importSummary.path_participating_nodes || 0 }} / {{ importSummary.knowledge_items || 0 }}</strong></article>
-        </div>
-        <div class="metric-grid compact">
-          <article><span>事实关系</span><strong>{{ importSummary.factual_relations || 0 }}</strong></article>
-          <article><span>教学推荐</span><strong>{{ importSummary.recommended_relations || 0 }}</strong></article>
-          <article><span>权重就绪</span><strong>{{ importSummary.ability_weights_ready || 0 }} / {{ importSummary.knowledge_items || 0 }}</strong></article>
-          <article><span>权重缺失</span><strong>{{ importSummary.ability_weights_missing || 0 }}</strong></article>
-        </div>
-        <div class="metric-grid compact">
-          <article><span>全节点参与率</span><strong>{{ Math.round(Number(importSummary.path_participation_ratio || 0) * 100) }}%</strong></article>
-          <article><span>孤立节点</span><strong>{{ importSummary.isolated_nodes || 0 }}（{{ Math.round(Number(importSummary.isolated_node_ratio || 0) * 100) }}%）</strong></article>
-          <article><span>题目覆盖</span><strong>{{ Math.round(Number(importSummary.question_knowledge_coverage || 0) * 100) }}%</strong></article>
-          <article><span>自动修复</span><strong>{{ importSummary.repair_rounds || 0 }} 轮</strong></article>
-        </div>
+        <section class="import-metrics" aria-label="导入质量摘要">
+          <article v-for="metric in importMetrics" :key="metric.label">
+            <span>{{ metric.label }}</span>
+            <strong>{{ metric.value }}</strong>
+          </article>
+        </section>
         <article v-if="importSummary.blocking_issues?.length" class="candidate-item quality-blockers">
           <header><strong>暂不可发布</strong><StatusBadge label="质量门禁未通过" type="danger" /></header>
           <p v-for="issue in importSummary.blocking_issues" :key="`${issue.code}-${issue.message}`">
@@ -932,8 +959,76 @@
       </div>
       <template #footer>
         <button class="btn" :disabled="importActionLoading" @click="loadImportReview">刷新</button>
+        <button v-if="importSummary?.status === 'needs_attention'" class="btn" :disabled="importActionLoading" @click="revalidateImportGraph">重新校验图谱</button>
         <button class="btn primary" :disabled="importActionLoading || importSummary?.status !== 'ready_to_publish'" @click="confirmImport">确认并发布</button>
       </template>
+    </AppDrawer>
+
+    <AppDrawer v-model="questionImportOpen" title="导入正式题库" :subtitle="activeQuestionImport ? `${activeQuestionImport.original_name} · ${questionImportStatusLabel(activeQuestionImport.status)}` : `${selectedDomain?.name || selectedCode} · 仅支持 XLSX`" size="wide">
+      <template v-if="!activeQuestionImport">
+        <div class="upload-warning">
+          <strong>按缺口补齐题库</strong>
+          <p>模板预填知识点、用途和槽位。上传后将在此处完成来源绑定、认证进度和题目预览。</p>
+        </div>
+        <div class="upload-compact question-upload-dropzone">
+          <span>⇧</span><strong>选择已填写的 XLSX 模板</strong>
+          <p>一次导入必须全部通过认证后才能发布</p>
+          <button class="btn primary" :disabled="questionImportActionLoading" @click="questionImportFile?.click()">选择 XLSX</button>
+          <input ref="questionImportFile" class="hidden" type="file" accept=".xlsx" @change="handleQuestionImportFile" />
+        </div>
+      </template>
+      <div v-if="questionImportLoading" class="empty-view"><strong>正在加载题目认证结果</strong></div>
+      <template v-else-if="activeQuestionImport">
+        <article class="import-stage-card question-import-stage">
+          <div>
+            <span class="import-stage-label">当前阶段</span>
+            <strong>{{ activeQuestionImport.is_validating ? '正在绑定来源并认证题目' : questionImportStatusLabel(activeQuestionImport.status) }}</strong>
+            <p>{{ activeQuestionImport.is_validating ? `已处理 ${activeQuestionImport.processed_row_count} / ${activeQuestionImport.row_count} 题，关闭面板不会中断。` : '逐题预览字段、来源和认证结论后再确认发布。' }}</p>
+          </div>
+          <StatusBadge :label="questionImportStatusLabel(activeQuestionImport.status)" :type="activeQuestionImport.status === 'ready_to_publish' || activeQuestionImport.status === 'published' ? 'ok' : activeQuestionImport.needs_attention_count ? 'warning' : 'wait'" />
+        </article>
+        <section class="import-metrics question-import-metrics" aria-label="题库导入摘要">
+          <article><span>模板题目</span><strong>{{ activeQuestionImport.row_count }}</strong><small>本次需全部通过</small></article>
+          <article><span>{{ activeQuestionImport.is_validating ? '已认证' : '已通过' }}</span><strong>{{ activeQuestionImport.valid_row_count }}</strong><small>{{ activeQuestionImport.is_validating ? `已处理 ${activeQuestionImport.processed_row_count} / ${activeQuestionImport.row_count}` : '含来源与认证' }}</small></article>
+          <article :class="{ 'has-gap': activeQuestionImport.source_confirmation_count }"><span>待确认来源</span><strong>{{ activeQuestionImport.source_confirmation_count }}</strong><small>可选择原文后重试</small></article>
+          <article :class="{ 'has-gap': activeQuestionImport.content_rejected_count }"><span>内容不合格</span><strong>{{ activeQuestionImport.content_rejected_count }}</strong><small>需修正题目内容</small></article>
+          <article :class="{ 'has-gap': activeQuestionImport.certification_service_error_count }"><span>认证异常</span><strong>{{ activeQuestionImport.certification_service_error_count }}</strong><small>可重新认证</small></article>
+        </section>
+        <p v-if="activeQuestionImport.error_summary" class="document-error">{{ activeQuestionImport.error_summary }}</p>
+        <div class="question-preview-toolbar">
+          <div class="segmented" aria-label="题目认证状态">
+            <button v-for="item in questionImportStatusFilters" :key="item.value" type="button" :class="{ active: questionImportPreview.status === item.value }" @click="questionImportPreview.status = item.value">{{ item.label }} <span>{{ item.count }}</span></button>
+          </div>
+          <select v-model="questionImportPreview.purpose" class="field"><option value="all">全部用途</option><option value="diagnosis">诊断题</option><option value="graded_quiz">分阶测验</option><option value="mastery_validation">掌握检查</option></select>
+          <label class="search-field"><span aria-hidden="true">⌕</span><input v-model="questionImportPreview.keyword" type="search" placeholder="搜索题干或知识点" /></label>
+        </div>
+        <p class="question-preview-count">显示 {{ filteredQuestionImportRows.length }} / {{ questionImportRows.length }} 题</p>
+        <div class="question-import-preview">
+          <article v-for="row in filteredQuestionImportRows" :key="row.row_id" class="question-import-card" :class="{ 'has-issue': questionRowIssue(row) }">
+            <header><div><span class="question-import-kicker">{{ questionImportKnowledgeName(row) }}</span><strong>第 {{ row.row_number }} 行 · {{ questionPurposeLabel(row.purpose) }} · {{ questionLevelLabel(row.quiz_level) }}</strong></div><StatusBadge :label="questionRowStatusLabel(row)" :type="questionRowIssue(row) ? 'warning' : row.status === 'pending' ? 'wait' : 'ok'" /></header>
+            <p class="question-import-meta">{{ questionTypeLabel(row.question_type) }} · 难度 {{ row.difficulty || '--' }}</p>
+            <h3>{{ row.stem || '题干尚未填写' }}</h3>
+            <ol v-if="row.question_type === 'single_choice'" class="question-option-preview">
+              <li v-for="(option, index) in row.options" :key="`${row.row_id}-${index}`" :class="{ correct: questionAnswerLabel(row) === optionLabel(index) }"><b>{{ optionLabel(index) }}</b><span>{{ option }}</span></li>
+            </ol>
+            <div v-else class="question-answer-preview"><span>参考答案</span><p>{{ String(row.answer || '未填写') }}</p><small v-if="row.rubric.length">评分点：{{ row.rubric.join('；') }}</small></div>
+            <details class="question-explanation"><summary>查看答案与解析</summary><p><strong>正确答案：</strong>{{ questionAnswerDisplay(row) }}</p><p><strong>解析：</strong>{{ row.explanation || '未填写' }}</p></details>
+            <section v-if="questionRowIssue(row)" class="question-row-issue">
+              <div><strong>{{ questionRowIssue(row)?.title }}</strong><p>{{ questionRowIssue(row)?.description }}</p></div>
+              <small v-if="questionRowIssue(row)?.fields.length">涉及：{{ questionRowIssue(row)?.fields.join('、') }}</small>
+            </section>
+            <p v-for="warning in row.warnings" :key="warning" class="question-row-warning">提示：{{ warning }}</p>
+            <div v-if="row.can_confirm_source && row.candidate_sources.length" class="source-confirmation">
+              <select :value="row.source_binding.source_ref_ids?.[0] || row.candidate_sources[0].source_ref_id" @change="sourceQuotes[row.row_id] = String(($event.target as HTMLSelectElement).value)">
+                <option v-for="source in row.candidate_sources" :key="source.source_ref_id" :value="source.source_ref_id">{{ source.source_ref_id }} · 匹配 {{ Math.round(source.score * 100) }}%</option>
+              </select>
+              <textarea v-model="sourceQuotes[`${row.row_id}:quote`]" rows="3" :placeholder="row.candidate_sources[0].excerpt"></textarea>
+              <button class="btn text" :disabled="questionImportActionLoading" @click="confirmQuestionSource(row)">确认来源并重新认证</button>
+            </div>
+          </article>
+        </div>
+      </template>
+      <template #footer><div class="drawer-footer"><template v-if="activeQuestionImport"><button class="btn" :disabled="questionImportActionLoading || activeQuestionImport.is_validating" @click="startNewQuestionImport">导入另一份</button><button class="btn" :disabled="questionImportActionLoading || activeQuestionImport.is_validating" @click="reloadQuestionImport">重新校验</button><button v-if="activeQuestionImport.change_set_id && activeQuestionImport.status === 'published'" class="btn primary" :disabled="questionImportActionLoading" @click="activatePendingChangeSet">一次启用变更</button><button v-else class="btn primary" :disabled="questionImportActionLoading || activeQuestionImport.status !== 'ready_to_publish'" @click="publishImportedQuestions">确认发布</button></template><template v-else><button class="btn" @click="questionImportOpen = false">取消</button><button class="btn" :disabled="questionImportActionLoading" @click="downloadQuestionBankTemplate">重新下载模板</button></template></div></template>
     </AppDrawer>
 
     <AppDialog
@@ -1018,6 +1113,7 @@ import {
   getKnowledgeImportGraph,
   getKnowledgeImportSummary,
   listImportCandidates,
+  revalidateKnowledgeImportGraph,
   updateImportCandidate,
   validateKnowledgeImport,
   type AbilityWeights,
@@ -1025,6 +1121,22 @@ import {
   type ImportCandidate,
   type KnowledgeImportSummary,
 } from "@/api/knowledgeImports";
+import {
+  bindQuestionImportSource,
+  downloadQuestionTemplate,
+  getQuestionImport,
+  listQuestionImportRows,
+  publishQuestionImport,
+  uploadQuestionImport,
+  validateQuestionImport,
+  type QuestionImportRow,
+  type QuestionImportRun,
+} from "@/api/questionImports";
+import {
+  activateDomainChangeSet,
+  listDomainChangeSets,
+  type DomainChangeSet,
+} from "@/api/domainChangeSets";
 import { useDomainStore } from "@/stores/domainStore";
 import { useToast } from "@/composables/useToast";
 import { formatBeijingDateTime } from "@/utils/dateTime";
@@ -1146,28 +1258,88 @@ const importReviewOpen = ref(false),
   importCandidates = ref<ImportCandidate[]>([]),
   savingCandidateId = ref(""),
   activeImportId = ref("");
+type DrawerController = {
+  getBodyScrollTop: () => number;
+  setBodyScrollTop: (value: number) => void;
+};
+const importReviewDrawer = ref<DrawerController | null>(null);
 const knowledgeImportCandidates = computed(() =>
   importCandidates.value.filter((candidate) => candidate.candidate_type === "knowledge_item"),
 );
-const previewItems = computed<KnowledgeItem[]>(() => (importGraph.value?.nodes || []).map((node) => ({
-  knowledge_id: node.id, domain_code: selectedCode.value, name: node.name,
-  category: node.category, difficulty: node.difficulty, tags: node.tags,
-  content: "", source_title: node.source_chunk_ids.join(", "), source_url: null,
-  license_note: "", needs_reembedding: true,
-})));
-const previewRelations = computed<KnowledgeRelation[]>(() => {
-  const names = new Map((importGraph.value?.nodes || []).map((node) => [node.id, node.name]));
-  return (importGraph.value?.edges || []).filter((edge) => edge.accepted).map((edge) => ({
-    source_id: edge.source, source_name: names.get(edge.source) || edge.source,
-    target_id: edge.target, target_name: names.get(edge.target) || edge.target,
-    relation_type: edge.relation_type === "depends_on" ? "dependent" : edge.relation_type === "related_to" ? "related" : edge.relation_type,
-  }));
+function previewItem(node: GraphPreview["nodes"][number]): KnowledgeItem {
+  return {
+    knowledge_id: node.knowledge_id || node.id,
+    domain_code: selectedCode.value,
+    name: node.name,
+    category: node.category,
+    difficulty: node.difficulty,
+    tags: node.tags,
+    content: "",
+    source_title: node.source_chunk_ids.join(", "),
+    source_url: null,
+    license_note: "",
+    needs_reembedding: true,
+  };
+}
+function previewRelationsFor(graph: GraphPreview | null, availableIds: Set<string>): KnowledgeRelation[] {
+  const nodes = new Map((graph?.nodes || []).map((node) => [node.id, previewItem(node)]));
+  return (graph?.edges || [])
+    .filter((edge) => edge.accepted)
+    .map((edge) => {
+      const source = nodes.get(edge.source);
+      const target = nodes.get(edge.target);
+      return {
+        source_id: source?.knowledge_id || edge.source,
+        source_name: source?.name || edge.source,
+        target_id: target?.knowledge_id || edge.target,
+        target_name: target?.name || edge.target,
+        relation_type: ["depends_on", "next_step"].includes(edge.relation_type)
+          ? "dependent"
+          : edge.relation_type === "related_to"
+            ? "related"
+            : edge.relation_type,
+      } as KnowledgeRelation;
+    })
+    .filter((edge) => availableIds.has(edge.source_id) && availableIds.has(edge.target_id));
+}
+const previewItems = computed<KnowledgeItem[]>(() => (importGraph.value?.nodes || []).map(previewItem));
+const previewRelations = computed<KnowledgeRelation[]>(() =>
+  previewRelationsFor(importGraph.value, new Set(previewItems.value.map((item) => item.knowledge_id))),
+);
+const importMetrics = computed(() => {
+  const summary = importSummary.value;
+  if (!summary) return [];
+  const readinessComplete = Boolean(summary.projected_readiness);
+  const candidateTotal = summary.knowledge_items || 0;
+  const projectedTotal = summary.projected_knowledge_items || (
+    Number(summary.path_participating_nodes || 0) + Number(summary.isolated_nodes || 0)
+  );
+  return [
+    { label: "本次候选知识", value: String(candidateTotal) },
+    { label: "来源追溯", value: `${Math.round(Number(summary.source_traceability || 0) * 100)}%` },
+    {
+      label: "预计全域路径参与",
+      value: readinessComplete ? `${summary.path_participating_nodes || 0} / ${projectedTotal}` : "未完成",
+    },
+    {
+      label: "预计全域学习路径孤立",
+      value: readinessComplete ? `${summary.isolated_nodes || 0}` : "未完成",
+    },
+    { label: "事实关系", value: String(summary.factual_relations || 0) },
+    { label: "教学推荐", value: String(summary.recommended_relations || 0) },
+    {
+      label: "候选权重就绪",
+      value: readinessComplete ? `${summary.ability_weights_ready || 0} / ${candidateTotal}` : "未完成",
+    },
+    { label: "自动修复", value: `${summary.repair_rounds || 0} 轮` },
+  ];
 });
 const deleteDialog = ref<InstanceType<typeof AppDialog> | null>(null),
   deleteTarget = ref<KnowledgeDocumentItem | null>(null),
   deleting = ref(false);
 let pollTimer: number | undefined,
   rebuildPollTimer: number | undefined,
+  questionImportPollTimer: number | undefined,
   highlightTimer: number | undefined,
   loadVersion = 0;
 
@@ -1224,6 +1396,79 @@ const readinessItems = computed(() =>
   attentionItems = computed(() =>
     readinessItems.value.filter((item) => item.state !== "ready"),
   );
+const questionImportOpen = ref(false),
+  questionImportLoading = ref(false),
+  questionImportActionLoading = ref(false),
+  questionImportFile = ref<HTMLInputElement | null>(null),
+  activeQuestionImport = ref<QuestionImportRun | null>(null),
+  questionImportChangeSetId = ref(""),
+  questionImportRows = ref<QuestionImportRow[]>([]),
+  sourceQuotes = reactive<Record<string, string>>({});
+const questionImportPreview = reactive({ status: "all", purpose: "all", keyword: "" });
+const questionImportStatusFilters = computed(() => [
+  { value: "all", label: "全部", count: questionImportRows.value.length },
+  { value: "passed", label: "已通过", count: questionImportRows.value.filter((row) => ["valid", "published"].includes(row.status)).length },
+  { value: "source", label: "待确认来源", count: questionImportRows.value.filter((row) => row.issue_kind === "source_confirmation_required").length },
+  { value: "content", label: "内容不合格", count: questionImportRows.value.filter((row) => row.issue_kind === "content_rejected").length },
+  { value: "service", label: "认证异常", count: questionImportRows.value.filter((row) => row.issue_kind === "certification_service_error").length },
+  { value: "pending", label: "认证中", count: questionImportRows.value.filter((row) => row.status === "pending").length },
+]);
+const filteredQuestionImportRows = computed(() => {
+  const keyword = questionImportPreview.keyword.trim().toLowerCase();
+  return questionImportRows.value.filter((row) => {
+    if (questionImportPreview.status === "passed" && !["valid", "published"].includes(row.status)) return false;
+    if (questionImportPreview.status === "source" && row.issue_kind !== "source_confirmation_required") return false;
+    if (questionImportPreview.status === "content" && row.issue_kind !== "content_rejected") return false;
+    if (questionImportPreview.status === "service" && row.issue_kind !== "certification_service_error") return false;
+    if (questionImportPreview.status === "pending" && row.status !== "pending") return false;
+    if (questionImportPreview.purpose !== "all" && row.purpose !== questionImportPreview.purpose) return false;
+    return !keyword || [row.stem, questionImportKnowledgeName(row), row.knowledge_ref].join(" ").toLowerCase().includes(keyword);
+  });
+});
+const domainChangeSets = ref<DomainChangeSet[]>([]);
+const activeChangeSet = computed(() =>
+  domainChangeSets.value.find((changeSet) =>
+    ["preparing", "ready_for_questions", "questions_preparing", "ready_to_activate"].includes(changeSet.status),
+  ) || null,
+);
+const graphView = ref<"active" | "pending">("active");
+const pendingGraph = ref<GraphPreview | null>(null);
+const pendingGraphLoading = ref(false);
+const pendingGraphPathIsolatedCount = computed(
+  () => pendingGraph.value?.nodes.filter((node) => node.isolated).length || 0,
+);
+const pendingChangeDocument = computed(() => {
+  const documentIds = activeChangeSet.value?.summary.documents || [];
+  return documents.value.find((document) => documentIds.includes(document.document_id)) || null;
+});
+const pendingGraphItems = computed<KnowledgeItem[]>(() => {
+  if (!pendingGraph.value) return [];
+  const items = new Map(knowledgeItems.value.map((item) => [item.knowledge_id, item]));
+  for (const node of pendingGraph.value.nodes) {
+    const item = previewItem(node);
+    items.set(item.knowledge_id, { ...items.get(item.knowledge_id), ...item });
+  }
+  return [...items.values()];
+});
+const pendingGraphRelations = computed<KnowledgeRelation[]>(() => {
+  const availableIds = new Set(pendingGraphItems.value.map((item) => item.knowledge_id));
+  const relationMap = new Map(
+    relations.value.map((relation) => [
+      `${relation.source_id}:${relation.target_id}:${relation.relation_type}`,
+      relation,
+    ]),
+  );
+  for (const relation of previewRelationsFor(pendingGraph.value, availableIds)) {
+    relationMap.set(`${relation.source_id}:${relation.target_id}:${relation.relation_type}`, relation);
+  }
+  return [...relationMap.values()];
+});
+const displayedGraphItems = computed(() =>
+  graphView.value === "pending" ? pendingGraphItems.value : knowledgeItems.value,
+);
+const displayedGraphRelations = computed(() =>
+  graphView.value === "pending" ? pendingGraphRelations.value : relations.value,
+);
 const passedReadinessItems = computed(() =>
   readinessItems.value.filter((item) => item.state === "ready"),
 );
@@ -1639,6 +1884,8 @@ async function loadAll() {
 }
 async function switchDomain() {
   stopPolling();
+  graphView.value = "active";
+  pendingGraph.value = null;
   validationResult.value = null;
   rebuildStatus.value = null;
   stats.value = null;
@@ -1661,13 +1908,14 @@ async function loadDomain() {
   domainStore.domains = domains.value;
   domainStore.setWorkspaceDomain(selectedCode.value);
   try {
-    const [s, d, r, i, q, validation] = await Promise.all([
+    const [s, d, r, i, q, validation, changeSets] = await Promise.all([
       getDomainStats(selectedCode.value),
       listKnowledgeDocuments(selectedCode.value),
       listKnowledgeRelations(selectedCode.value),
       listKnowledgeItems(selectedCode.value, 500),
       listQuestionBank(selectedCode.value),
       getDomainReadiness(selectedCode.value),
+      listDomainChangeSets(selectedCode.value),
     ]);
     if (version !== loadVersion) return;
     stats.value = s;
@@ -1677,6 +1925,15 @@ async function loadDomain() {
     questionBank.value = q.items;
     questionCoverage.value = q.coverage;
     validationResult.value = validation;
+    domainChangeSets.value = changeSets;
+    if (!changeSets.some((changeSet) => changeSet.status !== "activated")) {
+      graphView.value = "active";
+      pendingGraph.value = null;
+    }
+    const acceptingChangeSet = changeSets.find((changeSet) =>
+      ["preparing", "ready_for_questions", "questions_preparing"].includes(changeSet.status),
+    );
+    questionImportChangeSetId.value = acceptingChangeSet?.change_set_id || "";
     schedulePolling();
   } catch {
     if (version === loadVersion)
@@ -1813,14 +2070,16 @@ async function uploadFiles(files: File[]) {
   if (!files.length) return;
   uploading.value = true;
   uploadResults.value = [];
+  let latestImportId = "";
   for (const file of files) {
     try {
-      await uploadKnowledgeDocument(
+      const document = await uploadKnowledgeDocument(
         file,
         selectedCode.value,
         sourceTitle.value,
         licenseNote.value,
       );
+      latestImportId = document.import_id || document.run_id || document.document_id;
       uploadResults.value.push({
         name: file.name,
         ok: true,
@@ -1837,9 +2096,16 @@ async function uploadFiles(files: File[]) {
   uploading.value = false;
   if (fileInput.value) fileInput.value.value = "";
   await loadDocuments();
+  if (latestImportId) {
+    activeImportId.value = latestImportId;
+    uploadOpen.value = false;
+    importReviewOpen.value = true;
+    await loadImportReview();
+  }
 }
 async function loadImportReview() {
   if (!activeImportId.value) return;
+  const scrollTop = importReviewDrawer.value?.getBodyScrollTop() || 0;
   importLoading.value = true;
   try {
     [importSummary.value, importGraph.value, importCandidates.value] = await Promise.all([
@@ -1847,11 +2113,48 @@ async function loadImportReview() {
       getKnowledgeImportGraph(activeImportId.value),
       listImportCandidates(activeImportId.value),
     ]);
+    if (graphView.value === "pending" && pendingChangeDocument.value?.document_id === activeImportId.value) {
+      pendingGraph.value = importGraph.value;
+    }
   } catch (error: any) {
     showToast(error?.response?.data?.detail || "导入候选加载失败");
   } finally {
     importLoading.value = false;
+    await nextTick();
+    if (scrollTop > 0) importReviewDrawer.value?.setBodyScrollTop(scrollTop);
   }
+}
+async function showPendingGraph() {
+  const document = pendingChangeDocument.value;
+  if (!document) return;
+  graphView.value = "pending";
+  selectedKnowledgeId.value = null;
+  if (pendingGraph.value?.import_id === document.document_id) return;
+  pendingGraphLoading.value = true;
+  try {
+    pendingGraph.value = await getKnowledgeImportGraph(document.document_id);
+  } catch (error: any) {
+    graphView.value = "active";
+    showToast(error?.response?.data?.detail || "待启用图谱加载失败", "error");
+  } finally {
+    pendingGraphLoading.value = false;
+  }
+}
+function showActiveGraph() {
+  graphView.value = "active";
+  selectedKnowledgeId.value = null;
+}
+async function openPendingChangeGraph() {
+  openAssetView("graph");
+  await nextTick();
+  await showPendingGraph();
+}
+async function revalidateImportGraph() {
+  if (!activeImportId.value) return;
+  return withImportAction(
+    () => revalidateKnowledgeImportGraph(activeImportId.value),
+    "图谱质量已重新校验",
+  );
 }
 function openImportReview(document: KnowledgeDocumentItem) {
   activeImportId.value = document.document_id;
@@ -1860,7 +2163,12 @@ function openImportReview(document: KnowledgeDocumentItem) {
 }
 async function withImportAction(action: () => Promise<unknown>, success: string) {
   importActionLoading.value = true;
-  try { await action(); showToast(success); await loadImportReview(); await loadDomain(); }
+  try {
+    const result = await action();
+    showToast(typeof result === "string" ? result : success);
+    await loadImportReview();
+    await loadDomain();
+  }
   catch (error: any) { showToast(error?.response?.data?.detail || "导入操作失败"); }
   finally { importActionLoading.value = false; }
 }
@@ -1869,8 +2177,19 @@ function confirmImport() {
   const indexVersion = summary?.candidate_manifest?.index_version;
   if (!summary || !indexVersion) return;
   return withImportAction(
-    () => confirmKnowledgeImport(activeImportId.value, summary.input_version, indexVersion),
-    "知识导入已发布",
+    async () => {
+      const result = await confirmKnowledgeImport(
+        activeImportId.value,
+        summary.input_version,
+        indexVersion,
+      );
+      questionImportChangeSetId.value = String(result.change_set_id || "");
+      if (result.status === "ready_for_questions") {
+        return "知识变更已暂存，请补齐题库后一次启用";
+      }
+      return "知识与索引已发布，请在题库管理下载缺口模板";
+    },
+    "导入状态已更新",
   );
 }
 const abilityWeightFields: Array<{ key: keyof AbilityWeights; label: string }> = [
@@ -1948,6 +2267,177 @@ async function disableBankQuestion(question: QuestionBankItem) {
     questionActionLoading.value = "";
   }
 }
+async function downloadQuestionBankTemplate() {
+  questionImportActionLoading.value = true;
+  try {
+    const response = await downloadQuestionTemplate(
+      selectedCode.value,
+      [],
+      questionImportChangeSetId.value || undefined,
+    );
+    const url = URL.createObjectURL(response.data);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${selectedCode.value}-question-bank-template.xlsx`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast("已生成当前题库缺口模板");
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "题库模板下载失败", "error");
+  } finally {
+    questionImportActionLoading.value = false;
+  }
+}
+function openQuestionImport() {
+  questionImportOpen.value = true;
+}
+function startNewQuestionImport() {
+  activeQuestionImport.value = null;
+  questionImportRows.value = [];
+  questionImportPreview.status = "all";
+  questionImportPreview.purpose = "all";
+  questionImportPreview.keyword = "";
+}
+function stopQuestionImportPolling() {
+  if (questionImportPollTimer !== undefined) {
+    window.clearTimeout(questionImportPollTimer);
+    questionImportPollTimer = undefined;
+  }
+}
+function scheduleQuestionImportPolling() {
+  stopQuestionImportPolling();
+  if (activeQuestionImport.value?.is_validating) {
+    questionImportPollTimer = window.setTimeout(pollQuestionImport, 1500);
+  }
+}
+async function pollQuestionImport() {
+  const runId = activeQuestionImport.value?.run_id;
+  if (!runId) return;
+  try {
+    const run = await getQuestionImport(runId);
+    if (activeQuestionImport.value?.run_id !== runId) return;
+    await loadQuestionImport(run, true);
+  } catch {
+    scheduleQuestionImportPolling();
+  }
+}
+async function loadQuestionImport(run: QuestionImportRun, silent = false) {
+  if (!silent) questionImportLoading.value = true;
+  activeQuestionImport.value = run;
+  try {
+    questionImportRows.value = await listQuestionImportRows(run.run_id);
+    for (const row of questionImportRows.value) {
+      const source = row.candidate_sources[0];
+      if (source) sourceQuotes[row.row_id] ||= source.source_ref_id;
+    }
+    questionImportOpen.value = true;
+  } finally {
+    if (!silent) questionImportLoading.value = false;
+    scheduleQuestionImportPolling();
+  }
+}
+async function handleQuestionImportFile(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  questionImportActionLoading.value = true;
+  try {
+    const run = await uploadQuestionImport(
+      file,
+      selectedCode.value,
+      questionImportChangeSetId.value || undefined,
+    );
+    await loadQuestionImport(run);
+    showToast("题库已接收，正在后台逐题认证");
+  } catch (error: any) {
+    showToast(questionImportErrorMessage(error, "题库导入失败"), "error");
+  } finally {
+    questionImportActionLoading.value = false;
+    if (questionImportFile.value) questionImportFile.value.value = "";
+  }
+}
+async function reloadQuestionImport() {
+  if (!activeQuestionImport.value) return;
+  questionImportActionLoading.value = true;
+  try {
+    const run = await validateQuestionImport(activeQuestionImport.value.run_id);
+    await loadQuestionImport(run);
+    showToast("题库已重新校验");
+  } catch (error: any) {
+    showToast(questionImportErrorMessage(error, "重新校验失败"), "error");
+  } finally {
+    questionImportActionLoading.value = false;
+  }
+}
+async function confirmQuestionSource(row: QuestionImportRow) {
+  if (!activeQuestionImport.value) return;
+  const sourceRefId = sourceQuotes[row.row_id] || row.candidate_sources[0]?.source_ref_id;
+  const quote = sourceQuotes[`${row.row_id}:quote`]?.trim();
+  if (!sourceRefId || !quote) {
+    showToast("请选择来源并填写支持答案的原文片段", "error");
+    return;
+  }
+  questionImportActionLoading.value = true;
+  try {
+    await bindQuestionImportSource(activeQuestionImport.value.run_id, row.row_id, sourceRefId, quote);
+    const run = await getQuestionImport(activeQuestionImport.value.run_id);
+    await loadQuestionImport(run);
+  } catch (error: any) {
+    showToast(questionImportErrorMessage(error, "来源确认失败"), "error");
+  } finally {
+    questionImportActionLoading.value = false;
+  }
+}
+async function publishImportedQuestions() {
+  if (!activeQuestionImport.value) return;
+  questionImportActionLoading.value = true;
+  try {
+    const result = await publishQuestionImport(activeQuestionImport.value.run_id);
+    questionImportChangeSetId.value = result.change_set_id || questionImportChangeSetId.value;
+    if (result.change_set_id) {
+      activeQuestionImport.value = result;
+      showToast("题库已暂存，确认后可一次启用变更", "success");
+    } else {
+      showToast("题库已原子发布，正在刷新领域就绪状态", "success");
+      questionImportOpen.value = false;
+      await loadDomain();
+    }
+  } catch (error: any) {
+    showToast(questionImportErrorMessage(error, "题库发布失败"), "error");
+  } finally {
+    questionImportActionLoading.value = false;
+  }
+}
+async function activatePendingChangeSet() {
+  const changeSetId = activeQuestionImport.value?.change_set_id || questionImportChangeSetId.value;
+  if (!changeSetId) return;
+  questionImportActionLoading.value = true;
+  try {
+    await activateDomainChangeSet(changeSetId);
+    questionImportOpen.value = false;
+    questionImportChangeSetId.value = "";
+    showToast("知识、图谱、索引和题库已一次启用", "success");
+    await loadDomain();
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "变更集启用失败", "error");
+  } finally {
+    questionImportActionLoading.value = false;
+  }
+}
+async function activateCurrentChangeSet() {
+  const changeSetId = activeChangeSet.value?.change_set_id;
+  if (!changeSetId) return;
+  questionImportActionLoading.value = true;
+  try {
+    await activateDomainChangeSet(changeSetId);
+    questionImportChangeSetId.value = "";
+    showToast("知识、图谱、索引和题库已一次启用", "success");
+    await loadDomain();
+  } catch (error: any) {
+    showToast(error?.response?.data?.detail || "变更集启用失败", "error");
+  } finally {
+    questionImportActionLoading.value = false;
+  }
+}
 async function cancelDocumentImport(document: KnowledgeDocumentItem) {
   try {
     await cancelKnowledgeImport(document.document_id);
@@ -1986,8 +2476,13 @@ async function confirmRemove() {
   if (!deleteTarget.value) return;
   deleting.value = true;
   try {
-    await deleteKnowledgeDocument(deleteTarget.value.document_id);
-    showToast("来源文档已删除");
+    const result = await deleteKnowledgeDocument(deleteTarget.value.document_id);
+    showToast(
+      result.change_set_cancelled
+        ? "待启用变更已取消，正式知识图谱未受影响"
+        : "来源文档已撤回，正在重建索引",
+      "success",
+    );
     closeDeleteDialog();
     await loadDomain();
   } catch (error: any) {
@@ -2103,10 +2598,6 @@ function isProcessing(status: KnowledgeDocumentStatus) {
     "extracting",
     "graph_generation",
     "graph_review",
-    "question_generation",
-    "question_certification",
-    "question_review",
-    "question_repair",
     "validating",
     "staging",
     "indexing",
@@ -2127,25 +2618,126 @@ function documentStatusLabel(status: KnowledgeDocumentStatus) {
         extracting: "正在抽取知识与关系",
         graph_generation: "正在生成知识图谱",
         graph_review: "正在复核事实关系",
-        question_generation: "正在生成诊断题",
-        question_certification: "正在认证正式题目",
-        question_review: "正在复核诊断题",
-        question_repair: "正在补充诊断题",
         validating: "正在校验",
         staging: "正在暂存候选结果",
+        index_pending: "等待构建索引",
         indexing: "正在索引",
         smoke_testing: "正在验证检索",
+        smoke_passed: "检索验证通过",
         ready_to_publish: "等待确认发布",
+        ready_for_questions: "等待补齐题库",
         publishing: "正在发布",
         cancel_requested: "正在中断",
         cancelled: "已中断",
         ready: "已就绪",
         needs_attention: "质量检查未通过",
         failed: "处理失败",
+        interrupted: "已中断",
         withdrawn: "已撤回",
       } as Record<string, string>
     )[status] || "未知状态"
   );
+}
+function importStatusLabel(status: string) {
+  return documentStatusLabel(status as KnowledgeDocumentStatus);
+}
+function importStepLabel(step: string) {
+  return (
+    {
+      parsing: "解析来源文档",
+      extracting: "抽取知识与关系",
+      graph_generation: "构建候选图谱",
+      graph_review: "复核图谱关系",
+      validating: "校验知识目录",
+      staging: "暂存候选结果",
+      indexing: "构建候选索引",
+      smoke_testing: "验证检索结果",
+      ready_to_publish: "等待确认知识发布",
+      ready_for_questions: "等待补齐正式题库",
+      publishing: "正在发布知识变更",
+      ready: "知识变更已启用",
+    } as Record<string, string>
+  )[step] || step;
+}
+function changeSetStatusLabel(status: DomainChangeSet["status"]) {
+  return {
+    preparing: "正在准备知识",
+    ready_for_questions: "待补齐题库",
+    questions_preparing: "题库补齐中",
+    ready_to_activate: "可一次启用",
+    activated: "已启用",
+    cancelled: "已取消",
+  }[status];
+}
+function questionImportStatusLabel(status: QuestionImportRun["status"]) {
+  return {
+    validating: "正在认证",
+    uploaded: "已接收",
+    needs_attention: "待处理",
+    ready_to_publish: "可发布",
+    published: "已发布",
+  }[status];
+}
+function questionImportErrorMessage(error: any, fallback: string) {
+  const code = String(error?.response?.data?.error?.code || error?.response?.data?.detail || "");
+  const messages: Record<string, string> = {
+    QUESTION_IMPORT_XLSX_REQUIRED: "仅支持 XLSX 题库模板",
+    QUESTION_TEMPLATE_DOMAIN_OR_VERSION_INVALID: "模板不属于当前领域或模板版本已过期，请重新下载",
+    QUESTION_TEMPLATE_CHANGE_SET_INVALID: "模板所属的待启用知识变更不一致，请刷新页面后重新下载模板",
+    QUESTION_TEMPLATE_INVENTORY_CHANGED: "题库缺口已变化，请重新下载模板后再填写",
+    QUESTION_TEMPLATE_KNOWLEDGE_SCOPE_INVALID: "模板中的知识点范围已变化，请重新下载模板",
+    QUESTION_IMPORT_FILE_EMPTY: "上传文件为空",
+    QUESTION_IMPORT_FILE_TOO_LARGE: "题库文件不能超过 20MB",
+    QUESTION_IMPORT_NOT_READY_TO_PUBLISH: "题库仍在认证或存在待处理题目，暂不能发布",
+    QUESTION_IMPORT_ALREADY_PUBLISHED: "该题库已发布，无需重复校验",
+  };
+  return messages[code] || code || fallback;
+}
+function questionImportKnowledgeName(row: QuestionImportRow) {
+  return knowledgeItems.value.find((item) => item.knowledge_id === row.knowledge_ref)?.name || row.knowledge_ref;
+}
+function questionPurposeLabel(purpose: string | null) {
+  return { diagnosis: "诊断题", graded_quiz: "分阶测验", mastery_validation: "掌握检查" }[purpose || ""] || "未指定用途";
+}
+function questionLevelLabel(level: string | null) {
+  return { foundation: "基础", improvement: "提升", challenge: "挑战" }[level || ""] || "未指定层级";
+}
+function questionTypeLabel(type: string) {
+  return type === "single_choice" ? "单选题" : type === "short_answer" ? "简答题" : "未识别题型";
+}
+function optionLabel(index: number) {
+  return String.fromCharCode("A".charCodeAt(0) + index);
+}
+function questionAnswerLabel(row: QuestionImportRow) {
+  return typeof row.answer === "number" ? optionLabel(row.answer) : "";
+}
+function questionAnswerDisplay(row: QuestionImportRow) {
+  if (row.question_type === "single_choice") {
+    const index = typeof row.answer === "number" ? row.answer : -1;
+    return index >= 0 ? `${optionLabel(index)}. ${row.options[index] || ""}` : "未填写";
+  }
+  return String(row.answer || "未填写");
+}
+function questionRowStatusLabel(row: QuestionImportRow) {
+  if (row.status === "pending") return "认证中";
+  if (["valid", "published"].includes(row.status)) return "已通过";
+  return questionRowIssue(row)?.title || "待处理";
+}
+function questionRowIssue(row: QuestionImportRow) {
+  const fields = row.issue_fields.map((field) => ({ stem: "题干", options: "选项", answer: "答案", explanation: "解析", rubric: "评分点", difficulty: "难度", source: "来源" }[field] || field));
+  if (row.issue_kind === "source_confirmation_required") {
+    return { title: "待确认来源", description: "系统找到了候选知识片段，但自动匹配的可信度不足。请选择支持答案的原文片段后重新认证。", fields: ["来源引用"] };
+  }
+  if (row.issue_kind === "certification_service_error") {
+    return { title: "认证服务异常", description: row.issue_reason || "认证模型连续返回无效结构或服务暂时不可用，可重新认证；该题不会被发布。", fields: fields.length ? fields : ["认证结论"] };
+  }
+  if (row.issue_kind === "content_rejected") {
+    return { title: "内容认证未通过", description: row.issue_reason || "题目存在答案不唯一、来源不足、歧义或解析不一致，请修正后重新上传。", fields: fields.length ? fields : ["题目内容"] };
+  }
+  if (row.issue_kind === "template_invalid") {
+    return { title: "字段校验未通过", description: "模板中的必填字段或预填元数据不符合导入规则，请修正对应字段后重新上传。", fields: row.validation_errors };
+  }
+  return null;
 }
 function fileTypeLabel(type: string) {
   return (
@@ -2197,6 +2789,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopPolling();
   stopRebuildPolling();
+  stopQuestionImportPolling();
   if (highlightTimer) window.clearTimeout(highlightTimer);
 });
 </script>
@@ -2721,6 +3314,13 @@ onBeforeUnmount(() => {
 }
 .graph-summary { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 12px; color: var(--muted); font-size: 11px; }
 .graph-summary strong { color: var(--body); }
+.graph-summary-with-view { align-items: center; justify-content: space-between; gap: 12px; }
+.graph-summary-with-view > div:first-child { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.graph-view-toggle { display: inline-flex; gap: 6px; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--soft); }
+.graph-view-toggle .btn { border-color: transparent; }
+.graph-view-toggle .btn.active { border-color: var(--blue); background: var(--blue2); color: var(--blue); }
+.pending-graph-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; border: 1px solid var(--blue); border-radius: 7px; background: var(--blue2); padding: 10px 12px; color: var(--body); font-size: 12px; }
+.pending-graph-notice strong { color: var(--blue); }
 .empty-view {
   min-height: 210px;
   display: grid;
@@ -3040,6 +3640,70 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+.import-review-content { gap: 16px; }
+.import-stage-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 18px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  padding: 16px;
+}
+.import-stage-card > div { display: grid; gap: 4px; }
+.import-stage-card p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.import-stage-card > div > strong { color: var(--ink); font-size: 17px; line-height: 1.35; }
+.import-stage-label { color: var(--muted); font-size: 11px; font-weight: 700; }
+.import-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--line);
+  gap: 1px;
+}
+.import-metrics article { display: grid; gap: 5px; min-height: 68px; background: var(--panel); padding: 11px 12px; }
+.import-metrics span { color: var(--muted); font-size: 11px; }
+.import-metrics strong { color: var(--ink); font-size: 15px; line-height: 1.25; overflow-wrap: anywhere; }
+.question-upload-dropzone { min-height: 260px; }
+.question-import-stage { margin-bottom: 12px; }
+.question-import-metrics { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 14px; }
+.question-import-metrics article.has-gap { background: var(--amber2); }
+.question-row-warning { margin: 0; padding: 8px 10px; border-left: 3px solid var(--amber); background: var(--amber2); color: var(--ink); font-size: 12px; }
+.question-preview-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 138px minmax(190px, .8fr); align-items: center; gap: 10px; margin: 12px 0 8px; }
+.question-preview-toolbar .segmented { padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
+.question-preview-toolbar .segmented button { padding: 7px 9px; }
+.question-preview-toolbar .field { min-height: 36px; }
+.question-preview-toolbar .search-field { min-width: 0; }
+.question-preview-count { margin: 0 0 10px; color: var(--muted); font-size: 11px; }
+.question-import-preview { display: grid; gap: 10px; }
+.question-import-card { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); padding: 14px; }
+.question-import-card.has-issue { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); }
+.question-import-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.question-import-card > header > div { display: grid; gap: 3px; min-width: 0; }
+.question-import-kicker, .question-import-meta { margin: 0; color: var(--muted); font-size: 11px; }
+.question-import-card h3 { margin: 0; color: var(--ink); font-size: 14px; line-height: 1.6; }
+.question-option-preview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 0; padding: 0; list-style: none; }
+.question-option-preview li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 7px; align-items: start; border: 1px solid var(--line); border-radius: 6px; padding: 8px; color: var(--body); font-size: 12px; line-height: 1.45; }
+.question-option-preview li.correct { border-color: var(--green); background: var(--green2); }
+.question-option-preview b { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--soft); color: var(--muted); font-size: 10px; }
+.question-option-preview li.correct b { background: var(--green); color: white; }
+.question-answer-preview { border-left: 3px solid var(--blue); background: var(--blue2); padding: 9px 11px; }
+.question-answer-preview span, .question-answer-preview small { color: var(--muted); font-size: 11px; }
+.question-answer-preview p { margin: 4px 0; font-size: 12px; line-height: 1.5; }
+.question-explanation { border-top: 1px solid var(--line); padding-top: 9px; }
+.question-explanation summary { cursor: pointer; color: var(--blue); font-size: 12px; font-weight: 700; }
+.question-explanation p { margin: 8px 0 0; color: var(--body); font-size: 12px; line-height: 1.55; }
+.question-row-issue { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; border: 1px solid color-mix(in srgb, var(--amber) 55%, var(--line)); border-radius: 6px; background: var(--amber2); padding: 10px 11px; }
+.question-row-issue strong { color: var(--amber); font-size: 12px; }
+.question-row-issue p { margin: 4px 0 0; color: var(--body); font-size: 12px; line-height: 1.55; }
+.question-row-issue small { color: var(--muted); font-size: 11px; text-align: right; }
+.source-confirmation { display: grid; grid-template-columns: 180px minmax(0, 1fr) auto; gap: 8px; align-items: start; border-top: 1px solid var(--line); padding-top: 10px; }
+.source-confirmation select, .source-confirmation textarea { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); padding: 8px; font: inherit; font-size: 12px; }
+.source-confirmation textarea { min-height: 70px; resize: vertical; }
+
 .quality-blockers {
   border-color: var(--red);
   background: var(--red2);
@@ -3155,6 +3819,9 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 @media (max-width: 1000px) {
+  .import-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .question-preview-toolbar { grid-template-columns: 1fr 138px; }
+  .question-preview-toolbar .search-field { grid-column: 1 / -1; }
   .ability-weight-grid {
     grid-template-columns: repeat(2, minmax(100px, 1fr));
   }
@@ -3172,6 +3839,14 @@ onBeforeUnmount(() => {
   }
 }
 @media (max-width: 760px) {
+  .graph-summary-with-view { align-items: stretch; }
+  .graph-view-toggle { width: 100%; }
+  .graph-view-toggle .btn { flex: 1; }
+  .import-stage-card { grid-template-columns: 1fr; }
+  .import-stage-card .status { justify-self: start; }
+  .question-import-metrics, .question-preview-toolbar, .question-option-preview, .question-row-issue, .source-confirmation { grid-template-columns: 1fr; }
+  .question-preview-toolbar .search-field { grid-column: auto; }
+  .question-row-issue small { text-align: left; }
   .rp-head-actions {
     width: 100%;
   }

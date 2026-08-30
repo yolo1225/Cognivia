@@ -5,7 +5,7 @@ from app.agents.domain_evidence_policy import EvidenceCapability, get_domain_evi
 
 
 class EvidenceGapError(ValueError):
-    """A requested resource has no evidence with the capability it requires."""
+    """A requested knowledge target has no retrieved evidence."""
 
 
 PRIMARY_OWNER_PRIORITY = (
@@ -47,22 +47,20 @@ def allocate_resource_knowledge_targets(
     resource_types: list[ResourceType],
     domain_code: str,
 ) -> dict[ResourceType, list[str]]:
-    """Allocate task targets by resource responsibility, deterministically."""
+    """Allocate targets by teaching responsibility without capability hard gates."""
     targets = list(dict.fromkeys(required_ids))[:10]
     policy = get_domain_evidence_policy(domain_code)
     capabilities_by_id: dict[str, set[EvidenceCapability]] = {}
     for chunk in chunks:
         capabilities_by_id.setdefault(chunk.knowledge_id, set()).update(policy.classify(chunk))
+    if not targets or not set(targets).issubset(capabilities_by_id):
+        raise EvidenceGapError("evidence_gap")
+
     result: dict[ResourceType, list[str]] = {item: [] for item in resource_types}
     if resource_types == [ResourceType.PRACTICE_GUIDE]:
-        operational = [
-            knowledge_id
-            for knowledge_id in targets
-            if EvidenceCapability.OPERATION in capabilities_by_id.get(knowledge_id, set())
-        ]
-        if operational != targets:
-            raise EvidenceGapError("evidence_gap")
-        result[ResourceType.PRACTICE_GUIDE] = operational
+        # A guide without operation evidence becomes a source-backed analysis,
+        # design, comparison, review, or learning-record activity.
+        result[ResourceType.PRACTICE_GUIDE] = list(targets)
         return result
     if len(resource_types) == 1:
         result[resource_types[0]] = list(targets)
@@ -83,11 +81,14 @@ def allocate_resource_knowledge_targets(
     if ResourceType.GRADED_QUIZ in result:
         result[ResourceType.GRADED_QUIZ] = list(targets[:6])
 
+    # A complete package still includes a practice guide when the retrieved
+    # evidence is conceptual only. Lecture remains the primary explanation for
+    # those targets; the guide turns the same evidence into a learning activity.
     if ResourceType.PRACTICE_GUIDE in result and not result[ResourceType.PRACTICE_GUIDE]:
-        raise EvidenceGapError("evidence_gap")
+        result[ResourceType.PRACTICE_GUIDE] = list(targets)
 
-    # Lecture may explain an operational target as supporting context, but a
-    # practice guide must never inherit a conceptual target merely to stay non-empty.
+    # Empty resource types need one valid target to satisfy the frozen contract.
+    # This supporting assignment does not change the primary teaching owner.
     for resource_type, values in result.items():
         if not values and targets:
             result[resource_type] = [targets[0]]

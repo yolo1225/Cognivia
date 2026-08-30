@@ -26,7 +26,7 @@ from app.services.domain_runtime_service import (
 )
 from app.services.question_bank_service import question_bank_coverage
 from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
+    ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS,
 )
 
 
@@ -229,7 +229,7 @@ class DomainApiService:
                         DiagnosticQuestion.status == "active",
                         DiagnosticQuestion.certification_status == "certified",
                         DiagnosticQuestion.certification_rule_version
-                        == QUESTION_CERTIFICATION_RULE_VERSION,
+                        .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS),
                         KnowledgeItem.domain_code == domain_code,
                         KnowledgeItem.status == "published",
                     )
@@ -299,25 +299,18 @@ class DomainApiService:
                 "分级测验正式题库覆盖",
             ),
             (
-                "quiz_question_types",
-                len((quiz_question_bank["distribution"] or {})["question_types"]),
-                2,
-                ">=",
-                "正式题库题型覆盖",
+                "question_bank_invalid_purpose_count",
+                int((quiz_question_bank["distribution"] or {})["invalid_purpose_count"]),
+                0,
+                "==",
+                "正式题目用途唯一",
             ),
             (
-                "quiz_teaching_levels",
-                len((quiz_question_bank["distribution"] or {})["quiz_levels"]),
-                3,
-                ">=",
-                "正式题库教学层级覆盖",
-            ),
-            (
-                "quiz_difficulty_levels",
-                len((quiz_question_bank["distribution"] or {})["difficulty_levels"]),
-                5,
-                ">=",
-                "正式题库1-5级难度覆盖",
+                "question_bank_invalid_question_count",
+                int((quiz_question_bank["distribution"] or {})["invalid_question_count"]),
+                0,
+                "==",
+                "正式题目认证与来源有效",
             ),
             ("learning_directions", len(directions), 1, ">=", "学习方向"),
             ("missing_ability_weights", missing_weights, 0, "==", "缺失能力权重"),
@@ -385,6 +378,7 @@ class DomainApiService:
         for key, label, value in (
             ("profile_runtime_ready", "画像运行时", runtime.get("profile_ready")),
             ("diagnostic_runtime_ready", "诊断运行时", runtime.get("diagnostic_ready")),
+            ("question_bank_runtime_ready", "正式题库库存", runtime.get("question_bank_ready")),
             ("generation_runtime_ready", "生成运行时", runtime.get("generation_ready")),
         ):
             passed = bool(value)
@@ -422,6 +416,7 @@ class DomainApiService:
             "rag": rag,
             "profile_ready": bool(runtime.get("profile_ready")),
             "diagnostic_ready": bool(runtime.get("diagnostic_ready")),
+            "question_bank_ready": bool(runtime.get("question_bank_ready")),
             "rag_ready": bool(runtime.get("rag_ready")),
             "generation_ready": bool(runtime.get("generation_ready")),
             "runtime_reasons": list(runtime.get("reasons") or []),

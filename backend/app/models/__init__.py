@@ -6,6 +6,8 @@ from app.models.diagnostic import (
     DiagnosticSession,
     PathNodeAssessment,
 )
+from app.models.question_import import QuestionImportRow, QuestionImportRun
+from app.models.domain_change_set import DomainChangeSet
 from app.models.domain import Domain
 from app.models.evaluation import EvaluationCase
 from app.models.feedback import Feedback
@@ -46,6 +48,9 @@ __all__ = [
     "DiagnosticQuestion",
     "DiagnosticSession",
     "PathNodeAssessment",
+    "QuestionImportRow",
+    "QuestionImportRun",
+    "DomainChangeSet",
     "Domain",
     "EvaluationCase",
     "Feedback",

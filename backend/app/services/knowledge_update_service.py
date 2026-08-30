@@ -91,6 +91,13 @@ def replace_item_relations(
                 source_item_id=source.id,
                 target_item_id=item.id,
                 relation_type=relation_type,
+                evidence_json={
+                    "evidence_kind": "curriculum_rule",
+                    "rule_version": "admin-curriculum-rule-v1",
+                    "reason": "管理员维护的课程关系",
+                    "source_knowledge_ids": [source.public_id, item.public_id],
+                },
+                generation_method="admin_curriculum_rule",
             )
         )
     db.flush()

@@ -1152,6 +1152,7 @@ textarea {
   transition: transform .22s;
 }
 .drawer.open { transform: translateX(0); }
+.drawer.drawer-wide { width: min(760px, 100vw); }
 .drawer-head, .drawer-foot { padding: 16px 18px; border-bottom: 1px solid var(--line); }
 .drawer-foot { border-top: 1px solid var(--line); border-bottom: 0; }
 .drawer-body { overflow: auto; padding: 18px; }

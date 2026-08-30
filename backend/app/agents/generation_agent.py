@@ -30,7 +30,11 @@ from app.agents.observability import record_model_call
 from app.agents.claim_policy import sanitize_deterministic_text
 from app.agents.prompt_registry import get_prompt
 from app.agents.review_claim_manifest import build_review_claims
-from app.agents.domain_evidence_policy import evidence_capability_payload
+from app.agents.domain_evidence_policy import (
+    EvidenceCapability,
+    evidence_capability_payload,
+    get_domain_evidence_policy,
+)
 from app.agents.prompt_budget import bounded_text, estimate_tokens
 from app.core.config import settings
 from app.services.llm_service import (
@@ -904,6 +908,32 @@ def _generation_payload(
             for item in request.reference_questions
             if item.knowledge_id in target_ids
         ]
+    if resource_type == ResourceType.PRACTICE_GUIDE:
+        target_chunks = [
+            chunks_by_source[source.source_ref_id]
+            for source in allowed_sources
+            if chunks_by_source[source.source_ref_id].knowledge_id in target_ids
+        ]
+        has_operation_evidence = any(
+            EvidenceCapability.OPERATION
+            in get_domain_evidence_policy(request.context.domain_code).classify(chunk)
+            for chunk in target_chunks
+        )
+        payload["practice_guide_mode"] = (
+            "operation_task" if has_operation_evidence else "conceptual_learning_activity"
+        )
+        payload["practice_guide_rules"] = (
+            [
+                "优先生成由证据支持的分步骤操作、观察和核验任务。",
+                "标题和学习目标应明确这是操作练习，不得补造命令、配置效果或固定结果。",
+            ]
+            if has_operation_evidence
+            else [
+                "生成有明确产出物的分析、设计、比较、评审或学习记录任务。",
+                "标题和学习目标应明确这是分析或设计练习，不得把概念材料伪装成可执行操作。",
+                "验收结果只能描述学习者提交的记录、方案、检查表或对比结论。",
+            ]
+        )
     if candidate is not None:
         payload["correction_attempt"] = correction_attempt
         payload["candidate"] = candidate.model_dump(mode="json")
@@ -1747,21 +1777,36 @@ def _fixture_response(
             summary=f"基于检索证据掌握{first_chunk.name}。",
         )
     elif resource_type == ResourceType.PRACTICE_GUIDE:
+        practice_target_ids = set(
+            request.requirements.resource_knowledge_targets.get(ResourceType.PRACTICE_GUIDE, [])
+        )
+        target_chunks = [
+            chunk
+            for chunk in request.retrieved_chunks
+            if not practice_target_ids or chunk.knowledge_id in practice_target_ids
+        ]
+        has_operation_evidence = any(
+            EvidenceCapability.OPERATION
+            in get_domain_evidence_policy(request.context.domain_code).classify(chunk)
+            for chunk in target_chunks
+        )
+        activity_label = "可追溯实操任务" if has_operation_evidence else "可追溯学习任务"
+        activity_title = f"验证{first_chunk.name}" if has_operation_evidence else f"分析{first_chunk.name}"
         content = PracticeGuideContent(
             title=title,
             target_audience=audience,
-            learning_objectives=[f"完成{first_chunk.name}的最小可复现实操"],
+            learning_objectives=[f"完成{first_chunk.name}的{activity_label}"],
             environment_requirements=["与引用材料相符的受控学习环境"],
             steps=[
                 {
                     "order": 1,
-                    "title": f"验证{first_chunk.name}",
+                    "title": activity_title,
                     "instruction": first_chunk.content,
                     "expected_result": "记录实际结果并与引用材料核对。",
                     "source_ref_ids": source_ids,
                 }
             ],
-            acceptance_criteria=["能够复现实操并指出所用知识来源。"],
+            acceptance_criteria=[f"完成{activity_label}并指出所用知识来源。"],
         )
     else:
         questions = []

@@ -41,7 +41,7 @@ from app.services.question_bank_service import (
     select_graded_quiz_candidates,
 )
 from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
+    ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS,
 )
 
 
@@ -886,7 +886,7 @@ class CandidateRetriever:
                     .where(DiagnosticQuestion.certification_status == "certified")
                     .where(
                         DiagnosticQuestion.certification_rule_version
-                        == QUESTION_CERTIFICATION_RULE_VERSION
+                        .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS)
                     )
                     .order_by(DiagnosticQuestion.id)
                 )

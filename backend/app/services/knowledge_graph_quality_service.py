@@ -120,7 +120,7 @@ def evaluate_graph_quality(
         if (
             not nodes
             or len(direction_participating) / len(nodes) < 0.8
-            or (len(nodes) >= 4 and longest_path(nodes) < 4)
+            or (len(nodes) >= 4 and longest_path(nodes) < 3)
         ):
             deficient_nodes.update(nodes)
 
@@ -148,8 +148,8 @@ def evaluate_graph_quality(
             block("EMPTY_DIRECTION", f"学习方向“{metric['label']}”没有匹配知识点")
         elif metric["path_participation_ratio"] < 0.8:
             block("DIRECTION_PATH_COVERAGE_LOW", f"学习方向“{metric['label']}”路径参与率低于 80%")
-        if metric["nodes"] >= 4 and metric["longest_path_nodes"] < 4:
-            block("DIRECTION_PATH_TOO_SHORT", f"学习方向“{metric['label']}”缺少至少 4 个节点的主路径")
+        if metric["nodes"] >= 4 and metric["longest_path_nodes"] < 3:
+            block("DIRECTION_PATH_TOO_SHORT", f"学习方向“{metric['label']}”缺少至少 3 个节点的主路径")
     if cycle_count:
         block("DIRECTIONAL_CYCLE", "方向性关系存在环", count=cycle_count)
     if invalid_edges:

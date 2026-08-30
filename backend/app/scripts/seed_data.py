@@ -258,6 +258,13 @@ def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
             target = items.get(target_public_id)
             if target is None:
                 continue
+            evidence = {
+                "evidence_kind": "curriculum_rule",
+                "rule_version": "ai-app-dev-seed-curriculum-v1",
+                "reason": "初始领域包声明的教学前置或关联关系",
+                "source_document_public_id": seed_document.public_id,
+                "source_knowledge_ids": [target.public_id, source.public_id],
+            }
             exists = db.scalar(
                 select(KnowledgeRelation).where(
                     KnowledgeRelation.source_item_id == target.id,
@@ -271,8 +278,22 @@ def seed_knowledge_items(db: Session) -> dict[str, KnowledgeItem]:
                         source_item_id=target.id,
                         target_item_id=source.id,
                         relation_type=relation_type,
+                        evidence_json=evidence,
+                        generation_method="seed_curriculum_rule",
+                        source_document_id=seed_document.id,
                     )
                 )
+            elif (
+                exists.generation_method == "manual"
+                and exists.source_document_id is None
+                and not exists.evidence_json
+            ):
+                # Seed relations are a declared curriculum policy. Record that
+                # provenance instead of pretending an arbitrary text quote
+                # proves a pedagogical sequence.
+                exists.evidence_json = evidence
+                exists.generation_method = "seed_curriculum_rule"
+                exists.source_document_id = seed_document.id
     return items
 
 

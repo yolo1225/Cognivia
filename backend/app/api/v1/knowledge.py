@@ -9,15 +9,13 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.agents.domain_evidence_policy import classify_evidence_capabilities
-from app.models import DiagnosticQuestion, KnowledgeDocument, KnowledgeItem, KnowledgeRelation
+from app.models import DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.rag.readiness import candidate_rag_status
 from app.schemas.common import ApiResponse, ok
 from app.services import candidate_index_job
 from app.services.domain_api_service import default_ability_weights, mark_domain_preparing
 from app.services.question_bank_service import question_bank_coverage
 from app.services.question_certification_service import mark_question_certifications_stale
-from app.services.knowledge_document_service import KnowledgeDocumentError, retry_document
-from app.services.knowledge_import_orchestrator import create_import_run, schedule_import
 from app.services.knowledge_update_service import (
     mark_affected_content,
     related_knowledge_ids,
@@ -122,7 +120,6 @@ def list_question_bank(
 def disable_question(
     question_id: str,
     payload: QuestionDisableRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> ApiResponse:
     row = db.execute(
@@ -143,36 +140,14 @@ def disable_question(
     coverage = question_bank_coverage(
         db, domain_code=question.domain_code, knowledge_ids=[item.public_id]
     )
-    import_id = None
-    source_document_id = str((question.answer_key_json or {}).get("import_document_id") or "")
-    source_document = (
-        db.scalar(
-            select(KnowledgeDocument).where(
-                KnowledgeDocument.public_id == source_document_id,
-                KnowledgeDocument.domain_code == question.domain_code,
-            )
-        )
-        if source_document_id
-        else None
-    )
-    replenishment_status = "source_document_required"
-    if source_document is not None:
-        try:
-            retry_document(db, source_document)
-            run = create_import_run(db, source_document)
-            import_id = run.public_id
-            background_tasks.add_task(schedule_import, run.public_id)
-            replenishment_status = "queued"
-        except KnowledgeDocumentError:
-            replenishment_status = "already_running"
     return ok({
         "question": _serialize_question(question, item),
         "coverage": coverage,
         "replenishment": {
             "required": item.public_id in coverage["missing_knowledge_ids"],
             "knowledge_id": item.public_id,
-            "status": replenishment_status,
-            "import_id": import_id,
+            "status": "question_template_required",
+            "next_action": "download_question_template",
         },
     })
 

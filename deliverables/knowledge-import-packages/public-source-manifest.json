@@ -1,0 +1,62 @@
+[
+  {
+    "knowledge_id": "sm.simulation.openplc_runtime_v4.001",
+    "name": "OpenPLC Runtime v4 容器化部署与编辑器连接",
+    "category": "PLC 仿真与集成",
+    "source_title": "OpenPLC Runtime v4 README (commit bf82b1b)",
+    "source_url": "https://github.com/Autonomy-Logic/openplc-runtime/blob/bf82b1b661fd95c9899969f629d692b77b4e1454/README.md",
+    "source_commit": "bf82b1b661fd95c9899969f629d692b77b4e1454",
+    "source_blob_sha": "b90f2ab9a4c5774f343309036514754dcbc02463",
+    "license_note": "MIT License; public repository; captured 2026-08-30"
+  },
+  {
+    "knowledge_id": "sm.robot.ur_ros2_installation.001",
+    "name": "UR ROS 2 Driver 安装与实时通信边界",
+    "category": "机器人仿真与集成",
+    "source_title": "Universal Robots ROS 2 Driver installation (commit f6cae59)",
+    "source_url": "https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver/blob/f6cae596ae0ba7a5045a89b1e847c47155d7e203/ur_robot_driver/doc/installation/installation.rst",
+    "source_commit": "f6cae596ae0ba7a5045a89b1e847c47155d7e203",
+    "source_blob_sha": "0ba605065d3d22f3dbf6955a1edea1b6e6d99983",
+    "license_note": "BSD-3-Clause License; Universal Robots public repository; captured 2026-08-30"
+  },
+  {
+    "knowledge_id": "sm.robot.ursim_driver_simulation.001",
+    "name": "URSim 与 UR ROS 2 Driver 联合仿真",
+    "category": "机器人仿真与集成",
+    "source_title": "Universal Robots ROS 2 Driver simulation (commit f6cae59)",
+    "source_url": "https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver/blob/f6cae596ae0ba7a5045a89b1e847c47155d7e203/ur_robot_driver/doc/usage/simulation.rst",
+    "source_commit": "f6cae596ae0ba7a5045a89b1e847c47155d7e203",
+    "source_blob_sha": "4a80b5fa5c83c4a70163fddd8ea7428b72fdbe99",
+    "license_note": "BSD-3-Clause License; Universal Robots public repository; captured 2026-08-30"
+  },
+  {
+    "knowledge_id": "sm.robot.ur_ros2_driver_startup.001",
+    "name": "UR ROS 2 Driver 启动与控制模式衔接",
+    "category": "机器人仿真与集成",
+    "source_title": "Universal Robots ROS 2 Driver startup (commit f6cae59)",
+    "source_url": "https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver/blob/f6cae596ae0ba7a5045a89b1e847c47155d7e203/ur_robot_driver/doc/usage/startup.rst",
+    "source_commit": "f6cae596ae0ba7a5045a89b1e847c47155d7e203",
+    "source_blob_sha": "d696c4b2b9b2b35ef91c61df60206d438bd47d8",
+    "license_note": "BSD-3-Clause License; Universal Robots public repository; captured 2026-08-30"
+  },
+  {
+    "knowledge_id": "sm.robot.ur_calibration_validation.001",
+    "name": "UR ROS 2 运动学校准提取与校验",
+    "category": "机器人仿真与集成",
+    "source_title": "Universal Robots ROS 2 Driver robot setup and startup (commit f6cae59)",
+    "source_url": "https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver/tree/f6cae596ae0ba7a5045a89b1e847c47155d7e203/ur_robot_driver/doc",
+    "source_commit": "f6cae596ae0ba7a5045a89b1e847c47155d7e203",
+    "source_blob_sha": "2c5c1821a7c824362227043eedefa0708fe17ce6, d696c4b2b9b2b35ef91c61df60206d438bd47d8",
+    "license_note": "BSD-3-Clause License; Universal Robots public repository; captured 2026-08-30"
+  },
+  {
+    "knowledge_id": "sm.robot.ur_external_control_recovery.001",
+    "name": "UR External Control 中断识别与恢复",
+    "category": "机器人仿真与集成",
+    "source_title": "Universal Robots ROS 2 Driver startup recovery (commit f6cae59)",
+    "source_url": "https://github.com/UniversalRobots/Universal_Robots_ROS2_Driver/blob/f6cae596ae0ba7a5045a89b1e847c47155d7e203/ur_robot_driver/doc/usage/startup.rst",
+    "source_commit": "f6cae596ae0ba7a5045a89b1e847c47155d7e203",
+    "source_blob_sha": "d696c4b2b9b2b35ef91c61df60206d438bd47d8",
+    "license_note": "BSD-3-Clause License; Universal Robots public repository; captured 2026-08-30"
+  }
+]

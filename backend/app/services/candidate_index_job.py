@@ -294,6 +294,31 @@ def run_import_build(
         )
 
 
+def discard_change_set_candidates(manifests: list[dict[str, Any]]) -> None:
+    """Best-effort cleanup for unactivated import collections after cancellation."""
+    if not manifests:
+        return
+    try:
+        with SessionLocal() as db:
+            builder = _builder(db)
+            seen: set[str] = set()
+            for manifest in manifests:
+                collection = str(manifest.get("active_collection") or "")
+                if not collection or collection in seen:
+                    continue
+                seen.add(collection)
+                try:
+                    builder.discard_candidate(manifest)
+                except Exception:
+                    logger.warning(
+                        "cancelled import candidate cleanup failed collection=%s",
+                        collection,
+                        exc_info=True,
+                    )
+    except Exception:
+        logger.warning("cancelled import candidate cleanup setup failed", exc_info=True)
+
+
 def status(db: Session, domain_code: str | None = None) -> dict[str, Any]:
     job = latest_job(db, domain_code)
     if job is None:

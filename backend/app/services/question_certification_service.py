@@ -2,33 +2,53 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
-from datetime import UTC, datetime
-from functools import partial
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models import (
     DiagnosticQuestion,
-    KnowledgeImportCandidate,
-    KnowledgeImportRun,
     KnowledgeItem,
 )
 from app.rag.candidate_chunker import CHUNKER_VERSION
-from app.services.knowledge_import_batch_service import (
-    execute_json_batch,
-    pack_by_tokens,
-    prepare_batch,
-    run_parallel,
-)
+from app.services.llm_service import ModelGatewayError, ModelResponseError, gateway
 
 
-QUESTION_CERTIFICATION_RULE_VERSION = "question-cert-v1"
+QUESTION_CERTIFICATION_RULE_VERSION = "question-cert-v2"
+LEGACY_QUESTION_CERTIFICATION_RULE_VERSION = "question-cert-v1"
+ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS = {
+    LEGACY_QUESTION_CERTIFICATION_RULE_VERSION,
+    QUESTION_CERTIFICATION_RULE_VERSION,
+}
 _SPACE_RE = re.compile(r"\s+")
+logger = logging.getLogger(__name__)
+CERTIFICATION_FIELDS = Literal[
+    "stem", "options", "answer", "explanation", "rubric", "difficulty", "source"
+]
+_CERTIFICATION_FIELD_ALIASES = {
+    "question": "stem",
+    "question_text": "stem",
+    "question_stem": "stem",
+    "option": "options",
+    "distractors": "options",
+    "correct_answer": "answer",
+    "answer_key": "answer",
+    "analysis": "explanation",
+    "rationale": "explanation",
+    "rubrics": "rubric",
+    "scoring_points": "rubric",
+    "level": "difficulty",
+    "evidence": "source",
+    "source_chunks": "source",
+    "source_ref_ids": "source",
+}
 
 
 class CertificationIssue(BaseModel):
@@ -44,14 +64,67 @@ class CertificationDecision(BaseModel):
 
     question_id: str
     verdict: Literal["pass", "fail"]
-    failed_fields: list[str] = []
+    failed_fields: list[CERTIFICATION_FIELDS] = Field(default_factory=list)
     reason: str = ""
+    warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_optional_empty_lists(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        # Qwen commonly emits null for semantically empty arrays. This is the
+        # only provider-shape normalization allowed; names, verdicts, fields
+        # and failed-decision reasons remain strict.
+        for field in ("failed_fields", "warnings"):
+            if normalized.get(field) in (None, ""):
+                normalized[field] = []
+            elif isinstance(normalized.get(field), str):
+                normalized[field] = (
+                    [
+                        value.strip()
+                        for value in re.split(r"[,，]", normalized[field])
+                        if value.strip()
+                    ]
+                    if field == "failed_fields"
+                    else [normalized[field]]
+                )
+        failed_fields = normalized.get("failed_fields")
+        if isinstance(failed_fields, list):
+            normalized["failed_fields"] = [
+                _CERTIFICATION_FIELD_ALIASES.get(str(field), field)
+                for field in failed_fields
+            ]
+        return normalized
+
+    @model_validator(mode="after")
+    def require_actionable_failure(self) -> "CertificationDecision":
+        self.question_id = self.question_id.strip()
+        self.reason = self.reason.strip()
+        self.warnings = [value.strip() for value in self.warnings if value.strip()]
+        if not self.question_id:
+            raise ValueError("question_id is required")
+        if self.verdict == "fail" and (not self.failed_fields or not self.reason):
+            raise ValueError("failed decisions require failed_fields and reason")
+        if self.verdict == "pass" and self.failed_fields:
+            raise ValueError("passed decisions cannot contain failed_fields")
+        return self
 
 
 class CertificationOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     decisions: list[CertificationDecision]
+
+
+class QuestionCertificationResult(BaseModel):
+    question_id: str
+    issue_kind: Literal["valid", "content_rejected", "certification_service_error"]
+    issue_fields: list[str] = Field(default_factory=list)
+    issue_reason: str = ""
+    warnings: list[str] = Field(default_factory=list)
+    report: dict[str, Any] = Field(default_factory=dict)
 
 
 def normalize_evidence_text(value: object) -> str:
@@ -276,47 +349,60 @@ def deterministic_certification_issues(
     ]
 
 
-def _adapt_certification_output(result: object) -> dict[str, Any]:
-    raw = result.get("decisions") if isinstance(result, dict) else []
-    decisions: list[dict[str, Any]] = []
-    for value in raw or []:
-        if not isinstance(value, dict):
-            continue
-        verdict = value.get("verdict") or value.get("decision")
-        if verdict in {True, "accepted", "certified", "supported", "yes"}:
-            verdict = "pass"
-        elif verdict in {False, "rejected", "unsupported", "no"}:
-            verdict = "fail"
-        decisions.append(
-            {
-                "question_id": value.get("question_id") or value.get("id"),
-                "verdict": verdict,
-                "failed_fields": value.get("failed_fields") or value.get("fields") or [],
-                "reason": str(value.get("reason") or "")[:300],
-            }
+QUESTION_CERTIFICATION_PROMPT = (
+    "你是正式题库认证审核员，只根据每道题绑定的 source_chunks 审核。"
+    "单选题要求题干清晰、正确答案唯一且由来源支持、解析能说明正确依据。错误选项允许来自其他"
+    "知识点、常见误解或错误陈述，不要求被当前来源支持；只有错误选项在题干语境下也可能成立、"
+    "与正确答案等价或导致真假无法判断时才失败。明显无关但确定错误的干扰项只写入 warnings，"
+    "不得判失败。简答题要求参考答案和每个评分点均由来源支持。不得使用外部知识补全。"
+    "失败必须返回具体 failed_fields 和中文 reason；通过时 failed_fields 必须为空。"
+)
+
+
+def _apply_distractor_policy(
+    decision: CertificationDecision,
+    payload: dict[str, Any],
+) -> CertificationDecision:
+    if decision.verdict != "fail" or payload.get("question_type") != "single_choice":
+        return decision
+    if set(decision.failed_fields) != {"options"}:
+        return decision
+    reason = decision.reason
+    low_relevance_only = any(
+        marker in reason
+        for marker in ("无关", "缺乏来源支持", "未在提供的", "source_chunks")
+    )
+    ambiguity = any(
+        marker in reason
+        for marker in (
+            "多个正确", "多项正确", "也可能成立", "歧义", "等价", "无法判断",
+            "正确答案错误", "正确答案不受", "正确答案缺乏",
         )
-    return {"decisions": decisions}
+    )
+    if not low_relevance_only or ambiguity:
+        return decision
+    return CertificationDecision(
+        question_id=decision.question_id,
+        verdict="pass",
+        failed_fields=[],
+        reason="",
+        warnings=[*decision.warnings, "干扰项与题干关联较弱，但不影响答案唯一性"],
+    )
 
 
-def _review_payload(candidate: KnowledgeImportCandidate) -> dict[str, Any]:
-    payload = dict(candidate.payload_json or {})
+def _semantic_payload(question_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {
-        "question_id": candidate.public_id,
-        "knowledge_id": payload.get("knowledge_candidate_id"),
+        "question_id": question_id,
         "question_type": payload.get("question_type"),
         "stem": payload.get("stem"),
         "options": payload.get("options") or [],
         "answer": payload.get("answer"),
-        "rubric": payload.get("rubric") or [],
         "explanation": payload.get("explanation"),
-        "quiz_level": payload.get("quiz_level"),
+        "rubric": payload.get("rubric") or [],
         "difficulty": payload.get("difficulty"),
-        "evidence_quotes": payload.get("evidence_quotes") or [],
         "source_chunks": [
             {
                 "source_ref_id": value.get("chunk_id"),
-                "source_locator": value.get("source_locator"),
-                "knowledge_id": value.get("knowledge_id"),
                 "content": value.get("content"),
             }
             for value in payload.get("source_chunks") or []
@@ -324,151 +410,154 @@ def _review_payload(candidate: KnowledgeImportCandidate) -> dict[str, Any]:
     }
 
 
-def _run_review_channel(
-    db: Session,
-    run: KnowledgeImportRun,
-    candidates: list[KnowledgeImportCandidate],
-    *,
-    model_name: str | None,
-    model_role: str,
-    round_number: int,
-) -> dict[str, CertificationDecision]:
-    records = [_review_payload(candidate) for candidate in candidates]
-    groups = pack_by_tokens(records, max_records=4, target_tokens=6000)
-    prepared: list[tuple[int, list[dict[str, Any]]]] = []
-    for index, group in enumerate(groups):
-        payload = {"questions": group}
-        batch = prepare_batch(
-            db,
-            run,
-            step=f"question_certification_{model_role}_{round_number}",
-            batch_key=f"{model_role}_{round_number}_{index}",
-            payload=payload,
-            model_name=model_name,
-            prompt_version=QUESTION_CERTIFICATION_RULE_VERSION,
-        )
-        prepared.append((batch.id, group))
-    db.commit()
-    jobs = [
-        partial(
-            execute_json_batch,
-            batch_id,
-            model=model_name,
-            system_prompt=(
-                "你是正式题库独立认证审核员。逐题对照题目绑定的 source_chunks，分别检查题干、正确答案、"
-                "所有选项、解析和简答 rubric 是否完全由这些 Chunk 支持，是否存在歧义、来源外结论或"
-                "错误难度。不得使用外部知识补全，不得因题量要求放宽。每题必须返回 verdict=pass/fail；"
-                "失败时 failed_fields 只能列出 stem/options/answer/explanation/rubric/difficulty 中的具体字段。"
-            ),
-            payload={"questions": group},
-            response_model=CertificationOutput,
-            response_adapter=_adapt_certification_output,
-            max_output_tokens=1400,
-            role="review",
-        )
-        for batch_id, group in prepared
-    ]
-    results = run_parallel(jobs, max_workers=settings.knowledge_import_review_concurrency)
-    output: dict[str, CertificationDecision] = {}
-    for result, (_, group) in zip(results, prepared, strict=True):
-        expected_ids = {str(item["question_id"]) for item in group}
-        if isinstance(result, Exception):
-            for question_id in expected_ids:
-                output[question_id] = CertificationDecision(
-                    question_id=question_id,
-                    verdict="fail",
-                    failed_fields=["review_channel"],
-                    reason=type(result).__name__,
+def _strict_decision_adapter(value: object) -> dict[str, Any]:
+    """Keep valid decisions so one malformed sibling does not discard a batch."""
+
+    if not isinstance(value, dict) or set(value) != {"decisions"}:
+        raise ModelResponseError("certification output must contain only decisions")
+    raw_decisions = value.get("decisions")
+    if not isinstance(raw_decisions, list):
+        raise ModelResponseError("certification decisions must be a list")
+    decisions: list[dict[str, Any]] = []
+    for raw in raw_decisions:
+        try:
+            decision = CertificationDecision.model_validate(raw)
+        except ValueError:
+            if isinstance(raw, dict):
+                logger.warning(
+                    "Question certification decision rejected fields=%s",
+                    raw.get("failed_fields"),
                 )
             continue
-        decisions = {
-            str(value.get("question_id")): CertificationDecision.model_validate(value)
-            for value in result.get("decisions") or []
-            if str(value.get("question_id") or "") in expected_ids
-        }
-        for question_id in expected_ids:
-            output[question_id] = decisions.get(
-                question_id,
-                CertificationDecision(
-                    question_id=question_id,
-                    verdict="fail",
-                    failed_fields=["review_response"],
-                    reason="missing_decision",
-                ),
-            )
-    return output
+        decisions.append(decision.model_dump(mode="json"))
+    return {"decisions": decisions}
 
 
-def certify_question_candidates(
-    db: Session,
-    run: KnowledgeImportRun,
-    candidates: list[KnowledgeImportCandidate],
+def certify_question_payloads(
+    questions: list[tuple[str, dict[str, Any]]],
     *,
-    round_number: int,
-) -> tuple[set[str], dict[str, list[str]]]:
-    deterministic_failures: dict[str, list[str]] = {}
-    eligible: list[KnowledgeImportCandidate] = []
-    for candidate in candidates:
-        payload = dict(candidate.payload_json or {})
+    on_batch_complete: Callable[[dict[str, QuestionCertificationResult]], None] | None = None,
+) -> dict[str, QuestionCertificationResult]:
+    """Certify formal questions through the sole production certification path."""
+
+    results: dict[str, QuestionCertificationResult] = {}
+    eligible: list[tuple[str, dict[str, Any]]] = []
+    for question_id, payload in questions:
         issues = deterministic_certification_issues(
-            {"candidate_id": candidate.public_id, **payload}
+            {"candidate_id": question_id, **payload}
         )
         if issues:
-            deterministic_failures[candidate.public_id] = issues[0].fields
-        else:
-            eligible.append(candidate)
-
-    certification_model = settings.primary_review_model or settings.primary_llm_model
-    model_results = _run_review_channel(
-        db,
-        run,
-        eligible,
-        model_name=certification_model,
-        model_role="certifier",
-        round_number=round_number,
-    )
-    certified: set[str] = set()
-    failed_fields = dict(deterministic_failures)
-    certified_at = datetime.now(UTC).replace(tzinfo=None)
-    for candidate in candidates:
-        payload = dict(candidate.payload_json or {})
-        model_result = model_results.get(candidate.public_id)
-        passed = (
-            candidate.public_id not in deterministic_failures
-            and model_result is not None
-            and model_result.verdict == "pass"
-        )
-        combined_fields = list(
-            dict.fromkeys(
-                [
-                    *failed_fields.get(candidate.public_id, []),
-                    *(model_result.failed_fields if model_result else []),
-                ]
-            )
-        )
-        report = {
-            "rule_version": QUESTION_CERTIFICATION_RULE_VERSION,
-            "deterministic_passed": candidate.public_id not in deterministic_failures,
-            "model_role": {
-                "question_certification_model": {
-                    "model_name": certification_model,
-                    "passed": bool(model_result and model_result.verdict == "pass"),
-                    "failed_fields": model_result.failed_fields if model_result else [],
-                    "reason": model_result.reason if model_result else "not_run",
+            issue = issues[0]
+            results[question_id] = QuestionCertificationResult(
+                question_id=question_id,
+                issue_kind="content_rejected",
+                issue_fields=issue.fields,
+                issue_reason="题目结构或来源引用不符合正式题库规则",
+                report={
+                    "rule_version": QUESTION_CERTIFICATION_RULE_VERSION,
+                    "deterministic_passed": False,
+                    "failed_fields": issue.fields,
                 },
-            },
-            "failed_fields": combined_fields,
-            "source_content_hash": payload.get("source_content_hash"),
-            "certified_at": certified_at.isoformat() if passed else None,
-        }
-        payload["certification_status"] = "certified" if passed else "rejected"
-        payload["certification_rule_version"] = QUESTION_CERTIFICATION_RULE_VERSION
-        payload["certification_report"] = report
-        payload["certified_at"] = report["certified_at"]
-        candidate.payload_json = payload
-        if passed:
-            certified.add(candidate.public_id)
+            )
         else:
-            failed_fields[candidate.public_id] = combined_fields or ["model_review"]
-    db.flush()
-    return certified, failed_fields
+            eligible.append((question_id, payload))
+
+    deterministic_results = {
+        question_id: result
+        for question_id, result in results.items()
+        if result.issue_kind != "valid"
+    }
+    if deterministic_results and on_batch_complete is not None:
+        on_batch_complete(deterministic_results)
+
+    groups = [eligible[index : index + 4] for index in range(0, len(eligible), 4)]
+    workers = min(max(1, settings.knowledge_import_review_concurrency), len(groups) or 1)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(_certify_group, group): group for group in groups}
+        for future in as_completed(futures):
+            batch_results = future.result()
+            results.update(batch_results)
+            if on_batch_complete is not None:
+                on_batch_complete(batch_results)
+    return results
+
+
+def _certify_group(
+    group: list[tuple[str, dict[str, Any]]],
+) -> dict[str, QuestionCertificationResult]:
+    pending = {question_id: payload for question_id, payload in group}
+    decisions: dict[str, tuple[CertificationDecision, dict[str, Any]]] = {}
+    last_error: ModelGatewayError | None = None
+    # The gateway already owns 1/3/5 retries for malformed structured output.
+    # A second call is only for IDs omitted from an otherwise valid batch.
+    for round_number in range(2):
+        if not pending:
+            break
+        try:
+            output, metadata = gateway.complete_json(
+                model=settings.primary_review_model or settings.primary_llm_model,
+                system_prompt=QUESTION_CERTIFICATION_PROMPT,
+                payload={
+                    "questions": [
+                        _semantic_payload(question_id, payload)
+                        for question_id, payload in pending.items()
+                    ]
+                },
+                response_adapter=_strict_decision_adapter,
+                response_model=CertificationOutput,
+                max_output_tokens=max(800, 500 * len(pending)),
+            )
+            expected = set(pending)
+            for raw in output["decisions"]:
+                decision = CertificationDecision.model_validate(raw)
+                if decision.question_id in expected and decision.question_id not in decisions:
+                    decisions[decision.question_id] = (decision, metadata)
+            pending = {
+                question_id: payload
+                for question_id, payload in pending.items()
+                if question_id not in decisions
+            }
+        except ModelGatewayError as exc:
+            last_error = exc
+            break
+
+    output_results: dict[str, QuestionCertificationResult] = {}
+    for question_id, _payload in group:
+        saved = decisions.get(question_id)
+        if saved is None:
+            reason = (
+                "认证模型连续返回无效结构，本题尚未完成认证"
+                if isinstance(last_error, ModelResponseError)
+                else "认证服务暂时不可用，本题尚未完成认证"
+            )
+            output_results[question_id] = QuestionCertificationResult(
+                question_id=question_id,
+                issue_kind="certification_service_error",
+                issue_fields=["source"],
+                issue_reason=reason,
+                report={
+                    "rule_version": QUESTION_CERTIFICATION_RULE_VERSION,
+                    "deterministic_passed": True,
+                    "service_error": type(last_error).__name__ if last_error else "missing_decision",
+                },
+            )
+            continue
+        decision, metadata = saved
+        decision = _apply_distractor_policy(decision, _payload)
+        passed = decision.verdict == "pass"
+        output_results[question_id] = QuestionCertificationResult(
+            question_id=question_id,
+            issue_kind="valid" if passed else "content_rejected",
+            issue_fields=list(decision.failed_fields),
+            issue_reason=decision.reason,
+            warnings=decision.warnings,
+            report={
+                "rule_version": QUESTION_CERTIFICATION_RULE_VERSION,
+                "deterministic_passed": True,
+                "model_metadata": metadata,
+                "failed_fields": list(decision.failed_fields),
+                "reason": decision.reason,
+                "warnings": decision.warnings,
+            },
+        )
+    return output_results

@@ -38,7 +38,7 @@
           <div v-if="selectedItem.tags.length" class="detail-tags">
             <span v-for="tag in selectedItem.tags" :key="tag">{{ tag }}</span>
           </div>
-          <button class="btn small detail-action" type="button" @click="emit('edit', selectedItem.knowledge_id)">
+          <button v-if="!readonly" class="btn small detail-action" type="button" @click="emit('edit', selectedItem.knowledge_id)">
             查看与编辑知识点
           </button>
           <div class="detail-relations">
@@ -93,10 +93,12 @@ const props = withDefaults(defineProps<{
   loading?: boolean
   error?: string
   selectedKnowledgeId?: string | null
+  readonly?: boolean
 }>(), {
   loading: false,
   error: '',
   selectedKnowledgeId: null,
+  readonly: false,
 })
 
 const emit = defineEmits<{

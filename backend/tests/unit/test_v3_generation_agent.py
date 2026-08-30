@@ -1583,6 +1583,39 @@ def test_generation_payload_uses_a_resource_specific_schema() -> None:
     )
 
 
+def test_conceptual_practice_payload_and_fixture_use_a_learning_activity() -> None:
+    request = _input()
+    target_id = request.requirements.required_knowledge_ids[0]
+    original_chunk = next(
+        chunk for chunk in request.retrieved_chunks if chunk.knowledge_id == target_id
+    )
+    concept_chunk = original_chunk.model_copy(
+        update={"content": "检索结果必须保留知识片段与来源标识，以便后续核对。"}
+    )
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "resource_knowledge_targets": {
+                ResourceType.PRACTICE_GUIDE: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    practice_request = request.model_copy(
+        update={"retrieved_chunks": [concept_chunk], "requirements": requirements}
+    )
+    sources = [concept_chunk.source]
+
+    payload = _generation_payload(practice_request, ResourceType.PRACTICE_GUIDE, sources)
+    fixture = _fixture_response(practice_request, ResourceType.PRACTICE_GUIDE, sources)
+
+    assert payload["practice_guide_mode"] == "conceptual_learning_activity"
+    assert "分析、设计、比较、评审或学习记录任务" in payload["practice_guide_rules"][0]
+    assert isinstance(fixture.structured_content, PracticeGuideContent)
+    assert "可追溯学习任务" in fixture.structured_content.learning_objectives[0]
+    assert fixture.structured_content.steps[0].code_or_command is None
+    assert fixture.structured_content.steps[0].troubleshooting is None
+
+
 def test_quiz_blueprint_detects_slot_drift() -> None:
     request = _input()
     requirements = request.requirements.model_copy(

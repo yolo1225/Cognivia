@@ -121,7 +121,9 @@ class OpenAICompatibleGateway:
                 messages: list[dict[str, str]] = [
                     {
                         "role": "system",
-                        "content": f"Return a valid JSON object.\n\n{system_prompt}",
+                        "content": _structured_system_prompt(
+                            system_prompt, response_model=response_model
+                        ),
                     },
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                 ]
@@ -147,7 +149,7 @@ class OpenAICompatibleGateway:
                     )
                 request_options: dict[str, Any] = {
                     "model": model,
-                    "response_format": {"type": settings.llm_json_schema_mode},
+                    "response_format": _response_format(response_model),
                     "messages": messages,
                 }
                 if max_output_tokens is not None:
@@ -362,7 +364,7 @@ class OpenAICompatibleGateway:
         stream = self._client().chat.completions.create(
             model=model,
             stream=True,
-            response_format={"type": settings.llm_json_schema_mode},
+            response_format={"type": "json_object"},
             messages=[
                 {
                     "role": "system",
@@ -514,3 +516,34 @@ def _provider_retry_kind(exc: Exception) -> str | None:
 
 
 gateway = OpenAICompatibleGateway()
+
+
+def _response_format(
+    response_model: type[BaseModel] | None,
+) -> dict[str, Any]:
+    if settings.llm_json_schema_mode == "json_schema" and response_model is not None:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_model.__name__,
+                "strict": True,
+                "schema": response_model.model_json_schema(),
+            },
+        }
+    return {"type": "json_object"}
+
+
+def _structured_system_prompt(
+    system_prompt: str,
+    *,
+    response_model: type[BaseModel] | None,
+) -> str:
+    if response_model is None or settings.llm_json_schema_mode == "json_schema":
+        return f"Return a valid JSON object.\n\n{system_prompt}"
+    schema = json.dumps(
+        response_model.model_json_schema(), ensure_ascii=False, separators=(",", ":")
+    )
+    return (
+        "Return exactly one JSON object matching this JSON Schema. Do not use Markdown "
+        f"or add fields outside the schema.\nJSON Schema: {schema}\n\n{system_prompt}"
+    )

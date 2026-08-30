@@ -30,7 +30,7 @@ from app.models import (
     PathNodeAssessment,
 )
 from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
+    ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS,
 )
 
 
@@ -195,7 +195,7 @@ def select_mastery_question(
                 DiagnosticQuestion.status == "active",
                 DiagnosticQuestion.certification_status == "certified",
                 DiagnosticQuestion.certification_rule_version
-                == QUESTION_CERTIFICATION_RULE_VERSION,
+                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS),
             )
         )
     )
@@ -453,7 +453,7 @@ def is_question_bank_eligible(question: DiagnosticQuestion) -> bool:
         getattr(question, "status", None) == "active"
         and getattr(question, "certification_status", None) == "certified"
         and getattr(question, "certification_rule_version", None)
-        == QUESTION_CERTIFICATION_RULE_VERSION
+        in ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS
         and bool(getattr(question, "source_content_hash", None))
         and bool(str(question.stem or "").strip())
         and _eligible_question_values(
@@ -498,6 +498,7 @@ def question_bank_coverage(
         "eligible_total": 0,
         "purpose_counts": defaultdict(int),
         "invalid_purpose_count": 0,
+        "invalid_question_count": 0,
     }
     for knowledge_id in requested:
         counts.setdefault(
@@ -519,16 +520,17 @@ def question_bank_coverage(
                 DiagnosticQuestion.status == "active",
                 DiagnosticQuestion.certification_status == "certified",
                 DiagnosticQuestion.certification_rule_version
-                == QUESTION_CERTIFICATION_RULE_VERSION,
+                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS),
                 DiagnosticQuestion.knowledge_item_id.in_(item_by_id),
             )
         )
         for question in questions:
-            if not is_question_bank_eligible(question):
-                continue
             uses = question_bank_uses(question)
             if not uses:
                 distribution["invalid_purpose_count"] += 1
+                continue
+            if not is_question_bank_eligible(question):
+                distribution["invalid_question_count"] += 1
                 continue
             knowledge_id = item_by_id[question.knowledge_item_id].public_id
             counts[knowledge_id][question.question_type] += 1
@@ -580,6 +582,7 @@ def question_bank_coverage(
             "eligible_total": distribution["eligible_total"],
             "purpose_counts": dict(distribution["purpose_counts"]),
             "invalid_purpose_count": distribution["invalid_purpose_count"],
+            "invalid_question_count": distribution["invalid_question_count"],
         },
         "requirements": {
             "primary_total": MIN_QUIZ_QUESTIONS_PER_KNOWLEDGE,
@@ -623,7 +626,9 @@ def graded_quiz_preflight(
                 DiagnosticQuestion.domain_code == domain_code,
                 DiagnosticQuestion.status == "active",
                 DiagnosticQuestion.certification_status == "certified",
-                DiagnosticQuestion.certification_rule_version == QUESTION_CERTIFICATION_RULE_VERSION,
+                DiagnosticQuestion.certification_rule_version.in_(
+                    ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS
+                ),
             )
             .order_by(DiagnosticQuestion.id)
         )

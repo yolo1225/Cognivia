@@ -12,6 +12,9 @@ class DiagnosticQuestion(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     public_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     domain_code: Mapped[str] = mapped_column(String(64), default="ai_app_dev")
+    # Stable identity of an imported formal question. Historical seed questions
+    # are backfilled from public_id by the migration.
+    external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     knowledge_item_id: Mapped[int] = mapped_column(ForeignKey("knowledge_items.id"))
     related_knowledge_ids_json: Mapped[list] = mapped_column(JSON, default=list)
     question_type: Mapped[str] = mapped_column(String(32))
@@ -31,6 +34,11 @@ class DiagnosticQuestion(TimestampMixin, Base):
     certified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     disabled_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+    __table_args__ = (
+        UniqueConstraint("domain_code", "external_id", name="uq_diagnostic_questions_domain_external"),
+    )
 
 
 class DiagnosticSession(TimestampMixin, Base):
@@ -86,6 +94,7 @@ class PathNodeAssessment(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     public_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    external_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     learning_path_id: Mapped[int] = mapped_column(ForeignKey("learning_paths.id"), index=True)
     path_node_id: Mapped[str] = mapped_column(String(128), index=True)
     learner_id: Mapped[int] = mapped_column(ForeignKey("learners.id"), index=True)

@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
+from app.agents.domain_evidence_policy import classify_evidence_capabilities
 from app.models import Base, DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.rag.candidate_index import (
     CandidateIndexBuilder,
@@ -23,7 +24,6 @@ from app.scripts.validate_rag_seed import source_data_version
 EXPECTED_SOURCE_VERSION = (
     "sha256:43e22ac6a2b6ef0d67b895548157bc35496796b574c5f3bc820c5dbe64c59cfe"
 )
-from app.agents.domain_evidence_policy import classify_evidence_capabilities
 
 
 class FakeProvider:
@@ -137,6 +137,21 @@ def test_database_snapshot_reproduces_frozen_seed_version() -> None:
         items = list(db.scalars(select(KnowledgeItem).order_by(KnowledgeItem.public_id)))
 
         assert source_data_version(database_source_snapshot(db, items)) == EXPECTED_SOURCE_VERSION
+
+
+def test_seed_relations_keep_declared_curriculum_provenance() -> None:
+    sessions = _session_factory()
+    with sessions() as db:
+        seed_knowledge_items(db)
+        relations = list(db.scalars(select(KnowledgeRelation)))
+
+        assert relations
+        assert all(relation.generation_method == "seed_curriculum_rule" for relation in relations)
+        assert all(relation.source_document_id is not None for relation in relations)
+        assert all(
+            (relation.evidence_json or {}).get("evidence_kind") == "curriculum_rule"
+            for relation in relations
+        )
 
 
 def test_llm_api_common_error_chunk_keeps_explicit_error_semantics() -> None:

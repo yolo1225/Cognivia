@@ -68,7 +68,17 @@
 
             <div v-else-if="detailTab === 'assessment'" class="detail-pane" role="tabpanel">
               <div v-if="!activeAttempt" class="pane-empty"><AppIcon name="check" /><h3>尚未开始巩固</h3><p>开始后，系统将从正式题库中选择一道同知识点新题，提交结果会作为正式学习证据。</p><button v-if="selected.status !== 'consolidated'" type="button" class="btn primary" :disabled="startingId === selected.item_id" @click="begin(selected)">开始巩固</button></div>
-              <section v-else class="assessment-block"><div class="assessment-title"><div><span class="section-label">同知识点验证</span><h3>{{ activeAttempt.question.stem }}</h3></div><span class="tag">难度 {{ activeAttempt.question.difficulty }}</span></div><div class="answer-options"><button v-for="(option, index) in activeAttempt.question.options" :key="option" type="button" :class="{ selected: selectedAnswer === index }" :disabled="Boolean(result)" @click="selectedAnswer = index"><i></i><span>{{ option }}</span></button></div><div v-if="result" class="result-box" :class="result.passed ? 'passed' : 'failed'"><strong>{{ result.passed ? '本次验证已通过' : '本次需要继续练习' }}</strong><p>得分 {{ Math.round(result.score * 100) }} · 通过阈值 {{ Math.round(result.threshold * 100) }} · 置信度 {{ Math.round(result.confidence * 100) }}%</p><p>{{ governanceMessage(result) }}</p><p v-if="result.node_gate && !result.node_gate.can_advance">当前节点仍有 {{ result.node_gate.blocking_mistake_count }} 道阻断性错题。</p><div v-if="result.resource_recommendation" class="result-actions"><button type="button" class="btn primary" :disabled="resourceDecisionSubmitting" @click="generateRecommendedResource">{{ resourceDecisionSubmitting ? '正在创建任务' : result.resource_recommendation.mode === 'next_node' ? '生成下一节点资源' : '生成补救资源' }}</button></div><small>证据 {{ result.evidence_ref }}</small></div><button v-else type="button" class="btn primary detail-primary" :disabled="selectedAnswer == null || submitting" @click="submitAttempt">{{ submitting ? '正在评分' : '提交验证' }}</button></section>
+              <section v-else class="assessment-block">
+                <div class="assessment-title"><div><span class="section-label">同知识点验证</span><h3>{{ activeAttempt.question.stem }}</h3></div><span class="tag">难度 {{ activeAttempt.question.difficulty }}</span></div>
+                <div v-if="isTextAnswerQuestion(activeAttempt.question.question_type)" class="short-answer-field">
+                  <label for="consolidation-short-answer">你的回答</label>
+                  <textarea id="consolidation-short-answer" v-model="shortAnswer" :disabled="Boolean(result) || submitting" maxlength="4000" rows="6" placeholder="请结合题目要求，用自己的话说明你的理解。" />
+                  <small>{{ shortAnswer.length }}/4000</small>
+                </div>
+                <div v-else class="answer-options"><button v-for="(option, index) in activeAttempt.question.options" :key="option" type="button" :class="{ selected: selectedAnswer === index }" :disabled="Boolean(result)" @click="selectedAnswer = index"><i></i><span>{{ option }}</span></button></div>
+                <div v-if="result" class="result-box" :class="result.passed ? 'passed' : 'failed'"><strong>{{ result.passed ? '本次验证已通过' : '本次需要继续练习' }}</strong><p>得分 {{ Math.round(result.score * 100) }} · 通过阈值 {{ Math.round(result.threshold * 100) }} · 置信度 {{ Math.round(result.confidence * 100) }}%</p><p>{{ governanceMessage(result) }}</p><p v-if="result.node_gate && !result.node_gate.can_advance">当前节点仍有 {{ result.node_gate.blocking_mistake_count }} 道阻断性错题。</p><div v-if="result.resource_recommendation" class="result-actions"><button type="button" class="btn primary" :disabled="resourceDecisionSubmitting" @click="generateRecommendedResource">{{ resourceDecisionSubmitting ? '正在创建任务' : result.resource_recommendation.mode === 'next_node' ? '生成下一节点资源' : '生成补救资源' }}</button></div><small>证据 {{ result.evidence_ref }}</small></div>
+                <button v-else type="button" class="btn primary detail-primary" :disabled="!hasAttemptAnswer || submitting" @click="submitAttempt">{{ submitting ? (isTextAnswerQuestion(activeAttempt.question.question_type) ? '正在评分' : '正在提交') : '提交验证' }}</button>
+              </section>
             </div>
 
             <div v-else class="detail-pane" role="tabpanel"><ul v-if="selected.attempts?.length" class="history-list"><li v-for="attempt in selected.attempts" :key="attempt.attempt_id"><span>{{ formatDate(attempt.completed_at) }}</span><strong>{{ attempt.status === 'passed' ? '已通过' : attempt.status === 'failed' ? '需继续练习' : '等待确认' }}</strong><small v-if="attempt.evidence_ref">{{ attempt.evidence_ref }}</small></li></ul><div v-else class="pane-empty"><AppIcon name="history" /><h3>暂无巩固记录</h3><p>完成同知识点验证后，正式证据会显示在这里。</p></div></div>
@@ -112,7 +122,7 @@ import { useDomainStore } from '@/stores/domainStore'
 import { formatKnowledgeName } from '@/utils/knowledgeName'
 import { useLearnerStore } from '@/stores/learnerStore'
 import { useToast } from '@/composables/useToast'
-import { mistakePathLabel, mistakePathTone } from './mistakeReviewState'
+import { isTextAnswerQuestion, mistakePathLabel, mistakePathTone } from './mistakeReviewState'
 import { masteryCheckErrorMessage } from '@/utils/masteryCheckError'
 
 const route = useRoute()
@@ -137,6 +147,7 @@ const result = ref<ConsolidationResult | null>(null)
 const detailTab = ref<'analysis' | 'assessment' | 'history'>('analysis')
 const resourceDecisionSubmitting = ref(false)
 const selectedAnswer = ref<number | null>(null)
+const shortAnswer = ref('')
 const loading = ref(false)
 const submitting = ref(false)
 const startingId = ref('')
@@ -157,6 +168,12 @@ const assessmentInMessages = computed(() => Boolean(nodeAssessment.value && tuto
 const quickPrompts = ['解释我为什么容易在这里出错', '换一种方式讲解这个知识点', '给我一个不包含答案的提示', '我还是不理解，拆成步骤说明']
 const filters = reactive({ priorityScope: 'current_node' as 'current_node' | 'all', sourceType: '', status: '', difficulty: '' })
 const hasActiveFilters = computed(() => Boolean(filters.sourceType || filters.status || filters.difficulty))
+const hasAttemptAnswer = computed(() => {
+  if (!activeAttempt.value) return false
+  return isTextAnswerQuestion(activeAttempt.value.question.question_type)
+    ? Boolean(shortAnswer.value.trim())
+    : selectedAnswer.value != null
+})
 const overallProgress = computed(() => summary.value?.total ? Math.round(summary.value.consolidated / summary.value.total * 100) : 0)
 const focusTip = computed(() => {
   const count = summary.value?.current_priority_count || 0
@@ -193,7 +210,7 @@ async function loadAll(preserveSelection = false) {
 }
 
 async function selectItem(item: MistakeReviewItem) {
-  activeAttempt.value = null; result.value = null; selectedAnswer.value = null; detailTab.value = 'analysis'
+  activeAttempt.value = null; result.value = null; selectedAnswer.value = null; shortAnswer.value = ''; detailTab.value = 'analysis'
   clearTutor(); tutoringInput.value = ''; tutoringError.value = ''
   try {
     selected.value = await getMistakeItem(item.item_id, learnerId.value)
@@ -263,11 +280,15 @@ async function begin(item: MistakeReviewItem) {
 }
 
 async function submitAttempt() {
-  if (!selected.value || !activeAttempt.value || selectedAnswer.value == null) return
+  if (!selected.value || !activeAttempt.value || !hasAttemptAnswer.value) return
   const itemId = selected.value.item_id
+  const answer = isTextAnswerQuestion(activeAttempt.value.question.question_type)
+    ? shortAnswer.value.trim()
+    : selectedAnswer.value
+  if (answer == null) return
   submitting.value = true
   try {
-    result.value = await answerConsolidation(itemId, activeAttempt.value.attempt_id, selectedAnswer.value, learnerId.value)
+    result.value = await answerConsolidation(itemId, activeAttempt.value.attempt_id, answer, learnerId.value)
     await loadAll(true)
     if (items.value.some(item => item.item_id === itemId)) selected.value = await getMistakeItem(itemId, learnerId.value)
   } catch { showToast('验证结果提交失败，请检查网络后重试。', 'error') }
@@ -380,6 +401,7 @@ onMounted(loadAll)
 .resource-link { margin-top: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); padding: 13px 14px; }.resource-link > div { display: grid; gap: 4px; }.resource-link strong { font-size: 13px; }.detail-primary { margin-top: 18px; }
 .pane-empty { min-height: 330px; display: grid; place-items: center; align-content: center; gap: 8px; text-align: center; }.pane-empty .app-icon { color: var(--muted); font-size: 28px; }.pane-empty .btn { margin-top: 7px; }
 .assessment-title { align-items: flex-start; }.assessment-title > div { display: grid; gap: 8px; }.assessment-title h3 { max-width: 720px; font-size: 17px; line-height: 1.6; }.answer-options { gap: 9px; margin: 20px 0; }.answer-options button { min-height: 46px; padding: 12px 13px; font-size: 14px; line-height: 1.55; }.result-box { padding: 16px; }.result-box p { font-size: 13px; line-height: 1.6; }.result-actions { margin-top: 12px; }
+.short-answer-field { display: grid; gap: 7px; margin: 20px 0; }.short-answer-field label { color: var(--body); font-size: 13px; font-weight: 700; }.short-answer-field textarea { width: 100%; min-height: 144px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); padding: 11px 12px; line-height: 1.65; }.short-answer-field textarea:focus { border-color: var(--blue); box-shadow: var(--focus); outline: 0; }.short-answer-field small { color: var(--muted); font-size: 11px; text-align: right; }
 .tutoring-note { border-left: 3px solid var(--info); background: var(--info2); color: var(--info); padding: 10px 12px; font-size: 13px; }.quick-prompts { margin-top: 16px; }.quick-prompts button { min-height: 36px; font-size: 12px; }.tutoring-messages article { padding: 12px 13px; }.tutoring-compose textarea { min-height: 88px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); padding: 10px; }.history-list { gap: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }.history-list li { border-bottom: 1px solid var(--line); border-radius: 0; background: var(--panel); padding: 12px 13px; }.history-list li:last-child { border-bottom: 0; }
 .pagination { border-top: 1px solid var(--line); padding: 12px; }.pagination span { font-size: 12px; }
 .scope-tabs button:focus-visible,.source-tabs button:focus-visible,.detail-tabs button:focus-visible,.path-badge:focus-visible { outline: 3px solid var(--visual-ring); outline-offset: 2px; }

@@ -1,7 +1,7 @@
 import { apiClient } from './client'
 import type { ApiResponse } from '@/types/api'
 
-export type ImportCandidateType = 'knowledge_item' | 'knowledge_relation' | 'diagnostic_question'
+export type ImportCandidateType = 'knowledge_item' | 'knowledge_relation'
 export type ImportCandidateStatus = 'pending' | 'approved' | 'rejected' | 'needs_edit' | 'published'
 
 export interface AbilityWeights {
@@ -36,6 +36,7 @@ export interface KnowledgeImportSummary {
   run_id: string
   document_public_id?: string
   domain_code: string
+  change_set_id?: number | null
   status: string
   current_step: string
   attempt: number
@@ -45,10 +46,10 @@ export interface KnowledgeImportSummary {
   candidate_counts?: Record<string, number>
   review_counts?: Record<string, number>
   knowledge_items?: number
+  projected_knowledge_items?: number
   ability_weights_ready?: number
   ability_weights_missing?: number
   ability_weight_blocking_ids?: string[]
-  diagnostic_questions?: number
   relations_generated?: number
   relations_accepted?: number
   relations_filtered?: number
@@ -63,7 +64,6 @@ export interface KnowledgeImportSummary {
   isolated_node_ratio?: number
   cycle_count?: number
   unresolved_relation_conflicts?: number
-  question_knowledge_coverage?: number
   retrieval_hit_rate?: number
   repair_rounds?: number
   quality_gate_passed?: boolean
@@ -201,6 +201,14 @@ export async function buildKnowledgeImportIndex(importId: string) {
 
 export async function smokeKnowledgeImport(importId: string) {
   const response = await apiClient.post<ApiResponse<{ passed: boolean }>>(`/knowledge/imports/${importId}/smoke-test`, {})
+  return response.data.data
+}
+
+export async function revalidateKnowledgeImportGraph(importId: string) {
+  const response = await apiClient.post<ApiResponse<KnowledgeImportSummary>>(
+    `/knowledge/imports/${importId}/revalidate-graph`,
+    {},
+  )
   return response.data.data
 }
 

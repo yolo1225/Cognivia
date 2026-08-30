@@ -8,12 +8,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    DomainChangeSet,
     KnowledgeDocument,
-    KnowledgeImportCandidate,
     KnowledgeItem,
 )
 from app.services.knowledge_update_service import mark_affected_content
@@ -56,8 +56,23 @@ def create_document(
     source_title: str,
     license_note: str,
     uploaded_by: str,
+    change_set: DomainChangeSet | None = None,
+    import_mode: str = "append",
+    replaces_document: KnowledgeDocument | None = None,
 ) -> KnowledgeDocument:
     safe_name, file_type = validate_upload(original_name, content)
+    if import_mode not in {"append", "replace"}:
+        raise KnowledgeDocumentError("导入模式仅支持 append 或 replace")
+    if import_mode == "replace" and replaces_document is None:
+        raise KnowledgeDocumentError("replace 模式必须指定被替换的来源文档")
+    if replaces_document is not None and (
+        import_mode != "replace" or replaces_document.domain_code != domain_code
+    ):
+        raise KnowledgeDocumentError("替换目标必须属于当前领域且使用 replace 模式")
+    if change_set is not None and change_set.domain_code != domain_code:
+        raise KnowledgeDocumentError("变更集不属于当前领域")
+    if change_set is not None and change_set.mode != import_mode:
+        raise KnowledgeDocumentError("导入模式必须与变更集一致")
     digest = hashlib.sha256(content).hexdigest()
     duplicate = db.scalar(
         select(KnowledgeDocument).where(
@@ -80,6 +95,9 @@ def create_document(
     document = KnowledgeDocument(
         public_id=public_id,
         domain_code=domain_code,
+        change_set_id=change_set.id if change_set else None,
+        import_mode=import_mode,
+        replaces_document_id=replaces_document.id if replaces_document else None,
         original_name=safe_name,
         stored_path=str(path.relative_to(root)),
         file_type=file_type,
@@ -122,9 +140,30 @@ def retry_document(db: Session, document: KnowledgeDocument) -> None:
 def delete_document(db: Session, document: KnowledgeDocument) -> dict[str, object]:
     if document.file_type == "seed_package":
         raise KnowledgeDocumentError("系统内置知识包不能删除")
+    if document.change_set_id is not None:
+        from app.services.domain_change_set_service import (
+            DomainChangeSetError,
+            cancel_change_set,
+        )
+
+        change_set = db.get(DomainChangeSet, document.change_set_id)
+        if change_set is not None and change_set.status != "activated":
+            try:
+                cancelled = cancel_change_set(db, change_set)
+            except DomainChangeSetError as exc:
+                raise KnowledgeDocumentError(str(exc)) from exc
+            return {
+                "document_id": document.public_id,
+                "status": "withdrawn",
+                "change_set_cancelled": True,
+                "change_set_id": change_set.public_id,
+                "staged_knowledge_items_removed": cancelled["staged_knowledge_items_removed"],
+                "staged_questions_removed": cancelled["staged_questions_removed"],
+                "question_runs_cancelled": cancelled["question_runs_cancelled"],
+                "candidate_manifests": cancelled["candidate_manifests"],
+            }
     processing_statuses = {
-        "queued", "parsing", "extracting", "graph_generation", "graph_review",
-        "question_generation", "question_review", "question_repair", "validating",
+        "queued", "parsing", "extracting", "graph_generation", "graph_review", "validating",
         "staging", "indexing", "smoke_testing", "publishing",
     }
     if document.status in processing_statuses:
@@ -159,16 +198,7 @@ def delete_document(db: Session, document: KnowledgeDocument) -> dict[str, objec
         document.status = "cancelled"
         document.error_summary = "导入已取消"
         db.flush()
-    from app.models import (
-        AnswerRecord,
-        DiagnosticQuestion,
-        KnowledgeChunk,
-        KnowledgeImportBatch,
-        KnowledgeImportRun,
-        KnowledgeItemSource,
-        KnowledgeRelation,
-        PathNodeAssessment,
-    )
+    from app.models import DiagnosticQuestion, KnowledgeItemSource
 
     sources = list(db.scalars(select(KnowledgeItemSource).where(
         KnowledgeItemSource.document_id == document.id,
@@ -176,19 +206,14 @@ def delete_document(db: Session, document: KnowledgeDocument) -> dict[str, objec
     )))
     item_ids = {source.knowledge_item_id for source in sources}
     items = list(db.scalars(select(KnowledgeItem).where(KnowledgeItem.id.in_(item_ids)))) if item_ids else []
-    db.execute(delete(KnowledgeImportCandidate).where(KnowledgeImportCandidate.document_id == document.id))
-    db.execute(delete(KnowledgeImportBatch).where(KnowledgeImportBatch.run_id.in_(
-        select(KnowledgeImportRun.id).where(KnowledgeImportRun.document_id == document.id)
-    )))
-    db.execute(delete(KnowledgeImportRun).where(KnowledgeImportRun.document_id == document.id))
     shared_item_ids: set[int] = set()
-    exclusive_item_ids: set[int] = set()
+    retired_item_ids: set[int] = set()
     if items:
         mark_affected_content(
             db,
             domain_code=document.domain_code,
             affected_knowledge_ids={item.public_id for item in items},
-            reason="knowledge_document_deleted",
+            reason="knowledge_document_withdrawn",
         )
         for item in items:
             remaining = db.scalar(select(KnowledgeItemSource.id).where(
@@ -196,41 +221,39 @@ def delete_document(db: Session, document: KnowledgeDocument) -> dict[str, objec
                 KnowledgeItemSource.document_id != document.id,
                 KnowledgeItemSource.status.in_(("staged", "published")),
             ))
-            (shared_item_ids if remaining is not None else exclusive_item_ids).add(item.id)
+            (shared_item_ids if remaining is not None else retired_item_ids).add(item.id)
         db.flush()
-    if exclusive_item_ids:
-        question_ids = set(db.scalars(select(DiagnosticQuestion.id).where(
-            DiagnosticQuestion.knowledge_item_id.in_(exclusive_item_ids)
-        )))
-        if question_ids:
-            db.execute(delete(PathNodeAssessment).where(PathNodeAssessment.question_id.in_(question_ids)))
-            db.execute(delete(AnswerRecord).where(AnswerRecord.question_id.in_(question_ids)))
-            db.execute(delete(DiagnosticQuestion).where(DiagnosticQuestion.id.in_(question_ids)))
-        db.execute(delete(KnowledgeRelation).where(
-            (KnowledgeRelation.source_item_id.in_(exclusive_item_ids))
-            | (KnowledgeRelation.target_item_id.in_(exclusive_item_ids))
-        ))
-        db.execute(delete(KnowledgeItem).where(KnowledgeItem.id.in_(exclusive_item_ids)))
-    if shared_item_ids:
-        db.execute(delete(KnowledgeItemSource).where(
-            KnowledgeItemSource.document_id == document.id,
-            KnowledgeItemSource.knowledge_item_id.in_(shared_item_ids),
-        ))
-    db.execute(delete(KnowledgeItemSource).where(KnowledgeItemSource.document_id == document.id))
-    db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
-    document.status = "deleted"
+    for source in sources:
+        source.status = "withdrawn"
+    if retired_item_ids:
+        retired_questions = list(
+            db.scalars(
+                select(DiagnosticQuestion).where(
+                    DiagnosticQuestion.knowledge_item_id.in_(retired_item_ids),
+                    DiagnosticQuestion.status == "active",
+                )
+            )
+        )
+        for question in retired_questions:
+            question.status = "disabled"
+            question.certification_status = "stale"
+            question.disabled_at = datetime.now(UTC).replace(tzinfo=None)
+            question.disabled_reason = "知识来源已撤回"
+        for item in items:
+            if item.id in retired_item_ids:
+                item.status = "retired"
+                item.needs_reembedding = True
+    # Preserve import artifacts, chunks, questions and answer records for audit.
+    # Candidate rebuilding excludes retired knowledge from the active collection.
+    document.status = "withdrawn"
     document.deleted_at = datetime.now(UTC)
-    document.error_summary = None
+    document.error_summary = "来源已撤回，历史学习记录已保留"
     db.commit()
-    stored_path = (KNOWLEDGE_STORAGE_ROOT / str(document.stored_path or "")).resolve()
-    root = KNOWLEDGE_STORAGE_ROOT.resolve()
-    if stored_path.is_file() and root in stored_path.parents:
-        stored_path.unlink()
     return {
         "document_id": document.public_id,
-        "status": "deleted",
+        "status": "withdrawn",
         "sources_retracted": len(sources),
-        "knowledge_deleted": len(exclusive_item_ids),
+        "knowledge_retired": len(retired_item_ids),
         "knowledge_preserved_shared": len(shared_item_ids),
         "affected_knowledge": len(items),
     }
@@ -240,6 +263,9 @@ def serialize_document(document: KnowledgeDocument) -> dict[str, object]:
     return {
         "document_id": document.public_id,
         "domain_code": document.domain_code,
+        "change_set_id": document.change_set_id,
+        "import_mode": document.import_mode,
+        "replaces_document_id": document.replaces_document_id,
         "original_name": document.original_name,
         "file_type": document.file_type,
         "mime_type": document.mime_type,

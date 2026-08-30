@@ -21,12 +21,6 @@ ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 PROMPT_VERSION = "knowledge-import-v2"
 
 
-class QuestionGenerationIncompleteError(RuntimeError):
-    """Raised when a question-generation batch returns no usable questions."""
-
-    error_code = "question_generation_incomplete"
-
-
 class KnowledgeImportBatchCancelled(RuntimeError):
     """Raised when an in-flight provider response must be discarded."""
 
@@ -126,7 +120,6 @@ def execute_json_batch(
     max_output_tokens: int,
     role: str,
     repair_truncated_output: bool = False,
-    expected_question_slots: list[int] | None = None,
 ) -> dict[str, Any]:
     owner = f"batch_{batch_id}_{datetime.now(UTC).timestamp():.0f}"
     with SessionLocal() as db:
@@ -163,38 +156,15 @@ def execute_json_batch(
         with _GLOBAL_SEMAPHORE, role_semaphore:
             result = {}
             metadata = {}
-            for semantic_attempt in range(2):
-                result, metadata = gateway.complete_json(
-                    model=model,
-                    system_prompt=system_prompt,
-                    payload={
-                        **payload,
-                        **(
-                            {"retry_instruction": "上次返回题槽不完整；本次必须精确返回所有 required_question_slots，不得返回空数组。"}
-                            if semantic_attempt
-                            else {}
-                        ),
-                    },
-                    response_model=response_model,
-                    response_adapter=response_adapter,
-                    max_output_tokens=max_output_tokens,
-                    repair_truncated_output=repair_truncated_output,
-                )
-                if expected_question_slots is None:
-                    break
-                actual_slots = {
-                    int(question.get("question_slot") or 0)
-                    for question in list(result.get("questions") or [])
-                    if isinstance(question, dict)
-                }
-                if actual_slots == set(expected_question_slots):
-                    break
-            if expected_question_slots is not None and actual_slots != set(
-                expected_question_slots
-            ):
-                raise QuestionGenerationIncompleteError(
-                    f"题槽不完整：expected={expected_question_slots}, actual={sorted(actual_slots)}"
-                )
+            result, metadata = gateway.complete_json(
+                model=model,
+                system_prompt=system_prompt,
+                payload=payload,
+                response_model=response_model,
+                response_adapter=response_adapter,
+                max_output_tokens=max_output_tokens,
+                repair_truncated_output=repair_truncated_output,
+            )
         with SessionLocal() as db:
             batch = db.get(KnowledgeImportBatch, batch_id)
             if batch is None:
@@ -208,19 +178,6 @@ def execute_json_batch(
                 batch.lease_expires_at = None
                 db.commit()
                 raise KnowledgeImportBatchCancelled(batch.error_summary)
-            is_question_batch = batch.step.startswith("question_generation") or batch.step.startswith(
-                "question_repair"
-            )
-            if is_question_batch and not list(result.get("questions") or []):
-                batch.status = "failed"
-                batch.error_code = "question_generation_incomplete"
-                batch.error_summary = "questions 为空，未产生可用题目"
-                batch.artifact_json = result
-                batch.artifact_hash = _canonical_hash(result)
-                batch.lease_owner = None
-                batch.lease_expires_at = None
-                db.commit()
-                raise QuestionGenerationIncompleteError(batch.error_summary)
             batch.status = "succeeded"
             batch.artifact_json = result
             batch.artifact_hash = _canonical_hash(result)
@@ -279,15 +236,7 @@ def batch_progress(db: Session, run_id: int) -> dict[str, int]:
         "total_batches": total,
         "reused_batches": int(aggregates[3]),
         "model_calls": sum(counts.values()),
-        "empty_result_batches": int(
-            db.scalar(
-                select(func.count(KnowledgeImportBatch.id)).where(
-                    KnowledgeImportBatch.run_id == run_id,
-                    KnowledgeImportBatch.error_code == "question_generation_incomplete",
-                )
-            )
-            or 0
-        ),
+        "empty_result_batches": 0,
         "tokens_input": int(aggregates[0]),
         "tokens_output": int(aggregates[1]),
         "model_duration_ms": int(aggregates[2]),

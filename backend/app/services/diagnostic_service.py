@@ -49,7 +49,7 @@ from app.services.diagnostic_scoring_service import score_short_answer_batch
 from app.services.llm_service import ModelGatewayError
 from app.services.mistake_review_service import sync_existing_mistakes
 from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
+    ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS,
 )
 from app.services.question_bank_service import question_supports_use
 from app.services.profile_service import (
@@ -401,7 +401,7 @@ def prepare_diagnostic_submission(
                 DiagnosticQuestion.status == "active",
                 DiagnosticQuestion.certification_status == "certified",
                 DiagnosticQuestion.certification_rule_version
-                == QUESTION_CERTIFICATION_RULE_VERSION,
+                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS),
                 KnowledgeItem.domain_code == domain_code,
                 KnowledgeItem.status == "published",
             )
@@ -516,7 +516,7 @@ def create_diagnostic_session(
             .where(DiagnosticQuestion.certification_status == "certified")
             .where(
                 DiagnosticQuestion.certification_rule_version
-                == QUESTION_CERTIFICATION_RULE_VERSION
+                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS)
             )
             .where(KnowledgeItem.domain_code == domain_code)
             .where(KnowledgeItem.status == "published")
@@ -666,7 +666,7 @@ def submit_diagnostic_session(
                 DiagnosticQuestion.status == "active",
                 DiagnosticQuestion.certification_status == "certified",
                 DiagnosticQuestion.certification_rule_version
-                == QUESTION_CERTIFICATION_RULE_VERSION,
+                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS),
                 KnowledgeItem.domain_code == domain_code,
                 KnowledgeItem.status == "published",
             )

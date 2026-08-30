@@ -101,18 +101,33 @@
 | GET | `/domains/{domain_code}/stats`、`/validate`、`/readiness` | 领域统计、配置检查和发布门禁 |
 | POST | `/domains/{domain_code}/publish`、`/disable` | 发布或停用领域 |
 | GET/POST | `/knowledge/documents` | 查询或上传 Markdown/PDF/TXT 等来源文档 |
-| GET/POST/DELETE | `/knowledge/documents/{document_id}`、`/{document_id}/retry` | 查看、重试或删除文档 |
+| GET/POST/DELETE | `/knowledge/documents/{document_id}`、`/{document_id}/retry` | 查看、重试或撤回来源文档（保留历史记录） |
 | GET/PATCH | `/knowledge/imports/{import_id}`、`/candidates/...` | 读取导入运行或修订候选 |
 | GET | `/knowledge/imports/{import_id}/summary`、`/graph-preview`、`/events` | 查看导入汇总、图谱预览或订阅进度 |
-| POST | `/knowledge/imports/{import_id}/validate`、`/approve`、`/build-index`、`/smoke-test`、`/publish`、`/confirm-publish` | 执行候选校验、批准、索引、冒烟与确认发布 |
+| POST | `/knowledge/imports/{import_id}/validate`、`/approve`、`/build-index`、`/smoke-test`、`/revalidate-graph`、`/publish`、`/confirm-publish` | 执行候选校验、批准、索引、冒烟、无重传图谱重校验与确认发布 |
 | GET/POST/PATCH | `/knowledge/items`、`/knowledge/items/{knowledge_id}` | 管理已发布知识条目 |
 | GET | `/knowledge/relations`、`/questions`、`/search` | 查询关系、认证题库或知识检索 |
+| GET | `/question-imports/template?domain_code=...` | 下载仅包含当前题库缺口的 XLSX 模板 |
+| POST | `/question-imports?domain_code=...` | 上传填写后的 XLSX 正式题库模板 |
+| GET | `/question-imports/{run_id}`、`/rows` | 查看题库导入运行及逐行校验、认证和来源候选 |
+| GET/POST | `/domain-change-sets`、`/{id}` | 查询或创建增量领域变更集 |
+| POST | `/domain-change-sets/{id}/activate` | 在资料、索引和题库缺口均完成后一次启用增量变更 |
+| PATCH | `/question-imports/{run_id}/rows/{row_id}/source-binding` | 确认 Candidate Chunk 与精确原文片段 |
+| POST | `/question-imports/{run_id}/validate`、`/confirm-publish` | 重新认证或在全行通过后原子发布题目 |
 | POST | `/knowledge/rebuild-index` | 启动待处理知识的 Candidate 索引重建 |
 | GET | `/knowledge/rebuild-index/status` | 查询索引构建状态 |
+
+题库行响应包含 `issue_kind`、`issue_fields`、`issue_reason`、`warnings` 和
+`can_confirm_source`。`issue_kind` 为 `source_confirmation_required`、
+`content_rejected`、`certification_service_error` 或 `template_invalid`；仅第一类允许通过
+来源确认接口处理。跨知识点但确定错误的单选干扰项不要求由当前 Chunk 支持，过于无关时通过
+`warnings` 返回，不阻止发布。
 
 领域发布依赖 Candidate manifest、数据/模型版本一致性、检索冒烟、知识关系、题库密度与来源认证等
 readiness 门禁。正式题目生命周期为 `pending | certified | rejected | stale`，活动题必须唯一声明
 `diagnosis | graded_quiz | mastery_validation` 用途；各业务只读取对应用途的 `active + certified` 题目。
+增量导入的图谱重校验以“已发布知识 + 当前候选”为范围：没有充分标签重合的新主题会增加学习方向；
+手工维护的教学顺序记录为可追溯的 `curriculum_rule`，不伪造为原文事实引文。
 
 ## 运维与评测接口
 
