@@ -29,6 +29,8 @@ from app.models import (
     LearningPackageResource,
     LearningPath,
     LearningResource,
+    MistakeReviewItem,
+    ResourceQuizAttempt,
     ReviewReport,
     TutoringMessage,
     TutoringSession,
@@ -83,10 +85,11 @@ def _delete_exports(export_dir: Path | None) -> int:
     if export_dir is None or not export_dir.exists():
         return 0
     deleted = 0
-    for path in export_dir.glob("res_*"):
-        if path.is_file():
-            path.unlink()
-            deleted += 1
+    for pattern in ("res_*", "learning_package_*.zip"):
+        for path in export_dir.glob(pattern):
+            if path.is_file():
+                path.unlink()
+                deleted += 1
     return deleted
 
 
@@ -171,6 +174,11 @@ def clear_generation_runtime(
         )
     if resource_ids:
         db.execute(
+            update(MistakeReviewItem)
+            .where(MistakeReviewItem.source_resource_id.in_(resource_ids))
+            .values(source_resource_id=None)
+        )
+        db.execute(
             update(LearningResource)
             .where(LearningResource.id.in_(resource_ids))
             .values(previous_resource_id=None)
@@ -231,6 +239,7 @@ def clear_generation_runtime(
     else:
         deleted["tutoring_messages"] = 0
         deleted["tutoring_sessions"] = 0
+    execute_delete("resource_quiz_attempts", delete(ResourceQuizAttempt))
     execute_delete("learning_resources", delete(LearningResource))
     execute_delete("generation_tasks", delete(GenerationTask))
     db.flush()

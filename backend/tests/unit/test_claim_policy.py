@@ -36,6 +36,27 @@ def test_chinese_and_english_teaching_actions_are_excluded() -> None:
         assert decision.review_disposition is ReviewDisposition.EXCLUDE
 
 
+def test_practice_observation_and_knowledge_summary_actions_are_excluded() -> None:
+    for field_group, text in (
+        ("expected_result", "记录实际收到的响应结构；与文档中声明的响应格式进行比对。"),
+        (
+            "acceptance_criterion",
+            "总结 asyncio 事件循环调度机制的核心要点：await 触发挂起、事件循环恢复协程",
+        ),
+    ):
+        decision = classify_claim(field_group, text)
+        assert decision.category is ClaimCategory.TEACHING_ACTION
+        assert decision.review_disposition is ReviewDisposition.EXCLUDE
+
+
+def test_acceptance_summary_with_a_fixed_behavior_remains_reviewable() -> None:
+    decision = classify_claim(
+        "acceptance_criterion", "总结接口默认返回的 JSON 字段及其校验方式"
+    )
+
+    assert decision.review_disposition is ReviewDisposition.DUAL_REVIEW
+
+
 def test_quiz_question_only_keeps_an_independent_factual_premise() -> None:
     assert classify_claim(
         "quiz_prompt", "哪一种方法适合当前任务？"

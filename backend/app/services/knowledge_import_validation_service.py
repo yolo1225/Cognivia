@@ -5,23 +5,35 @@ from collections import defaultdict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import KnowledgeDocument, KnowledgeImportCandidate, KnowledgeItem
+from app.agents.domain_evidence_policy import classify_evidence_capabilities
+from app.models import (
+    KnowledgeDocument,
+    KnowledgeImportCandidate,
+    KnowledgeImportRun,
+    KnowledgeItem,
+)
 from app.services.knowledge_parser_service import parse_document
+from app.services.ability_weight_service import ability_weight_gate
+from app.services.question_certification_service import (
+    QUESTION_CERTIFICATION_RULE_VERSION,
+    deterministic_certification_issues,
+)
 
 
 ALLOWED_EVIDENCE = {
     "concept",
-    "definition",
-    "example",
     "operation",
     "command",
-    "code",
     "code_example",
     "expected_result",
-    "troubleshooting",
     "error_handling",
     "version_boundary",
 }
+QUESTION_PURPOSES = {"diagnosis", "graded_quiz", "mastery_validation"}
+
+
+def _is_blank(value: object) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
 
 
 def validate_import(db: Session, document_id: int) -> dict[str, int]:
@@ -36,9 +48,13 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
             )
         )
     )
+    enforce_question_bank = db.scalar(
+        select(KnowledgeImportRun.id).where(KnowledgeImportRun.document_id == document_id)
+    ) is not None
     by_id = {item.public_id: item for item in candidates}
     names: set[str] = set()
     graph: dict[str, list[str]] = defaultdict(list)
+    relation_keys: set[tuple[str, str, str]] = set()
     invalid = 0
     for item in candidates:
         payload = item.payload_json or {}
@@ -54,30 +70,16 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
                 errors.append("来源摘录无法在原文中定位")
             if not 1 <= int(payload.get("difficulty", 0) or 0) <= 5:
                 errors.append("难度必须为 1 到 5")
-            weights = payload.get("ability_weights") or {}
-            if (
-                abs(
-                    sum(
-                        float(weights.get(key, 0))
-                        for key in (
-                            "theory",
-                            "practice",
-                            "problem_solving",
-                            "knowledge_breadth",
-                        )
-                    )
-                    - 1
-                )
-                > 0.001
-                or float(weights.get("learning_speed", 0)) != 0
-            ):
-                errors.append("能力权重不合法")
-            if set(payload.get("evidence_capabilities") or []) - ALLOWED_EVIDENCE:
+            errors.extend(ability_weight_gate(payload))
+            derived_capabilities = classify_evidence_capabilities(str(payload.get("content") or ""))
+            if payload.get("evidence_capabilities") != derived_capabilities:
+                payload["evidence_capabilities"] = derived_capabilities
+                item.payload_json = dict(payload)
+            if set(derived_capabilities) - ALLOWED_EVIDENCE:
                 errors.append("证据能力不合法")
             normalized = name.casefold()
-            if (
-                normalized in names
-                or db.scalar(
+            if normalized in names or (
+                payload.get("action") == "create" and db.scalar(
                     select(KnowledgeItem.id).where(
                         KnowledgeItem.domain_code == item.domain_code, KnowledgeItem.name == name
                     )
@@ -87,12 +89,19 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
                 errors.append("知识点重复")
             names.add(normalized)
         elif item.candidate_type == "diagnostic_question":
+            purposes = payload.get("question_bank_uses")
+            if (
+                not isinstance(purposes, list)
+                or len(purposes) != 1
+                or str(purposes[0]) not in QUESTION_PURPOSES
+            ):
+                errors.append("活动题目必须声明且只能声明一个合法用途")
             if payload.get("knowledge_candidate_id") not in by_id:
                 errors.append("关联知识候选不存在")
             if (
-                not payload.get("stem")
-                or not payload.get("answer")
-                or not payload.get("explanation")
+                _is_blank(payload.get("stem"))
+                or _is_blank(payload.get("answer"))
+                or _is_blank(payload.get("explanation"))
             ):
                 errors.append("题干、答案和解析不能为空")
             if payload.get("question_type") in {"choice", "single_choice"}:
@@ -101,20 +110,101 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
                 answer_is_index = isinstance(answer, int) and 0 <= answer < len(options)
                 if not answer_is_index and answer not in options:
                     errors.append("选择题答案不在选项中")
+                if len(options) != len({str(option).strip() for option in options}):
+                    errors.append("选择题选项重复")
+            if "来源章节的知识主题" in str(payload.get("stem") or ""):
+                errors.append("诊断题不能只考查章节标题识别")
+            if _is_blank(payload.get("source_quote")):
+                errors.append("诊断题缺少来源依据")
+            if enforce_question_bank:
+                if (
+                    payload.get("certification_status") != "certified"
+                    or payload.get("certification_rule_version")
+                    != QUESTION_CERTIFICATION_RULE_VERSION
+                ):
+                    errors.append("正式题目尚未通过认证")
+                deterministic_issues = deterministic_certification_issues(
+                    {"candidate_id": item.public_id, **payload}
+                )
+                if deterministic_issues:
+                    errors.append(
+                        "正式题目证据或结构失效："
+                        + ",".join(deterministic_issues[0].fields)
+                    )
+                if payload.get("question_type") not in {"single_choice", "short_answer"}:
+                    errors.append("正式题库题型不合法")
+                if payload.get("quiz_level") not in {
+                    "foundation", "improvement", "challenge"
+                }:
+                    errors.append("正式题库教学层级不合法")
         elif item.candidate_type == "knowledge_relation":
             source, target = payload.get("source_candidate_id"), payload.get("target_candidate_id")
+            relation_type = str(payload.get("relation_type") or "")
             if source == target:
                 errors.append("知识关系不能自环")
             if source not in by_id or target not in by_id:
                 errors.append("知识关系端点不存在")
-            if payload.get("relation_type") == "prerequisite":
+            if relation_type not in {"prerequisite", "depends_on", "next_step", "related_to"}:
+                errors.append("知识关系类型不合法")
+            key = (str(source), str(target), relation_type)
+            if key in relation_keys:
+                errors.append("知识关系重复")
+            relation_keys.add(key)
+            if not (
+                payload.get("source_quote")
+                or payload.get("evidence_chunk_ids")
+                or (item.source_locator_json or {}).get("chunk_id")
+            ):
+                errors.append("知识关系缺少证据")
+            if relation_type in {"prerequisite", "next_step"}:
                 graph[source].append(target)
+            elif relation_type == "depends_on":
+                graph[target].append(source)
         else:
             errors.append("未知候选类型")
         item.validation_errors_json = errors
         if errors:
             item.status = "needs_edit"
             invalid += 1
+    if enforce_question_bank:
+        questions_by_knowledge: dict[str, list[KnowledgeImportCandidate]] = defaultdict(list)
+        for item in candidates:
+            if item.candidate_type == "diagnostic_question":
+                knowledge_id = str(
+                    (item.payload_json or {}).get("knowledge_candidate_id") or ""
+                )
+                questions_by_knowledge[knowledge_id].append(item)
+        for item in candidates:
+            if item.candidate_type != "knowledge_item":
+                continue
+            questions = [
+                question
+                for question in questions_by_knowledge.get(item.public_id, [])
+                if not question.validation_errors_json
+            ]
+            purpose_counts = defaultdict(int)
+            mastery_roles: set[str] = set()
+            for question in questions:
+                question_payload = question.payload_json or {}
+                purposes = list(question_payload.get("question_bank_uses") or [])
+                if len(purposes) == 1:
+                    purpose_counts[str(purposes[0])] += 1
+                if purposes == ["mastery_validation"]:
+                    mastery_roles.add(str(question_payload.get("reserve_role") or ""))
+            missing_requirements = []
+            if purpose_counts["diagnosis"] < 1:
+                missing_requirements.append("诊断题至少1道")
+            if purpose_counts["graded_quiz"] < 3:
+                missing_requirements.append("分阶测验题至少3道")
+            if purpose_counts["mastery_validation"] < 2:
+                missing_requirements.append("掌握检查题至少2道")
+            if not {"consolidation", "mastery_transfer"}.issubset(mastery_roles):
+                missing_requirements.append("掌握检查必须包含基础检查和迁移检查")
+            if missing_requirements:
+                item.validation_errors_json = list(item.validation_errors_json or []) + [
+                    "正式题库用途密度不足：" + "；".join(missing_requirements)
+                ]
+                item.status = "needs_edit"
     visiting: set[str] = set()
     visited: set[str] = set()
 
@@ -140,5 +230,6 @@ def validate_import(db: Session, document_id: int) -> dict[str, int]:
                 ]
                 item.status = "needs_edit"
         invalid = sum(bool(item.validation_errors_json) for item in candidates)
+    invalid = sum(bool(item.validation_errors_json) for item in candidates)
     db.commit()
     return {"total": len(candidates), "valid": len(candidates) - invalid, "invalid": invalid}

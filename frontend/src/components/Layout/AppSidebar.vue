@@ -1,5 +1,5 @@
 <template>
-  <aside class="side" :class="{ collapsed }">
+  <aside ref="sidebarRoot" class="side" :class="{ collapsed }">
     <div class="brand">
       <div class="mark">域</div>
       <div class="brand-copy">
@@ -45,13 +45,12 @@
         <span class="theme-toggle-text">{{ darkMode ? '浅色模式' : '深色模式' }}</span>
       </button>
       <span class="foot-status"><span class="dot"></span><span class="foot-text">服务正常</span></span>
-      <span class="foot-version">MVP v0.1</span>
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import { useLearnerStore } from '@/stores/learnerStore'
@@ -69,6 +68,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 const learnerStore = useLearnerStore()
 const profileGate = useProfileGateStore()
+const sidebarRoot = ref<HTMLElement | null>(null)
 
 interface NavItem {
   page: string
@@ -88,7 +88,8 @@ const allNavGroups: NavGroup[] = [
     items: [
       { page: 'dashboard', label: '首页', icon: 'home', route: '/dashboard' },
       { page: 'resources', label: '学习资源', icon: 'resources', route: '/resources' },
-      { page: 'report', label: '学习报告', icon: 'report', route: '/report' },
+      { page: 'mistakeReview', label: '错题巩固', icon: 'check', route: '/mistake-review' },
+      { page: 'report', label: '学情画像', icon: 'report', route: '/report' },
       { page: 'metrics', label: '学习历程', icon: 'history', route: '/metrics' },
     ],
   },
@@ -120,6 +121,13 @@ function refreshProfileGate() {
   if (authStore.role === 'learner') void profileGate.refresh(learnerStore.selectedLearnerId || '')
 }
 
-onMounted(refreshProfileGate)
+async function ensureActiveNavVisible() {
+  await nextTick()
+  if (!window.matchMedia('(max-width: 760px)').matches) return
+  sidebarRoot.value?.querySelector<HTMLElement>('.nav button.active')?.scrollIntoView({ inline: 'center', block: 'nearest' })
+}
+
+onMounted(() => { refreshProfileGate(); void ensureActiveNavVisible() })
 watch(() => learnerStore.selectedLearnerId, refreshProfileGate)
+watch(() => route.path, ensureActiveNavVisible)
 </script>

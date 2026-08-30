@@ -31,14 +31,16 @@ def resolve_node_generation_basis(
         or payload.get("current_node_id") != path_node_id
     ):
         raise ValueError("path_node_changed")
-    core_id = str(node.get("knowledge_id") or "")
-    core = db.scalar(
+    core_ids = [str(value) for value in node.get("knowledge_ids") or []]
+    cores = list(db.scalars(
         select(KnowledgeItem).where(
-            KnowledgeItem.public_id == core_id,
+            KnowledgeItem.public_id.in_(core_ids),
             KnowledgeItem.domain_code == path.domain_code,
         )
-    )
-    if core is None:
+    ))
+    core_by_public_id = {item.public_id: item for item in cores}
+    cores = [core_by_public_id[value] for value in core_ids if value in core_by_public_id]
+    if len(cores) != len(core_ids) or not cores:
         raise ValueError("path_node_knowledge_not_found")
     prerequisite_items = list(
         db.scalars(
@@ -48,20 +50,27 @@ def resolve_node_generation_basis(
                 KnowledgeRelation.source_item_id == KnowledgeItem.id,
             )
             .where(
-                KnowledgeRelation.target_item_id == core.id,
+                KnowledgeRelation.target_item_id.in_([item.id for item in cores]),
                 KnowledgeRelation.relation_type == "prerequisite",
                 KnowledgeItem.domain_code == path.domain_code,
             )
             .order_by(KnowledgeItem.id)
         )
     )
-    targets = {resource_type: [core.public_id] for resource_type in resource_types}
+    targets = {resource_type: list(core_ids) for resource_type in resource_types}
     return {
         "path_id": path.public_id,
         "path_node_id": path_node_id,
-        "path_node_title": str(node.get("title") or core.name),
+        "path_node_title": str(node.get("title") or cores[0].name),
         "path_node_order": int(node.get("path_order") or 1),
-        "core_knowledge": {"knowledge_id": core.public_id, "name": core.name},
+        "target_difficulty": int(
+            node.get("target_difficulty")
+            or round(sum(item.difficulty for item in cores) / len(cores))
+        ),
+        "core_knowledge": [
+            {"knowledge_id": item.public_id, "name": item.name} for item in cores
+        ],
+        "focus_knowledge_ids": list(node.get("focus_knowledge_ids") or []),
         "prerequisite_knowledge": [
             {"knowledge_id": item.public_id, "name": item.name}
             for item in prerequisite_items
@@ -100,12 +109,12 @@ def generation_basis_for_task(
         node = (payload.get("node_states") or {}).get(task.path_node_id) or {}
         targets = dict(task.resource_knowledge_targets_json or {})
         core_ids = next(iter(targets.values()), [])
-        core = db.scalar(
+        cores = list(db.scalars(
             select(KnowledgeItem).where(
-                KnowledgeItem.public_id == core_ids[0],
+                KnowledgeItem.public_id.in_(core_ids),
                 KnowledgeItem.domain_code == path.domain_code,
             )
-        ) if core_ids else None
+        )) if core_ids else []
         prerequisite_items = list(
             db.scalars(
                 select(KnowledgeItem)
@@ -114,21 +123,22 @@ def generation_basis_for_task(
                     KnowledgeRelation.source_item_id == KnowledgeItem.id,
                 )
                 .where(
-                    KnowledgeRelation.target_item_id == core.id,
+                    KnowledgeRelation.target_item_id.in_([item.id for item in cores]),
                     KnowledgeRelation.relation_type == "prerequisite",
                     KnowledgeItem.domain_code == path.domain_code,
                 )
                 .order_by(KnowledgeItem.id)
             )
-        ) if core is not None else []
+        ) if cores else []
         return {
             "path_id": path.public_id,
             "path_node_id": task.path_node_id,
             "path_node_title": node.get("title"),
             "path_node_order": node.get("path_order"),
-            "core_knowledge": {"knowledge_id": core.public_id, "name": core.name}
-            if core is not None
-            else None,
+            "core_knowledge": [
+                {"knowledge_id": item.public_id, "name": item.name} for item in cores
+            ],
+            "focus_knowledge_ids": list(node.get("focus_knowledge_ids") or []),
             "prerequisite_knowledge": [
                 {"knowledge_id": item.public_id, "name": item.name}
                 for item in prerequisite_items

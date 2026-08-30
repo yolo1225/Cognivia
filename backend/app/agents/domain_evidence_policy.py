@@ -61,15 +61,23 @@ def normalize_evidence_capabilities(values: object) -> list[str]:
     return sorted(normalized)
 
 
+def classify_evidence_capabilities(content: str) -> list[str]:
+    """Derive the evidence vocabulary from the source text itself."""
+    return sorted(
+        capability.value
+        for capability in DomainEvidencePolicy(domain_code="").classify_content(content)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DomainEvidencePolicy:
     domain_code: str
     declared_by_knowledge: dict[str, frozenset[EvidenceCapability]] | None = None
 
     def classify(self, chunk: RetrievedChunk) -> frozenset[EvidenceCapability]:
-        declared = (self.declared_by_knowledge or {}).get(chunk.knowledge_id)
-        if declared:
-            return declared
+        # Claim-level validation is intentionally chunk-local. Knowledge-level
+        # declarations are an aggregate used for discovery and reporting; using
+        # them here would let one operational section authorize unrelated chunks.
         return self.classify_content(chunk.content)
 
     def classify_content(self, content: str) -> frozenset[EvidenceCapability]:
@@ -84,9 +92,9 @@ class DomainEvidencePolicy:
 
 _GENERIC_PATTERNS = {
     EvidenceCapability.OPERATION: re.compile(
-        r"(?:^|\n)#{1,6}\s*(?:操作步骤|分步操作|实操|实践任务|实验步骤|操作方法)\s*$|"
-        r"(?:^|\n)标题\s*[:：].*(?:操作步骤|分步操作|实操|实践任务|实验步骤|操作方法)\s*$|"
-        r"(?:^|\n)\s*(?:操作步骤|分步操作|实操任务|实践任务|实验步骤|操作方法)\s*[:：]|"
+        r"(?:^|\n)#{1,6}\s*(?:操作步骤|分步操作|实操|应用任务|实践任务|实验步骤|操作方法)\s*$|"
+        r"(?:^|\n)标题\s*[:：].*(?:操作步骤|分步操作|实操|应用任务|实践任务|实验步骤|操作方法)\s*$|"
+        r"(?:^|\n)\s*(?:操作步骤|分步操作|实操任务|应用任务|实践任务|实验步骤|操作方法)\s*[:：]|"
         r"(?:^|\n)\s*(?:步骤\s*)?\d+[.、)]\s*(?:执行|运行|创建|配置|安装|输入|选择|检查|调用|提交)|"
         r"(?:执行|运行|创建|配置|安装|输入|选择|检查|调用|提交)(?:以下|下列|该|此)?(?:命令|代码|文件|配置|请求|操作)",
         re.M,
@@ -104,6 +112,7 @@ _GENERIC_PATTERNS = {
     ),
     EvidenceCapability.EXPECTED_RESULT: re.compile(
         r"(?:^|\n)#{1,6}\s*(?:预期结果|预期输出|验收结果|输出示例)\s*$|"
+        r"(?:^|\n)标题\s*[:：].*(?:预期结果|预期输出|验收结果|输出示例)\s*$|"
         r"(?:^|\n)\s*(?:预期结果|预期输出|验收结果|输出示例)\s*[:：]|"
         r"(?:运行|执行|调用|提交)(?:后|成功后).{0,60}(?:返回|输出|显示|生成|状态)",
         re.M,

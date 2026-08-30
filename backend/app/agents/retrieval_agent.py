@@ -6,7 +6,7 @@ from app.agents.contracts import RetrieveKnowledgeInput, RetrieveKnowledgeOutput
 from app.agents.prompt_registry import get_prompt
 from app.core.config import Settings
 from app.core.db import SessionLocal
-from app.rag.candidate_manifest import CandidateManifestStore
+from app.rag.database_manifest_store import DatabaseManifestStore
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.rag.retrieval import CandidateRetriever
 from app.rag.vector_store import VectorStore
@@ -17,7 +17,7 @@ SYSTEM_PROMPT = get_prompt("retrieval")
 
 
 class KnowledgeRetrievalAgent:
-    """Standalone V3 retrieval boundary; it deliberately does not inherit legacy BaseAgent."""
+    """Standalone V10 retrieval boundary with no legacy base dependency."""
 
     name = RETRIEVAL_AGENT_NAME
     system_prompt = SYSTEM_PROMPT
@@ -38,7 +38,10 @@ class KnowledgeRetrievalAgent:
                     model=settings.embedding_model,
                     timeout_seconds=settings.llm_timeout_seconds,
                 ),
-                manifest_store=CandidateManifestStore(),
+                # Keep runtime retrieval aligned with domain readiness. Active
+                # index pointers are persisted in MySQL; the legacy local-file
+                # manifest is only a compatibility fallback inside this store.
+                manifest_store=DatabaseManifestStore(),
                 mode=mode,
             )
         )

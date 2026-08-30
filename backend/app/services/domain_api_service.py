@@ -14,14 +14,28 @@ from app.models import (
     KnowledgeItem,
     KnowledgeRelation,
 )
+from app.agents.domain_evidence_policy import (
+    EvidenceCapability,
+    normalize_evidence_capabilities,
+)
 from app.rag.readiness import candidate_rag_status
-from app.services.domain_runtime_service import DomainRuntimeError, load_domain_runtime
+from app.services.domain_runtime_service import (
+    DomainRuntimeError,
+    load_domain_runtime,
+    practice_generation_mode_for_items,
+)
+from app.services.question_bank_service import question_bank_coverage
+from app.services.question_certification_service import (
+    QUESTION_CERTIFICATION_RULE_VERSION,
+)
 
 
 DOMAIN_STATUSES = {"draft", "preparing", "ready", "disabled"}
-PRIMARY_READINESS_POLICY = {"minimum_published_knowledge": 50, "minimum_diagnostic_questions": 60}
-SECONDARY_READINESS_POLICY = {"minimum_published_knowledge": 10, "minimum_diagnostic_questions": 10}
-DEFAULT_ABILITY_WEIGHTS = {
+SERVER_MINIMUM_READINESS_POLICY = {
+    "minimum_published_knowledge": 10,
+    "minimum_diagnostic_questions": 10,
+}
+MANUAL_ENTRY_ABILITY_WEIGHTS = {
     "theory": 0.3,
     "practice": 0.25,
     "problem_solving": 0.2,
@@ -36,11 +50,7 @@ class DomainServiceError(ValueError):
 
 def readiness_policy(domain: Domain) -> dict[str, int]:
     raw = dict((domain.config_json or {}).get("readiness_policy") or {})
-    defaults = (
-        PRIMARY_READINESS_POLICY
-        if domain.domain_code == "ai_app_dev"
-        else SECONDARY_READINESS_POLICY
-    )
+    defaults = SERVER_MINIMUM_READINESS_POLICY
     return {
         "minimum_published_knowledge": max(
             defaults["minimum_published_knowledge"],
@@ -75,7 +85,8 @@ def mark_domain_preparing(db: Session, domain_code: str) -> None:
 
 
 def default_ability_weights() -> dict[str, float]:
-    return dict(DEFAULT_ABILITY_WEIGHTS)
+    """Manual-entry default; the document import pipeline must never use it."""
+    return dict(MANUAL_ENTRY_ABILITY_WEIGHTS)
 
 
 class DomainApiService:
@@ -114,7 +125,7 @@ class DomainApiService:
             config_json={
                 "description": description,
                 "learning_directions": learning_directions,
-                "readiness_policy": dict(SECONDARY_READINESS_POLICY),
+                "readiness_policy": dict(SERVER_MINIMUM_READINESS_POLICY),
             },
         )
         self.db.add(domain)
@@ -215,6 +226,10 @@ class DomainApiService:
                     .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
                     .where(
                         DiagnosticQuestion.domain_code == domain_code,
+                        DiagnosticQuestion.status == "active",
+                        DiagnosticQuestion.certification_status == "certified",
+                        DiagnosticQuestion.certification_rule_version
+                        == QUESTION_CERTIFICATION_RULE_VERSION,
                         KnowledgeItem.domain_code == domain_code,
                         KnowledgeItem.status == "published",
                     )
@@ -228,6 +243,25 @@ class DomainApiService:
             for item in items
         )
         missing_sources = sum(not str(item.source_title or "").strip() for item in items)
+        evidence_counts = {capability.value: 0 for capability in EvidenceCapability}
+        for item in items:
+            for capability in normalize_evidence_capabilities(
+                item.evidence_capabilities_json
+            ):
+                evidence_counts[capability] += 1
+        evidence_coverage = {
+            "total_items": len(items),
+            "capabilities": evidence_counts,
+            "practice_generation_mode": practice_generation_mode_for_items(items),
+        }
+        require_full_practice_evidence = bool(
+            (domain.config_json or {}).get("practice_evidence_required_for_all", False)
+        )
+        quiz_question_bank = question_bank_coverage(
+            self.db,
+            domain_code=domain_code,
+            knowledge_ids=[item.public_id for item in items],
+        )
         directions = list((domain.config_json or {}).get("learning_directions") or [])
         rag = candidate_rag_status(domain_code)
         latest_job = self.db.scalar(
@@ -257,9 +291,57 @@ class DomainApiService:
                 ">=",
                 "可用诊断题",
             ),
+            (
+                "quiz_question_bank_coverage",
+                int(quiz_question_bank["ready_items"]),
+                len(items),
+                "==",
+                "分级测验正式题库覆盖",
+            ),
+            (
+                "quiz_question_types",
+                len((quiz_question_bank["distribution"] or {})["question_types"]),
+                2,
+                ">=",
+                "正式题库题型覆盖",
+            ),
+            (
+                "quiz_teaching_levels",
+                len((quiz_question_bank["distribution"] or {})["quiz_levels"]),
+                3,
+                ">=",
+                "正式题库教学层级覆盖",
+            ),
+            (
+                "quiz_difficulty_levels",
+                len((quiz_question_bank["distribution"] or {})["difficulty_levels"]),
+                5,
+                ">=",
+                "正式题库1-5级难度覆盖",
+            ),
             ("learning_directions", len(directions), 1, ">=", "学习方向"),
             ("missing_ability_weights", missing_weights, 0, "==", "缺失能力权重"),
             ("missing_sources", missing_sources, 0, "==", "缺失来源定位"),
+            *(
+                [
+                    (
+                        "practice_operation_coverage",
+                        evidence_counts[EvidenceCapability.OPERATION.value],
+                        len(items),
+                        "==",
+                        "实操操作证据覆盖",
+                    ),
+                    (
+                        "practice_expected_result_coverage",
+                        evidence_counts[EvidenceCapability.EXPECTED_RESULT.value],
+                        len(items),
+                        "==",
+                        "实操结果证据覆盖",
+                    ),
+                ]
+                if require_full_practice_evidence
+                else []
+            ),
             ("invalid_relations", cross_domain_relations, 0, "==", "无效或跨领域关系"),
             (
                 "prerequisite_cycles",
@@ -343,6 +425,8 @@ class DomainApiService:
             "rag_ready": bool(runtime.get("rag_ready")),
             "generation_ready": bool(runtime.get("generation_ready")),
             "runtime_reasons": list(runtime.get("reasons") or []),
+            "evidence_coverage": evidence_coverage,
+            "question_bank_coverage": quiz_question_bank,
         }
 
     def validate(self, domain_code: str) -> dict[str, Any]:

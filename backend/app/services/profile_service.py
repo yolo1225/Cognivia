@@ -4,20 +4,18 @@ from collections import defaultdict
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
     AnswerRecord,
     DiagnosticQuestion,
-    KnowledgeItem,
-    KnowledgeRelation,
+    DiagnosticSession,
     Learner,
     LearnerProfile,
     LearningPath,
-    LearningResource,
-    GenerationTask,
 )
+from app.services.knowledge_extraction_service import normalize_knowledge_name
 
 RADAR_KEYS = ["theory", "practice", "problem_solving", "breadth", "learning_speed"]
 RESOURCE_TYPES = ["lecture", "practice_guide", "graded_quiz"]
@@ -31,12 +29,12 @@ def public_id(prefix: str) -> str:
 
 def clean_display_text(value: str) -> str:
     if not value or not any(marker in value for marker in MOJIBAKE_MARKERS):
-        return value
+        return normalize_knowledge_name(value)
     try:
         repaired = value.encode("latin1").decode("utf-8")
     except UnicodeError:
-        return value
-    return repaired if repaired else value
+        return normalize_knowledge_name(value)
+    return normalize_knowledge_name(repaired if repaired else value)
 
 
 def clean_display_payload(value: Any) -> Any:
@@ -123,77 +121,6 @@ def build_ability_profile(
     if ability["practice"] >= ability["theory"] + 10 and score_percent >= 60:
         ability["profile_type"] = "practice_oriented"
     return ability
-
-
-def _weakness_type(avg_score: float) -> str:
-    if avg_score < 0.2:
-        return "not_mastered"
-    if avg_score < 0.6:
-        return "partial_confusion"
-    return "needs_consolidation"
-
-
-def _relation_public_ids(
-    db: Session,
-    knowledge_item_ids: list[int],
-    relation_type: str,
-) -> dict[int, list[str]]:
-    if not knowledge_item_ids:
-        return {}
-    rows = db.execute(
-        select(KnowledgeRelation.source_item_id, KnowledgeItem.public_id)
-        .join(KnowledgeItem, KnowledgeItem.id == KnowledgeRelation.target_item_id)
-        .where(KnowledgeRelation.source_item_id.in_(knowledge_item_ids))
-        .where(KnowledgeRelation.relation_type == relation_type)
-    ).all()
-    grouped: dict[int, list[str]] = defaultdict(list)
-    for source_item_id, target_public_id in rows:
-        grouped[source_item_id].append(target_public_id)
-    return dict(grouped)
-
-
-def build_weak_knowledge(
-    db: Session,
-    weak_evidence: dict[int, dict[str, Any]],
-) -> list[dict[str, Any]]:
-    if not weak_evidence:
-        return []
-    item_ids = list(weak_evidence.keys())
-    items = {
-        item.id: item
-        for item in db.scalars(select(KnowledgeItem).where(KnowledgeItem.id.in_(item_ids)))
-    }
-    prerequisites = _relation_public_ids(db, item_ids, "prerequisite")
-
-    weak_items: list[dict[str, Any]] = []
-    for item_id, evidence in weak_evidence.items():
-        item = items.get(item_id)
-        if item is None:
-            continue
-        attempts = max(1, evidence["attempts"])
-        avg_score = evidence["score_total"] / attempts
-        wrong_count = evidence["wrong_count"]
-        difficulty = evidence["difficulty_total"] / attempts
-        weakness_level = min(5, max(1, round((1 - avg_score) * 3 + wrong_count + difficulty / 2)))
-        weak_items.append(
-            {
-                "knowledge_id": item.public_id,
-                "name": clean_display_text(item.name),
-                "category": clean_display_text(item.category),
-                "weakness_level": weakness_level,
-                "weakness_type": _weakness_type(avg_score),
-                "suggested_action": "补救讲解" if weakness_level >= 4 else "巩固练习",
-                "evidence": {
-                    "wrong_count": wrong_count,
-                    "attempts": attempts,
-                    "avg_score": round(avg_score, 2),
-                },
-                "prerequisites": prerequisites.get(item_id, []),
-            }
-        )
-
-    weak_items.sort(key=lambda item: (-item["weakness_level"], item["name"]))
-    return weak_items
 
 
 def build_learning_path_payload(
@@ -293,134 +220,6 @@ def profile_source(profile: LearnerProfile) -> str:
     return "default_profile"
 
 
-def apply_feedback_profile_update(
-    db: Session,
-    *,
-    profile: LearnerProfile,
-    resource: LearningResource | None,
-    feedback_intent: str | None,
-    evidence: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Build a bounded, evidence-backed profile snapshot for feedback tasks."""
-    ability = dict(profile.ability_profile_json or {})
-    category_mastery = dict(ability.get("category_mastery") or {})
-    weak_items = [dict(item) for item in (profile.weak_knowledge_json or [])]
-    source_ids = [
-        str(item.get("knowledge_id"))
-        for item in (resource.sources_json if resource else [])
-        if isinstance(item, dict) and item.get("knowledge_id")
-    ]
-    knowledge_rows = (
-        list(db.scalars(select(KnowledgeItem).where(KnowledgeItem.public_id.in_(source_ids))))
-        if source_ids
-        else []
-    )
-    knowledge_ids = {item.id for item in knowledge_rows}
-    related_ids: set[int] = set()
-    if knowledge_ids:
-        relations = list(
-            db.scalars(
-                select(KnowledgeRelation).where(
-                    KnowledgeRelation.relation_type.in_({"prerequisite", "dependent", "related"}),
-                    or_(
-                        KnowledgeRelation.source_item_id.in_(knowledge_ids),
-                        KnowledgeRelation.target_item_id.in_(knowledge_ids),
-                    ),
-                )
-            )
-        )
-        for relation in relations:
-            if relation.source_item_id in knowledge_ids:
-                related_ids.add(relation.target_item_id)
-            elif relation.target_item_id in knowledge_ids:
-                related_ids.add(relation.source_item_id)
-    related_public_ids = (
-        {
-            item.public_id
-            for item in db.scalars(select(KnowledgeItem).where(KnowledgeItem.id.in_(related_ids)))
-        }
-        if related_ids
-        else set()
-    )
-    affected_knowledge_ids = list(dict.fromkeys([*source_ids, *sorted(related_public_ids)]))
-    categories = {item.category for item in knowledge_rows if item.category}
-    negative = feedback_intent in {"too_hard", "confusing"}
-    positive = feedback_intent == "too_easy"
-    if not (negative or positive):
-        return {
-            "ability_profile": ability,
-            "weak_knowledge": weak_items,
-            "changed_dimensions": [],
-            "affected_knowledge_ids": [],
-        }
-
-    delta = -6 if negative else 6
-    for category in categories:
-        current = float(category_mastery.get(category, ability.get("practice", 50)))
-        category_mastery[category] = max(0, min(100, round(current + delta, 1)))
-    ability["category_mastery"] = category_mastery
-    for key in ("practice", "problem_solving"):
-        ability[key] = max(20, min(95, int(ability.get(key, 50)) + (delta // 2)))
-    radar_average = sum(int(ability.get(key, 50)) for key in RADAR_KEYS) / len(RADAR_KEYS)
-    ability["profile_type"] = classify_profile_level(radar_average)
-
-    weak_by_id = {str(item.get("knowledge_id")): item for item in weak_items}
-    for knowledge in knowledge_rows:
-        key = knowledge.public_id
-        if negative:
-            item = weak_by_id.setdefault(
-                key,
-                {
-                    "knowledge_id": key,
-                    "name": knowledge.name,
-                    "category": knowledge.category,
-                    "weakness_level": 1,
-                    "weakness_type": "feedback_confirmed",
-                    "suggested_action": "remedial_explanation",
-                    "evidence": {},
-                    "prerequisites": [],
-                },
-            )
-            item["weakness_level"] = min(5, int(item.get("weakness_level") or 1) + 1)
-            item["weakness_type"] = "feedback_confirmed"
-        elif key in weak_by_id:
-            weak_by_id[key]["weakness_level"] = max(
-                0, int(weak_by_id[key].get("weakness_level") or 1) - 1
-            )
-            if weak_by_id[key]["weakness_level"] == 0:
-                del weak_by_id[key]
-
-    affected_resource_ids = [resource.public_id] if resource else []
-    learner_resources = db.execute(
-        select(LearningResource)
-        .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
-        .where(GenerationTask.learner_id == profile.learner_id)
-        .where(LearningResource.is_current.is_(True))
-    ).scalars()
-    for candidate in learner_resources:
-        candidate_ids = {
-            str(item.get("knowledge_id"))
-            for item in (candidate.sources_json or [])
-            if isinstance(item, dict) and item.get("knowledge_id")
-        }
-        if (
-            candidate_ids.intersection(affected_knowledge_ids)
-            and candidate.public_id not in affected_resource_ids
-        ):
-            affected_resource_ids.append(candidate.public_id)
-
-    changed_dimensions = ["ability_scores", "category_mastery", "weak_knowledge"]
-    return {
-        "ability_profile": ability,
-        "weak_knowledge": list(weak_by_id.values())[:8],
-        "changed_dimensions": changed_dimensions,
-        "affected_knowledge_ids": affected_knowledge_ids,
-        "affected_path_node_ids": [f"path:{item}" for item in affected_knowledge_ids],
-        "affected_resource_ids": affected_resource_ids,
-        "evidence": evidence,
-    }
-
-
 def latest_profile_for_learner(
     db: Session, learner: Learner, domain_code: str | None = None
 ) -> LearnerProfile | None:
@@ -501,47 +300,53 @@ def diagnostic_summary_for_learner(
     db: Session, learner: Learner, domain_code: str | None = None
 ) -> dict[str, Any]:
     selected_domain = str(domain_code or learner.target_domain).strip()
-    total_count = (
-        db.scalar(
-            select(func.count(AnswerRecord.id))
-            .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
-            .where(
-                AnswerRecord.learner_id == learner.id,
-                DiagnosticQuestion.domain_code == selected_domain,
-            )
-        )
-        or 0
-    )
-    correct_count = (
-        db.scalar(
-            select(func.count(AnswerRecord.id))
-            .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
-            .where(
-                AnswerRecord.learner_id == learner.id,
-                DiagnosticQuestion.domain_code == selected_domain,
-                AnswerRecord.is_correct.is_(True),
-            )
-        )
-        or 0
-    )
-    latest_answer = db.scalar(
-        select(AnswerRecord)
-        .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+    diagnostic_session = db.scalar(
+        select(DiagnosticSession)
         .where(
-            AnswerRecord.learner_id == learner.id,
-            DiagnosticQuestion.domain_code == selected_domain,
+            DiagnosticSession.learner_id == learner.id,
+            DiagnosticSession.domain_code == selected_domain,
+            DiagnosticSession.status == "scored",
         )
-        .order_by(AnswerRecord.id.desc())
+        .order_by(DiagnosticSession.updated_at.desc(), DiagnosticSession.id.desc())
+    )
+    latest_session_id = diagnostic_session.public_id if diagnostic_session else None
+    records = (
+        list(
+            db.scalars(
+                select(AnswerRecord)
+                .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+                .where(
+                    AnswerRecord.learner_id == learner.id,
+                    DiagnosticQuestion.domain_code == selected_domain,
+                    AnswerRecord.session_id == latest_session_id,
+                )
+                .order_by(AnswerRecord.id)
+            )
+        )
+        if latest_session_id
+        else []
+    )
+    total_count = len(records)
+    correct_count = sum(record.is_correct is True for record in records)
+    total_score = sum(float(record.score or 0) for record in records)
+    persisted_result = dict(diagnostic_session.result_json or {}) if diagnostic_session else {}
+    # The scored session result is authoritative. Path quizzes, mistake review,
+    # and tutoring checks also create AnswerRecord rows but are not diagnostics.
+    total_count = int(persisted_result.get("question_count") or total_count)
+    correct_count = int(persisted_result.get("correct_count") or correct_count)
+    score_percent = (
+        float(persisted_result["score"])
+        if persisted_result.get("score") is not None
+        else round(total_score / total_count * 100, 1) if total_count else 0
     )
     return {
         "answer_count": total_count,
         "correct_count": correct_count,
+        # This is the learner-facing overall score: choice and short-answer
+        # partial scores are added together, then divided by the question count.
+        "total_score": score_percent,
         "accuracy": round(correct_count / total_count * 100, 1) if total_count else 0,
-        "latest_session_id": (
-            latest_answer.session_id or (latest_answer.answer_summary_json or {}).get("session_id")
-        )
-        if latest_answer
-        else None,
+        "latest_session_id": latest_session_id,
     }
 
 

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import (
     GenerationTask,
+    KnowledgeItem,
     KnowledgeUpdateImpact,
     Learner,
     LearnerProfile,
@@ -99,7 +100,16 @@ def current_package(db: Session, *, learner_id: int, domain_code: str) -> Genera
     if task is not None:
         return task
     if path is not None:
-        return None
+        return db.scalar(
+            select(GenerationTask)
+            .where(
+                GenerationTask.learner_id == learner_id,
+                GenerationTask.domain_code == domain_code,
+                GenerationTask.is_current_package.is_(True),
+                GenerationTask.path_node_id == current_node_id,
+            )
+            .order_by(GenerationTask.id.desc())
+        )
     # Compatibility for databases created before package membership existed.
     return db.scalar(
         select(GenerationTask)
@@ -141,9 +151,26 @@ def serialize_package(
         )
         for report in reports:
             report_by_resource.setdefault(report.resource_id, report)
+    knowledge_ids = {
+        str(source.get("knowledge_id") or "").strip()
+        for _member, resource in rows
+        for source in (resource.sources_json or [])
+        if str(source.get("knowledge_id") or "").strip()
+    }
+    knowledge_names = dict(
+        db.execute(
+            select(KnowledgeItem.public_id, KnowledgeItem.name).where(
+                KnowledgeItem.public_id.in_(knowledge_ids)
+            )
+        ).all()
+    ) if knowledge_ids else {}
     resources = []
     for member, resource in rows:
-        payload = serialize_resource(resource, db.get(GenerationTask, resource.generation_task_id))
+        payload = serialize_resource(
+            resource,
+            db.get(GenerationTask, resource.generation_task_id),
+            knowledge_names=knowledge_names,
+        )
         payload.update(
             {
                 "membership_type": member.membership_type,
@@ -172,6 +199,26 @@ def serialize_package(
             ),
             "index_status": "ready" if rag.get("ready") else "updating",
         }
+    active_path = db.scalar(
+        select(LearningPath)
+        .where(
+            LearningPath.learner_id == task.learner_id,
+            LearningPath.domain_code == task.domain_code,
+            LearningPath.status == "active",
+        )
+        .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
+    )
+    active_profile = db.get(LearnerProfile, active_path.profile_id) if active_path else None
+    node_gate = None
+    if active_path is not None and active_profile is not None:
+        from app.services.node_mastery_service import build_node_gate
+
+        node_gate = build_node_gate(
+            db,
+            path=active_path,
+            profile=active_profile,
+            package_task=task,
+        )
     return {
         "package_id": task.public_id,
         "task_id": task.public_id,
@@ -192,6 +239,7 @@ def serialize_package(
         "resources": resources,
         "knowledge_impact": impact_payload,
         "package_quality": task.package_quality_json or None,
+        "node_gate": node_gate,
         "created_at": task.created_at.isoformat() if task.created_at else None,
     }
 

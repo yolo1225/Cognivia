@@ -40,18 +40,36 @@ from app.models import (
 from app.services.contract_mapping import profile_snapshot
 from app.services.domain_runtime_service import load_domain_runtime
 from app.services.feedback_service import create_feedback_task
-from app.services.learning_path_service import _advance_path_node, normalize_learning_path
+from app.services.learning_path_service import (
+    _advance_path_node,
+    normalize_learning_path,
+)
 from app.services.profile_revision_service import persist_profile_revision
-from app.services.profile_semantics_service import apply_confirmed_knowledge_semantics
+from app.services.profile_knowledge_state_service import (
+    STATE_KEY,
+    build_knowledge_state,
+    project_analysis_with_knowledge_state,
+)
 from app.services.node_generation_target_service import (
     bind_node_generation_targets,
     resolve_node_generation_basis,
 )
+from app.services.node_mastery_service import (
+    affected_resource_types,
+    build_node_gate,
+)
 from app.services.profile_service import public_id
+from app.services.question_bank_service import (
+    QuestionBankError,
+    graded_quiz_preflight,
+    select_mastery_question,
+)
 
 
 OPEN_PROPOSAL_STATUSES = {"collecting", "pending_validation"}
 INTENT_HYPOTHESES = {"too_easy": "mastery_up", "too_hard": "support_down"}
+NODE_ADVANCEMENT_EVENT_TYPE = "node_advancement"
+NODE_ADVANCEMENT_RESOURCE_TYPES = {"lecture", "practice_guide", "graded_quiz"}
 
 
 def _active_context(
@@ -193,36 +211,33 @@ def _assessment_for_proposal(
     path: LearningPath,
     node: dict[str, Any],
 ) -> dict[str, Any]:
-    knowledge = db.scalar(
-        select(KnowledgeItem).where(
-            KnowledgeItem.public_id == node.get("knowledge_id"),
-            KnowledgeItem.domain_code == path.domain_code,
-        )
+    knowledge_ids = [str(value) for value in node.get("knowledge_ids") or []]
+    profile = db.get(LearnerProfile, proposal.profile_id)
+    source_resource = db.get(LearningResource, proposal.source_resource_id)
+    package_task = (
+        db.get(GenerationTask, source_resource.generation_task_id)
+        if source_resource is not None
+        else None
     )
-    if knowledge is None:
-        raise ValueError("learning_adjustment_assessment_unavailable")
-    attempted = set(
-        db.scalars(
-            select(PathNodeAssessment.question_id).where(
-                PathNodeAssessment.learner_id == proposal.learner_id,
-                PathNodeAssessment.path_node_id == proposal.path_node_id,
-            )
-        )
+    gate = (
+        build_node_gate(db, path=path, profile=profile, package_task=package_task)
+        if profile is not None
+        else None
     )
-    questions = list(
-        db.scalars(
-            select(DiagnosticQuestion)
-            .where(
-                DiagnosticQuestion.knowledge_item_id == knowledge.id,
-                DiagnosticQuestion.domain_code == path.domain_code,
-                DiagnosticQuestion.question_type == "single_choice",
-            )
-            .order_by(DiagnosticQuestion.difficulty.desc(), DiagnosticQuestion.id)
+    try:
+        question, knowledge = select_mastery_question(
+            db,
+            learner_id=proposal.learner_id,
+            domain_code=path.domain_code,
+            knowledge_ids=knowledge_ids,
+            target_difficulty=int(node.get("target_difficulty") or 3),
+            use="mastery_validation",
+            node_gate=gate,
+            package_task=package_task,
+            preferred_knowledge_ids=node.get("focus_knowledge_ids") or [],
         )
-    )
-    if not questions:
-        raise ValueError("learning_adjustment_assessment_unavailable")
-    question = next((item for item in questions if item.id not in attempted), questions[0])
+    except QuestionBankError as exc:
+        raise ValueError(exc.code) from exc
     assessment = PathNodeAssessment(
         public_id=public_id("pathval"),
         learning_path_id=path.id,
@@ -357,6 +372,7 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
             "pending_assessment": None,
             "node_adjustment_result": None,
             "evidence_scope": None,
+            "node_gate": None,
         }
     task_proposal = db.scalar(
         select(LearningAdjustmentProposal)
@@ -407,6 +423,7 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
                 "path_node_title": None,
                 "generation_task_id": task.public_id,
             },
+            "node_gate": result.get("node_gate") if isinstance(result, dict) else None,
         }
     path = db.scalar(
         select(LearningPath)
@@ -433,6 +450,7 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
             "pending_assessment": None,
             "node_adjustment_result": None,
             "evidence_scope": None,
+            "node_gate": None,
         }
     proposal = db.scalar(
         select(LearningAdjustmentProposal)
@@ -462,6 +480,7 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
                 knowledge=knowledge,
             )
             state = "pending_validation"
+    active_profile = db.get(LearnerProfile, path.profile_id)
     return {
         "node_adjustment_state": state,
         "pending_assessment": pending_assessment,
@@ -471,6 +490,11 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
             "path_node_title": node.get("title") or node.get("knowledge_id"),
             "generation_task_id": task.public_id,
         },
+        "node_gate": (
+            build_node_gate(db, path=path, profile=active_profile, package_task=task)
+            if active_profile is not None
+            else None
+        ),
     }
 
 
@@ -537,11 +561,16 @@ def _path_snapshots(
     nodes = [
         LearningPathNodeSnapshot(
             path_node_id=str(node["path_node_id"]),
-            knowledge_id=str(node["knowledge_id"]),
-            title=str(node.get("title") or node["knowledge_id"]),
+            knowledge_ids=list(node.get("knowledge_ids") or []),
+            focus_knowledge_ids=list(node.get("focus_knowledge_ids") or []),
+            title=str(node.get("title") or "学习单元"),
             path_order=int(node.get("path_order") or 1),
             target_difficulty=difficulty,
-            learning_objective=f"掌握 {node.get('title') or node['knowledge_id']}",
+            learning_objective=str(node.get("learning_objective") or "掌握本单元知识"),
+            recommendation_reason=str(
+                node.get("recommendation_reason") or "根据画像与知识关系规划。"
+            ),
+            prerequisite_knowledge_ids=list(node.get("prerequisite_knowledge_ids") or []),
         )
         for node in (payload.get("node_states") or {}).values()
         if isinstance(node, dict)
@@ -565,30 +594,43 @@ def _analyze_profile(
     feedback: Feedback,
     record: AnswerRecord,
     question: DiagnosticQuestion,
+    evidence_records: list[AnswerRecord] | None = None,
 ) -> tuple[LearnerProfile, LearningPath | None, Any, dict[str, Any]]:
     evidence_id = f"answer_record:{record.id}"
     knowledge = db.get(KnowledgeItem, question.knowledge_item_id)
     learner = db.get(Learner, proposal.learner_id)
     if knowledge is None or learner is None:
         raise ValueError("learning_adjustment_knowledge_missing")
-    evidence = EvidenceRef(
-        evidence_id=evidence_id,
-        evidence_type=EvidenceType.SCORED_QUIZ,
-        summary="导学微验证已由服务端评分",
-        knowledge_id=knowledge.public_id,
-        source_ref_id=question.public_id,
-        confidence=0.9,
-        confirmed=True,
-    )
-    assessment = KnowledgeAssessment(
-        assessment_id=proposal.public_id,
-        evidence_id=evidence_id,
-        knowledge_id=knowledge.public_id,
-        score=float(record.score),
-        difficulty=question.difficulty,
-        attempted=True,
-        confidence=0.9,
-    )
+    formal_records = evidence_records or [record]
+    evidences: list[EvidenceRef] = []
+    assessments: list[KnowledgeAssessment] = []
+    for index, formal_record in enumerate(formal_records):
+        formal_question = db.get(DiagnosticQuestion, formal_record.question_id)
+        if formal_question is None:
+            raise ValueError("learning_adjustment_question_missing")
+        formal_evidence_id = f"answer_record:{formal_record.id}"
+        evidences.append(
+            EvidenceRef(
+                evidence_id=formal_evidence_id,
+                evidence_type=EvidenceType.SCORED_QUIZ,
+                summary="正式验证已由服务端评分",
+                knowledge_id=knowledge.public_id,
+                source_ref_id=formal_question.public_id,
+                confidence=float(formal_record.confidence or 0.0),
+                confirmed=True,
+            )
+        )
+        assessments.append(
+            KnowledgeAssessment(
+                assessment_id=f"{proposal.public_id}:{index + 1}",
+                evidence_id=formal_evidence_id,
+                knowledge_id=knowledge.public_id,
+                score=float(formal_record.score),
+                difficulty=formal_question.difficulty,
+                attempted=True,
+                confidence=float(formal_record.confidence or 0.0),
+            )
+        )
     path_snapshot, current_node = _path_snapshots(path, profile)
     context = TaskContext(
         task_id=proposal.public_id,
@@ -641,13 +683,13 @@ def _analyze_profile(
                 current_profile=profile_snapshot(profile),
                 learning_path=path_snapshot,
                 current_path_node=current_node,
-                feedback_evidence=[evidence],
+                feedback_evidence=evidences,
                 recommended_action=(
                     RecommendedAction.CHALLENGE
                     if proposal.hypothesis_type == "mastery_up"
                     else RecommendedAction.EXPLAIN
                 ),
-                knowledge_assessments=[assessment],
+                knowledge_assessments=assessments,
             )
         )
     calls = collector.snapshot()
@@ -676,19 +718,69 @@ def _analyze_profile(
             },
         )
     )
-    analysis, change_summary = apply_confirmed_knowledge_semantics(
-        original=profile,
+    previous_state = (profile.ability_profile_json or {}).get(STATE_KEY)
+    knowledge_state = build_knowledge_state(
+        config=runtime.profile_config,
+        assessments=assessments,
+        evidence=evidences,
+        previous_state=previous_state,
+    )
+    analysis, projection = project_analysis_with_knowledge_state(
         analysis=analysis,
-        hypothesis_type=proposal.hypothesis_type,
-        knowledge=knowledge,
-        evidence_id=evidence_id,
-        path_node_id=proposal.path_node_id,
+        state=knowledge_state,
+        previous_state=previous_state,
+        config=runtime.profile_config,
+        context=profile.context_snapshot_json or {},
+    )
+    before_snapshot = profile_snapshot(profile)
+    before_weak = next(
+        (item for item in before_snapshot.weak_knowledge if item.knowledge_id == knowledge.public_id),
+        None,
+    )
+    after_item = knowledge_state["items"][knowledge.public_id]
+    after_weak = next(
+        (item for item in analysis.profile.weak_knowledge if item.knowledge_id == knowledge.public_id),
+        None,
+    )
+    before_scores = before_snapshot.ability_scores.model_dump(mode="json")
+    after_scores = analysis.profile.ability_scores.model_dump(mode="json")
+    change_summary = {
+        "knowledge_id": knowledge.public_id,
+        "knowledge_name": knowledge.name,
+        "before_state": (
+            (previous_state or {}).get("items", {}).get(knowledge.public_id, {}).get("status")
+            or (before_weak.mastery_type.value if before_weak else "unassessed")
+        ),
+        "after_state": after_item["status"],
+        "before_weakness_level": before_weak.weakness_level if before_weak else None,
+        "after_weakness_level": after_weak.weakness_level if after_weak else None,
+        "removed_from_weak_knowledge": before_weak is not None and after_weak is None,
+        "removed_from_blind_spots": (
+            knowledge.public_id in before_snapshot.blind_spot_ids
+            and knowledge.public_id not in analysis.profile.blind_spot_ids
+        ),
+        "evidence_ids": [evidence_id],
+        "path_node_id": proposal.path_node_id,
+        "profile_changed": analysis.profile_update_required,
+        "ability_score_changes": {
+            key: {"before": before_scores[key], "after": after_scores[key]}
+            for key in before_scores
+            if before_scores[key] != after_scores[key]
+        },
+    }
+    change_summary["ability_summary"] = (
+        "高层能力已更新" if change_summary["ability_score_changes"] else "高层能力保持不变"
     )
     next_profile, next_path = persist_profile_revision(
         db,
         original=profile,
         analysis=analysis,
         trigger_feedback_id=feedback.id,
+        internal_profile_updates={
+            STATE_KEY: knowledge_state,
+            "dimension_status": projection["dimension_status"],
+            "learning_speed_evidence": projection.get("learning_speed_evidence", {}),
+        },
     )
     change_summary["original_profile_id"] = profile.public_id
     change_summary["original_profile_version"] = profile.profile_version
@@ -717,7 +809,8 @@ def answer_adjustment_assessment(
     )
     if assessment is None or proposal is None or proposal.learner_id != session.learner_id:
         raise ValueError("learning_adjustment_assessment_not_found")
-    feedback = db.get(Feedback, (proposal.source_feedback_ids_json or [None])[-1])
+    feedback_id = (proposal.source_feedback_ids_json or [None])[-1]
+    feedback = db.get(Feedback, feedback_id) if feedback_id is not None else None
     if feedback is None:
         feedback = Feedback(
             resource_id=proposal.source_resource_id,
@@ -781,35 +874,70 @@ def answer_adjustment_assessment(
         scoring_method="deterministic",
         confidence=0.9,
         answer_summary_json={
+            "evidence_type": "path_validation",
+            "evidence_role": "validation",
             "assessment_id": assessment.public_id,
             "adjustment_proposal_id": proposal.public_id,
             "contract_evidence_type": "scored_quiz",
-            "confirmed": confirmed,
+            "confirmed": True,
             "confidence": 0.9,
+            "generation_task_id": db.get(GenerationTask, resource.generation_task_id).public_id,
+            "path_node_id": proposal.path_node_id,
             "consumed_by_profile_id": None,
         },
     )
     db.add(record)
     db.flush()
     evidence_id = f"answer_record:{record.id}"
-    decision = "hypothesis_rejected"
+    package_task = db.get(GenerationTask, resource.generation_task_id)
+    preliminary_gate = build_node_gate(
+        db,
+        path=path,
+        profile=profile,
+        package_task=package_task,
+    )
+    knowledge = db.get(KnowledgeItem, question.knowledge_item_id)
+    knowledge_id = knowledge.public_id if knowledge else None
+    knowledge_progress = next(
+        (
+            item
+            for item in preliminary_gate.get("knowledge_progress") or []
+            if item.get("knowledge_id") == knowledge_id
+        ),
+        None,
+    )
+    mastery_evidence_ready = bool(
+        is_correct
+        and knowledge_progress
+        and knowledge_progress.get("eligible_evidence_count", 0)
+        >= knowledge_progress.get("required_evidence_count", 2)
+        and knowledge_progress.get("has_corroborating_evidence")
+        and knowledge_progress.get("has_target_difficulty_evidence")
+    )
+    confirmed = (
+        proposal.hypothesis_type == "mastery_up" and mastery_evidence_ready
+    ) or (proposal.hypothesis_type == "support_down" and not is_correct)
+    decision = "evidence_recorded" if is_correct else "hypothesis_rejected"
     profile_changed = False
     resulting_profile = profile
     resulting_path = path
     completed_node_id = None
     profile_change_summary = None
     if confirmed:
-        if proposal.hypothesis_type == "mastery_up":
-            _advance_path_node(
-                db,
-                path=path,
-                node_id=proposal.path_node_id,
-                evidence_ids=[evidence_id],
+        evidence_records = None
+        if proposal.hypothesis_type == "mastery_up" and knowledge_progress:
+            record_ids = [
+                int(value.split(":", 1)[1])
+                for value in knowledge_progress.get("evidence_ids") or []
+                if str(value).startswith("answer_record:")
+            ]
+            evidence_records = list(
+                db.scalars(
+                    select(AnswerRecord)
+                    .where(AnswerRecord.id.in_(record_ids))
+                    .order_by(AnswerRecord.created_at, AnswerRecord.id)
+                )
             )
-            completed_node_id = proposal.path_node_id
-            decision = "confirmed_mastery"
-        else:
-            decision = "confirmed_support_need"
         resulting_profile, revised_path, _analysis, profile_change_summary = _analyze_profile(
             db,
             proposal=proposal,
@@ -819,11 +947,35 @@ def answer_adjustment_assessment(
             feedback=feedback,
             record=record,
             question=question,
+            evidence_records=evidence_records,
         )
         profile_changed = resulting_profile.id != profile.id
         if revised_path is not None:
             resulting_path = revised_path
+        node_gate = build_node_gate(
+            db,
+            path=resulting_path,
+            profile=resulting_profile,
+            package_task=package_task,
+        )
+        if proposal.hypothesis_type == "mastery_up" and node_gate["can_advance"]:
+            completed_node_id = proposal.path_node_id
+            _advance_path_node(
+                db,
+                path=resulting_path,
+                node_id=completed_node_id,
+                evidence_ids=[
+                    evidence_id
+                    for item in node_gate.get("knowledge_progress") or []
+                    for evidence_id in item.get("evidence_ids") or []
+                ],
+            )
+            decision = "confirmed_mastery"
+        else:
+            decision = "confirmed_support_need" if proposal.hypothesis_type == "support_down" else "evidence_recorded"
         current_node_id = (resulting_path.path_json or {}).get("current_node_id")
+        node_gate["completed_node_id"] = completed_node_id
+        node_gate["current_node_id"] = current_node_id
         profile_change_summary = dict(profile_change_summary or {})
         profile_change_summary.update(
             {
@@ -835,25 +987,41 @@ def answer_adjustment_assessment(
                 "current_node_id": current_node_id,
             }
         )
-        recommendation = {
-            "proposal_id": proposal.public_id,
-            "path_id": resulting_path.public_id,
-            "path_node_id": current_node_id,
-            "resource_types": (
+        recommendation = None
+        if profile_changed:
+            is_next_node = completed_node_id is not None
+            affected_ids = (
+                list(node_gate.get("unmastered_knowledge_ids") or [])
+                if not is_next_node
+                else []
+            )
+            if knowledge_id and knowledge_id not in affected_ids:
+                affected_ids.append(knowledge_id)
+            resource_types = (
                 ["lecture", "practice_guide", "graded_quiz"]
-                if proposal.hypothesis_type == "mastery_up"
-                else [resource.resource_type]
-            ),
-            "mode": "next_node" if proposal.hypothesis_type == "mastery_up" else "remedial",
-        }
-        proposal.status = "resource_pending"
+                if is_next_node
+                else affected_resource_types(
+                    package_task=package_task,
+                    affected_knowledge_ids=affected_ids,
+                    fallback_resource_type=resource.resource_type,
+                )
+            )
+            recommendation = {
+                "proposal_id": proposal.public_id,
+                "path_id": resulting_path.public_id,
+                "path_node_id": current_node_id,
+                "resource_types": resource_types,
+                "mode": "next_node" if is_next_node else "remedial",
+            }
+        proposal.status = "resource_pending" if recommendation else "evidence_recorded"
         proposal.resulting_profile_id = resulting_profile.id
         proposal.resulting_learning_path_id = resulting_path.id
-        proposal.resource_recommendation_json = recommendation
+        proposal.resource_recommendation_json = recommendation or {}
     else:
         current_node_id = (path.path_json or {}).get("current_node_id")
         recommendation = None
-        proposal.status = "rejected"
+        node_gate = preliminary_gate
+        proposal.status = "evidence_recorded" if is_correct else "rejected"
     result = {
         "adjustment_proposal_id": proposal.public_id,
         "hypothesis_type": proposal.hypothesis_type,
@@ -867,13 +1035,22 @@ def answer_adjustment_assessment(
         "completed_node_id": completed_node_id,
         "current_node_id": current_node_id,
         "resource_recommendation": recommendation,
+        "node_gate": node_gate,
         "profile_change_summary": profile_change_summary,
         "decision_reason": {
             "confirmed_mastery": "已确认掌握，学习路线已推进",
             "confirmed_support_need": "已确认需要补强，当前学习节点保持不变",
+            "evidence_recorded": "本次正式证据已记录，尚未达到画像或节点更新门槛",
             "hypothesis_rejected": "验证结果与近期反馈不一致，画像和路线保持不变",
         }[decision],
+        "submitted_option": selected,
     }
+    if is_correct:
+        result.update({
+            "correct_option": correct,
+            "correct_answer": (question.options_json or [])[correct],
+            "explanation": str((question.answer_key_json or {}).get("explanation") or ""),
+        })
     assessment.answer_record_id = record.id
     assessment.status = "scored"
     assessment.score = score
@@ -943,11 +1120,9 @@ def decide_proposal_resource(
     if proposal is None or learner is None or learner.public_id != learner_public_id:
         raise ValueError("learning_adjustment_proposal_not_found")
     existing = db.get(GenerationTask, proposal.generation_task_id) if proposal.generation_task_id else None
-    if proposal.status == "resource_started" and existing is not None:
-        return {"proposal_id": proposal.public_id, "decision": "generate", "task_id": existing.public_id}, existing
     if proposal.status == "resource_skipped":
         return {"proposal_id": proposal.public_id, "decision": "skip", "task_id": None}, None
-    if proposal.status != "resource_pending":
+    if proposal.status not in {"resource_pending", "resource_started"}:
         raise ValueError("learning_adjustment_proposal_stale")
     recommendation = proposal.resource_recommendation_json or {}
     path = db.get(LearningPath, proposal.resulting_learning_path_id or proposal.learning_path_id)
@@ -965,6 +1140,40 @@ def decide_proposal_resource(
     if decision != "generate":
         raise ValueError("invalid_resource_decision")
     resource_types = list(recommendation.get("resource_types") or [])
+    is_node_advancement = recommendation.get("mode") == "next_node"
+    if is_node_advancement and set(resource_types) != NODE_ADVANCEMENT_RESOURCE_TYPES:
+        raise ValueError("node_advancement_resource_types_invalid")
+    basis = resolve_node_generation_basis(
+        db,
+        path=path,
+        path_node_id=current_node_id,
+        profile=profile,
+        resource_types=resource_types,
+    )
+    if "graded_quiz" in resource_types:
+        quiz_preflight = graded_quiz_preflight(
+            db,
+            domain_code=path.domain_code,
+            target_knowledge_ids=list(
+                (basis.get("resource_knowledge_targets") or {}).get("graded_quiz") or []
+            ),
+            focus_knowledge_ids=list(basis.get("focus_knowledge_ids") or []),
+            target_difficulty=int(basis.get("target_difficulty") or 3),
+            profile_type=profile_snapshot(profile).profile_type.value,
+        )
+        if not quiz_preflight["ready"]:
+            raise ValueError("graded_quiz_question_bank_not_ready")
+    if existing is not None:
+        if not is_node_advancement or not _node_advancement_task_needs_recovery(
+            db, task=existing, resource_types=resource_types
+        ):
+            return {
+                "proposal_id": proposal.public_id,
+                "decision": "generate",
+                "task_id": existing.public_id,
+                "recovered": False,
+            }, existing
+
     if recommendation.get("mode") == "remedial":
         resource = db.get(LearningResource, proposal.source_resource_id)
         feedback = db.get(Feedback, (proposal.source_feedback_ids_json or [None])[-1])
@@ -981,6 +1190,14 @@ def decide_proposal_resource(
         task.learning_path_id = path.id
         task.path_node_id = current_node_id
     else:
+        resource = db.get(LearningResource, proposal.source_resource_id)
+        feedback = db.get(Feedback, (proposal.source_feedback_ids_json or [None])[-1])
+        if resource is None or feedback is None:
+            raise ValueError("learning_adjustment_source_missing")
+        # A learner-confirmed next-node package is a new generation request,
+        # not an ordinary feedback interpretation.  It intentionally uses the
+        # existing initial-generation graph route while retaining feedback and
+        # source-resource links solely as audit evidence.
         task = GenerationTask(
             public_id=public_id("task"),
             learner_id=learner.id,
@@ -990,28 +1207,64 @@ def decide_proposal_resource(
             domain_code=path.domain_code,
             status="pending",
             resource_types_json=resource_types,
+            revision_count=0,
             decision="pending",
             trigger_type="initial_generation",
             execution_mode="auto",
-            learning_goal=f"为学习路线当前节点 {current_node_id} 生成学习资源",
-            event_type="generation",
+            learning_goal=(
+                f"掌握验证已确认；基于画像 V{profile.profile_version} 为学习路线当前节点 "
+                f"{current_node_id} 生成完整学习包"
+            )[:512],
+            source_resource_id=resource.id,
+            source_feedback_id=feedback.id,
+            source_task_id=resource.generation_task_id,
+            event_type=NODE_ADVANCEMENT_EVENT_TYPE,
             progress=0,
         )
         db.add(task)
         db.flush()
-    basis = resolve_node_generation_basis(
-        db,
-        path=path,
-        path_node_id=current_node_id,
-        profile=profile,
-        resource_types=resource_types,
-    )
     bind_node_generation_targets(task, basis)
     proposal.status = "resource_started"
     proposal.resource_decision = "generate"
     proposal.generation_task_id = task.id
     db.commit()
-    return {"proposal_id": proposal.public_id, "decision": "generate", "task_id": task.public_id}, task
+    return {
+        "proposal_id": proposal.public_id,
+        "decision": "generate",
+        "task_id": task.public_id,
+        "recovered": existing is not None,
+    }, task
+
+
+def _node_advancement_task_needs_recovery(
+    db: Session,
+    *,
+    task: GenerationTask,
+    resource_types: list[str],
+) -> bool:
+    """Whether a confirmed next-node package needs a fresh replacement task.
+
+    Historical proposals may point at a feedback task which completed with
+    ``no_change`` and no resources.  A failed or incomplete node-advancement
+    task is also safe to replace: the proposal switches to the new task while
+    the failed task and its original feedback links remain intact for audit.
+    """
+    expected = set(resource_types)
+    resources = list(
+        db.scalars(
+            select(LearningResource).where(LearningResource.generation_task_id == task.id)
+        )
+    )
+    passed_types = {
+        resource.resource_type for resource in resources if resource.review_status == "passed"
+    }
+    if task.status in {"pending", "retry_pending", "running", "revision_required"}:
+        return False
+    if task.status == "completed" and task.decision == "completed" and passed_types == expected:
+        return False
+    if task.status == "completed" and task.decision == "no_change" and not resources:
+        return True
+    return task.status == "failed" or passed_types != expected
 
 
 def pending_resource_proposals(
@@ -1023,23 +1276,56 @@ def pending_resource_proposals(
             .join(LearningPath, LearningPath.id == LearningAdjustmentProposal.resulting_learning_path_id)
             .where(
                 LearningAdjustmentProposal.learner_id == learner_id,
-                LearningAdjustmentProposal.status == "resource_pending",
+                LearningAdjustmentProposal.status.in_({"resource_pending", "resource_started"}),
                 LearningPath.domain_code == domain_code,
                 LearningPath.status == "active",
             )
             .order_by(LearningAdjustmentProposal.id.desc())
         )
     )
-    return [
-        {
-            "proposal_id": item.public_id,
-            "hypothesis_type": item.hypothesis_type,
-            "status": item.status,
-            "resource_recommendation": item.resource_recommendation_json or {},
-            "decision": (item.validation_result_json or {}).get("decision"),
-        }
-        for item in rows
-    ]
+    result: list[dict[str, Any]] = []
+    for item in rows:
+        recommendation = dict(item.resource_recommendation_json or {})
+        task = db.get(GenerationTask, item.generation_task_id) if item.generation_task_id else None
+        resource_types = list(recommendation.get("resource_types") or [])
+        recoverable = bool(
+            task is not None
+            and recommendation.get("mode") == "next_node"
+            and _node_advancement_task_needs_recovery(
+                db, task=task, resource_types=resource_types
+            )
+        )
+        result.append(
+            {
+                "proposal_id": item.public_id,
+                "hypothesis_type": item.hypothesis_type,
+                "status": item.status,
+                "resource_recommendation": recommendation,
+                "decision": (item.validation_result_json or {}).get("decision"),
+                "generation_task": (
+                    {
+                        "task_id": task.public_id,
+                        "status": task.status,
+                        "decision": task.decision,
+                        "failure_reason": task.failure_reason or None,
+                        "event_type": task.event_type,
+                        "published_resource_types": sorted(
+                            resource.resource_type
+                            for resource in db.scalars(
+                                select(LearningResource).where(
+                                    LearningResource.generation_task_id == task.id,
+                                    LearningResource.review_status == "passed",
+                                )
+                            )
+                        ),
+                    }
+                    if task is not None
+                    else None
+                ),
+                "recovery_available": recoverable,
+            }
+        )
+    return result
 
 
 def recent_profile_changes(
@@ -1076,6 +1362,16 @@ def recent_profile_changes(
                 "decision": validation.get("decision"),
                 "status": item.status,
                 "resource_decision": item.resource_decision,
+                "generation_task": (
+                    {
+                        "task_id": task.public_id,
+                        "status": task.status,
+                        "decision": task.decision,
+                        "failure_reason": task.failure_reason or None,
+                    }
+                    if (task := db.get(GenerationTask, item.generation_task_id)) is not None
+                    else None
+                ),
                 "profile_change_summary": summary,
                 "created_at": item.created_at.isoformat() if item.created_at else None,
                 "updated_at": item.updated_at.isoformat() if item.updated_at else None,

@@ -8,7 +8,7 @@
       <div class="relation-filters" role="group" aria-label="关系类型筛选">
         <label v-for="type in relationTypes" :key="type" class="relation-filter">
           <input v-model="enabledTypes" type="checkbox" :value="type" />
-          <i :style="{ backgroundColor: relationMeta[type].color }"></i>
+          <i :style="{ backgroundColor: relationColor(type, chartTheme) }"></i>
           {{ relationMeta[type].label }}
         </label>
       </div>
@@ -29,7 +29,7 @@
       <aside class="node-detail" aria-live="polite">
         <template v-if="selectedItem">
           <span class="detail-label">已选知识点</span>
-          <h3>{{ selectedItem.name }}</h3>
+          <h3>{{ knowledgeNameLabel(selectedItem) }}</h3>
           <div class="detail-meta">
             <span>{{ selectedItem.category || '未分类' }}</span>
             <span>难度 {{ selectedItem.difficulty }}/5</span>
@@ -38,12 +38,15 @@
           <div v-if="selectedItem.tags.length" class="detail-tags">
             <span v-for="tag in selectedItem.tags" :key="tag">{{ tag }}</span>
           </div>
+          <button class="btn small detail-action" type="button" @click="emit('edit', selectedItem.knowledge_id)">
+            查看与编辑知识点
+          </button>
           <div class="detail-relations">
             <strong>关联知识</strong>
             <ul v-if="selectedRelations.length">
               <li v-for="relation in selectedRelations" :key="`${relation.source_id}-${relation.target_id}-${relation.relation_type}`">
                 <button type="button" @click="selectRelationTarget(relation)">
-                  <span :style="{ color: relationMeta[relation.relation_type]?.color || relationMeta.related.color }">{{ relationMeta[relation.relation_type]?.label || '关联关系' }}</span>
+                  <span :style="{ color: relationColor(relation.relation_type, chartTheme) }">{{ relativeRelationLabel(relation, selectedId) }}</span>
                   {{ otherNodeName(relation) }}
                 </button>
               </li>
@@ -75,44 +78,72 @@ import {
   buildGraphModel,
   filterRelations,
   findKnowledgeItem,
+  knowledgeNameLabel,
+  relationColor,
   relationMeta,
   relationTypes,
+  relativeRelationLabel,
+  resolveKnowledgeSelection,
 } from './knowledgeGraph'
+import { useChartTheme } from '@/composables/chartTheme'
 
 const props = withDefaults(defineProps<{
   items: KnowledgeItem[]
   relations: KnowledgeRelation[]
   loading?: boolean
   error?: string
+  selectedKnowledgeId?: string | null
 }>(), {
   loading: false,
   error: '',
+  selectedKnowledgeId: null,
 })
+
+const emit = defineEmits<{
+  select: [knowledgeId: string | null]
+  edit: [knowledgeId: string]
+}>()
 
 const chartRef = ref<HTMLDivElement | null>(null)
 const selectedId = ref<string | null>(null)
 const searchQuery = ref('')
 const enabledTypes = ref<string[]>([...relationTypes])
+const chartTheme = useChartTheme()
 let chart: echarts.ECharts | null = null
 let resizeObserver: ResizeObserver | null = null
+let renderedSelection: string | null | undefined
 
 const filteredRelations = computed(() => filterRelations(props.relations, enabledTypes.value))
-const graphModel = computed(() => buildGraphModel(props.items, filteredRelations.value, selectedId.value, searchQuery.value))
+const graphModel = computed(() => buildGraphModel(
+  props.items,
+  filteredRelations.value,
+  selectedId.value,
+  searchQuery.value,
+  chartTheme.value,
+))
 const selectedItem = computed(() => props.items.find((item) => item.knowledge_id === selectedId.value) ?? null)
 const selectedRelations = computed(() => filteredRelations.value.filter((relation) => relation.source_id === selectedId.value || relation.target_id === selectedId.value))
 
 function renderGraph() {
   if (!chartRef.value || props.loading || props.error || props.items.length === 0) return
   chart ??= echarts.init(chartRef.value)
+  if (renderedSelection !== selectedId.value) {
+    chart.clear()
+    renderedSelection = selectedId.value
+  }
   chart.off('click')
   chart.on('click', (params) => {
     const nodeData = params.data as { id?: unknown }
     if (params.dataType === 'node' && typeof nodeData.id === 'string') selectNode(nodeData.id)
   })
+  const theme = chartTheme.value
   chart.setOption({
     animationDurationUpdate: 220,
     tooltip: {
       trigger: 'item',
+      backgroundColor: theme.tooltip,
+      borderWidth: 0,
+      textStyle: { color: theme.tooltipText, fontSize: 12 },
       formatter: (params: { dataType?: string; data?: { name?: string; value?: string | number } }) => {
         if (params.dataType === 'edge') return String(params.data?.value || '')
         return `${params.data?.name || ''}<br />难度 ${params.data?.value || '-'} / 5`
@@ -125,19 +156,32 @@ function renderGraph() {
       draggable: true,
       focusNodeAdjacency: false,
       categories: graphModel.value.categories,
-      data: graphModel.value.nodes,
+      data: graphModel.value.nodes.map((node) => selectedId.value === node.id ? {
+        ...node,
+        x: chart!.getWidth() / 2,
+        y: chart!.getHeight() / 2,
+        fixed: true,
+      } : node),
       links: graphModel.value.links,
-      label: { position: 'right' },
+      label: { position: 'right', color: theme.text },
       lineStyle: { curveness: 0.08 },
       edgeSymbol: ['none', 'arrow'],
       edgeSymbolSize: 8,
       force: { repulsion: 340, edgeLength: [70, 155], gravity: 0.08 },
     }],
   }, { notMerge: true })
+  if (selectedId.value) {
+    const selectedIndex = graphModel.value.nodes.findIndex((node) => node.id === selectedId.value)
+    if (selectedIndex >= 0) {
+      chart.dispatchAction({ type: 'highlight', seriesIndex: 0, dataIndex: selectedIndex })
+      chart.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: selectedIndex })
+    }
+  }
 }
 
 function selectNode(knowledgeId: string) {
   selectedId.value = knowledgeId
+  emit('select', knowledgeId)
   nextTick(renderGraph)
 }
 
@@ -151,12 +195,17 @@ function selectRelationTarget(relation: KnowledgeRelation) {
 }
 
 function otherNodeName(relation: KnowledgeRelation) {
-  return relation.source_id === selectedId.value ? relation.target_name : relation.source_name
+  const otherId = relation.source_id === selectedId.value ? relation.target_id : relation.source_id
+  const item = props.items.find((candidate) => candidate.knowledge_id === otherId)
+  return item
+    ? knowledgeNameLabel(item)
+    : relation.source_id === selectedId.value ? relation.target_name : relation.source_name
 }
 
 function clearSelection() {
   selectedId.value = null
   searchQuery.value = ''
+  emit('select', null)
   nextTick(renderGraph)
 }
 
@@ -165,11 +214,23 @@ function fitGraph() {
   chart?.resize()
 }
 
-watch([graphModel, () => props.loading, () => props.error], () => nextTick(renderGraph), { deep: true })
+watch([graphModel, () => props.loading, () => props.error, chartTheme], () => nextTick(renderGraph), { deep: true })
+watch(() => props.selectedKnowledgeId, (knowledgeId) => {
+  const nextSelection = resolveKnowledgeSelection(props.items, knowledgeId)
+  if (selectedId.value === nextSelection) return
+  selectedId.value = nextSelection
+  nextTick(renderGraph)
+}, { immediate: true })
+watch(() => props.items, (items) => {
+  if (selectedId.value && !resolveKnowledgeSelection(items, selectedId.value)) {
+    selectedId.value = null
+    emit('select', null)
+  }
+})
 watch(searchQuery, (query) => {
   if (!query.trim()) return
   const match = findKnowledgeItem(props.items, query)
-  if (match) selectedId.value = match.knowledge_id
+  if (match && match.knowledge_id !== selectedId.value) selectNode(match.knowledge_id)
 })
 
 onMounted(() => {
@@ -201,13 +262,14 @@ onBeforeUnmount(() => {
 .graph-canvas { min-height: 500px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .graph-hint { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .graph-state { display: grid; min-height: 260px; place-items: center; border: 1px dashed var(--line); border-radius: 8px; background: var(--soft); color: var(--muted); font-size: 13px; text-align: center; }
-.graph-state.error { border-color: #edc9c9; background: var(--red2); color: var(--red); }
+.graph-state.error { border-color: var(--line-danger); background: var(--surface-danger); color: var(--red); }
 .node-detail { display: grid; align-content: start; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .detail-label { color: var(--muted); font-size: 11px; font-weight: 700; }
 .node-detail h3 { font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
 .node-detail p { color: var(--muted); font-size: 12px; line-height: 1.65; }
 .detail-meta, .detail-tags, .category-legend { display: flex; flex-wrap: wrap; gap: 6px; }
 .detail-meta span, .detail-tags span { border: 1px solid var(--line); border-radius: 5px; background: var(--soft); padding: 4px 6px; color: var(--body); font-size: 11px; }
+.detail-action { justify-self: start; }
 .detail-relations { display: grid; gap: 7px; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
 .detail-relations strong { font-size: 12px; }
 .detail-relations ul { display: grid; gap: 5px; padding: 0; margin: 0; list-style: none; }

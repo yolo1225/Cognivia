@@ -39,10 +39,19 @@ from app.models import (
     LearningPath,
 )
 from app.services.learner_service import get_or_create_demo_learner
-from app.services.learning_path_service import normalize_path_for_domain
-from app.services.domain_runtime_service import DomainRuntime, require_ready_domain
+from app.services.learning_path_service import normalize_path_for_domain, serialize_learning_path
+from app.services.domain_runtime_service import (
+    DomainRuntime,
+    practice_generation_mode_for_items,
+    require_ready_domain,
+)
 from app.services.diagnostic_scoring_service import score_short_answer_batch
 from app.services.llm_service import ModelGatewayError
+from app.services.mistake_review_service import sync_existing_mistakes
+from app.services.question_certification_service import (
+    QUESTION_CERTIFICATION_RULE_VERSION,
+)
+from app.services.question_bank_service import question_supports_use
 from app.services.profile_service import (
     build_learning_path_from_snapshot,
     default_profile_for_learner,
@@ -52,6 +61,11 @@ from app.services.profile_service import (
     score_single_choice_answer,
 )
 from app.services.contract_mapping import ability_profile_payload, profile_snapshot
+from app.services.profile_knowledge_state_service import (
+    STATE_KEY,
+    build_knowledge_state,
+    project_analysis_with_knowledge_state,
+)
 
 PROFILE_AGENT_NAME = "profile_analysis_agent"
 logger = logging.getLogger(__name__)
@@ -197,8 +211,13 @@ def _question_payload(question: DiagnosticQuestion) -> dict[str, Any]:
     }
 
 
-def _is_practice_knowledge(knowledge: KnowledgeItem) -> bool:
-    return "operation" in (knowledge.evidence_capabilities_json or [])
+def _is_practice_question(
+    question: DiagnosticQuestion, knowledge: KnowledgeItem | None = None
+) -> bool:
+    dimension = str((question.answer_key_json or {}).get("assessment_dimension") or "")
+    if dimension:
+        return dimension == "operation"
+    return bool(knowledge and "operation" in (knowledge.evidence_capabilities_json or []))
 
 
 def _direction_score(
@@ -218,13 +237,25 @@ def _direction_score(
 def _take_questions(
     candidates: list[tuple[DiagnosticQuestion, KnowledgeItem, int]],
     count: int,
+    *,
+    rng: random.Random | None = None,
 ) -> list[tuple[DiagnosticQuestion, KnowledgeItem, int]]:
     if len(candidates) < count:
         raise ValueError("diagnostic_question_distribution_unavailable")
-    ranked = sorted(candidates, key=lambda item: item[2], reverse=True)
+    rng = rng or random.Random()
+    ranked = sorted(candidates, key=lambda item: (-item[2], item[0].public_id))
     cutoff = ranked[count - 1][2]
-    preferred = [item for item in ranked if item[2] >= cutoff]
-    return random.sample(preferred, k=count)
+    selected = [item for item in ranked if item[2] > cutoff]
+    ties = [item for item in ranked if item[2] == cutoff]
+    rng.shuffle(ties)
+    seen_knowledge = {item[1].id for item in selected}
+    distinct = []
+    duplicate = []
+    for item in ties:
+        target = distinct if item[1].id not in seen_knowledge else duplicate
+        target.append(item)
+        seen_knowledge.add(item[1].id)
+    return [*selected, *distinct, *duplicate][:count]
 
 
 def _message(
@@ -252,11 +283,14 @@ def _sample_diagnostic_questions(
     direction_tags: list[str],
     question_count: int,
     runtime: DomainRuntime | None = None,
+    rng: random.Random | None = None,
 ) -> list[DiagnosticQuestion]:
     if int(question_count) != 10:
         raise ValueError("initial_diagnostic_requires_ten_questions")
 
-    buckets: dict[tuple[str, bool], list[tuple[DiagnosticQuestion, KnowledgeItem, int]]] = {
+    evidence_buckets: dict[
+        tuple[str, bool], list[tuple[DiagnosticQuestion, KnowledgeItem, int]]
+    ] = {
         ("single_choice", False): [],
         ("single_choice", True): [],
         ("short_answer", False): [],
@@ -266,20 +300,39 @@ def _sample_diagnostic_questions(
         knowledge = knowledge_rows.get(question.knowledge_item_id)
         if knowledge is None or question.question_type not in {"single_choice", "short_answer"}:
             continue
-        buckets[(question.question_type, _is_practice_knowledge(knowledge))].append(
+        evidence_buckets[(question.question_type, _is_practice_question(question, knowledge))].append(
             (question, knowledge, _direction_score(knowledge, direction_tags, runtime))
         )
 
-    targets = {
-        ("single_choice", False): 3,
-        ("single_choice", True): 3,
-        ("short_answer", False): 2,
-        ("short_answer", True): 2,
-    }
     selected: list[DiagnosticQuestion] = []
-    for bucket, target in targets.items():
-        selected.extend(question for question, _, _ in _take_questions(buckets[bucket], target))
-    random.shuffle(selected)
+    mode = (
+        runtime.practice_generation_mode
+        if runtime is not None
+        else practice_generation_mode_for_items(list(knowledge_rows.values()))
+    )
+    if mode == "evidence_backed":
+        targets = {
+            ("single_choice", False): 3,
+            ("single_choice", True): 3,
+            ("short_answer", False): 2,
+            ("short_answer", True): 2,
+        }
+        for bucket, target in targets.items():
+            selected.extend(
+                question
+                for question, _, _ in _take_questions(evidence_buckets[bucket], target, rng=rng)
+            )
+    else:
+        type_targets = {"single_choice": 6, "short_answer": 4}
+        for question_type, target in type_targets.items():
+            candidates = [
+                item
+                for (bucket_type, _practice), bucket_items in evidence_buckets.items()
+                if bucket_type == question_type
+                for item in bucket_items
+            ]
+            selected.extend(question for question, _, _ in _take_questions(candidates, target, rng=rng))
+    (rng or random.Random()).shuffle(selected)
     return selected
 
 
@@ -345,6 +398,10 @@ def prepare_diagnostic_submission(
             .where(
                 DiagnosticQuestion.public_id.in_(question_ids),
                 DiagnosticQuestion.domain_code == domain_code,
+                DiagnosticQuestion.status == "active",
+                DiagnosticQuestion.certification_status == "certified",
+                DiagnosticQuestion.certification_rule_version
+                == QUESTION_CERTIFICATION_RULE_VERSION,
                 KnowledgeItem.domain_code == domain_code,
                 KnowledgeItem.status == "published",
             )
@@ -455,11 +512,22 @@ def create_diagnostic_session(
             select(DiagnosticQuestion)
             .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
             .where(DiagnosticQuestion.domain_code == domain_code)
+            .where(DiagnosticQuestion.status == "active")
+            .where(DiagnosticQuestion.certification_status == "certified")
+            .where(
+                DiagnosticQuestion.certification_rule_version
+                == QUESTION_CERTIFICATION_RULE_VERSION
+            )
             .where(KnowledgeItem.domain_code == domain_code)
             .where(KnowledgeItem.status == "published")
             .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.public_id)
         )
     )
+    available_questions = [
+        question
+        for question in available_questions
+        if question_supports_use(question, "diagnosis")
+    ]
     knowledge_rows = {
         item.id: item
         for item in db.scalars(
@@ -471,25 +539,35 @@ def create_diagnostic_session(
             )
         )
     }
+    session_id = public_id("diag")
+    selection_seed = int(sha256(session_id.encode()).hexdigest()[:16], 16)
     questions = _sample_diagnostic_questions(
         available_questions,
         knowledge_rows,
         context_snapshot["direction_tags"],
         question_count,
         runtime,
+        rng=random.Random(selection_seed),
     )
     practice_count = sum(
         1
         for question in questions
-        if _is_practice_knowledge(knowledge_rows[question.knowledge_item_id])
+        if _is_practice_question(question, knowledge_rows[question.knowledge_item_id])
     )
-    session_id = public_id("diag")
     selection_summary = {
+        "algorithm_version": "diagnostic-selection-v2",
+        "random_seed": selection_seed,
         "direction_tags": context_snapshot["direction_tags"],
         "single_choice_count": 6,
         "short_answer_count": 4,
         "theory_count": len(questions) - practice_count,
         "practice_count": practice_count,
+        "practice_generation_mode": runtime.practice_generation_mode,
+        "question_ids": [question.public_id for question in questions],
+        "difficulty_distribution": {
+            str(level): sum(question.difficulty == level for question in questions)
+            for level in sorted({question.difficulty for question in questions})
+        },
     }
     db.add(
         DiagnosticSession(
@@ -585,6 +663,10 @@ def submit_diagnostic_session(
             .where(
                 DiagnosticQuestion.public_id.in_(question_ids),
                 DiagnosticQuestion.domain_code == domain_code,
+                DiagnosticQuestion.status == "active",
+                DiagnosticQuestion.certification_status == "certified",
+                DiagnosticQuestion.certification_rule_version
+                == QUESTION_CERTIFICATION_RULE_VERSION,
                 KnowledgeItem.domain_code == domain_code,
                 KnowledgeItem.status == "published",
             )
@@ -637,6 +719,9 @@ def submit_diagnostic_session(
                     KnowledgeItem.domain_code == domain_code,
                 )
             )
+        }
+        knowledge_rows_by_public = {
+            item.public_id: item for item in knowledge_rows.values()
         }
         evidence_refs: list[EvidenceRef] = []
         assessments: list[KnowledgeAssessment] = []
@@ -873,9 +958,74 @@ def submit_diagnostic_session(
             )
         )
 
+        uncertain_evidence_ids = {
+            assessment.evidence_id
+            for assessment, question in zip(assessments, questions, strict=True)
+            if records[question.id].scoring_uncertain
+        }
+        confusion_tags_by_evidence = {
+            assessment.evidence_id: list(
+                dict.fromkeys(
+                    [
+                        *list((records[question.id].scoring_detail_json or {}).get("missing_points") or []),
+                        *list((records[question.id].scoring_detail_json or {}).get("factual_errors") or []),
+                    ]
+                )
+            )[:5]
+            for assessment, question in zip(assessments, questions, strict=True)
+        }
+        previous_state = (current_profile.ability_profile_json or {}).get(STATE_KEY)
+        knowledge_state = build_knowledge_state(
+            config=runtime.profile_config,
+            assessments=assessments,
+            evidence=evidence_refs,
+            previous_state=previous_state,
+            excluded_evidence_ids=uncertain_evidence_ids,
+            confusion_tags_by_evidence=confusion_tags_by_evidence,
+        )
+        accepted_ids = set(knowledge_state["accepted_evidence_ids"])
+        accepted_assessments = [
+            item for item in assessments if item.evidence_id in accepted_ids
+        ]
+        accepted_practice = sum(
+            "operation" in (
+                knowledge_rows_by_public[item.knowledge_id].evidence_capabilities_json or []
+            )
+            for item in accepted_assessments
+        )
+        evidence_sufficient = len(accepted_assessments) >= 6 and (
+            runtime.practice_generation_mode != "evidence_backed"
+            or (accepted_practice >= 2 and len(accepted_assessments) - accepted_practice >= 2)
+        )
+        projection_state = knowledge_state
+        if not evidence_sufficient:
+            projection_state = {**knowledge_state, "accepted_evidence_ids": []}
+        analysis, profile_projection = project_analysis_with_knowledge_state(
+            analysis=analysis,
+            state=projection_state,
+            previous_state=previous_state,
+            config=runtime.profile_config,
+            context=context_snapshot,
+        )
+
         active_profile = current_profile
         if analysis.profile_update_required:
             ability_payload = ability_profile_payload(analysis.profile)
+            ability_payload[STATE_KEY] = knowledge_state
+            ability_payload["dimension_status"] = profile_projection["dimension_status"]
+            ability_payload["evidence_profile"] = {
+                "version": "cumulative-evidence-v1",
+                "diagnostic_weight_max": 0.85,
+                "background_weight_min": 0.15,
+                "assessed_question_count": len(accepted_assessments),
+                "assessed_knowledge_count": knowledge_state["coverage"]["assessed_count"],
+                "coverage": knowledge_state["coverage"],
+                "excluded_uncertain_count": len(uncertain_evidence_ids),
+                "learning_speed_status": profile_projection["dimension_status"].get(
+                    "learning_speed"
+                ),
+                "learning_speed_evidence": profile_projection.get("learning_speed_evidence", {}),
+            }
             ability_payload["category_mastery"] = {
                 category: round(sum(scores) / len(scores) * 100, 1)
                 for category, scores in sorted(category_scores.items())
@@ -908,8 +1058,8 @@ def submit_diagnostic_session(
             ):
                 path.needs_refresh = True
 
-        path = latest_path_for_profile(db, active_profile)
-        if path is None:
+        path = latest_path_for_profile(db, active_profile) if analysis.profile_update_required else None
+        if analysis.profile_update_required and path is None:
             path = LearningPath(
                 public_id=public_id("path"),
                 learner_id=learner.id,
@@ -944,13 +1094,20 @@ def submit_diagnostic_session(
             else None,
             "profile_changed_dimensions": analysis.changed_dimensions,
             "profile_source": "diagnostic_result",
-            "profile_type": analysis.profile.profile_type.value,
+            "evidence_sufficient": evidence_sufficient,
+            "evidence_reason": None
+            if evidence_sufficient
+            else "至少需要 6 道有效评分，并满足理论/实操最低证据覆盖",
+            "profile_type": str(
+                (active_profile.ability_profile_json or {}).get("profile_type")
+                or analysis.profile.profile_type.value
+            ),
             "ability_profile": active_profile.ability_profile_json,
             "weak_knowledge": active_profile.weak_knowledge_json,
-            "learning_path_id": path.public_id,
-            "learning_path": path.path_json,
+            "learning_path_id": path.public_id if path else None,
+            "learning_path": serialize_learning_path(path) if path else None,
             "answer_results": answer_results,
-            "next_action": "create_generation_task",
+            "next_action": "create_generation_task" if evidence_sufficient else "retry_diagnostic",
         }
         output_summary = {
             "session_id": session_id,
@@ -994,8 +1151,9 @@ def submit_diagnostic_session(
         session.progress = 100
         session.error_code = None
         session.profile_id = active_profile.id
-        session.learning_path_id = path.id
+        session.learning_path_id = path.id if path else None
         session.result_json = final_result
+        sync_existing_mistakes(db, learner=learner, domain_code=domain_code)
         db.commit()
         return final_result
     except DiagnosticScoringPending:

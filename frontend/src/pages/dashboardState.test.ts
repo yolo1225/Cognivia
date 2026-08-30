@@ -40,6 +40,32 @@ describe('dashboard state', () => {
     expect(state.kind === 'preparing' && state.feedbackTriggered).toBe(true)
   })
 
+  it('prioritizes unresolved current-node mistakes before available resources', () => {
+    const state = getDashboardState(null, [resource()], [], {
+      status: 'in_progress',
+      can_advance: false,
+      reason: 'BLOCKING_MISTAKES_REMAIN',
+      blocking_mistake_count: 2,
+      quiz_completed: true,
+      knowledge_progress: [],
+    })
+
+    expect(state).toEqual({ kind: 'mistake_review', blockingMistakeCount: 2 })
+  })
+
+  it('keeps an active generation task visible while mistakes remain', () => {
+    const state = getDashboardState(task(), [resource()], [], {
+      status: 'in_progress',
+      can_advance: false,
+      reason: 'BLOCKING_MISTAKES_REMAIN',
+      blocking_mistake_count: 1,
+      quiz_completed: true,
+      knowledge_progress: [],
+    })
+
+    expect(state.kind).toBe('preparing')
+  })
+
   it('shows a published resource instead of an unreviewed resource', () => {
     const state = getDashboardState(null, [resource({ review_status: 'pending' }), resource()], [])
 

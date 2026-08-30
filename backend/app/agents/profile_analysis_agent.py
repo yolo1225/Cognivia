@@ -1,4 +1,4 @@
-"""Standalone V3 boundary for deterministic learner-profile analysis."""
+"""Standalone V10 boundary for deterministic learner-profile analysis."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ SYSTEM_PROMPT = get_prompt("profile")
 
 
 class ProfileAnalysisAgent:
-    """Isolated V3 Agent boundary; it deliberately does not inherit legacy BaseAgent."""
+    """Isolated V10 Agent boundary with no legacy base dependency."""
 
     name = PROFILE_ANALYSIS_AGENT_NAME
     system_prompt = SYSTEM_PROMPT
@@ -31,7 +31,7 @@ class ProfileAnalysisAgent:
         self._logger = logger or logging.getLogger(__name__)
 
     def execute(self, request: AnalyzeProfileInput) -> AnalyzeProfileOutput:
-        """Validate one V3 request, run the pure algorithm, and emit safe observability."""
+        """Validate one request, run the pure algorithm, and emit safe observability."""
         if not isinstance(request, AnalyzeProfileInput):
             self._logger.warning(
                 "profile_analysis_rejected error_code=invalid_analyze_profile_input_type"

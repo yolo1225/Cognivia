@@ -10,7 +10,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.contracts import CONTRACT_VERSION
 from app.core.db import SessionLocal, get_db
+from app.core.errors import api_error_response
 from app.core.security import Principal, get_current_user, principal_learner, require_admin, require_task
 from app.models import (
     AgentMessageRecord,
@@ -45,6 +47,8 @@ from app.services.profile_service import (
     profile_source,
     public_id,
 )
+from app.services.question_bank_service import graded_quiz_preflight
+from app.services.contract_mapping import profile_snapshot
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.workers.generation_worker import run_generation_task
 
@@ -54,6 +58,14 @@ TRIGGER_TYPES = {"initial_generation", "resource_feedback"}
 EXECUTION_MODES = {"auto", "assisted"}
 TERMINAL_TASK_STATUSES = {"completed", "failed", "revision_required", "no_change", "rejected"}
 ACTIVE_TASK_STATUSES = {"pending", "retry_pending", "running"}
+FRESH_STATE_RETRY_FAILURES = {
+    # The failed generation node cannot repair missing upstream evidence by
+    # resuming itself. Re-run profile analysis and retrieval under the same
+    # public task/thread ID so newly indexed or newly retrieved sources enter
+    # the graph state before generation is attempted again.
+    "graded_quiz_question_source_missing",
+    "graded_quiz_question_bank_insufficient",
+}
 SENSITIVE_KEYS = {"content", "content_md", "draft_resources", "profile", "answers"}
 
 STEP_LABELS = {
@@ -162,6 +174,18 @@ def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
         if path is not None and task.path_node_id
         else None
     )
+    quality = task.package_quality_json or {}
+    failed_metrics = []
+    for metric, actual, threshold in (
+        ("hallucination_rate", quality.get("hallucination_rate"), "< 5"),
+        ("difficulty_match_score", quality.get("difficulty_match_score"), ">= 85"),
+        ("core_knowledge_coverage", quality.get("core_knowledge_coverage"), ">= 90"),
+    ):
+        if actual is None:
+            continue
+        passed = actual < 5 if metric == "hallucination_rate" else actual >= int(threshold[3:])
+        if not passed:
+            failed_metrics.append({"metric": metric, "actual": actual, "threshold": threshold})
     return {
         "task_id": task.public_id,
         "thread_id": task.public_id,
@@ -185,8 +209,11 @@ def _task_detail_summary(db: Session, task: GenerationTask) -> dict[str, Any]:
         "revision_count": task.revision_count,
         "decision": task.decision,
         "failure_reason": task.failure_reason or None,
+        "failed_metrics": failed_metrics,
         "failure_details": {
+            "failure_code": failure_output.get("failure_code"),
             "failed_step": failure_output.get("failed_step"),
+            "resource_types": list(failure_output.get("resource_types") or [])[:10],
             "field_paths": list(failure_output.get("field_paths") or [])[:20],
             "recoverable": bool(failure_output.get("recoverable")),
         }
@@ -303,6 +330,25 @@ def create_generation_task(
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc).upper()) from exc
+    if "graded_quiz" in requested_types:
+        quiz_targets = list(
+            (basis.get("resource_knowledge_targets") or {}).get("graded_quiz") or []
+        )
+        quiz_preflight = graded_quiz_preflight(
+            db,
+            domain_code=domain_code,
+            target_knowledge_ids=quiz_targets,
+            focus_knowledge_ids=list(basis.get("focus_knowledge_ids") or []),
+            target_difficulty=int(basis.get("target_difficulty") or 3),
+            profile_type=profile_snapshot(profile).profile_type.value,
+        )
+        if not quiz_preflight["ready"]:
+            return api_error_response(
+                status_code=409,
+                code="GRADED_QUIZ_QUESTION_BANK_NOT_READY",
+                message="当前学习单元题库密度不足，正式认证题少于3道，无法生成测验。",
+                details=quiz_preflight,
+            )
     bind_node_generation_targets(task, basis)
     db.add(task)
     db.commit()
@@ -318,6 +364,7 @@ def create_generation_task(
             "path_id": path.public_id,
             "path_node_id": current_node_id,
             "generation_basis": basis,
+            "quiz_preflight": quiz_preflight if "graded_quiz" in requested_types else None,
             "agent_graph": "unified_learning_graph_v3",
             **_profile_summary(db, task),
             "decision": task.decision,
@@ -444,7 +491,7 @@ def retry_generation_task(
     db: Session = Depends(get_db),
     principal: Principal = Depends(get_current_user),
 ) -> ApiResponse:
-    """Resume a recoverable failed node from its existing LangGraph checkpoint."""
+    """Resume a failed node, or restart upstream retrieval when evidence is stale."""
 
     task = require_task(db, principal, task_id)
     if task is None:
@@ -467,14 +514,57 @@ def retry_generation_task(
     recoverable = bool(
         latest_failure and (latest_failure.output_summary_json or {}).get("recoverable")
     )
+    failure_code = str(
+        ((latest_failure.output_summary_json or {}).get("failure_code") if latest_failure else "")
+        or task.failure_reason
+        or ""
+    )
     if (
         checkpoint is None
         or not (checkpoint.state_json or {}).get("native_checkpoint")
         or not recoverable
     ):
         raise HTTPException(status_code=409, detail="TASK_CHECKPOINT_NOT_RECOVERABLE")
+    stale_contract_checkpoint = bool(
+        latest_failure and latest_failure.contract_version != CONTRACT_VERSION
+    )
+    if stale_contract_checkpoint or "revision_exhausted" in failure_code:
+        successor = GenerationTask(
+            public_id=public_id("task"),
+            learner_id=task.learner_id,
+            profile_id=task.profile_id,
+            learning_path_id=task.learning_path_id,
+            path_node_id=task.path_node_id,
+            domain_code=task.domain_code,
+            status="pending",
+            resource_types_json=list(task.resource_types_json or []),
+            resource_knowledge_targets_json=dict(
+                task.resource_knowledge_targets_json or {}
+            ),
+            revision_count=0,
+            decision="pending",
+            trigger_type=task.trigger_type,
+            execution_mode=task.execution_mode,
+            learning_goal=task.learning_goal,
+            source_resource_id=task.source_resource_id,
+            source_feedback_id=task.source_feedback_id,
+            source_task_id=task.id,
+            event_type=task.event_type,
+            progress=0,
+        )
+        db.add(successor)
+        db.commit()
+        background_tasks.add_task(run_generation_task, successor.public_id)
+        return ok(_task_detail_summary(db, successor))
+    fresh_state_retry = (
+        failure_code in FRESH_STATE_RETRY_FAILURES or stale_contract_checkpoint
+    )
+    if fresh_state_retry:
+        db.delete(checkpoint)
+        task.progress = 0
     task.status = "retry_pending"
     task.decision = "pending"
+    task.failure_reason = ""
     db.commit()
     background_tasks.add_task(run_generation_task, task.public_id)
     return ok(_task_detail_summary(db, task))

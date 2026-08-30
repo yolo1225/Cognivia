@@ -223,6 +223,7 @@ def test_cleanup_is_idempotent_and_preserves_learning_state(tmp_path: Path) -> N
         export_dir = tmp_path / "exports"
         export_dir.mkdir()
         (export_dir / "res_cleanup.md").write_text("old", encoding="utf-8")
+        (export_dir / "learning_package_task_cleanup.zip").write_bytes(b"old")
         (export_dir / ".gitkeep").write_text("", encoding="utf-8")
 
         first = clear_generation_runtime(
@@ -243,7 +244,7 @@ def test_cleanup_is_idempotent_and_preserves_learning_state(tmp_path: Path) -> N
         assert first["deleted"]["generation_tasks"] == 1
         assert first["deleted"]["learning_resources"] == 1
         assert first["deleted"]["agent_runs"] == 2
-        assert first["deleted"]["export_files"] == 1
+        assert first["deleted"]["export_files"] == 2
         assert sum(second["deleted"].values()) == 0
         assert {
             table: first["preserved_counts"][table] for table in preserved

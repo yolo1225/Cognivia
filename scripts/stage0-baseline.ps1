@@ -38,8 +38,8 @@ $BaselineScope = @(
     ".env.example",
     "AGENTS.md",
     "docs/project-conventions.md",
-    "docs/agent-contract-v6.md",
-    "docs/contracts/v6"
+    "docs/agent-contract-v10.md",
+    "docs/contracts/v10"
 )
 
 function Invoke-Checked {

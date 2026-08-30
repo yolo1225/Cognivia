@@ -4,8 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents.contracts import (
+    AgentContractSchema,
     CONTRACT_VERSION,
     GenerationPackageQuality,
+    GradedQuizContent,
     ResourceQualityMetrics,
     ReviewDecision,
     TaskDecision,
@@ -13,12 +15,34 @@ from app.agents.contracts import (
 from app.agents.graphs import build_learning_graph
 
 
-def test_v6_removes_manual_review_decisions_and_graph_node() -> None:
-    assert CONTRACT_VERSION == "agent-contract-v6"
+def test_v10_preserves_review_decisions_and_graph_topology() -> None:
+    assert CONTRACT_VERSION == "agent-contract-v10"
     assert "manual_review_required" not in {item.value for item in ReviewDecision}
     assert "manual_review_required" not in {item.value for item in TaskDecision}
     graph = build_learning_graph()
     assert "human_review_node" not in graph.get_graph().nodes
+
+
+def test_v9_preserves_the_complete_evidence_pipeline_to_eighteen_chunks() -> None:
+    definitions = AgentContractSchema.model_json_schema()["$defs"]
+
+    assert definitions["RetrievalPlan"]["properties"]["n_results"]["maximum"] == 18
+    assert definitions["RetrieveKnowledgeOutput"]["properties"]["chunks"]["maxItems"] == 18
+    assert (
+        definitions["GenerateResourceInput"]["properties"]["retrieved_chunks"][
+            "maxItems"
+        ]
+        == 18
+    )
+
+
+def test_v9_allows_short_profile_specific_quizzes_without_all_teaching_levels() -> None:
+    definitions = AgentContractSchema.model_json_schema()["$defs"]
+    questions = definitions["GradedQuizContent"]["properties"]["questions"]
+    assert questions["minItems"] == 3
+    assert questions["maxItems"] == 8
+    assert "validate_levels" not in GradedQuizContent.__dict__
+    assert definitions["ReviewResourceInput"]["properties"]["evidence"]["maxItems"] == 18
 
 
 @pytest.mark.parametrize(
@@ -46,25 +70,30 @@ def test_package_hallucination_threshold_is_strict(
     assert metrics.passed is passed
 
 
-def test_evidence_insufficient_claims_stay_in_rate_denominator_and_block_publish() -> None:
+@pytest.mark.parametrize(
+    ("insufficient", "rate", "passed"),
+    [(1, 2.78, True), (2, 5.56, False)],
+)
+def test_evidence_insufficient_claims_use_official_package_rate(
+    insufficient: int, rate: float, passed: bool
+) -> None:
     metrics = GenerationPackageQuality(
-        evaluated_claim_count=8,
-        contradicted_claim_count=1,
-        evidence_insufficient_claim_count=7,
+        evaluated_claim_count=36,
+        contradicted_claim_count=0,
+        evidence_insufficient_claim_count=insufficient,
         unresolved_claim_count=0,
-        verifiable_claim_count=8,
-        hallucinated_claim_count=1,
-        hallucination_rate=12.5,
+        verifiable_claim_count=36,
+        hallucinated_claim_count=insufficient,
+        hallucination_rate=rate,
         difficulty_match_score=90,
         covered_core_knowledge_count=10,
         target_core_knowledge_count=10,
         core_knowledge_coverage=100,
-        passed=False,
+        passed=passed,
         revision_count=0,
     )
 
-    assert metrics.hallucination_rate == 12.5
-    assert metrics.passed is False
+    assert metrics.passed is passed
 
 
 def test_quality_metrics_reject_model_supplied_inconsistent_ratios() -> None:
@@ -85,7 +114,7 @@ def test_quality_metrics_reject_model_supplied_inconsistent_ratios() -> None:
         )
 
 
-def test_resource_quality_defers_coverage_threshold_to_package_scope() -> None:
+def test_resource_quality_uses_the_same_three_official_thresholds() -> None:
     metrics = ResourceQualityMetrics(
         evaluated_claim_count=10,
         contradicted_claim_count=0,
@@ -94,7 +123,7 @@ def test_resource_quality_defers_coverage_threshold_to_package_scope() -> None:
         verifiable_claim_count=10,
         hallucinated_claim_count=0,
         hallucination_rate=0,
-        difficulty_match_score=80,
+        difficulty_match_score=85,
         covered_core_knowledge_count=9,
         target_core_knowledge_count=10,
         core_knowledge_coverage=90,

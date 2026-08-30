@@ -147,6 +147,16 @@ def decide_tutoring_action(
             "已记录这次反馈。后续计分结果或已确认学习行为会作为画像判断的证据。",
         )
 
+    if intent is FeedbackIntent.OTHER and str(semantic.candidate_reply or "").strip():
+        return _decision(
+            intent,
+            RecommendedAction.NO_CHANGE,
+            False,
+            "已直接回答当前资源范围内的学习请求；本轮不构成画像更新证据。",
+            "我会依据当前资源回答这个问题。",
+            use_candidate_reply=True,
+        )
+
     return _safe_follow_up("反馈未能归入可执行教学意图，先追问具体学习目标。")
 
 

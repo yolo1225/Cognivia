@@ -17,7 +17,7 @@ def build_learning_graph(
     checkpointer: Any | None = None,
     runtime: AgentRuntime | None = None,
 ):
-    """Build the single V4 graph with automatic revision and atomic publication."""
+    """Build the single V10 graph with automatic revision and atomic publication."""
 
     owned_runtime = runtime is None
     active_runtime = runtime or AgentRuntime.production()
@@ -27,7 +27,7 @@ def build_learning_graph(
     graph = StateGraph(GRAPH_STATE)
     graph_node = {name: f"{name}_node" for name in node_map}
     for name, func in node_map.items():
-        # V3 State owns fields named prepare_task, analyze_profile, etc.;
+        # Contract State owns fields named prepare_task, analyze_profile, etc.;
         # LangGraph reserves those channel names, so internal node IDs differ.
         graph.add_node(graph_node[name], func)
 

@@ -23,7 +23,7 @@ export interface DomainMutationPayload {
   domain_code?: string;
   name: string;
   description: string;
-  learning_directions: LearningDirection[];
+  learning_directions?: LearningDirection[];
 }
 
 export interface DomainStats {
@@ -64,6 +64,48 @@ export interface DomainValidationResult {
   rag_ready: boolean;
   generation_ready: boolean;
   runtime_reasons?: string[];
+  evidence_coverage?: {
+    total_items: number;
+    capabilities: Record<
+      | "concept"
+      | "operation"
+      | "command"
+      | "code_example"
+      | "expected_result"
+      | "error_handling"
+      | "version_boundary",
+      number
+    >;
+    practice_generation_mode: "evidence_backed" | "safe_conceptual";
+  };
+  question_bank_coverage?: {
+    total_items: number;
+    ready_items: number;
+    ready_knowledge_ids: string[];
+    missing_knowledge_ids: string[];
+    missing_diagnosis_knowledge_ids: string[];
+    missing_quiz_knowledge_ids: string[];
+    missing_mastery_reserve_knowledge_ids: string[];
+    counts_by_knowledge: Record<string, {
+      single_choice: number;
+      short_answer: number;
+      total: number;
+      diagnosis: number;
+      graded_quiz: number;
+      mastery_validation: number;
+      mastery_reserve: number;
+    }>;
+    requirements: {
+      primary_total: number;
+      diagnosis_per_knowledge: number;
+      graded_quiz_per_knowledge: number;
+      mastery_reserve_per_knowledge: number;
+      domain_total: number;
+      levels: string[];
+      question_types: string[];
+      difficulty_levels: number[];
+    };
+  };
   status?: string;
   policy?: Record<string, number>;
   checks?: Array<{

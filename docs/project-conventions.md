@@ -1,6 +1,6 @@
 # Agent 执行规范
 
-> 更新日期：2026-07-06  
+> 更新日期：2026-08-29
 > 目标读者：开发代理、代码生成代理、协作智能体。  
 > 用途：约束后续实现行为，避免偏离当前 MVP 交付路线。
 
@@ -29,7 +29,7 @@
 - Vue 3
 - TypeScript
 - Vite
-- Element Plus
+- 项目内 Vue 组件与 CSS（当前未引入 Element Plus）
 - ECharts
 - Vue Flow
 - Pinia
@@ -39,18 +39,20 @@
 
 - 优先建设真实工具界面，不做营销落地页。
 - 首页是演示工作台，必须引导完整流程。
-- 核心页面固定包括：诊断测评、Agent 协作、学习资源、学习报告、知识库管理、领域配置、评测指标。
+- 核心页面固定包括：工作台建档/诊断、学习资源、错题巩固、学习报告、学习历程、知识库管理、领域配置和模型配置。
+- Agent 运行轨迹属于受控运行数据：学习者页面展示任务、资源、审核与路径结果；授权的任务 API、SSE 与离线评测保留可追溯的 Agent 状态和消息摘要。
 - 前端可以先用 demo 数据跑顺体验，但 API 类型、字段和状态必须按真实后端契约设计。
 - 页面中文必须可读，禁止提交乱码。
 - 所有核心操作必须有加载、成功、失败、空状态。
-- 不新增大型 UI 框架，不引入与 Element Plus 冲突的组件系统。
+- 不新增大型 UI 框架；保持现有项目内组件与 CSS 的轻量组合。
 
 交互约定：
 
 - 知识库新增或修改后，前端必须提示“需要重建向量索引”。
+- 仅题目用途、状态或库存变化时不得提示重建向量索引；正式题目直接从 MySQL 筛选。
 - 生成资源必须展示资源类型、难度、审核状态和知识来源。
 - 资源反馈必须展示触发的动作，例如补救解释、挑战任务、资源修订。
-- Agent 页面必须展示每个节点的职责和运行状态，不能只显示一个“生成中”。
+- 若新增运营侧 Agent 可视化，必须展示节点职责和真实运行状态，不能用硬编码步骤替代；学习者页面不得泄露完整 Agent 输入/输出或完整资源正文。
 - 指标页展示评测目标时，必须说明离线 `test_script` 是最终来源。
 
 ## 3. 后端规范
@@ -77,8 +79,8 @@ API 规则：
 
 服务实现规则：
 
-- 允许保留 demo/rule-based 实现作为过渡，但必须在代码或文档中标明边界。
-- 生成任务应逐步从 `demo_flow_service` 迁移到正式 service 和 Agent 节点。
+- 允许保留 demo/rule-based 实现作为隔离夹具或测试辅助，但必须在代码或文档中标明边界，且不得进入正式学习者运行链。
+- 正式生成任务通过 `build_learning_graph()`、`generation_worker` 和各 Agent 节点执行；不得新增或回退到平行的 `demo_flow_service` 运行链。
 - 每个 Agent 必须有独立职责、结构化输入输出、运行记录和消息记录。
 - SSE 事件应来自真实任务状态或 `agent_runs`，不长期依赖硬编码步骤。
 
@@ -104,7 +106,12 @@ API 规则：
 4. 向量索引重建完成后，才可清除 `needs_reembedding`。
 5. 如果来源或审核规则变化，相关资源应标记为 `review_stale`（字段可后续补充）。
 
-当前 MVP 允许先支持单条手动导入；批量 Excel/JSON 导入作为下一阶段能力。开发代理不得因为批量导入未完成而阻塞演示闭环。
+当前知识管理支持文档驱动的批次导入、候选校验、图谱预览、Candidate 索引构建、检索冒烟和一次确认发布；导入的正式题目还必须通过来源绑定与认证生命周期门禁。单条手工编辑仍可用，但不得绕过 re-embedding、影响范围或 readiness 检查。
+
+活动正式题目必须且只能声明一个用途：`diagnosis`、`graded_quiz` 或 `mastery_validation`。
+`mistake_consolidation` 只表示错题巩固业务，不得写入题目用途。诊断与分阶测验错题重做原题；
+错题修正参与画像更新但不计入掌握证据。当前节点相关错题全部解决后，仍须满足分阶测验和
+独立掌握证据门禁才能推进路线；掌握检查使用未见过的独立题目。
 
 ## 5. Agent 规范
 
@@ -144,27 +151,28 @@ finalize_task -> retrieve_knowledge   when revision_required and revision_count 
 约束：
 
 - `build_learning_graph()` 是唯一顶层图构建函数，worker 不得复制一套图定义。
-- 首次生成和反馈调优都使用 `generation_tasks.public_id` 作为 `task_id/thread_id`。
+- 每个生成事件使用自身的 `generation_tasks.public_id` 作为 `task_id/thread_id`；反馈与知识刷新任务通过 `source_task_id`、`source_feedback_id` 保留来源链路。
 - 自然语言反馈进入导学会话；快捷标签、评分和选中文本只作为辅助证据。
 - 单次 `too_hard/too_easy` 不得直接修改画像；证据不足时保存 `no_change` 和理由。
 - 临时材料上传属于紧随 P0 的 P1；未来实现时必须任务级隔离，不得自动入库或直接更新画像。
 
 ### 5.1 Agent 契约修改规范
 
-`docs/agent-contract-v6.md`、`backend/app/agents/contracts.py`、`backend/app/agents/state.py` 和对应 Schema 是当前唯一活动契约。契约由一名指定负责人统一维护，其他成员及开发代理在实现具体 Agent 时必须将以下文件视为只读：
+`docs/agent-contract-v10.md`、`backend/app/agents/contracts.py`、`backend/app/agents/state.py` 和对应 Schema 是当前唯一活动契约。契约由一名指定负责人统一维护，其他成员及开发代理在实现具体 Agent 时必须将以下文件视为只读：
 
 - `backend/app/agents/contracts.py`
 - `backend/app/agents/state.py`
 - `backend/app/agents/contract_adapters.py`
 - `backend/tests/contracts/`
-- `docs/agent-contract-v6.md`
-- `docs/contracts/v6/`
+- `docs/agent-contract-v10.md`
+- `docs/contracts/v10/`
 
 具体 Agent 实现者不得为了让代码、Prompt 或测试通过，擅自修改字段名、类型、枚举、必填性、默认值、State 字段所有权、Schema 或顶层图。实现与契约不一致时，先在 Agent 内按已有契约适配；确实无法表达时，停止修改共享文件并提交契约变更申请。
 
 变更申请必须说明申请字段或规则、所属输入/输出、生产与消费节点、使用原因、是否可空、默认值和兼容性影响。只有契约负责人可以决定是否修改，并统一更新模型、State、适配器、示例、Schema、测试和文档。破坏性变更必须升级契约版本。
 
-当前运行链和所有独立服务入口统一使用正式 `contracts` 与 `state`。V5 文档和 Schema 仅供读取历史记录；V1-V5 契约、State 和 Agent 实现已经退出活动运行链，禁止重新引入或与 V6 指标混算。
+当前运行链和所有独立服务入口统一使用 V10 `contracts` 与 `state`。旧契约文档和 Schema 已从
+活动文档树删除；历史数据库记录按其存储版本读取，但不得重建旧运行链或与 V10 指标混算。
 
 ## 6. 审核与反幻觉规范
 
@@ -180,9 +188,11 @@ Review and Validation Agent 是评分关键组件。
 双模型审核规则：
 
 - `primary_review_model` 和 `secondary_review_model` 都要检查事实和来源。
-- 事实判定冲突必须触发重新检索和再次审核。
+- 事实判定冲突、证据不足、明确矛盾或知识覆盖不足必须触发定向补检索和再次审核。
+- 补检索为空时保留原证据继续审核，不得把空结果作为单项否决条件。
 - 仲裁后仍不一致的声明计入幻觉事实，并进入自动局部修订。
 - 自动修订最多 2 轮；最终未通过资源不得展示给学习者。
+- 证据能力用于召回排序和治理，不得作为生成硬失败条件。
 
 ## 7. 评测规范
 
@@ -235,4 +245,4 @@ python -m compileall app tests
 - `docs/project-conventions.md`：当前工程规范。
 - `AGENTS.md`：开发代理必须遵守的简版规则入口。
 
-当实现路线与原设计文档发生偏移时，开发代理先更新 `docs/current-iteration-plan.md`，再决定是否回写根目录设计文档。
+当实现路线与原设计文档发生偏移时，开发代理先更新 `docs/current-iteration-plan.md`，再同步根目录设计文档、API/部署说明和 `AGENTS.md` 中的运行口径。历史方案文档必须在页首标记其历史状态，避免被误用为当前约束。

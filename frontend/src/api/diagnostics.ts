@@ -22,6 +22,10 @@ export interface DiagnosticSession {
     short_answer_count: number
     theory_count: number
     practice_count: number
+    algorithm_version?: string
+    random_seed?: number
+    question_ids?: string[]
+    difficulty_distribution?: Record<string, number>
   }
 }
 
@@ -41,13 +45,25 @@ export interface DiagnosticResult {
     category: string
     weakness_level: number
   }>
-  learning_path_id: string
+  evidence_sufficient?: boolean
+  evidence_reason?: string | null
+  learning_path_id: string | null
   learning_path?: {
+    nodes?: Array<{
+      path_node_id: string
+      title: string
+      status: 'current' | 'locked' | 'completed' | 'skipped'
+      learning_objective?: string
+      recommendation_reason?: string
+      knowledge_items?: Array<{ knowledge_id: string; name: string; category: string }>
+      focus_knowledge_ids?: string[]
+      path_order?: number
+    }>
     stages?: Array<{
       name: string
       description?: string
     }>
-  }
+  } | null
   next_action: string
   answer_results: DiagnosticAnswerResult[]
 }

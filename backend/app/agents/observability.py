@@ -1,4 +1,4 @@
-"""Task-scoped, non-contract telemetry for V3 model invocations."""
+"""Task-scoped, non-contract telemetry for model invocations."""
 
 from __future__ import annotations
 

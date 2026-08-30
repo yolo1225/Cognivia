@@ -14,7 +14,11 @@ from app.models import (
 from app.services.diagnostic_service import create_diagnostic_session, submit_diagnostic_session
 from app.agents.profile_analysis_config import AI_APP_DEV_PROFILE_V2
 from app.scripts.seed_data import seed_domain, seed_knowledge_items
-from app.services.domain_runtime_service import DomainRuntimeError, load_profile_analysis_config
+from app.services.domain_runtime_service import (
+    DomainRuntimeError,
+    load_domain_runtime,
+    load_profile_analysis_config,
+)
 
 
 DIMENSIONS = ("theory", "practice", "problem_solving", "knowledge_breadth", "learning_speed")
@@ -164,8 +168,16 @@ def test_second_domain_can_complete_an_isolated_diagnostic_and_profile(monkeypat
                     question_type="single_choice",
                     stem=f"{suffix} choice {index}",
                     options_json=["A", "B"],
-                    answer_key_json={"correct_option": 0},
+                    answer_key_json={
+                        "correct_option": 0,
+                        "question_bank_uses": ["diagnosis"],
+                        "assessment_dimension": "operation" if suffix == "practice" else "theory",
+                    },
                     difficulty=2,
+                    status="active",
+                    certification_status="certified",
+                    certification_rule_version="question-cert-v1",
+                    source_content_hash="sha256:" + "c" * 64,
                 )
             )
     for index in range(2):
@@ -177,8 +189,16 @@ def test_second_domain_can_complete_an_isolated_diagnostic_and_profile(monkeypat
                     knowledge_item_id=item.id,
                     question_type="short_answer",
                     stem=f"{suffix} short {index}",
-                    answer_key_json={"rubric": ["x"]},
+                    answer_key_json={
+                        "rubric": ["x"],
+                        "question_bank_uses": ["diagnosis"],
+                        "assessment_dimension": "operation" if suffix == "practice" else "theory",
+                    },
                     difficulty=2,
+                    status="active",
+                    certification_status="certified",
+                    certification_rule_version="question-cert-v1",
+                    source_content_hash="sha256:" + "d" * 64,
                 )
             )
     db.commit()
@@ -263,3 +283,61 @@ def test_database_runtime_preserves_main_domain_profile_configuration() -> None:
     assert runtime.ability_weights == AI_APP_DEV_PROFILE_V2.ability_weights
     assert runtime.knowledge_catalog == AI_APP_DEV_PROFILE_V2.knowledge_catalog
     assert runtime.mastery_thresholds == AI_APP_DEV_PROFILE_V2.mastery_thresholds
+
+
+def test_safe_conceptual_runtime_does_not_require_operation_question_buckets(
+    monkeypatch,
+) -> None:
+    db = _db()
+    _domain(db, "concept_domain")
+    concept = _item(db, "concept_domain", "concept_only")
+    for index in range(6):
+        db.add(
+            DiagnosticQuestion(
+                public_id=f"concept_choice_{index}",
+                domain_code="concept_domain",
+                knowledge_item_id=concept.id,
+                question_type="single_choice",
+                stem=f"choice {index}",
+                options_json=["A", "B"],
+                answer_key_json={
+                    "correct_option": 0,
+                    "question_bank_uses": ["diagnosis"],
+                },
+                difficulty=2,
+                status="active",
+                certification_status="certified",
+                certification_rule_version="question-cert-v1",
+                source_content_hash="sha256:" + "e" * 64,
+            )
+        )
+    for index in range(4):
+        db.add(
+            DiagnosticQuestion(
+                public_id=f"concept_short_{index}",
+                domain_code="concept_domain",
+                knowledge_item_id=concept.id,
+                question_type="short_answer",
+                stem=f"short {index}",
+                answer_key_json={
+                    "rubric": ["x"],
+                    "question_bank_uses": ["diagnosis"],
+                },
+                difficulty=2,
+                status="active",
+                certification_status="certified",
+                certification_rule_version="question-cert-v1",
+                source_content_hash="sha256:" + "f" * 64,
+            )
+        )
+    db.commit()
+    monkeypatch.setattr(
+        "app.services.domain_runtime_service.candidate_rag_status",
+        lambda code: {"ready": True, "domain_code": code},
+    )
+
+    runtime = load_domain_runtime(db, "concept_domain")
+
+    assert runtime.practice_generation_mode == "safe_conceptual"
+    assert runtime.diagnostic_ready is True
+    assert not any("operation" in reason for reason in runtime.reasons)

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agents.contracts import QUALITY_RULE_VERSION
 from app.core.db import get_db
 from app.core.security import Principal, get_current_user, principal_learner, require_task
 from app.models import GenerationTask, Learner
@@ -16,6 +19,7 @@ from app.services.learning_package_service import (
     package_member_rows,
     serialize_package,
 )
+from app.services.learning_package_export_service import export_learning_package
 from app.services.profile_service import public_id
 from app.workers.generation_worker import run_generation_task
 
@@ -48,6 +52,32 @@ def get_learning_package(
     return ok(serialize_package(db, task, include_resolved_impact=True))
 
 
+@router.post("/{task_id}/export", response_model=ApiResponse)
+def create_learning_package_export(
+    task_id: str,
+    payload: dict[str, Any] | None = None,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    task = require_task(db, principal, task_id)
+    try:
+        return ok(
+            export_learning_package(
+                db,
+                task,
+                str((payload or {}).get("format", "markdown")),
+            )
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = (
+            409
+            if detail.startswith("learning_package_")
+            else 422
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+
 @router.post("/{task_id}/knowledge-impact/dismiss", response_model=ApiResponse)
 def dismiss_knowledge_impact(
     task_id: str,
@@ -75,7 +105,7 @@ def refresh_affected_resources(
         raise HTTPException(status_code=409, detail="PACKAGE_IS_NOT_CURRENT")
     if (source_task.package_quality_json or {}).get(
         "quality_rule_version"
-    ) != "quality-v6-20260818":
+    ) != QUALITY_RULE_VERSION:
         raise HTTPException(
             status_code=409,
             detail="V6_FULL_REGENERATION_REQUIRED",

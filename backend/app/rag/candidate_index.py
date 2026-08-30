@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import uuid
+from copy import copy
 from collections import defaultdict
 from datetime import UTC, datetime
 from time import perf_counter
@@ -14,7 +15,8 @@ from chromadb.errors import NotFoundError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
+from app.agents.domain_evidence_policy import classify_evidence_capabilities
+from app.models import DiagnosticQuestion, KnowledgeImportCandidate, KnowledgeItem, KnowledgeRelation
 from app.rag.candidate_chunker import CHUNKER_VERSION, CandidateChunk, chunk_knowledge_item
 from app.rag.candidate_manifest import (
     DISTANCE_METRIC,
@@ -24,7 +26,14 @@ from app.rag.candidate_manifest import (
     compute_index_version,
 )
 from app.rag.embedding_provider import EmbeddingProvider
+from app.rag.database_manifest_store import DatabaseManifestStore
 from app.scripts.validate_rag_seed import source_data_version
+from app.services.question_source_binding_service import (
+    QuestionSourceBindingError,
+    candidate_source_locator,
+    validate_question_source_binding,
+)
+from app.services.question_certification_service import knowledge_item_content_hash
 
 
 logger = logging.getLogger(__name__)
@@ -50,11 +59,16 @@ def _item_payload(item: KnowledgeItem) -> dict[str, Any]:
         "difficulty": item.difficulty,
         "tags": list(item.tags_json or []),
         "evidence_capabilities": list(item.evidence_capabilities_json or []),
+        "ability_weights": dict(item.ability_weights_json or {}),
         "content": item.content_md,
         "source_title": item.source_title,
         "source_url": item.source_url,
         "license_note": item.license_note,
     }
+
+
+def knowledge_item_source_content_hash(item: KnowledgeItem) -> str:
+    return knowledge_item_content_hash(item)
 
 
 def database_source_snapshot(db: Session, items: list[KnowledgeItem]) -> list[dict[str, Any]]:
@@ -146,11 +160,21 @@ def validate_knowledge_integrity(
             raise CandidateIndexError(
                 f"diagnostic question has no explanation: {question.public_id}"
             )
-        expected_locator = f"knowledge:{item.public_id}#chunk="
-        if not str(answer.get("source_locator") or "").startswith(expected_locator):
-            raise CandidateIndexError(
-                f"diagnostic question has no valid source locator: {question.public_id}"
+        if (
+            question.status != "active"
+            or question.certification_status != "certified"
+        ):
+            continue
+        try:
+            validate_question_source_binding(
+                item,
+                question,
+                chunks_by_id,
             )
+        except QuestionSourceBindingError as exc:
+            raise CandidateIndexError(
+                f"diagnostic question has invalid source binding: {question.public_id}"
+            ) from exc
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -172,7 +196,7 @@ class CandidateIndexBuilder:
         self.db = db
         self.client = chroma_client
         self.provider = embedding_provider
-        self.manifests = manifest_store or CandidateManifestStore()
+        self.manifests = manifest_store or DatabaseManifestStore(db)
         self._now = now or (lambda: datetime.now(UTC))
 
     def _collection_exists(self, name: str) -> bool:
@@ -201,7 +225,7 @@ class CandidateIndexBuilder:
 
     @staticmethod
     def _item_hash(item: KnowledgeItem) -> str:
-        return _canonical_hash(_item_payload(item))
+        return knowledge_item_source_content_hash(item)
 
     @staticmethod
     def _metadata_for(
@@ -221,7 +245,9 @@ class CandidateIndexBuilder:
             "category": item.category,
             "difficulty": item.difficulty,
             "tags": ",".join(item.tags_json or []),
-            "evidence_capabilities": ",".join(item.evidence_capabilities_json or []),
+            "evidence_capabilities": ",".join(
+                classify_evidence_capabilities(chunk.embedding_text)
+            ),
             "source_title": item.source_title,
             "source_url": item.source_url or "",
             "license_note": item.license_note,
@@ -229,11 +255,7 @@ class CandidateIndexBuilder:
             "chunk_count": chunk_count,
             "heading_path": json.dumps(chunk.heading_path, ensure_ascii=False),
             "content_checksum": hashlib.sha256(chunk.embedding_text.encode("utf-8")).hexdigest(),
-            "source_locator": (
-                f"document:{item.source_document_id}#chunk={chunk.chunk_index}"
-                if item.source_document_id
-                else f"knowledge:{item.public_id}#chunk={chunk.chunk_index}"
-            ),
+            "source_locator": candidate_source_locator(item, chunk),
             "item_content_hash": item_hash,
             "embedding_model": model,
             "embedding_dimensions": dimensions,
@@ -428,6 +450,37 @@ class CandidateIndexBuilder:
                 .order_by(KnowledgeItem.public_id)
             )
         )
+        if staged_document_id is not None:
+            projected: dict[str, KnowledgeItem] = {item.public_id: item for item in items}
+            candidates = self.db.scalars(
+                select(KnowledgeImportCandidate).where(
+                    KnowledgeImportCandidate.document_id == staged_document_id,
+                    KnowledgeImportCandidate.candidate_type == "knowledge_item",
+                    KnowledgeImportCandidate.status == "approved",
+                )
+            )
+            for import_candidate in candidates:
+                payload = import_candidate.payload_json or {}
+                if payload.get("action") not in {"update", "merge"}:
+                    continue
+                target = projected.get(str(payload.get("target_public_id") or ""))
+                if target is None:
+                    continue
+                clone = copy(target)
+                clone.name = str(payload.get("name") or target.name)
+                clone.category = str(payload.get("category") or target.category)
+                clone.difficulty = int(payload.get("difficulty") or target.difficulty)
+                clone.tags_json = list(payload.get("tags") or target.tags_json or [])
+                clone.evidence_capabilities_json = list(
+                    payload.get("evidence_capabilities") or target.evidence_capabilities_json or []
+                )
+                clone.content_md = str(payload.get("content") or target.content_md)
+                clone.source_title = str(payload.get("source_title") or target.source_title)
+                clone.source_url = payload.get("source_url") or target.source_url
+                clone.license_note = str(payload.get("license_note") or target.license_note)
+                clone.needs_reembedding = True
+                projected[target.public_id] = clone
+            items = sorted(projected.values(), key=lambda item: item.public_id)
         if not items:
             raise CandidateIndexError(f"no knowledge items found for domain_code={domain_code}")
         chunks_by_id = self._chunks_for(items)
@@ -439,9 +492,17 @@ class CandidateIndexBuilder:
         )
         snapshot = database_source_snapshot(self.db, items)
         source_version = source_data_version(snapshot)
-        # A reset must be able to recover when its manifest outlives the
-        # Chroma collection it points to. Do not validate stale state before
-        # creating the replacement collection.
+        # A reset does not reuse old vectors, but activation still needs the
+        # collection that was active when the build started as its CAS base.
+        # Ignore that base only when the recorded collection has disappeared.
+        recorded_manifest = self.manifests.load(domain_code)
+        reset_previous_collection = (
+            recorded_manifest.active_collection
+            if reset
+            and recorded_manifest is not None
+            and self._collection_exists(recorded_manifest.active_collection)
+            else None
+        )
         manifest = None if reset else self._load_manifest(domain_code)
 
         old_records: list[dict[str, Any]] = []
@@ -555,7 +616,11 @@ class CandidateIndexBuilder:
             new_manifest = CandidateIndexManifest(
                 schema_version=MANIFEST_SCHEMA_VERSION,
                 active_collection=collection_name,
-                previous_collection=(manifest.active_collection if manifest else None),
+                previous_collection=(
+                    reset_previous_collection
+                    if reset
+                    else (manifest.active_collection if manifest else None)
+                ),
                 domain_code=domain_code,
                 embedding_model=self.provider.model_name,
                 embedding_dimensions=dimensions,
@@ -586,7 +651,11 @@ class CandidateIndexBuilder:
             "source_data_version": source_version,
             "index_version": index_version,
             "active_collection": collection_name,
-            "previous_collection": manifest.active_collection if manifest else None,
+            "previous_collection": (
+                reset_previous_collection
+                if reset
+                else (manifest.active_collection if manifest else None)
+            ),
             "indexed_items": len(items),
             "indexed_chunks": collection.count(),
             "reused_chunks": len(reused_records),
@@ -613,7 +682,15 @@ class CandidateIndexBuilder:
             if recorded is not None and self._collection_exists(recorded.active_collection)
             else None
         )
-        if previous and previous.active_collection != candidate.previous_collection:
+        if previous and previous.active_collection == candidate.active_collection:
+            if (
+                previous.index_version != candidate.index_version
+                or previous.source_data_version != candidate.source_data_version
+            ):
+                raise CandidateIndexError(
+                    "active manifest version does not match candidate payload"
+                )
+        elif previous and previous.active_collection != candidate.previous_collection:
             raise CandidateIndexError("active manifest changed while candidate was being built")
         if clear_reembedding:
             items = list(

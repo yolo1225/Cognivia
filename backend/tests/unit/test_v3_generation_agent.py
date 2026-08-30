@@ -12,6 +12,8 @@ from app.agents.contracts import (
     GradedQuizContent,
     LectureContent,
     PracticeGuideContent,
+    QuestionType,
+    RetrievedQuestion,
     ResourceType,
     RevisionPlan,
 )
@@ -21,33 +23,65 @@ from app.agents.generation_agent import (
     GenerationError,
     RevisionFieldPatch,
     RevisionPatchResponse,
-    _apply_quiz_blueprint_fallback,
     _apply_revision_patches,
-    _audited_quiz_slot_violations,
     _sanitize_revision_patches,
-    _stabilize_lecture_summary,
     _generation_payload,
     _quiz_blueprint,
     _quiz_blueprint_violations,
     _fixture_response,
-    _ground_practice_revision_fallbacks,
-    _apply_content_policy_fallback,
-    _apply_practice_evidence_fallback,
     _content_policy_violations,
-    _evidence_depth_violations,
-    _merge_coverage_additions,
     _merge_revision_candidate,
     _normalize_revision_path,
     _revision_field_fingerprints,
     _strip_audited_claims_after_repairs,
+    normalize_generated_content,
 )
 from app.agents.observability import collect_model_calls
+from app.agents.review_claim_manifest import build_review_claims
+from app.agents.nodes import _merge_revision_retrieval, _partial_generation_input
 from app.agents.domain_evidence_policy import (
     EvidenceCapability,
     get_domain_evidence_policy,
     normalize_evidence_capabilities,
 )
 from app.services.llm_service import ModelResponseError
+from app.services.question_bank_service import (
+    QuestionBankError,
+    _eligible_question_values,
+    _select_reference_questions,
+    build_graded_quiz_from_question_bank,
+)
+
+
+def test_partial_revision_retains_sources_cited_by_unchanged_resources() -> None:
+    flow = initial_generation_flow_example()
+    previous = flow["retrieve_knowledge"]["output"]
+    generated = flow["generate_resource"]["output"]
+    fresh = previous.model_copy(
+        update={
+            "chunks": [previous.chunks[0]],
+            "covered_knowledge_ids": [previous.chunks[0].knowledge_id],
+        }
+    )
+    inherited_source_ids = {
+        source.source_ref_id
+        for resource in generated.resources
+        if resource.resource_type is not ResourceType.GRADED_QUIZ
+        for source in resource.source_refs
+    }
+
+    merged = _merge_revision_retrieval(
+        previous=previous,
+        fresh=fresh,
+        generated=generated,
+        active_types={ResourceType.GRADED_QUIZ},
+    )
+
+    merged_source_ids = {chunk.source.source_ref_id for chunk in merged.chunks}
+    assert inherited_source_ids.issubset(merged_source_ids)
+    assert {chunk.source.source_ref_id for chunk in fresh.chunks}.issubset(
+        merged_source_ids
+    )
 
 
 class StubGenerator:
@@ -119,6 +153,23 @@ class UnrepairedPracticeEvidenceGenerator:
         content.steps[0].expected_result = "接口固定返回成功状态"
         content.steps[0].troubleshooting = "失败时重新提交"
         content.acceptance_criteria[0] = "接口返回固定 JSON 字段"
+        return response.model_copy(update={"structured_content": content})
+
+    def repair_content_policy(
+        self, _request, _resource_type, _allowed_sources, candidate, _violations
+    ):
+        self.repair_calls += 1
+        return candidate
+
+
+class UnrepairedPracticeResultGenerator:
+    repair_calls = 0
+
+    def generate(self, request, resource_type, allowed_sources):
+        response = _fixture_response(request, resource_type, allowed_sources)
+        content = response.structured_content.model_copy(deep=True)
+        assert isinstance(content, PracticeGuideContent)
+        content.steps[0].expected_result = "接口固定返回成功状态"
         return response.model_copy(update={"structured_content": content})
 
     def repair_content_policy(
@@ -225,30 +276,28 @@ class InvalidStructuredOutputGenerator:
         )
 
 
+class ResourceRetryGenerator:
+    def __init__(self, *, persistent_failure: bool = False) -> None:
+        self.calls = {ResourceType.LECTURE: 0, ResourceType.PRACTICE_GUIDE: 0}
+        self.persistent_failure = persistent_failure
+
+    def generate(self, request, resource_type, allowed_sources):
+        self.calls[resource_type] += 1
+        if resource_type is ResourceType.PRACTICE_GUIDE and (
+            self.persistent_failure or self.calls[resource_type] == 1
+        ):
+            raise GenerationError("practice_structure_invalid")
+        return _fixture_response(request, resource_type, allowed_sources)
+
+
 class InvalidLocalStructureGenerator:
     def generate(self, _request, _resource_type, _allowed_sources):
         return {"difficulty": 2}
 
 
-class QuizSlotRepairGenerator:
-    repair_calls = 0
-
-    def generate(self, request, resource_type, allowed_sources):
-        response = _fixture_response(request, resource_type, allowed_sources)
-        if resource_type != ResourceType.GRADED_QUIZ:
-            return response
-        content = response.structured_content.model_copy(deep=True)
-        assert isinstance(content, GradedQuizContent)
-        questions = list(content.questions)
-        questions[0] = questions[0].model_copy(update={"knowledge_id": "wrong-knowledge"})
-        return response.model_copy(
-            update={"structured_content": content.model_copy(update={"questions": questions})}
-        )
-
-    def repair_quiz(self, request, allowed_sources, _candidate, _violations):
-        self.repair_calls += 1
-        return _fixture_response(request, ResourceType.GRADED_QUIZ, allowed_sources)
-
+class QuizGeneratorMustNotRun:
+    def generate(self, _request, _resource_type, _allowed_sources):
+        raise AssertionError("正式题库组卷不得调用生成模型")
 
 def _input() -> GenerateResourceInput:
     request = initial_generation_flow_example()["generate_resource"]["input"]
@@ -268,12 +317,230 @@ def _input() -> GenerateResourceInput:
     return request.model_copy(update={"requirements": requirements})
 
 
+def _with_formal_question_bank(request: GenerateResourceInput) -> GenerateResourceInput:
+    target_ids = request.requirements.resource_knowledge_targets.get(
+        ResourceType.GRADED_QUIZ, []
+    )
+    questions = []
+    for knowledge_id in target_ids:
+        source_locator = next(
+            chunk.source_locator
+            for chunk in request.retrieved_chunks
+            if chunk.knowledge_id == knowledge_id
+        )
+        for slot in range(1, 7):
+            is_choice = slot % 2 == 1
+            questions.append(
+                RetrievedQuestion(
+                    question_id=f"formal_{knowledge_id}_{slot}",
+                    knowledge_id=knowledge_id,
+                    question_type=(
+                        QuestionType.SINGLE_CHOICE
+                        if is_choice
+                        else QuestionType.SHORT_ANSWER
+                    ),
+                    stem=f"正式题库题目 {slot}",
+                    options=["正确项", "干扰项一", "干扰项二", "干扰项三"]
+                    if is_choice
+                    else [],
+                    answer_key={
+                        **(
+                            {"correct_option": 0}
+                            if is_choice
+                            else {"answer": "来源支持的答案", "rubric": ["评分点一", "评分点二"]}
+                        ),
+                        "explanation": "依据当前知识点来源材料判定。",
+                        "source_ref_ids": [
+                            next(
+                                chunk.source.source_ref_id
+                                for chunk in request.retrieved_chunks
+                                if chunk.knowledge_id == knowledge_id
+                                and chunk.source_locator == source_locator
+                            )
+                        ],
+                        "source_locator": source_locator,
+                        "question_bank_uses": ["graded_quiz"],
+                        "question_slot": slot,
+                        "quiz_level": (
+                            "foundation"
+                            if slot <= 2
+                            else "improvement"
+                            if slot <= 4
+                            else "challenge"
+                        ),
+                    },
+                    explanation="依据当前知识点来源材料判定。",
+                    difficulty=min(5, max(1, slot)),
+                )
+            )
+    return request.model_copy(update={"reference_questions": questions})
+
+
+def test_formal_question_bank_allows_short_matching_quiz_but_requires_three_questions() -> None:
+    request = initial_generation_flow_example()["generate_resource"]["input"]
+    request = _with_formal_question_bank(request)
+    incomplete = request.model_copy(update={"reference_questions": request.reference_questions[:-4]})
+
+    with pytest.raises(QuestionBankError, match="graded_quiz_question_bank_insufficient"):
+        _select_reference_questions(incomplete)
+
+
+def test_formal_short_answer_accepts_detailed_source_backed_rubric() -> None:
+    answer_key = {
+        "answer": "来源支持的完整答案",
+        "explanation": "来源支持的解析",
+        "source_ref_ids": ["knowledge::chunk::0"],
+        "quiz_level": "challenge",
+        "rubric": [f"评分点 {index}" for index in range(8)],
+        "question_bank_uses": ["graded_quiz"],
+    }
+
+    assert _eligible_question_values("short_answer", [], answer_key)
+    assert not _eligible_question_values(
+        "short_answer", [], {**answer_key, "rubric": [*answer_key["rubric"], "评分点 9"]}
+    )
+
+
+def test_formal_question_bank_does_not_mix_unrelated_knowledge() -> None:
+    request = initial_generation_flow_example()["generate_resource"]["input"]
+    request = _with_formal_question_bank(request)
+    unrelated = request.reference_questions[0].model_copy(
+        update={"question_id": "foreign-question", "knowledge_id": "FOREIGN-K001"}
+    )
+    selected = _select_reference_questions(
+        request.model_copy(update={"reference_questions": [*request.reference_questions, unrelated]})
+    )
+
+    assert all(question.knowledge_id != "FOREIGN-K001" for _, _, question in selected)
+
+
+def test_formal_question_with_declared_locator_cannot_fall_back_to_other_chunk() -> None:
+    request = _with_formal_question_bank(
+        initial_generation_flow_example()["generate_resource"]["input"]
+    )
+    first = request.reference_questions[0].model_copy(
+        update={
+            "answer_key": {
+                **request.reference_questions[0].answer_key,
+                "source_locator": "missing-exact-locator",
+            }
+        }
+    )
+    request = request.model_copy(
+        update={"reference_questions": [first, *request.reference_questions[1:]]}
+    )
+
+    with pytest.raises(QuestionBankError, match="graded_quiz_question_source_missing"):
+        build_graded_quiz_from_question_bank(
+            request,
+            [chunk.source for chunk in request.retrieved_chunks],
+        )
+
+
+def test_quiz_only_revision_preserves_selected_related_question_source() -> None:
+    request = _with_formal_question_bank(
+        initial_generation_flow_example()["generate_resource"]["input"]
+    )
+    target_id = request.requirements.resource_knowledge_targets[ResourceType.GRADED_QUIZ][0]
+    target_chunk = next(
+        chunk for chunk in request.retrieved_chunks if chunk.knowledge_id == target_id
+    )
+    related_source_id = "RELATED-K001::chunk::0"
+    related_locator = "document:related-question-source#chunk=0"
+    related_chunk = target_chunk.model_copy(
+        update={
+            "knowledge_id": "RELATED-K001",
+            "source_locator": related_locator,
+            "source": target_chunk.source.model_copy(
+                update={"source_ref_id": related_source_id}
+            ),
+        }
+    )
+    questions = [
+        question.model_copy(
+            update={
+                "knowledge_id": "RELATED-K001",
+                "related_knowledge_ids": [target_id],
+                "answer_key": {
+                    **question.answer_key,
+                    "source_ref_ids": [related_source_id],
+                    "source_locator": related_locator,
+                },
+            }
+        )
+        if question.knowledge_id == target_id
+        else question
+        for question in request.reference_questions
+    ]
+    request = request.model_copy(
+        update={
+            "retrieved_chunks": [*request.retrieved_chunks, related_chunk],
+            "reference_questions": questions,
+        }
+    )
+
+    partial = _partial_generation_input(request, [ResourceType.GRADED_QUIZ])
+
+    assert related_source_id in partial.requirements.source_whitelist
+    content = build_graded_quiz_from_question_bank(
+        partial, [chunk.source for chunk in partial.retrieved_chunks]
+    )
+    assert len(content.questions) == 3
+    assert any(question.knowledge_id == "RELATED-K001" for question in content.questions)
+
+
+def test_formal_quiz_revision_replaces_rejected_question_without_model_generation() -> None:
+    request = _with_formal_question_bank(
+        initial_generation_flow_example()["generate_resource"]["input"]
+    )
+    request = _partial_generation_input(request, [ResourceType.GRADED_QUIZ])
+    replacement = request.reference_questions[2].model_copy(
+        update={
+            "question_id": "formal_replacement_improvement",
+            "stem": "正式题库替代提升题",
+        }
+    )
+    request = request.model_copy(
+        update={"reference_questions": [*request.reference_questions, replacement]}
+    )
+    agent = ContentGenerationAgent(
+        generator=QuizGeneratorMustNotRun(), renderer=render_resource_markdown
+    )
+    previous = agent.execute(request).resources[0]
+    previous_content = previous.structured_content
+    assert isinstance(previous_content, GradedQuizContent)
+    accepted_ids = [question.question_id for question in previous_content.questions[:2]]
+    rejected_id = previous_content.questions[2].question_id
+    revision_plan = RevisionPlan(
+        revision_count=1,
+        resource_types=[ResourceType.GRADED_QUIZ],
+        field_paths_by_resource={
+            ResourceType.GRADED_QUIZ: ["questions[2].prompt"]
+        },
+    )
+    revised_request = request.model_copy(
+        update={
+            "requirements": request.requirements.model_copy(
+                update={"revision_plan": revision_plan}
+            )
+        }
+    )
+
+    revised = agent.revise(revised_request, [previous]).resources[0].structured_content
+
+    assert isinstance(revised, GradedQuizContent)
+    assert len(revised.questions) == 3
+    assert [question.question_id for question in revised.questions[:2]] == accepted_ids
+    assert rejected_id not in {question.question_id for question in revised.questions}
+    assert all(question.reference_question_ids for question in revised.questions)
+
+
 def test_v3_generation_emits_contract_artifact_and_deterministic_markdown() -> None:
     output = ContentGenerationAgent(
         generator=StubGenerator(), renderer=render_resource_markdown
     ).execute(_input())
 
-    assert output.contract_version == "agent-contract-v6"
+    assert output.contract_version == "agent-contract-v10"
     assert output.task_id == _input().task_id
     assert [item.resource_type for item in output.resources] == [ResourceType.LECTURE]
     artifact = output.resources[0]
@@ -289,6 +556,80 @@ def test_v3_generation_rejects_non_contract_input() -> None:
         ).execute({})  # type: ignore[arg-type]
 
 
+def _lecture_and_practice_input() -> GenerateResourceInput:
+    request = _input()
+    resource_types = [ResourceType.LECTURE, ResourceType.PRACTICE_GUIDE]
+    targets = request.requirements.required_knowledge_ids
+    return request.model_copy(
+        update={
+            "context": request.context.model_copy(
+                update={"requested_resource_types": resource_types}
+            ),
+            "requirements": request.requirements.model_copy(
+                update={
+                    "resource_types": resource_types,
+                    "resource_knowledge_targets": {
+                        resource_type: targets for resource_type in resource_types
+                    },
+                }
+            ),
+        }
+    )
+
+
+def test_parallel_generation_retries_only_failed_resource() -> None:
+    generator = ResourceRetryGenerator()
+
+    output = ContentGenerationAgent(
+        generator=generator, renderer=render_resource_markdown
+    ).execute(_lecture_and_practice_input())
+
+    assert [item.resource_type for item in output.resources] == [
+        ResourceType.LECTURE,
+        ResourceType.PRACTICE_GUIDE,
+    ]
+    assert generator.calls == {
+        ResourceType.LECTURE: 1,
+        ResourceType.PRACTICE_GUIDE: 2,
+    }
+
+
+def test_parallel_generation_records_persistent_failed_resource(caplog) -> None:
+    generator = ResourceRetryGenerator(persistent_failure=True)
+
+    with pytest.raises(GenerationError, match="practice_structure_invalid"):
+        ContentGenerationAgent(
+            generator=generator, renderer=render_resource_markdown
+        ).execute(_lecture_and_practice_input())
+
+    assert generator.calls == {
+        ResourceType.LECTURE: 1,
+        ResourceType.PRACTICE_GUIDE: 2,
+    }
+    assert "generation_resource_failed" in caplog.text
+    assert "practice_guide" in caplog.text
+
+
+def test_missing_target_evidence_is_observable_but_does_not_block_review(caplog) -> None:
+    request = _input()
+    retained = request.retrieved_chunks[0]
+    request = request.model_copy(
+        update={
+            "retrieved_chunks": [retained],
+            "requirements": request.requirements.model_copy(
+                update={"source_whitelist": [retained.source.source_ref_id]}
+            ),
+        }
+    )
+
+    output = ContentGenerationAgent(
+        generator=StubGenerator(), renderer=render_resource_markdown
+    ).execute(request)
+
+    assert output.resources
+    assert "generation_missing_target_evidence" in caplog.text
+
+
 def test_v3_generation_rejects_sources_outside_whitelist() -> None:
     with pytest.raises(GenerationError, match="generated_source_outside_whitelist"):
         ContentGenerationAgent(
@@ -296,142 +637,39 @@ def test_v3_generation_rejects_sources_outside_whitelist() -> None:
         ).execute(_input())
 
 
-def test_generation_repairs_forbidden_source_meta_claim_once() -> None:
+def test_generation_normalizes_forbidden_source_meta_claim_without_model_repair() -> None:
     generator = ContentPolicyRepairGenerator()
     output = ContentGenerationAgent(generator=generator, renderer=render_resource_markdown).execute(
         _input()
     )
 
-    assert generator.repair_calls == 1
+    assert generator.repair_calls == 0
     content = output.resources[0].structured_content
-    assert content.summary == _input().retrieved_chunks[0].content
+    assert content.summary == "请结合本讲义的核心概念，梳理关键要点并记录自己的理解。"
     assert not _content_policy_violations(content)
 
 
-def test_generation_downgrades_unrepaired_source_meta_claim() -> None:
+def test_generation_downgrades_source_meta_claim_without_model_repair() -> None:
     generator = UnrepairedContentPolicyGenerator()
     output = ContentGenerationAgent(
         generator=generator, renderer=render_resource_markdown
     ).execute(_input())
 
-    assert generator.repair_calls == 1
+    assert generator.repair_calls == 0
     content = output.resources[0].structured_content
     assert isinstance(content, LectureContent)
     assert content.summary == "请结合本讲义的核心概念，梳理关键要点并记录自己的理解。"
     assert not _content_policy_violations(content)
 
 
-def test_content_policy_fallback_keeps_valid_text_around_provenance_claim() -> None:
-    request = _input()
-    response = _fixture_response(request, ResourceType.LECTURE, [request.retrieved_chunks[0].source])
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, LectureContent)
-    content.summary = "RAG 将检索结果作为生成上下文。所有结论均源自所列官方文档。"
-
-    sanitized = _apply_content_policy_fallback(
-        content,
-        [{"path": "summary", "code": "forbidden_meta_claim"}],
-    )
-
-    assert isinstance(sanitized, LectureContent)
-    assert sanitized.summary == "RAG 将检索结果作为生成上下文"
-    assert not _content_policy_violations(sanitized)
 
 
-def test_unified_policy_removes_misplaced_expected_result_action() -> None:
-    request = _input()
-    response = _fixture_response(
-        request,
-        ResourceType.PRACTICE_GUIDE,
-        [request.retrieved_chunks[0].source],
-    )
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.steps[0].expected_result = "处理完成后返回任务标识。请记录实际观察结果。"
-
-    violations = _content_policy_violations(content)
-    once = _apply_content_policy_fallback(content, violations)
-    twice = _apply_content_policy_fallback(once, _content_policy_violations(once))
-
-    assert any(
-        item == {
-            "path": "steps[0].expected_result",
-            "code": "misplaced_field_content",
-        }
-        for item in violations
-    )
-    assert isinstance(once, PracticeGuideContent)
-    assert once.steps[0].expected_result == "处理完成后返回任务标识"
-    assert twice == once
-    assert not _content_policy_violations(once)
 
 
-def test_content_policy_replaces_sole_implementation_meta_claim_safely() -> None:
-    request = _input()
-    response = _fixture_response(
-        request,
-        ResourceType.PRACTICE_GUIDE,
-        [request.retrieved_chunks[0].source],
-    )
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.steps[0].expected_result = "标注由代码落实的安全与校验项。"
-
-    sanitized = _apply_content_policy_fallback(
-        content,
-        _content_policy_violations(content),
-    )
-
-    assert isinstance(sanitized, PracticeGuideContent)
-    assert sanitized.steps[0].expected_result == (
-        "记录实际结果，并与引用材料中的描述进行核对。"
-    )
-    assert not _content_policy_violations(sanitized)
 
 
-def test_content_policy_removes_directive_misplaced_in_expected_result() -> None:
-    request = _input()
-    response = _fixture_response(
-        request,
-        ResourceType.PRACTICE_GUIDE,
-        [request.retrieved_chunks[0].source],
-    )
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.steps[0].expected_result = (
-        "校验通过表示响应符合当前契约；"
-        "校验失败时应暴露具体缺失或类型不符的字段，而非忽略或强转；"
-        "检查记录包含实际响应与契约的差异。"
-    )
-
-    violations = _content_policy_violations(content)
-    sanitized = _apply_content_policy_fallback(content, violations)
-
-    assert any(
-        item == {
-            "path": "steps[0].expected_result",
-            "code": "misplaced_field_content",
-        }
-        for item in violations
-    )
-    assert isinstance(sanitized, PracticeGuideContent)
-    assert sanitized.steps[0].expected_result == "校验通过表示响应符合当前契约"
-    assert not _content_policy_violations(sanitized)
 
 
-def test_lecture_summary_drops_facts_not_taught_by_core_concepts() -> None:
-    request = _input()
-    response = _fixture_response(
-        request, ResourceType.LECTURE, [request.retrieved_chunks[0].source]
-    )
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, LectureContent)
-    content.core_concepts[0].explanation = "API 调用前应限制输入大小。"
-    content.summary = "API 调用前应限制输入大小。调用后需校验未讲授的固定响应字段。"
-
-    stabilized = _stabilize_lecture_summary(content)
-
-    assert stabilized.summary == "API 调用前应限制输入大小。"
 
 
 def test_quiz_content_policy_removes_internal_source_ids_from_all_fact_fields() -> None:
@@ -450,6 +688,7 @@ def test_quiz_content_policy_removes_internal_source_ids_from_all_fact_fields() 
             ),
         }
     )
+    request = _with_formal_question_bank(request)
     sources = [chunk.source for chunk in request.retrieved_chunks]
     content = _fixture_response(request, ResourceType.GRADED_QUIZ, sources).structured_content
     content = content.model_copy(deep=True)
@@ -458,7 +697,7 @@ def test_quiz_content_policy_removes_internal_source_ids_from_all_fact_fields() 
     content.questions[0].explanation = "AIAPP-K029::chunk::0 明确支持该答案。"
 
     violations = _content_policy_violations(content)
-    sanitized = _apply_content_policy_fallback(content, violations)
+    sanitized = normalize_generated_content(content)
 
     assert {item["path"] for item in violations} >= {
         "questions[0].prompt",
@@ -487,6 +726,7 @@ def test_quiz_content_policy_drops_absence_based_distractor_reasoning() -> None:
             ),
         }
     )
+    request = _with_formal_question_bank(request)
     sources = [chunk.source for chunk in request.retrieved_chunks]
     content = _fixture_response(request, ResourceType.GRADED_QUIZ, sources).structured_content
     content = content.model_copy(deep=True)
@@ -495,13 +735,32 @@ def test_quiz_content_policy_drops_absence_based_distractor_reasoning() -> None:
     )
 
     violations = _content_policy_violations(content)
-    sanitized = _apply_content_policy_fallback(content, violations)
+    sanitized = normalize_generated_content(content)
 
     assert any(item["code"] == "unsupported_distractor_rationale" for item in violations)
     assert sanitized.questions[0].explanation == "HTTP 请求包含方法和目标 URI；"
 
 
-def test_generation_deterministically_downgrades_unsupported_practice_fields() -> None:
+def test_lecture_explanation_is_not_treated_as_a_quiz_distractor_rationale() -> None:
+    request = _input()
+    sources = [chunk.source for chunk in request.retrieved_chunks]
+    content = _fixture_response(request, ResourceType.LECTURE, sources).structured_content
+    assert isinstance(content, LectureContent)
+    content = content.model_copy(deep=True)
+    content.core_concepts[0].explanation = "文档未说明响应头字段可选，因此应重点核对响应结构。"
+
+    violations = _content_policy_violations(content)
+
+    assert not any(
+        item == {
+            "path": "core_concepts[0].explanation",
+            "code": "unsupported_distractor_rationale",
+        }
+        for item in violations
+    )
+
+
+def test_generation_leaves_fixed_practice_result_for_semantic_review() -> None:
     request = _input()
     requirements = request.requirements.model_copy(
         update={
@@ -514,111 +773,26 @@ def test_generation_deterministically_downgrades_unsupported_practice_fields() -
     context = request.context.model_copy(
         update={"resource_types": [ResourceType.PRACTICE_GUIDE]}
     )
-    generator = UnrepairedPracticeEvidenceGenerator()
+    generator = UnrepairedPracticeResultGenerator()
 
     output = ContentGenerationAgent(
         generator=generator, renderer=render_resource_markdown
     ).execute(request.model_copy(update={"context": context, "requirements": requirements}))
 
+    assert generator.repair_calls == 0
     content = output.resources[0].structured_content
     assert isinstance(content, PracticeGuideContent)
-    assert generator.repair_calls == 1
-    assert content.environment_requirements == ["准备练习所需的材料与受控环境。"]
-    assert content.steps[0].instruction == "阅读并梳理引用材料中明确描述的处理流程。"
-    assert content.steps[0].expected_result == "记录实际结果并与引用材料中的描述进行核对。"
-    assert content.steps[0].code_or_command is None
-    assert content.steps[0].troubleshooting is None
-    assert content.acceptance_criteria[0] == "形成学习记录并标注所依据的材料。"
-    assert content.steps[0].source_ref_ids
-    assert not _evidence_depth_violations(
-        content, request.model_copy(update={"context": context, "requirements": requirements}),
-        [request.retrieved_chunks[0].source],
-    )
+    assert content.steps[0].expected_result == "接口固定返回成功状态"
 
 
-def test_concept_evidence_cannot_support_executable_practice_code() -> None:
-    request = _input()
-    source = request.retrieved_chunks[0].source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    content.environment_requirements[0] = "安装并配置指定版本的 Python 环境"
-    content.steps[0].instruction = "执行 Git 提交并调用 HTTP 接口"
-    content.steps[0].code_or_command = "python app.py"
-    content.steps[0].expected_result = "接口固定返回成功状态"
-
-    violations = _evidence_depth_violations(content, request, [source])
-
-    assert {
-        "path": "steps[0].code_or_command",
-        "code": "executable_evidence_missing",
-    } in violations
-    assert {
-        "path": "steps[0].instruction",
-        "code": "operation_evidence_missing",
-    } in violations
-    assert {
-        "path": "steps[0].expected_result",
-        "code": "expected_result_evidence_missing",
-    } in violations
-    assert any(item["code"] == "environment_evidence_missing" for item in violations)
 
 
-def test_practice_fallback_separates_git_commands_glued_by_revision() -> None:
-    request = _input()
-    source = request.retrieved_chunks[0].source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    content.steps[0].code_or_command = 'git diffgit commit -m "describe intent"'
-
-    sanitized = _apply_practice_evidence_fallback(content, [])
-
-    assert sanitized.steps[0].code_or_command == 'git diff\ngit commit -m "describe intent"'
 
 
-def test_direct_code_evidence_allows_practice_code() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={"content": "代码示例：```python\nimport json\n```"}
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = chunk.source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    content.steps[0].code_or_command = "import json"
-
-    violations = _evidence_depth_violations(content, request, [source])
-
-    assert not any(item["code"] == "executable_evidence_missing" for item in violations)
 
 
-def test_operation_and_expected_result_evidence_supports_practice_steps() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={
-            "content": (
-                "操作步骤：执行受控验证。代码示例：```python\nimport json\n```。"
-                "预期结果：完成后输出验证记录。"
-            )
-        }
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = chunk.source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
 
-    violations = _evidence_depth_violations(
-        response.structured_content, request, [source]
-    )
 
-    assert not any(
-        item["code"]
-        in {
-            "environment_evidence_missing",
-            "operation_evidence_missing",
-            "executable_evidence_missing",
-            "expected_result_evidence_missing",
-        }
-        for item in violations
-    )
 
 
 def test_revision_path_normalizes_atomic_claim_suffixes() -> None:
@@ -698,31 +872,9 @@ def test_typed_revision_patch_preserves_structure_and_unrelated_fields() -> None
     assert revised.difficulty == original.difficulty
 
 
-def test_practice_provenance_fallback_covers_every_step_and_is_idempotent() -> None:
-    request = _input()
-    source = request.retrieved_chunks[0].source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    second = content.steps[0].model_copy(
-        update={
-            "order": 2,
-            "instruction": "比较两个方案。所有结论均源自所列官方文档。",
-        }
-    )
-    content.steps.append(second)
-
-    violations = _content_policy_violations(content)
-    once = _apply_content_policy_fallback(content, violations)
-    twice = _apply_content_policy_fallback(once, _content_policy_violations(once))
-
-    assert isinstance(once, PracticeGuideContent)
-    assert once.steps[1].instruction == "比较两个方案"
-    assert not _content_policy_violations(once)
-    assert twice == once
 
 
-def test_unrepaired_second_practice_step_converges_without_task_failure() -> None:
+def test_unrepaired_meta_claim_is_sanitized_without_rejecting_teaching_step() -> None:
     request = _input()
     requirements = request.requirements.model_copy(
         update={
@@ -741,60 +893,16 @@ def test_unrepaired_second_practice_step_converges_without_task_failure() -> Non
         generator=generator, renderer=render_resource_markdown
     ).execute(request.model_copy(update={"context": context, "requirements": requirements}))
 
+    assert generator.repair_calls == 0
     content = output.resources[0].structured_content
     assert isinstance(content, PracticeGuideContent)
-    assert generator.repair_calls == 1
     assert content.steps[1].instruction == "整理差异"
-    assert not _content_policy_violations(content)
 
 
-def test_explicit_cross_domain_capabilities_override_unstructured_prose() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={"knowledge_id": "marine_valve", "content": "Calibrate the valve against the reference card."}
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = chunk.source.model_copy(update={"knowledge_id": "marine_valve"})
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.steps[0].instruction = "执行阀门校准。"
-    content.steps[0].code_or_command = "CALIBRATE VALVE A"
-    content.steps[0].expected_result = "显示校准完成状态。"
-    content.steps[0].troubleshooting = "失败时检查阀门位置。"
-    declared = {
-        "marine_valve": [
-            "operation",
-            "command",
-            "expected_result",
-            "error_handling",
-        ]
-    }
-
-    assert not _evidence_depth_violations(content, request, [source], declared)
 
 
-def test_declared_concept_capability_cannot_be_promoted_by_body_keywords() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={"content": "操作步骤：执行命令。预期结果：返回成功状态。"}
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = chunk.source
-    content = _fixture_response(
-        request, ResourceType.PRACTICE_GUIDE, [source]
-    ).structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.steps[0].instruction = "执行命令并提交请求。"
 
-    violations = _evidence_depth_violations(
-        content,
-        request,
-        [source],
-        {chunk.knowledge_id: ["concept"]},
-    )
 
-    assert any(item["code"] == "operation_evidence_missing" for item in violations)
 
 
 def test_capability_normalization_accepts_only_canonical_domain_neutral_values() -> None:
@@ -814,163 +922,9 @@ def test_capability_normalization_accepts_only_canonical_domain_neutral_values()
         )
     }
 
-def test_quiz_blueprint_rejects_revision_placeholders_and_unrelated_answers() -> None:
-    request = _input()
-    targets = list(request.requirements.required_knowledge_ids)
-    request = request.model_copy(
-        update={
-            "context": request.context.model_copy(
-                update={"requested_resource_types": [ResourceType.GRADED_QUIZ]}
-            ),
-            "requirements": request.requirements.model_copy(
-                update={
-                    "resource_types": [ResourceType.GRADED_QUIZ],
-                    "resource_knowledge_targets": {ResourceType.GRADED_QUIZ: targets},
-                }
-            ),
-        }
-    )
-    allowed_sources = [chunk.source for chunk in request.retrieved_chunks]
-    response = _fixture_response(request, ResourceType.GRADED_QUIZ, allowed_sources)
-    content = response.structured_content.model_copy(deep=True)
-    content.questions[0].prompt = "请根据引用材料完成该题并核对答案。"
-    content.questions[0].correct_answer = "与所有选项无关的答案"
-
-    violations = _quiz_blueprint_violations(
-        content,
-        _quiz_blueprint(request, allowed_sources),
-    )
-
-    assert {item["field"] for item in violations if item["question_id"] == "Q1"} >= {
-        "assessment_content",
-        "correct_answer",
-    }
 
 
-def test_audited_quiz_claim_rebuilds_the_entire_question_from_evidence() -> None:
-    request = _input()
-    targets = list(request.requirements.required_knowledge_ids)
-    request = request.model_copy(
-        update={
-            "context": request.context.model_copy(
-                update={"requested_resource_types": [ResourceType.GRADED_QUIZ]}
-            ),
-            "requirements": request.requirements.model_copy(
-                update={
-                    "resource_types": [ResourceType.GRADED_QUIZ],
-                    "resource_knowledge_targets": {ResourceType.GRADED_QUIZ: targets},
-                }
-            ),
-        }
-    )
-    sources = [chunk.source for chunk in request.retrieved_chunks]
-    content = _fixture_response(
-        request, ResourceType.GRADED_QUIZ, sources
-    ).structured_content
-    content = content.model_copy(deep=True)
-    content.questions[0].correct_answer = "材料未说明的额外因果结论"
-
-    violations = _audited_quiz_slot_violations(
-        content,
-        {"questions[0].correct_answer": ["材料未说明的额外因果结论"]},
-    )
-    rebuilt = _apply_quiz_blueprint_fallback(
-        content,
-        violations,
-        _quiz_blueprint(request, sources),
-        request,
-    )
-
-    assert violations == [{"question_id": "Q1", "field": "assessment_content"}]
-    assert rebuilt.questions[0].correct_answer != "材料未说明的额外因果结论"
-    assert not _quiz_blueprint_violations(
-        rebuilt,
-        _quiz_blueprint(request, sources),
-        request,
-    )
-
-
-def test_quiz_blueprint_rejects_cross_target_content_and_falls_back_to_target_evidence() -> None:
-    request = _input()
-    first_chunk = request.retrieved_chunks[0]
-    first_body = first_chunk.content
-    first_chunk = first_chunk.model_copy(
-        update={
-            "content": (
-                "知识点：不应成为题目答案的元数据\n"
-                "分类：测试分类\n"
-                "难度：3\n"
-                "标签：测试\n"
-                "标题：测试标题\n\n"
-                f"{first_body}"
-            )
-        }
-    )
-    request = request.model_copy(
-        update={"retrieved_chunks": [first_chunk, *request.retrieved_chunks[1:]]}
-    )
-    targets = [chunk.knowledge_id for chunk in request.retrieved_chunks]
-    request = request.model_copy(
-        update={
-            "context": request.context.model_copy(
-                update={"requested_resource_types": [ResourceType.GRADED_QUIZ]}
-            ),
-            "requirements": request.requirements.model_copy(
-                update={
-                    "resource_types": [ResourceType.GRADED_QUIZ],
-                    "resource_knowledge_targets": {ResourceType.GRADED_QUIZ: targets},
-                }
-            ),
-        }
-    )
-    sources = [chunk.source for chunk in request.retrieved_chunks]
-    blueprint = _quiz_blueprint(request, sources)
-    content = _fixture_response(request, ResourceType.GRADED_QUIZ, sources).structured_content
-    content = content.model_copy(deep=True)
-    content.questions[0].prompt = "文本向量如何用于语义相似度召回？"
-    content.questions[0].correct_answer = "文本向量映射语义"
-    content.questions[0].explanation = request.retrieved_chunks[1].content
-
-    violations = _quiz_blueprint_violations(content, blueprint, request)
-    fallback = _apply_quiz_blueprint_fallback(content, violations, blueprint, request)
-
-    assert any(
-        item["question_id"] == "Q1" and item["field"] == "knowledge_alignment"
-        for item in violations
-    )
-    assert fallback.questions[0].knowledge_id == blueprint[0]["knowledge_id"]
-    assert first_body.split("。", 1)[0] in fallback.questions[0].explanation
-    assert "不应成为题目答案的元数据" not in fallback.questions[0].correct_answer
-    assert "测试分类" not in fallback.questions[0].explanation
-    assert not _quiz_blueprint_violations(fallback, blueprint, request)
-
-
-def test_environment_fact_without_operation_evidence_is_rewritten_as_preparation() -> None:
-    request = _input()
-    chunk = request.retrieved_chunks[0].model_copy(
-        update={"content": "概念说明：输入案例可用于比较学习材料。"}
-    )
-    request = request.model_copy(update={"retrieved_chunks": [chunk]})
-    source = chunk.source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    content.environment_requirements[0] = "支持对同一组输入案例反复测试不同提示词变体"
-
-    violations = _evidence_depth_violations(content, request, [source])
-    sanitized = _apply_practice_evidence_fallback(content, violations)
-
-    assert {
-        "path": "environment_requirements[0]",
-        "code": "environment_evidence_missing",
-    } in violations
-    assert sanitized.environment_requirements[0] == "准备练习所需的材料与受控环境。"
-    assert not any(
-        item["code"] == "environment_evidence_missing"
-        for item in _evidence_depth_violations(sanitized, request, [source])
-    )
-
-
-def test_practice_revision_reuses_cleaned_baseline_for_nonfactual_containers() -> None:
+def test_practice_revision_keeps_valid_field_patches_instead_of_cleaned_baseline() -> None:
     request = _input()
     source = request.retrieved_chunks[0].source
     original = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
@@ -1003,11 +957,11 @@ def test_practice_revision_reuses_cleaned_baseline_for_nonfactual_containers() -
 
     content = revised.structured_content
     assert isinstance(content, PracticeGuideContent)
-    assert content.environment_requirements[0] == "练习前请确认所需材料与受控环境已经准备妥当。"
-    assert content.steps[0].expected_result == "记录实际结果，并与引用材料中的描述进行核对。"
+    assert content.environment_requirements[0] == "网络连通性支持访问目标接口"
+    assert content.steps[0].expected_result == "运行后自动输出成功日志"
 
 
-def test_practice_revision_cannot_replace_rejected_instruction_with_equivalent_claim() -> None:
+def test_practice_revision_preserves_replacement_for_followup_review() -> None:
     request = _input()
     source = request.retrieved_chunks[0].source
     original = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
@@ -1033,25 +987,8 @@ def test_practice_revision_cannot_replace_rejected_instruction_with_equivalent_c
 
     assert isinstance(revised.structured_content, PracticeGuideContent)
     assert revised.structured_content.steps[0].instruction == (
-        "阅读引用材料，整理其中明确描述的处理流程。"
+        "仅当状态码为 2xx 且内容类型为 JSON 时才解析响应体"
     )
-
-
-def test_practice_revision_claim_free_instruction_is_grounded_in_cited_evidence() -> None:
-    request = _input()
-    source = request.retrieved_chunks[0].source
-    response = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
-    content = response.structured_content.model_copy(deep=True)
-    assert isinstance(content, PracticeGuideContent)
-    content.steps[0].instruction = "阅读引用材料，整理其中明确描述的处理流程。"
-
-    grounded = _ground_practice_revision_fallbacks(
-        response.model_copy(update={"structured_content": content}), request
-    )
-
-    assert isinstance(grounded.structured_content, PracticeGuideContent)
-    assert grounded.structured_content.steps[0].instruction != content.steps[0].instruction
-    assert request.retrieved_chunks[0].content in grounded.structured_content.steps[0].instruction
 
 
 @pytest.mark.parametrize(
@@ -1246,6 +1183,7 @@ def test_deterministic_convergence_removes_atomic_claim_without_model_call() -> 
     previous = GeneratedResourceArtifact(
         resource_type=ResourceType.LECTURE,
         structured_content=content,
+        review_claims=build_review_claims(ResourceType.LECTURE, content),
         content_md="上一轮候选资源",
         difficulty=candidate.difficulty,
         source_refs=[source],
@@ -1271,7 +1209,153 @@ def test_deterministic_convergence_removes_atomic_claim_without_model_call() -> 
     assert collector.snapshot() == []
 
 
-def test_generation_agent_revises_previous_candidate_instead_of_regenerating() -> None:
+def test_claim_free_practice_convergence_does_not_inject_source_sentence() -> None:
+    request = _input()
+    chunk = request.retrieved_chunks[0].model_copy(
+        update={
+            "content": (
+                "操作步骤：发送请求后读取响应状态码和响应体。\n"
+                "预期结果：记录实际返回的状态码和响应结构。"
+            )
+        }
+    )
+    source = chunk.source
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "required_knowledge_ids": [source.knowledge_id],
+            "resource_knowledge_targets": {
+                ResourceType.PRACTICE_GUIDE: [source.knowledge_id]
+            },
+            "source_whitelist": [source.source_ref_id],
+            "revision_plan": RevisionPlan(
+                revision_count=2,
+                resource_types=[ResourceType.PRACTICE_GUIDE],
+                field_paths_by_resource={
+                    ResourceType.PRACTICE_GUIDE: ["environment_requirements[0][0]"]
+                },
+                required_changes=["[deterministic_convergence_v1]"],
+            ),
+        }
+    )
+    context = request.context.model_copy(
+        update={"resource_types": [ResourceType.PRACTICE_GUIDE]}
+    )
+    request = request.model_copy(
+        update={
+            "context": context,
+            "requirements": requirements,
+            "retrieved_chunks": [chunk],
+        }
+    )
+    candidate = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
+    content = candidate.structured_content.model_copy(deep=True)
+    assert isinstance(content, PracticeGuideContent)
+    content.environment_requirements = ["练习前请确认所需材料与受控环境已经准备妥当。"]
+    content.acceptance_criteria = ["完成练习后，提交学习记录并标注核对依据。"]
+    content.steps = [
+        step.model_copy(
+            update={
+                "instruction": "发送请求后读取响应状态码和响应体；再整理处理流程。",
+                "code_or_command": None,
+                "expected_result": "记录实际结果，并与引用材料中的描述进行核对。",
+                "troubleshooting": None,
+            }
+        )
+        for step in content.steps
+    ]
+    previous = GeneratedResourceArtifact(
+        resource_type=ResourceType.PRACTICE_GUIDE,
+        structured_content=content,
+        review_claims=build_review_claims(ResourceType.PRACTICE_GUIDE, content),
+        content_md="上一轮候选资源",
+        difficulty=candidate.difficulty,
+        source_refs=[source],
+        knowledge_coverage={source.knowledge_id: [source.source_ref_id]},
+    )
+
+    output = ContentGenerationAgent(
+        generator=object(), renderer=render_resource_markdown
+    ).converge(request, [previous], {})
+
+    revised = output.resources[0].structured_content
+    assert isinstance(revised, PracticeGuideContent)
+    assert revised.steps[0].instruction == "发送请求后读取响应状态码和响应体；再整理处理流程。"
+    assert revised.environment_requirements == content.environment_requirements
+    assert revised.acceptance_criteria == content.acceptance_criteria
+    assert revised.steps[1:] == content.steps[1:]
+
+
+def test_claim_free_practice_revision_preserves_structured_claims_for_review() -> None:
+    request = _input()
+    chunk = request.retrieved_chunks[0].model_copy(
+        update={"content": "概念说明：比较不同材料中的定义、范围与关系。"}
+    )
+    source = chunk.source
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "required_knowledge_ids": [source.knowledge_id],
+            "resource_knowledge_targets": {
+                ResourceType.PRACTICE_GUIDE: [source.knowledge_id]
+            },
+            "source_whitelist": [source.source_ref_id],
+            "revision_plan": RevisionPlan(
+                revision_count=2,
+                resource_types=[ResourceType.PRACTICE_GUIDE],
+                field_paths_by_resource={
+                    ResourceType.PRACTICE_GUIDE: ["environment_requirements[0][0]"]
+                },
+                required_changes=["[deterministic_convergence_v1]"],
+            ),
+        }
+    )
+    context = request.context.model_copy(
+        update={"resource_types": [ResourceType.PRACTICE_GUIDE]}
+    )
+    request = request.model_copy(
+        update={
+            "context": context,
+            "requirements": requirements,
+            "retrieved_chunks": [chunk],
+        }
+    )
+    candidate = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
+    content = candidate.structured_content.model_copy(deep=True)
+    assert isinstance(content, PracticeGuideContent)
+    content.environment_requirements = ["练习前请确认所需材料与受控环境已经准备妥当。"]
+    content.acceptance_criteria = ["完成练习后，提交学习记录并标注核对依据。"]
+    content.steps = [
+        step.model_copy(
+            update={
+                "instruction": "不同材料中的定义、范围与关系可能存在差异；请比较并分析。",
+                "code_or_command": None,
+                "expected_result": "记录实际结果，并与引用材料中的描述进行核对。",
+                "troubleshooting": None,
+            }
+        )
+        for step in content.steps
+    ]
+    previous = GeneratedResourceArtifact(
+        resource_type=ResourceType.PRACTICE_GUIDE,
+        structured_content=content,
+        review_claims=build_review_claims(ResourceType.PRACTICE_GUIDE, content),
+        content_md="上一轮候选资源",
+        difficulty=candidate.difficulty,
+        source_refs=[source],
+        knowledge_coverage={source.knowledge_id: [source.source_ref_id]},
+    )
+
+    output = ContentGenerationAgent(
+        generator=object(), renderer=render_resource_markdown
+    ).converge(request, [previous], {})
+
+    claims = output.resources[0].review_claims
+    assert any(claim.field_path.startswith("steps[0].instruction") for claim in claims)
+    assert not any(claim.field_path.startswith("steps[0].expected_result") for claim in claims)
+
+
+def test_generation_agent_accepts_pedagogical_revision_without_field_capability() -> None:
     request = _input()
     source = request.retrieved_chunks[0].source
     target_ids = [source.knowledge_id]
@@ -1297,6 +1381,9 @@ def test_generation_agent_revises_previous_candidate_instead_of_regenerating() -
     previous = GeneratedResourceArtifact(
         resource_type=ResourceType.PRACTICE_GUIDE,
         structured_content=candidate.structured_content,
+        review_claims=build_review_claims(
+            ResourceType.PRACTICE_GUIDE, candidate.structured_content
+        ),
         content_md="上一轮候选资源",
         difficulty=candidate.difficulty,
         source_refs=[source],
@@ -1308,17 +1395,13 @@ def test_generation_agent_revises_previous_candidate_instead_of_regenerating() -
         generator=generator, renderer=render_resource_markdown
     ).revise(request, [previous])
 
-    revised = output.resources[0]
     assert generator.revise_calls == 1
-    assert revised.structured_content.title == previous.structured_content.title
-    assert (
-        revised.structured_content.steps[0].expected_result
-        == "记录实际结果并与引用材料核对。"
-    )
-    assert revised.difficulty == previous.difficulty
+    revised = output.resources[0].structured_content
+    assert isinstance(revised, PracticeGuideContent)
+    assert revised.steps[0].expected_result == "记录实际结果并与引用材料核对。"
 
 
-def test_revision_structure_failure_uses_valid_candidate_and_audited_fallback() -> None:
+def test_revision_structure_failure_replaces_rejected_practice_field() -> None:
     request = _input()
     source = request.retrieved_chunks[0].source
     target_ids = [source.knowledge_id]
@@ -1347,6 +1430,7 @@ def test_revision_structure_failure_uses_valid_candidate_and_audited_fallback() 
     previous = GeneratedResourceArtifact(
         resource_type=ResourceType.PRACTICE_GUIDE,
         structured_content=content,
+        review_claims=build_review_claims(ResourceType.PRACTICE_GUIDE, content),
         content_md="上一轮候选资源",
         difficulty=candidate.difficulty,
         source_refs=[source],
@@ -1367,12 +1451,12 @@ def test_revision_structure_failure_uses_valid_candidate_and_audited_fallback() 
             },
         )
 
+    assert generator.revise_calls == 1
     revised = output.resources[0].structured_content
     assert isinstance(revised, PracticeGuideContent)
-    assert generator.revise_calls == 1
-    assert "记录实际结果" in revised.steps[0].expected_result
-    assert "引用材料" in revised.steps[0].expected_result
-    assert rejected_claim not in revised.steps[0].expected_result
+    assert rejected_claim != revised.steps[0].expected_result
+    assert revised.steps[0].expected_result == "形成与本步骤相关的学习检查表，列出关键观察项和核对结论。"
+    assert not _content_policy_violations(revised)
     assert collector.snapshot()[0]["correction_kind"] == (
         "field_revision_structure_fallback"
     )
@@ -1381,62 +1465,26 @@ def test_revision_structure_failure_uses_valid_candidate_and_audited_fallback() 
     ]
 
 
-def test_coverage_merge_only_appends_supported_missing_knowledge() -> None:
-    request = _input()
-    original_chunk = request.retrieved_chunks[0]
-    missing_chunk = original_chunk.model_copy(
-        update={
-            "chunk_id": "AIAPP-K030::chunk::0",
-            "knowledge_id": "AIAPP-K030",
-            "source": original_chunk.source.model_copy(
-                update={
-                    "source_ref_id": "AIAPP-K030::chunk::0",
-                    "knowledge_id": "AIAPP-K030",
-                }
-            ),
-        }
-    )
-    request = request.model_copy(
-        update={"retrieved_chunks": [original_chunk, missing_chunk]}
-    )
-    original = _fixture_response(
-        request, ResourceType.LECTURE, [original_chunk.source]
-    )
-    original_payload = original.structured_content.model_dump(mode="python")
-    proposed_content = original.structured_content.model_copy(deep=True)
-    assert isinstance(proposed_content, LectureContent)
-    proposed_content.title = "不应接受的重写标题"
-    proposed_content.summary = "不应接受的重写摘要"
-    proposed_content.core_concepts[0].explanation = "不应接受的原章节重写"
-    proposed_content.core_concepts.append(
-        ConceptBlock(
-            title="缺失知识点补充",
-            explanation="仅追加有来源支持的缺失知识点内容。",
-            source_ref_ids=[missing_chunk.source.source_ref_id],
-        )
-    )
-    proposed = original.model_copy(update={"structured_content": proposed_content})
-
-    merged = _merge_coverage_additions(
-        original, proposed, {missing_chunk.knowledge_id}, request
-    )
-
-    merged_content = merged.structured_content
-    assert isinstance(merged_content, LectureContent)
-    assert merged_content.model_dump(mode="python") | {
-        "core_concepts": original_payload["core_concepts"]
-    } == original_payload
-    assert merged_content.core_concepts[0].model_dump(mode="python") == original_payload[
-        "core_concepts"
-    ][0]
-    assert len(merged_content.core_concepts) == 2
-    assert merged_content.core_concepts[1].source_ref_ids == [
-        missing_chunk.source.source_ref_id
-    ]
 
 
 def test_v3_generation_fixture_supports_all_resource_types() -> None:
     request = _input()
+    request = request.model_copy(
+        update={
+            "retrieved_chunks": [
+                chunk.model_copy(
+                    update={
+                        "content": (
+                            f"{chunk.content}\n\n## 应用任务\n"
+                            "读取检索结果并按知识点标识核对来源。\n\n"
+                            "## 预期结果\n形成包含知识点标识和来源标识的核对记录。"
+                        )
+                    }
+                )
+                for chunk in request.retrieved_chunks
+            ]
+        }
+    )
     resource_types = list(ResourceType)
     context = request.context.model_copy(update={"resource_types": resource_types})
     requirements = GenerationRequirements(
@@ -1446,7 +1494,9 @@ def test_v3_generation_fixture_supports_all_resource_types() -> None:
         required_knowledge_ids=request.requirements.required_knowledge_ids,
         source_whitelist=request.requirements.source_whitelist,
     )
-    expanded = request.model_copy(update={"context": context, "requirements": requirements})
+    expanded = _with_formal_question_bank(
+        request.model_copy(update={"context": context, "requirements": requirements})
+    )
 
     output = ContentGenerationAgent(renderer=render_resource_markdown).execute(expanded)
 
@@ -1454,7 +1504,7 @@ def test_v3_generation_fixture_supports_all_resource_types() -> None:
     assert all(resource.content_md for resource in output.resources)
 
 
-def test_v3_generation_repairs_missing_coverage_once_and_preserves_existing() -> None:
+def test_v3_generation_reports_missing_coverage_without_model_repair(caplog) -> None:
     request = _input()
     original = request.retrieved_chunks[0]
     second = original.model_copy(
@@ -1488,9 +1538,10 @@ def test_v3_generation_repairs_missing_coverage_once_and_preserves_existing() ->
         expanded
     )
 
-    assert generator.repair_calls == 1
-    assert set(output.resources[0].knowledge_coverage) == {"AIAPP-K029", "AIAPP-K030"}
-    assert len(output.resources[0].structured_content.core_concepts) == 2
+    assert generator.repair_calls == 0
+    assert set(output.resources[0].knowledge_coverage) == {"AIAPP-K029"}
+    assert len(output.resources[0].structured_content.core_concepts) == 1
+    assert "generated_coverage_incomplete" in caplog.text
 
 
 def test_v3_generation_module_has_no_legacy_dependency() -> None:
@@ -1517,6 +1568,7 @@ def test_generation_payload_uses_a_resource_specific_schema() -> None:
             )
         }
     )
+    quiz_request = _with_formal_question_bank(quiz_request)
     quiz_schema = _generation_payload(quiz_request, ResourceType.GRADED_QUIZ, sources)[
         "output_schema"
     ]
@@ -1542,6 +1594,7 @@ def test_quiz_blueprint_detects_slot_drift() -> None:
         }
     )
     quiz_request = request.model_copy(update={"requirements": requirements})
+    quiz_request = _with_formal_question_bank(quiz_request)
     sources = [chunk.source for chunk in quiz_request.retrieved_chunks]
     response = _fixture_response(quiz_request, ResourceType.GRADED_QUIZ, sources)
     assert isinstance(response.structured_content, GradedQuizContent)
@@ -1554,6 +1607,46 @@ def test_quiz_blueprint_detects_slot_drift() -> None:
     invalid = response.structured_content.model_copy(update={"questions": questions})
     violations = _quiz_blueprint_violations(invalid, _quiz_blueprint(quiz_request, sources))
     assert {item["field"] for item in violations} == {"knowledge_id"}
+
+
+def test_quiz_blueprint_uses_certified_attribution_not_runtime_token_overlap() -> None:
+    request = _input()
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.GRADED_QUIZ],
+            "resource_knowledge_targets": {
+                ResourceType.GRADED_QUIZ: request.requirements.required_knowledge_ids
+            },
+        }
+    )
+    quiz_request = _with_formal_question_bank(
+        request.model_copy(update={"requirements": requirements})
+    )
+    sources = [chunk.source for chunk in quiz_request.retrieved_chunks]
+    blueprint = _quiz_blueprint(quiz_request, sources)
+    content = _fixture_response(
+        quiz_request, ResourceType.GRADED_QUIZ, sources
+    ).structured_content
+    assert isinstance(content, GradedQuizContent)
+
+    # The fixed formal-question identity, primary knowledge and certified
+    # evidence stay intact even where wording leans on a related target.
+    other_chunk = next(
+        chunk
+        for chunk in quiz_request.retrieved_chunks
+        if chunk.knowledge_id != content.questions[0].knowledge_id
+    )
+    questions = list(content.questions)
+    questions[0] = questions[0].model_copy(
+        update={
+            "prompt": f"综合比较：{other_chunk.content}",
+            "correct_answer": "按已认证题目的答案评分。",
+            "explanation": "该题的主归因、真实关联和来源已在题目认证时验证。",
+        }
+    )
+    integrated = content.model_copy(update={"questions": questions})
+
+    assert not _quiz_blueprint_violations(integrated, blueprint, quiz_request)
 
 
 def test_failed_structured_generation_is_collected_without_model_content() -> None:
@@ -1593,7 +1686,7 @@ def test_local_structure_failure_reports_precise_field_paths() -> None:
     assert captured.value.field_paths == ["structured_content"]
 
 
-def test_quiz_slot_repair_only_replaces_invalid_question() -> None:
+def test_quiz_is_assembled_from_formal_question_bank_without_model_repair() -> None:
     request = _input()
     requirements = request.requirements.model_copy(
         update={
@@ -1603,25 +1696,17 @@ def test_quiz_slot_repair_only_replaces_invalid_question() -> None:
             },
         }
     )
-    repair_generator = QuizSlotRepairGenerator()
+    repair_generator = QuizGeneratorMustNotRun()
     context = request.context.model_copy(update={"resource_types": [ResourceType.GRADED_QUIZ]})
+    bank_request = _with_formal_question_bank(
+        request.model_copy(update={"context": context, "requirements": requirements})
+    )
     output = ContentGenerationAgent(
         generator=repair_generator, renderer=render_resource_markdown
-    ).execute(request.model_copy(update={"context": context, "requirements": requirements}))
+    ).execute(bank_request)
 
     quiz = output.resources[0].structured_content
     assert isinstance(quiz, GradedQuizContent)
-    assert repair_generator.repair_calls == 1
-    assert [question.question_id for question in quiz.questions] == [
-        "Q1",
-        "Q2",
-        "Q3",
-        "Q4",
-        "Q5",
-        "Q6",
-    ]
-    assert {question.level.value for question in quiz.questions} == {
-        "foundation",
-        "improvement",
-        "challenge",
-    }
+    assert len(quiz.questions) == 3
+    assert all(question.question_id.startswith("formal_") for question in quiz.questions)
+    assert all(question.reference_question_ids == [question.question_id] for question in quiz.questions)

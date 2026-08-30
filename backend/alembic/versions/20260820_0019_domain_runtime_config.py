@@ -5,11 +5,12 @@ Revises: 20260819_0018
 """
 
 import json
+from pathlib import Path
 
 from alembic import op
 import sqlalchemy as sa
 
-from app.agents.profile_analysis_config import AI_APP_DEV_ABILITY_WEIGHTS, MASTERY_BASELINES
+from app.agents.profile_analysis_config import MASTERY_BASELINES
 
 
 revision = "20260820_0019"
@@ -18,9 +19,20 @@ branch_labels = None
 depends_on = None
 
 
+def _ai_app_dev_ability_weights() -> dict[str, dict[str, float]]:
+    """Keep this historical migration independent from runtime configuration."""
+
+    seed_path = Path(__file__).resolve().parents[3] / "data" / "seed" / "knowledge_items.json"
+    payload = json.loads(seed_path.read_text(encoding="utf-8"))
+    return {
+        str(item["knowledge_id"]): dict(item["ability_weights"])
+        for item in payload
+    }
+
+
 def upgrade() -> None:
     bind = op.get_bind()
-    for knowledge_id, weights in AI_APP_DEV_ABILITY_WEIGHTS.items():
+    for knowledge_id, weights in _ai_app_dev_ability_weights().items():
         bind.execute(
             sa.text(
                 "UPDATE knowledge_items SET ability_weights_json=:weights "

@@ -1,0 +1,12 @@
+{
+  "sample_version": "knowledge-import-gold-v1",
+  "domain_code": "ai_app_dev",
+  "normalization_source": "../seed/knowledge_items.json",
+  "relation_source": "../seed/knowledge_items.json",
+  "question_source": "../seed/diagnostic_questions.json",
+  "normalization_limit": 50,
+  "relation_limit": 100,
+  "question_limit": 30,
+  "relation_precision_threshold": 0.9,
+  "direction_accuracy_threshold": 0.9
+}

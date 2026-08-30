@@ -5,7 +5,7 @@
       <div class="quiz-progress">
         <div class="quiz-progress-meta">
           <span class="qp-level">{{ levelLabel(current.level) }}</span>
-          <span class="qp-count">{{ currentIndex + 1 }} / {{ orderedQuestions.length }}</span>
+          <span class="qp-count">{{ currentIndex + 1 }} / {{ orderedQuestions.length }}<small v-if="syncState === 'saving'">正在同步</small><small v-else-if="syncState === 'pending'" class="sync-warn">等待同步</small><small v-else-if="hasDraftScope">进度已保存</small></span>
         </div>
         <div class="quiz-progress-track">
           <span
@@ -58,24 +58,25 @@
           </strong>
           <p><b>参考答案：</b>{{ current.correct_answer }}</p>
           <p><b>解析：</b>{{ current.explanation }}</p>
-          <p class="q-source"><b>知识点：</b>{{ current.knowledge_id }} · <b>来源：</b>{{ current.source_ref_ids.join('、') }}</p>
+          <p class="q-source"><b>本题考查：</b>{{ knowledgeLabel(current) }}</p>
           <button
-            v-if="!isObjective(current) && !stateOf(current).selfMarked"
+            v-if="!isReviewMode && !isObjective(current) && !stateOf(current).selfMarked"
             type="button"
             class="btn text"
-            @click="stateOf(current).selfMarked = true"
-          >我答对了</button>
+            @click="markSelfChecked(current)"
+          >已完成自我检查</button>
         </div>
       </article>
 
       <!-- 底部导航 -->
       <div class="quiz-nav">
         <button type="button" class="btn ghost" :disabled="currentIndex === 0" @click="currentIndex -= 1">上一题</button>
-        <button v-if="!stateOf(current).checked" type="button" class="btn primary" :disabled="!canCheck(current)" @click="submitAnswer(current)">
-          {{ isObjective(current) ? '提交答案' : '查看参考答案' }}
+        <button v-if="isReviewMode" type="button" class="btn ghost" @click="returnToSummary">查看结果</button>
+        <button v-if="!stateOf(current).checked" type="button" class="btn primary" :disabled="!canCheck(current) || syncState === 'saving'" @click="submitAnswer(current)">
+          {{ syncState === 'saving' ? '正在提交' : isObjective(current) ? '提交答案' : '查看参考答案' }}
         </button>
         <button v-else-if="currentIndex < orderedQuestions.length - 1" type="button" class="btn primary" @click="currentIndex += 1">下一题</button>
-        <button v-else type="button" class="btn primary" @click="showSummary = true">查看成绩</button>
+        <button v-else type="button" class="btn primary" @click="returnToSummary">{{ isReviewMode ? '返回结果' : '查看成绩' }}</button>
       </div>
     </template>
 
@@ -99,8 +100,9 @@
           <h4>建议巩固的知识点</h4>
           <div class="summary-weak-tags"><span v-for="k in weakPoints" :key="k" class="tag">{{ k }}</span></div>
         </div>
+        <div v-if="completionMessage" class="quiz-evidence-note">{{ completionMessage }}</div>
         <div class="summary-actions">
-          <button type="button" class="btn ghost" @click="restart">重新作答</button>
+          <button type="button" class="btn ghost" @click="enterReview">查看题目与解析</button>
         </div>
       </div>
     </template>
@@ -108,8 +110,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
-import type { GradedQuizContent, QuizLevel, QuizQuestion } from '@/api/resources'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { completeQuizAttempt, createQuizAttempt, saveQuizAnswer, type GradedQuizContent, type QuizLevel, type QuizQuestion, type ResourceQuizAttempt } from '@/api/resources'
+import { loadGradedQuizDraft, saveGradedQuizDraft } from '@/utils/gradedQuizDraft'
 
 interface AnswerState {
   selected: string[]
@@ -121,6 +124,10 @@ interface AnswerState {
 
 const props = defineProps<{
   content: GradedQuizContent
+  learnerId?: string
+  resourceId?: string
+  resourceVersion?: number
+  knowledgeLabels?: Record<string, string>
 }>()
 
 const LEVEL_ORDER: QuizLevel[] = ['foundation', 'improvement', 'challenge']
@@ -132,10 +139,72 @@ const orderedQuestions = computed(() =>
 
 const currentIndex = ref(0)
 const showSummary = ref(false)
+const isReviewMode = ref(false)
+const serverAttemptId = ref('')
+const syncState = ref<'ready' | 'saving' | 'pending'>('ready')
+const completionResult = ref<ResourceQuizAttempt | null>(null)
 const answers = reactive<Record<string, AnswerState>>({})
 for (const q of props.content.questions) {
   answers[q.question_id] = { selected: [], text: '', checked: false, correct: null, selfMarked: false }
 }
+
+const hasDraftScope = computed(() => Boolean(props.learnerId && props.resourceId))
+
+function restoreDraft() {
+  const draft = loadGradedQuizDraft(
+    props.learnerId || '',
+    props.resourceId || '',
+    props.resourceVersion,
+    props.content.questions.map(question => question.question_id),
+  )
+  if (!draft) return
+  for (const [questionId, state] of Object.entries(draft.answers)) {
+    if (answers[questionId]) Object.assign(answers[questionId], state)
+  }
+  currentIndex.value = draft.currentIndex
+  showSummary.value = draft.showSummary
+}
+
+function persistDraft() {
+  if (!hasDraftScope.value) return
+  saveGradedQuizDraft(props.learnerId || '', props.resourceId || '', props.resourceVersion, {
+    answers: Object.fromEntries(Object.entries(answers).map(([questionId, state]) => [questionId, {
+      selected: [...state.selected],
+      text: state.text,
+      checked: state.checked,
+      correct: state.correct,
+      selfMarked: state.selfMarked,
+    }])),
+    currentIndex: currentIndex.value,
+    showSummary: showSummary.value,
+  })
+}
+
+restoreDraft()
+watch([answers, currentIndex, showSummary], persistDraft, { deep: true })
+
+async function restoreServerAttempt() {
+  if (!hasDraftScope.value) return
+  try {
+    const attempt = await createQuizAttempt(props.resourceId || '', props.learnerId)
+    serverAttemptId.value = attempt.attempt_id
+    for (const [questionId, saved] of Object.entries(attempt.answers || {})) {
+      const state = answers[questionId]
+      const question = props.content.questions.find(item => item.question_id === questionId)
+      if (!state || !question) continue
+      const value = saved.answer
+      state.selected = Array.isArray(value) ? value.map(String) : isChoice(question) ? [String(value)] : []
+      state.text = Array.isArray(value) ? '' : String(value || '')
+      state.checked = saved.checked
+      state.correct = saved.correct
+      state.selfMarked = saved.self_checked
+    }
+    showSummary.value = attempt.status === 'completed'
+    syncState.value = 'ready'
+  } catch { syncState.value = 'pending' }
+}
+
+onMounted(restoreServerAttempt)
 
 const current = computed(() => orderedQuestions.value[currentIndex.value])
 const levelSegments = computed(() =>
@@ -155,6 +224,10 @@ function stateOf(q: QuizQuestion): AnswerState {
 
 function levelLabel(level: QuizLevel): string {
   return LEVEL_LABELS[level]
+}
+
+function knowledgeLabel(question: QuizQuestion): string {
+  return props.knowledgeLabels?.[question.knowledge_id] || '当前学习知识点'
 }
 
 function typeLabel(type: string): string {
@@ -209,11 +282,60 @@ function canCheck(q: QuizQuestion): boolean {
   return isChoice(q) ? state.selected.length > 0 : state.text.trim().length > 0
 }
 
-function submitAnswer(q: QuizQuestion): void {
+async function submitAnswer(q: QuizQuestion): Promise<void> {
   const state = stateOf(q)
-  state.checked = true
-  state.correct = judge(q, state)
+  const localVerdict = judge(q, state)
+  if (!hasDraftScope.value || !serverAttemptId.value) {
+    state.checked = true
+    state.correct = localVerdict
+    syncState.value = hasDraftScope.value ? 'pending' : 'ready'
+    return
+  }
+  syncState.value = 'saving'
+  try {
+    const result = await saveQuizAnswer(
+      props.resourceId || '', serverAttemptId.value, q.question_id,
+      isChoice(q) ? state.selected : state.text, props.learnerId,
+    )
+    state.checked = true
+    state.correct = result.correct
+    syncState.value = 'ready'
+  } catch {
+    state.checked = true
+    state.correct = localVerdict
+    syncState.value = 'pending'
+  }
 }
+
+async function markSelfChecked(q: QuizQuestion) {
+  const state = stateOf(q)
+  state.selfMarked = true
+  if (!serverAttemptId.value || !hasDraftScope.value) return
+  syncState.value = 'saving'
+  try {
+    await saveQuizAnswer(
+      props.resourceId || '', serverAttemptId.value, q.question_id, state.text, props.learnerId, true,
+    )
+    syncState.value = 'ready'
+  } catch { syncState.value = 'pending' }
+}
+
+watch(showSummary, async value => {
+  if (!value || !serverAttemptId.value || !hasDraftScope.value) return
+  try {
+    completionResult.value = await completeQuizAttempt(props.resourceId || '', serverAttemptId.value, props.learnerId)
+  } catch { syncState.value = 'pending' }
+})
+
+const completionMessage = computed(() => {
+  const result = completionResult.value
+  if (!result) return ''
+  const gate = result.node_gate
+  if (gate?.can_advance) return '当前节点的核心知识、错题和分阶测验门槛均已满足，可申请进入下一阶段。'
+  if (gate?.blocking_mistake_count) return `测验证据已记录，仍有 ${gate.blocking_mistake_count} 道当前节点错题需要巩固。`
+  if (gate) return `测验证据已记录，核心知识已确认 ${gate.mastered_knowledge_count || 0}/${gate.core_knowledge_count || 0}。`
+  return result.evidence_result?.materialized_count ? '测验结果已记录为正式画像证据。' : ''
+})
 
 function optionClass(q: QuizQuestion, opt: string): string {
   const state = stateOf(q)
@@ -245,22 +367,20 @@ const weakPoints = computed(() => {
   const ids = new Set<string>()
   for (const q of orderedQuestions.value) {
     const s = stateOf(q)
-    if (s.checked && (s.correct === false || (!isObjective(q) && !s.selfMarked))) ids.add(q.knowledge_id)
+    if (s.checked && (s.correct === false || (!isObjective(q) && !s.selfMarked))) ids.add(knowledgeLabel(q))
   }
   return [...ids]
 })
 
-function restart(): void {
-  for (const q of orderedQuestions.value) {
-    const s = stateOf(q)
-    s.selected = []
-    s.text = ''
-    s.checked = false
-    s.correct = null
-    s.selfMarked = false
-  }
+function enterReview(): void {
   currentIndex.value = 0
   showSummary.value = false
+  isReviewMode.value = true
+}
+
+function returnToSummary(): void {
+  isReviewMode.value = false
+  showSummary.value = true
 }
 </script>
 
@@ -270,49 +390,51 @@ function restart(): void {
 /* 进度 */
 .quiz-progress-meta { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .qp-level { color: var(--ink); font-size: 13px; font-weight: 700; }
-.qp-count { color: var(--muted); font-size: 12px; }
+.qp-count { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.qp-count small { color: var(--green); font-size: 11px; }
+.qp-count small.sync-warn { color: var(--amber); }
 .quiz-progress-track { display: flex; gap: 4px; }
 .qp-seg { flex: 1; height: 6px; border-radius: 999px; background: var(--track); transition: background .2s ease; }
 .qp-seg.done { background: var(--green); }
 .qp-seg.current { background: var(--blue); }
-.qp-seg.qp-foundation.done { background: #4f8a5d; }
-.qp-seg.qp-improvement.done { background: #6a8bc0; }
-.qp-seg.qp-challenge.done { background: #c08a4a; }
+.qp-seg.qp-foundation.done { background: var(--green); }
+.qp-seg.qp-improvement.done { background: var(--blue); }
+.qp-seg.qp-challenge.done { background: var(--amber); }
 
 /* 题目卡 */
-.quiz-card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 22px; box-shadow: 0 1px 2px rgb(16 24 40 / .03); }
+.quiz-card { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 22px; box-shadow: var(--shadow-card); }
 .q-tags { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .q-level, .q-type, .q-diff { border-radius: 6px; padding: 3px 9px; font-size: 11px; font-weight: 650; }
-.q-level.ql-foundation { background: var(--green2); color: #2f6a48; }
-.q-level.ql-improvement { background: var(--blue2); color: #3a5a96; }
-.q-level.ql-challenge { background: var(--amber2); color: #a0641c; }
+.q-level.ql-foundation { background: var(--green2); color: var(--green); }
+.q-level.ql-improvement { background: var(--blue2); color: var(--blue); }
+.q-level.ql-challenge { background: var(--amber2); color: var(--amber); }
 .q-type { background: var(--soft); color: var(--muted); }
 .q-diff { color: var(--muted); background: var(--soft); }
 .q-prompt { margin: 0 0 16px; color: var(--ink); font-size: 16px; font-weight: 650; line-height: 1.6; }
 
 .q-options { display: grid; gap: 10px; }
 .q-option { display: flex; align-items: center; gap: 10px; width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 12px 14px; color: var(--ink); font-size: 14px; line-height: 1.6; text-align: left; cursor: pointer; transition: border-color .15s ease, background .15s ease, box-shadow .15s ease; }
-.q-option:hover:not(:disabled) { border-color: #b9c9e4; }
+.q-option:hover:not(:disabled) { border-color: var(--line-strong); }
 .q-option:disabled { cursor: default; }
-.q-option-dot { width: 16px; height: 16px; flex-shrink: 0; border: 2px solid #c6d0dd; border-radius: 50%; transition: all .15s ease; }
+.q-option-dot { width: 16px; height: 16px; flex-shrink: 0; border: 2px solid var(--line-strong); border-radius: 50%; transition: all .15s ease; }
 .q-option.is-selected { border-color: var(--blue); background: var(--blue2); }
-.q-option.is-selected .q-option-dot { border-color: var(--blue); background: var(--blue); box-shadow: inset 0 0 0 3px #fff; }
+.q-option.is-selected .q-option-dot { border-color: var(--blue); background: var(--blue); box-shadow: inset 0 0 0 3px var(--panel); }
 .q-option.is-correct { border-color: var(--green); background: var(--green2); }
-.q-option.is-correct .q-option-dot { border-color: var(--green); background: var(--green); box-shadow: inset 0 0 0 3px #fff; }
+.q-option.is-correct .q-option-dot { border-color: var(--green); background: var(--green); box-shadow: inset 0 0 0 3px var(--panel); }
 .q-option.is-wrong { border-color: var(--red); background: var(--red2); }
-.q-option.is-wrong .q-option-dot { border-color: var(--red); background: var(--red); box-shadow: inset 0 0 0 3px #fff; }
+.q-option.is-wrong .q-option-dot { border-color: var(--red); background: var(--red); box-shadow: inset 0 0 0 3px var(--panel); }
 
 .q-textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; color: var(--ink); font-size: 14px; line-height: 1.7; resize: vertical; }
-.q-textarea:focus { outline: 0; border-color: var(--blue); box-shadow: 0 0 0 3px rgb(49 95 206 / .12); }
+.q-textarea:focus { outline: 0; border-color: var(--blue); box-shadow: 0 0 0 3px var(--focus-ring); }
 
 .q-explanation { margin-top: 16px; border-radius: 10px; padding: 13px 15px; font-size: 13px; line-height: 1.7; }
 .q-explanation strong { display: block; font-size: 14px; margin-bottom: 4px; }
 .q-explanation p { margin: 6px 0 0; }
 .q-explanation b { font-weight: 650; }
 .q-explanation .q-source { color: var(--muted); font-size: 12px; }
-.q-explanation.is-ok { border: 1px solid #c8e6d6; background: var(--green2); color: #1f5c41; }
-.q-explanation.is-bad { border: 1px solid #f0cfcf; background: var(--red2); color: #7c3c3c; }
-.q-explanation.is-neutral { border: 1px solid #dfe6ef; background: var(--soft); color: var(--body); }
+.q-explanation.is-ok { border: 1px solid var(--line-success); background: var(--green2); color: var(--text-success-strong); }
+.q-explanation.is-bad { border: 1px solid var(--line-danger); background: var(--red2); color: var(--text-danger-strong); }
+.q-explanation.is-neutral { border: 1px solid var(--line); background: var(--soft); color: var(--body); }
 .q-explanation .btn { margin-top: 10px; }
 
 /* 底部导航 */
@@ -320,9 +442,9 @@ function restart(): void {
 .quiz-nav .btn { min-width: 110px; }
 
 /* 总结卡 */
-.quiz-summary { display: grid; gap: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 26px; box-shadow: 0 1px 2px rgb(16 24 40 / .03); }
+.quiz-summary { display: grid; gap: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); padding: 26px; box-shadow: var(--shadow-card); }
 .summary-hero { display: flex; align-items: center; gap: 20px; }
-.summary-ring { --pct: 0; width: 92px; height: 92px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: conic-gradient(var(--green) calc(var(--pct) * 1%), #e6ebf2 0); }
+.summary-ring { --pct: 0; width: 92px; height: 92px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; background: conic-gradient(var(--green) calc(var(--pct) * 1%), var(--track) 0); }
 .summary-ring span { display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; background: var(--panel); font-size: 24px; font-weight: 760; color: var(--ink); }
 .summary-ring small { font-size: 13px; font-weight: 650; color: var(--muted); }
 .summary-copy h3 { margin: 0 0 6px; color: var(--ink); font-size: 20px; }
@@ -333,6 +455,7 @@ function restart(): void {
 .summary-level .sl-stat { color: var(--ink); font-size: 20px; font-weight: 700; }
 .summary-weak h4 { margin: 0 0 8px; color: var(--ink); font-size: 14px; }
 .summary-weak-tags { display: flex; flex-wrap: wrap; gap: 7px; }
+.quiz-evidence-note { border: 1px solid var(--line); border-radius: 8px; background: var(--soft); padding: 11px 13px; color: var(--body); font-size: 13px; line-height: 1.6; }
 .summary-actions { display: flex; justify-content: flex-end; }
 @media (max-width: 560px) { .summary-levels { grid-template-columns: 1fr; } }
 </style>

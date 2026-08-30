@@ -1,6 +1,7 @@
 import { getData, postData } from './client'
 import type { ResourceSummary } from './resources'
 import type { GenerationBasis } from './generation'
+import type { NodeGate } from './tutoring'
 
 export interface KnowledgeImpact {
   impact_id: string
@@ -35,7 +36,19 @@ export interface LearningPackage {
   }>
   knowledge_impact?: KnowledgeImpact | null
   package_quality?: ResourceSummary['package_quality']
+  node_gate?: NodeGate | null
   created_at?: string | null
+}
+
+export type LearningPackageExportFormat = 'markdown' | 'pdf' | 'word'
+
+export interface LearningPackageExport {
+  package_id: string
+  format: LearningPackageExportFormat
+  file_name: string
+  file_hash: string
+  resource_count: number
+  download_url: string
 }
 
 export function getCurrentLearningPackage(domainCode: string, learnerId?: string) {
@@ -46,6 +59,13 @@ export function getCurrentLearningPackage(domainCode: string, learnerId?: string
 
 export function getLearningPackage(taskId: string) {
   return getData<LearningPackage>(`/learning-packages/${encodeURIComponent(taskId)}`)
+}
+
+export function exportLearningPackage(taskId: string, format: LearningPackageExportFormat) {
+  return postData<LearningPackageExport>(
+    `/learning-packages/${encodeURIComponent(taskId)}/export`,
+    { format },
+  )
 }
 
 export function dismissKnowledgeImpact(taskId: string) {

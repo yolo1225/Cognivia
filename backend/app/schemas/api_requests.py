@@ -65,6 +65,8 @@ class ResourceExportRequest(StrictRequest):
 class TutoringSessionCreateRequest(StrictRequest):
     learner_id: str = Field(default="learner_001", min_length=3, max_length=64)
     resource_id: str = Field(min_length=1, max_length=64)
+    context_type: Literal["resource", "mistake_review"] = "resource"
+    context_id: str | None = Field(default=None, max_length=64)
 
 
 class TutoringMessageRequest(StrictRequest):

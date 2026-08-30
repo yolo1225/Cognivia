@@ -138,7 +138,12 @@ def _supporting_evidence(values: list[dict]) -> list[EvidenceRef]:
 
 
 def create_session(
-    db: Session, *, learner: Learner, resource: LearningResource | None
+    db: Session,
+    *,
+    learner: Learner,
+    resource: LearningResource | None,
+    context_type: str = "resource",
+    context_ref_id: str | None = None,
 ) -> TutoringSession:
     if resource is None:
         raise ValueError("P0 tutoring sessions must be attached to a learning resource")
@@ -146,6 +151,8 @@ def create_session(
         select(TutoringSession)
         .where(TutoringSession.learner_id == learner.id)
         .where(TutoringSession.resource_id == resource.id)
+        .where(TutoringSession.context_type == context_type)
+        .where(TutoringSession.context_ref_id == context_ref_id)
         .where(TutoringSession.status == "active")
         .order_by(TutoringSession.id.desc())
     )
@@ -155,6 +162,8 @@ def create_session(
         public_id=public_id("tutor"),
         learner_id=learner.id,
         resource_id=resource.id,
+        context_type=context_type,
+        context_ref_id=context_ref_id,
         status="active",
         turn_count=0,
     )
@@ -475,7 +484,10 @@ def add_learner_message(
             resource=resource,
         )
     except ValueError as exc:
-        if str(exc) == "learning_adjustment_assessment_unavailable":
+        if str(exc) in {
+            "learning_adjustment_assessment_unavailable",
+            "MASTERY_QUESTION_BANK_INSUFFICIENT",
+        }:
             assessment_unavailable = str(exc)
         elif str(exc) not in {
             "learning_adjustment_context_missing",
@@ -776,6 +788,8 @@ def serialize_session(db: Session, session: TutoringSession) -> dict:
     adjustment_context = node_adjustment_context(db, session=session)
     return {
         "session_id": session.public_id,
+        "context_type": session.context_type,
+        "context_id": session.context_ref_id,
         "status": session.status,
         "turn_count": session.turn_count,
         **adjustment_context,

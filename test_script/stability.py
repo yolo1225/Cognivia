@@ -29,7 +29,7 @@ def _assert_completed(task: dict[str, Any], run_kind: str) -> None:
             f"decision={task.get('decision')} reason={task.get('failure_reason')}"
         )
     quality = task.get("package_quality") or {}
-    if quality.get("quality_rule_version") != "quality-v6-20260818":
+    if quality.get("quality_rule_version") != "quality-v8-official-gates":
         raise AssertionError(f"{run_kind} did not persist V6 quality metrics")
     if not quality.get("passed"):
         raise AssertionError(f"{run_kind} package quality did not pass")
@@ -214,7 +214,7 @@ def main() -> None:
     report = {
         "status": "running",
         "run_id": run_id,
-        "quality_rule_version": "quality-v6-20260818",
+        "quality_rule_version": "quality-v8-official-gates",
         "run_count": 0,
         "full_generation_count": 0,
         "partial_regeneration_count": 0,

@@ -40,7 +40,7 @@ def candidate_rag_status(domain_code: str) -> dict[str, Any]:
         }
 
     try:
-        manifest, _ = CandidateIndexAccess(VectorStore().client).active(domain_code)
+        manifest, collection = CandidateIndexAccess(VectorStore().client).active(domain_code)
         with SessionLocal() as db:
             items = list(
                 db.scalars(

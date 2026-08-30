@@ -116,6 +116,39 @@ def test_confirmed_diagnostic_creates_a_valid_profile_decision() -> None:
     assert result.affected_scope.resource_ids == []
 
 
+def test_six_knowledge_quiz_unit_uses_v8_evidence_budget() -> None:
+    payload = _initial_input().model_dump(mode="python")
+    knowledge_ids = [
+        "ai_app_dev_overview",
+        "prompt_basic",
+        "prompt_context_design",
+        "prompt_output_format",
+        "llm_api_calling",
+        "openai_compatible_api",
+    ]
+    payload["context"]["resource_types"] = [
+        ResourceType.LECTURE,
+        ResourceType.PRACTICE_GUIDE,
+        ResourceType.GRADED_QUIZ,
+    ]
+    payload["current_path_node"] = {
+        "path_node_id": "unit:v8-budget",
+        "knowledge_ids": knowledge_ids,
+        "focus_knowledge_ids": knowledge_ids[:3],
+        "title": "六知识点组合单元",
+        "path_order": 1,
+        "target_difficulty": 2,
+        "learning_objective": "完成组合单元学习与验证",
+        "recommendation_reason": "覆盖当前画像中的相关薄弱知识",
+        "prerequisite_knowledge_ids": [],
+    }
+
+    result = analyze_profile(AnalyzeProfileInput.model_validate(payload))
+
+    assert result.retrieval_plan.priority_knowledge_ids == knowledge_ids
+    assert 15 <= result.retrieval_plan.n_results <= 18
+
+
 def test_single_quick_feedback_does_not_update_profile() -> None:
     payload = _feedback_payload(RecommendedAction.ASK_FOLLOW_UP)
     payload["feedback_evidence"] = [

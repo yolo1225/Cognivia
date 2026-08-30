@@ -4,6 +4,7 @@ import hashlib
 from datetime import UTC, datetime
 
 from app.agents.contract_adapters import render_resource_markdown
+from app.agents.review_claim_manifest import build_review_claims
 from app.agents.contracts import (
     AgentMessage,
     AgentName,
@@ -272,6 +273,7 @@ def _lecture_artifact() -> GeneratedResourceArtifact:
         content_md=render_resource_markdown(content, [SOURCE, PREREQUISITE_SOURCE]),
         difficulty=2,
         source_refs=[SOURCE, PREREQUISITE_SOURCE],
+        review_claims=build_review_claims(ResourceType.LECTURE, content),
         knowledge_coverage={
             "AIAPP-K028": [PREREQUISITE_SOURCE.source_ref_id],
         },
@@ -303,6 +305,7 @@ def _practice_artifact() -> GeneratedResourceArtifact:
         content_md=render_resource_markdown(content, [SOURCE]),
         difficulty=2,
         source_refs=[SOURCE],
+        review_claims=build_review_claims(ResourceType.PRACTICE_GUIDE, content),
         knowledge_coverage={"AIAPP-K029": [SOURCE.source_ref_id]},
     )
 
@@ -345,6 +348,7 @@ def _quiz_artifact() -> GeneratedResourceArtifact:
         content_md=render_resource_markdown(content, [SOURCE]),
         difficulty=2,
         source_refs=[SOURCE],
+        review_claims=build_review_claims(ResourceType.GRADED_QUIZ, content),
         knowledge_coverage={"AIAPP-K029": [SOURCE.source_ref_id]},
     )
 

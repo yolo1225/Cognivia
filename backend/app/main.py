@@ -74,6 +74,13 @@ def create_app() -> FastAPI:
             # Once migrations exist, interrupted tasks are claimed atomically by
             # their persisted retry state and resumed at most once.
             pass
+        try:
+            from app.services.knowledge_import_orchestrator import recover_interrupted_imports
+
+            recover_interrupted_imports()
+        except Exception:
+            # Fresh databases may not have the import run table yet.
+            pass
         yield
 
     app = FastAPI(

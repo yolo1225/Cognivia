@@ -1,12 +1,12 @@
 {
   "fixture_version": "tutoring-stage1-v1",
   "case_id": "tutoring_first_difficulty",
-  "contract_version": "agent-contract-v6",
+  "contract_version": "agent-contract-v9",
   "input": {
-      "contract_version": "agent-contract-v6",
+      "contract_version": "agent-contract-v9",
     "task_id": "task_tutoring_stage1_001",
     "context": {
-    "contract_version": "agent-contract-v6",
+    "contract_version": "agent-contract-v9",
       "task_id": "task_tutoring_stage1_001",
       "session_id": "task_tutoring_stage1_001",
       "trigger_type": "resource_feedback",

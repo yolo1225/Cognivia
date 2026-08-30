@@ -1,4 +1,4 @@
-"""V3 content generation Agent with structured generation and deterministic rendering."""
+"""V10 content generation Agent with structured generation and deterministic rendering."""
 
 from __future__ import annotations
 
@@ -21,23 +21,16 @@ from app.agents.contracts import (
     PracticeGuideContent,
     QuestionType,
     QuizQuestion,
-    QuizLevel,
     ResourceType,
     SourceRef,
     StructuredResourceContent,
     structured_source_ref_ids,
 )
 from app.agents.observability import record_model_call
-from app.agents.claim_policy import (
-    capability_violation_for_claim,
-    sanitize_deterministic_text,
-)
+from app.agents.claim_policy import sanitize_deterministic_text
 from app.agents.prompt_registry import get_prompt
-from app.agents.domain_evidence_policy import (
-    EvidenceCapability,
-    evidence_capability_payload,
-    get_domain_evidence_policy,
-)
+from app.agents.review_claim_manifest import build_review_claims
+from app.agents.domain_evidence_policy import evidence_capability_payload
 from app.agents.prompt_budget import bounded_text, estimate_tokens
 from app.core.config import settings
 from app.services.llm_service import (
@@ -46,18 +39,19 @@ from app.services.llm_service import (
     OpenAICompatibleGateway,
     gateway,
 )
+from app.services.question_bank_service import (
+    QuestionBankError,
+    build_graded_quiz_from_question_bank,
+    quiz_revision_question_indexes,
+    revise_graded_quiz_from_question_bank,
+)
 
 
 GENERATION_AGENT_NAME = "content_generation_agent_v3"
 SYSTEM_PROMPT = get_prompt("generation")
 SOURCE_REPAIR_PROMPT = get_prompt("generation.source_repair")
-COVERAGE_REPAIR_PROMPT = get_prompt("generation.coverage_repair")
-CONTENT_POLICY_REPAIR_PROMPT = get_prompt("generation.content_policy_repair")
 REVISION_PROMPT = get_prompt("generation.revision")
-QUIZ_REPAIR_PROMPT = get_prompt("generation.quiz_repair")
 MAX_SOURCE_REPAIR_ATTEMPTS = 1
-MAX_COVERAGE_REPAIR_ATTEMPTS = 1
-MAX_CONTENT_POLICY_REPAIR_ATTEMPTS = 1
 _QUIZ_UNSUPPORTED_DISTRACTOR_RE = re.compile(
     r"(?:证据|材料|文档|原文|RFC).{0,24}(?:未提到|未出现|未说明|未声明)|"
     r"(?:未在|没有在).{0,24}(?:证据|材料|文档|原文).{0,12}(?:出现|说明|声明)|"
@@ -66,7 +60,7 @@ _QUIZ_UNSUPPORTED_DISTRACTOR_RE = re.compile(
 
 
 class GenerationError(RuntimeError):
-    """Controlled error raised at the V3 generation boundary."""
+    """Controlled error raised at the active generation boundary."""
 
     def __init__(
         self,
@@ -276,114 +270,8 @@ class OpenAICompatibleStructuredGenerator:
         )
         return GeneratedContentResponse.model_validate(result)
 
-    def repair_coverage(
-        self,
-        request: GenerateResourceInput,
-        resource_type: ResourceType,
-        allowed_sources: list[SourceRef],
-        candidate: GeneratedContentResponse,
-        missing_knowledge_ids: list[str],
-        preserve_knowledge_ids: list[str],
-    ) -> GeneratedContentResponse:
-        fixture = _fixture_response(request, resource_type, allowed_sources)
-        response_model = _response_model_for(resource_type)
-        result, metadata = self._gateway.complete_json(
-            model=self._model,
-            system_prompt=COVERAGE_REPAIR_PROMPT,
-            payload=self._payload(
-                request,
-                resource_type,
-                allowed_sources,
-                candidate=candidate,
-                missing_knowledge_ids=missing_knowledge_ids,
-                preserve_knowledge_ids=preserve_knowledge_ids,
-                response_model=response_model,
-            ),
-            fixture_factory=lambda: fixture.model_dump(mode="json"),
-            response_model=response_model,
-            max_output_tokens=_max_output_tokens_for(resource_type),
-        )
-        record_model_call(
-            metadata,
-            role="generation_model",
-            resource_type=resource_type.value,
-            correction_attempt=1,
-            correction_kind="coverage",
-        )
-        return GeneratedContentResponse.model_validate(result)
-
-    def repair_content_policy(
-        self,
-        request: GenerateResourceInput,
-        resource_type: ResourceType,
-        allowed_sources: list[SourceRef],
-        candidate: GeneratedContentResponse,
-        violations: list[dict[str, str]],
-    ) -> GeneratedContentResponse:
-        fixture = _fixture_response(request, resource_type, allowed_sources)
-        response_model = _response_model_for(resource_type)
-        payload = self._payload(
-            request,
-            resource_type,
-            allowed_sources,
-            candidate=candidate,
-            response_model=response_model,
-        )
-        payload["policy_violations"] = violations
-        result, metadata = self._gateway.complete_json(
-            model=self._model,
-            system_prompt=CONTENT_POLICY_REPAIR_PROMPT,
-            payload=payload,
-            fixture_factory=lambda: fixture.model_dump(mode="json"),
-            response_model=response_model,
-            max_output_tokens=_max_output_tokens_for(resource_type),
-        )
-        record_model_call(
-            metadata,
-            role="generation_model",
-            resource_type=resource_type.value,
-            correction_attempt=1,
-            correction_kind="content_policy",
-        )
-        return GeneratedContentResponse.model_validate(result)
-
-    def repair_quiz(
-        self,
-        request: GenerateResourceInput,
-        allowed_sources: list[SourceRef],
-        candidate: GeneratedContentResponse,
-        violations: list[dict[str, object]],
-    ) -> GeneratedContentResponse:
-        resource_type = ResourceType.GRADED_QUIZ
-        fixture = _fixture_response(request, resource_type, allowed_sources)
-        response_model = _response_model_for(resource_type)
-        result, metadata = self._gateway.complete_json(
-            model=self._model,
-            system_prompt=QUIZ_REPAIR_PROMPT,
-            payload=self._payload(
-                request,
-                resource_type,
-                allowed_sources,
-                candidate=candidate,
-                response_model=response_model,
-                quiz_violations=violations,
-            ),
-            fixture_factory=lambda: fixture.model_dump(mode="json"),
-            response_model=response_model,
-            max_output_tokens=_max_output_tokens_for(resource_type),
-        )
-        record_model_call(
-            metadata,
-            role="generation_model",
-            resource_type=resource_type.value,
-            correction_attempt=1,
-            correction_kind="quiz_slots",
-        )
-        return GeneratedContentResponse.model_validate(result)
-
-
 class ContentGenerationAgent:
-    """Formal V3 boundary for personalized resource generation."""
+    """Formal V10 boundary for personalized resource generation."""
 
     name = GENERATION_AGENT_NAME
     system_prompt = SYSTEM_PROMPT
@@ -461,18 +349,29 @@ class ContentGenerationAgent:
                     validated.task_id,
                     missing_evidence,
                 )
-                raise GenerationError("generation_missing_target_evidence")
             sources_by_id = {
                 chunk.source.source_ref_id: chunk.source for chunk in validated.retrieved_chunks
             }
 
             def generate_one(resource_type: ResourceType) -> GeneratedResourceArtifact:
                 target_ids = set(validated.requirements.resource_knowledge_targets[resource_type])
+                question_source_ids = (
+                    {
+                        str(source_ref_id)
+                        for question in validated.reference_questions
+                        for source_ref_id in question.answer_key.get("source_ref_ids") or []
+                    }
+                    if resource_type is ResourceType.GRADED_QUIZ
+                    else set()
+                )
                 allowed_sources = [
                     chunk.source
                     for chunk in validated.retrieved_chunks
                     if chunk.source.source_ref_id in validated.requirements.source_whitelist
-                    and chunk.knowledge_id in target_ids
+                    and (
+                        chunk.knowledge_id in target_ids
+                        or chunk.source.source_ref_id in question_source_ids
+                    )
                 ]
                 if not allowed_sources:
                     allowed_sources = [
@@ -480,7 +379,46 @@ class ContentGenerationAgent:
                         for source_id in validated.requirements.source_whitelist
                     ]
                 previous_candidate = candidates_by_type.get(resource_type)
-                if previous_candidate is None:
+                if resource_type is ResourceType.GRADED_QUIZ:
+                    excluded_question_ids: set[str] = set()
+                    rejected_indexes: list[int] = []
+                    targeted_quiz_revision = False
+                    if previous_candidate is not None:
+                        previous_content = previous_candidate.structured_content
+                        if not isinstance(previous_content, GradedQuizContent):
+                            raise GenerationError("revision_candidate_type_mismatch")
+                        rejected_indexes = quiz_revision_question_indexes(
+                            validated.requirements.revision_plan
+                        )
+                    try:
+                        if previous_candidate is not None and rejected_indexes:
+                            targeted_quiz_revision = True
+                            structured_content = revise_graded_quiz_from_question_bank(
+                                validated,
+                                allowed_sources,
+                                previous_content,
+                                rejected_indexes,
+                            )
+                        else:
+                            if previous_candidate is not None:
+                                # Without a rejected position the formal paper must be
+                                # replaced as a whole; free-form question edits are forbidden.
+                                excluded_question_ids = {
+                                    question.question_id
+                                    for question in previous_content.questions
+                                }
+                            structured_content = build_graded_quiz_from_question_bank(
+                                validated,
+                                allowed_sources,
+                                excluded_question_ids=excluded_question_ids,
+                            )
+                        response = GeneratedContentResponse(
+                            structured_content=structured_content,
+                            difficulty=validated.requirements.target_difficulty,
+                        )
+                    except QuestionBankError as exc:
+                        raise GenerationError(str(exc)) from exc
+                elif previous_candidate is None:
                     response = GeneratedContentResponse.model_validate(
                         self._generator.generate(validated, resource_type, allowed_sources)
                     )
@@ -578,7 +516,7 @@ class ContentGenerationAgent:
                             )
                     else:
                         # Compatibility for deterministic test doubles; the live
-                        # gateway always uses the V6 patch contract.
+                        # The live gateway always uses the typed patch response.
                         response = _merge_revision_candidate(
                             candidate_response,
                             GeneratedContentResponse.model_validate(proposed),
@@ -611,7 +549,6 @@ class ContentGenerationAgent:
                         changed_paths,
                         sorted(set(after_fingerprints) - set(changed_paths)),
                     )
-                    response = _ground_practice_revision_fallbacks(response, validated)
                 whitelist = {source.source_ref_id for source in allowed_sources}
                 for attempt in range(MAX_SOURCE_REPAIR_ATTEMPTS + 1):
                     if response.structured_content.resource_type != resource_type.value:
@@ -650,213 +587,65 @@ class ContentGenerationAgent:
                             self._generator.generate(validated, resource_type, allowed_sources)
                         )
 
-                for attempt in range(MAX_CONTENT_POLICY_REPAIR_ATTEMPTS + 1):
-                    policy_violations = [
-                        *_content_policy_violations(response.structured_content),
-                        *_evidence_depth_violations(
-                            response.structured_content,
-                            validated,
-                            allowed_sources,
-                            self._evidence_capabilities_by_knowledge,
-                        ),
-                    ]
-                    if not policy_violations:
-                        break
-                    if attempt == MAX_CONTENT_POLICY_REPAIR_ATTEMPTS:
-                        fallback_content = _apply_content_policy_fallback(
-                            response.structured_content, policy_violations
-                        )
-                        response = response.model_copy(
-                            update={"structured_content": fallback_content}
-                        )
-                        policy_violations = [
-                            *_content_policy_violations(response.structured_content),
-                            *_evidence_depth_violations(
-                                response.structured_content,
-                                validated,
-                                allowed_sources,
-                                self._evidence_capabilities_by_knowledge,
-                            ),
-                        ]
-                        if not policy_violations:
-                            break
-                        self._logger.warning(
-                            "generation_content_policy_repair_exhausted task_id=%s "
-                            "resource_type=%s violation_paths=%s",
-                            validated.task_id,
-                            resource_type.value,
-                            [item["path"] for item in policy_violations],
-                        )
-                        raise GenerationError(
-                            "generated_content_policy_invalid",
-                            field_paths=[item["path"] for item in policy_violations],
-                            violations=_observable_policy_violations(
-                                policy_violations,
-                                response.structured_content,
-                                validated,
-                                self._evidence_capabilities_by_knowledge,
-                            ),
-                        )
-                    repair_policy = getattr(self._generator, "repair_content_policy", None)
-                    if not callable(repair_policy):
-                        response = response.model_copy(
-                            update={
-                                "structured_content": _apply_content_policy_fallback(
-                                    response.structured_content, policy_violations
-                                )
-                            }
-                        )
-                        continue
-                    response = GeneratedContentResponse.model_validate(
-                        repair_policy(
-                            validated,
-                            resource_type,
-                            allowed_sources,
-                            response,
-                            policy_violations,
-                        )
-                    )
-                if previous_candidate is not None:
+                if (
+                    previous_candidate is not None
+                    and resource_type is not ResourceType.GRADED_QUIZ
+                ):
                     response = _strip_audited_claims_after_repairs(
                         response,
                         resource_type,
                         audited_claims_by_type.get(resource_type, {}),
                     )
-                    policy_violations = [
-                        *_content_policy_violations(response.structured_content),
-                        *_evidence_depth_violations(
-                            response.structured_content,
-                            validated,
-                            allowed_sources,
-                            self._evidence_capabilities_by_knowledge,
-                        ),
-                    ]
-                    if policy_violations:
-                        raise GenerationError("revision_post_repair_validation_failed")
+                response = response.model_copy(
+                    update={
+                        "structured_content": normalize_generated_content(
+                            response.structured_content
+                        )
+                    }
+                )
                 if _source_violations(response.structured_content, whitelist):
                     raise GenerationError("generated_source_outside_whitelist_after_repair")
 
-                stabilized_content = _stabilize_lecture_summary(
-                    response.structured_content
-                )
-                if stabilized_content is not response.structured_content:
-                    response = response.model_copy(
-                        update={"structured_content": stabilized_content}
-                    )
-
                 if resource_type == ResourceType.GRADED_QUIZ:
-                    blueprint = _quiz_blueprint(validated, allowed_sources)
-                    if previous_candidate is not None:
-                        audited_quiz_violations = _audited_quiz_slot_violations(
-                            response.structured_content,
-                            audited_claims_by_type.get(resource_type, {}),
+                    blueprint = (
+                        _quiz_blueprint_for_content(validated, response.structured_content)
+                        if targeted_quiz_revision
+                        else _quiz_blueprint(
+                            validated,
+                            allowed_sources,
+                            excluded_question_ids=excluded_question_ids,
                         )
-                        if audited_quiz_violations:
-                            response = response.model_copy(
-                                update={
-                                    "structured_content": _apply_quiz_blueprint_fallback(
-                                        response.structured_content,
-                                        audited_quiz_violations,
-                                        blueprint,
-                                        validated,
-                                    )
-                                }
-                            )
+                    )
                     quiz_violations = _quiz_blueprint_violations(
                         response.structured_content,
                         blueprint,
                         validated,
                     )
                     if quiz_violations:
-                        repair_quiz = getattr(self._generator, "repair_quiz", None)
-                        if not callable(repair_quiz):
-                            raise GenerationError("graded_quiz_structure_invalid")
-                        repaired = GeneratedContentResponse.model_validate(
-                            repair_quiz(
-                                validated,
-                                allowed_sources,
-                                response,
-                                quiz_violations,
-                            )
-                        )
-                        response = _merge_quiz_slot_repairs(
-                            response,
-                            repaired,
-                            quiz_violations,
-                            blueprint,
-                        )
-                        response = _strip_audited_claims_after_repairs(
-                            response,
-                            resource_type,
-                            audited_claims_by_type.get(resource_type, {}),
-                        )
-                        quiz_violations = _quiz_blueprint_violations(
-                            response.structured_content,
-                            blueprint,
-                            validated,
-                        )
-                    if quiz_violations:
-                        fallback_content = _apply_quiz_blueprint_fallback(
-                            response.structured_content,
-                            quiz_violations,
-                            blueprint,
-                            validated,
-                        )
-                        response = response.model_copy(
-                            update={"structured_content": fallback_content}
-                        )
-                        quiz_violations = _quiz_blueprint_violations(
-                            response.structured_content,
-                            blueprint,
-                            validated,
-                        )
-                    if quiz_violations:
                         self._logger.warning(
-                            "graded_quiz_structure_invalid task_id=%s question_ids=%s fields=%s",
+                            "graded_quiz_question_bank_invalid task_id=%s "
+                            "question_ids=%s fields=%s",
                             validated.task_id,
                             [item["question_id"] for item in quiz_violations],
                             [item["field"] for item in quiz_violations],
                         )
-                        raise GenerationError("graded_quiz_structure_invalid")
+                        raise GenerationError("graded_quiz_question_bank_invalid")
                     violations = _source_violations(response.structured_content, whitelist)
                     if violations:
                         raise GenerationError("generated_source_outside_whitelist_after_repair")
 
-                covered_before = _covered_knowledge_ids(
-                    response.structured_content, validated, resource_type
-                )
-                missing = sorted(target_ids - covered_before)
-                if missing:
-                    repair_coverage = getattr(self._generator, "repair_coverage", None)
-                    if callable(repair_coverage) and not deterministic_only:
-                        preserve = sorted(covered_before)
-                        candidate = GeneratedContentResponse.model_validate(
-                            repair_coverage(
-                                validated,
-                                resource_type,
-                                allowed_sources,
-                                response,
-                                missing,
-                                preserve,
-                            )
-                        )
-                        violations = _source_violations(candidate.structured_content, whitelist)
-                        covered_after = _covered_knowledge_ids(
-                            candidate.structured_content, validated, resource_type
-                        )
-                        if not violations and covered_before.issubset(covered_after):
-                            response = _merge_coverage_additions(
-                                response,
-                                candidate,
-                                set(missing),
-                                validated,
-                            )
-
                 covered_final = _covered_knowledge_ids(
                     response.structured_content, validated, resource_type
                 )
-                if target_ids - covered_final:
-                    raise GenerationError("generated_coverage_incomplete")
+                missing_coverage = sorted(target_ids - covered_final)
+                if missing_coverage:
+                    self._logger.warning(
+                        "generated_coverage_incomplete task_id=%s resource_type=%s "
+                        "knowledge_ids=%s",
+                        validated.task_id,
+                        resource_type.value,
+                        missing_coverage,
+                    )
 
                 used_source_ids = structured_source_ref_ids(response.structured_content)
                 source_refs = [
@@ -884,6 +673,9 @@ class ContentGenerationAgent:
                             for source_id in used_source_ids
                         )
                     },
+                    review_claims=build_review_claims(
+                        resource_type, response.structured_content
+                    ),
                 )
 
             resource_types = validated.requirements.resource_types
@@ -897,7 +689,44 @@ class ContentGenerationAgent:
                     executor.submit(context.run, generate_one, resource_type)
                     for context, resource_type in zip(contexts, resource_types, strict=True)
                 ]
-                resources = [future.result() for future in futures]
+                resources_by_type: dict[ResourceType, GeneratedResourceArtifact] = {}
+                failures: dict[ResourceType, Exception] = {}
+                for resource_type, future in zip(resource_types, futures, strict=True):
+                    try:
+                        resources_by_type[resource_type] = future.result()
+                    except Exception as exc:  # settled and retried below per resource
+                        failures[resource_type] = exc
+
+            for resource_type in list(failures):
+                try:
+                    resources_by_type[resource_type] = copy_context().run(
+                        generate_one, resource_type
+                    )
+                    del failures[resource_type]
+                except Exception as exc:
+                    failures[resource_type] = exc
+            if failures:
+                failed_types = sorted(item.value for item in failures)
+                self._logger.warning(
+                    "generation_resource_failed task_id=%s resource_types=%s error_codes=%s",
+                    validated.task_id,
+                    failed_types,
+                    [
+                        getattr(failures[item], "code", type(failures[item]).__name__)
+                        for item in failures
+                    ],
+                )
+                first_type = next(iter(failures))
+                first_error = failures[first_type]
+                if isinstance(
+                    first_error,
+                    (GenerationError, ModelResponseError, ModelCallError, ValidationError),
+                ):
+                    raise first_error
+                raise GenerationError(
+                    "generation_resource_failed:" + ",".join(failed_types)
+                ) from first_error
+            resources = [resources_by_type[item] for item in resource_types]
             output = GenerateResourceOutput(task_id=validated.task_id, resources=resources)
         except GenerationError:
             self._log_failure(request, "generation_policy_rejected")
@@ -1221,7 +1050,7 @@ def _apply_revision_patches(
     field_paths: list[str],
     audited_claims: dict[str, list[str]] | None = None,
 ) -> GeneratedContentResponse:
-    """Apply V6 field patches without allowing structural resource rewrites."""
+    """Apply typed field patches without allowing structural resource rewrites."""
     resource_type = ResourceType(original.structured_content.resource_type)
     allowed = {
         normalized
@@ -1229,12 +1058,6 @@ def _apply_revision_patches(
         if (normalized := _normalize_revision_path(path, resource_type)) is not None
     }
     payload = original.structured_content.model_dump(mode="python")
-    safe_baseline = original.structured_content.model_dump(mode="python")
-    _remove_residual_audited_claims(
-        safe_baseline,
-        resource_type,
-        audited_claims or {},
-    )
     seen: set[str] = set()
     for patch in proposed.patches:
         normalized = _normalize_revision_path(patch.path, resource_type)
@@ -1257,12 +1080,6 @@ def _apply_revision_patches(
                 raise GenerationError("patch_validation_failed")
         _write_path(payload, tokens, patch.value)
     _remove_residual_audited_claims(payload, resource_type, audited_claims or {})
-    _stabilize_practice_revision_fields(
-        payload,
-        safe_baseline,
-        resource_type,
-        audited_claims or {},
-    )
     try:
         content = type(original.structured_content).model_validate(payload)
     except ValidationError as exc:
@@ -1344,12 +1161,6 @@ def _merge_revision_candidate(
     if proposed.structured_content.resource_type != resource_type.value:
         return original
     original_payload = original.structured_content.model_dump(mode="python")
-    safe_baseline = original.structured_content.model_dump(mode="python")
-    _remove_residual_audited_claims(
-        safe_baseline,
-        resource_type,
-        audited_claims or {},
-    )
     proposed_payload = proposed.structured_content.model_dump(mode="python")
     merged_payload = original.structured_content.model_dump(mode="python")
     normalized_paths = list(
@@ -1375,12 +1186,6 @@ def _merge_revision_candidate(
         _write_path(merged_payload, tokens, new_value)
     _remove_residual_audited_claims(
         merged_payload,
-        resource_type,
-        audited_claims or {},
-    )
-    _stabilize_practice_revision_fields(
-        merged_payload,
-        safe_baseline,
         resource_type,
         audited_claims or {},
     )
@@ -1443,36 +1248,6 @@ def _strip_audited_claims_after_repairs(
     return response.model_copy(update={"structured_content": content})
 
 
-def _stabilize_practice_revision_fields(
-    payload: dict[str, object],
-    safe_baseline: dict[str, object],
-    resource_type: ResourceType,
-    audited_claims: dict[str, list[str]],
-) -> None:
-    """Keep supported prose while preventing rejected practice claims from being replaced.
-
-    Once review rejects a factual practice-guide field, the deterministic baseline
-    removes that exact claim and falls back to a non-factual learner action if nothing
-    remains. Reusing the cleaned value for every affected practice field prevents the
-    revision model from replacing one unsupported operational assertion with an
-    equivalent or stronger assertion on the next review round.
-    """
-    if resource_type is not ResourceType.PRACTICE_GUIDE:
-        return
-    stable_paths = {
-        parent
-        for field_path in audited_claims
-        if (parent := _normalize_revision_path(field_path, resource_type)) is not None
-    }
-    for path in stable_paths:
-        tokens = _path_tokens(path)
-        try:
-            value = _read_path(safe_baseline, tokens)
-            _write_path(payload, tokens, value)
-        except (IndexError, KeyError, TypeError):
-            continue
-
-
 def _audited_claim_body(path: str, claim: str) -> str:
     markers = {
         ".code_or_command": "以下代码或命令应能完成该步骤：\n",
@@ -1492,10 +1267,10 @@ def _revision_fallback_text(path: str) -> str:
         return "练习前请确认所需材料与受控环境已经准备妥当。"
     if path.startswith("acceptance_criteria["):
         return "完成练习后，提交学习记录并标注核对依据。"
-    if path.endswith(".expected_result"):
-        return "记录实际结果，并与引用材料中的描述进行核对。"
     if path.endswith(".instruction"):
-        return "阅读引用材料，整理其中明确描述的处理流程。"
+        return "整理本步骤的学习要点，并记录学习结论。"
+    if path.endswith(".expected_result"):
+        return "形成与本步骤相关的学习检查表，列出关键观察项和核对结论。"
     if path.endswith(".troubleshooting"):
         return "记录问题现象，并依据引用材料逐项核对。"
     if path.endswith(".code_or_command"):
@@ -1507,79 +1282,6 @@ def _revision_fallback_text(path: str) -> str:
     if path.startswith("questions["):
         return "请根据引用材料完成该题并核对答案。"
     return "阅读引用材料并完成对应学习记录。"
-
-
-def _ground_practice_revision_fallbacks(
-    response: GeneratedContentResponse,
-    request: GenerateResourceInput,
-) -> GeneratedContentResponse:
-    """Replace claim-free practice placeholders with literal cited evidence.
-
-    A rejected operational assertion may leave an instruction containing only the
-    non-factual safety placeholder.  Such a guide has no auditable claim and used to
-    abort the following review node.  Copying the already-whitelisted evidence body
-    keeps the revision conservative while ensuring the dual reviewers still receive
-    a factual statement to verify.
-    """
-    content = response.structured_content
-    if not isinstance(content, PracticeGuideContent):
-        return response
-    placeholder = _revision_fallback_text("steps[0].instruction")
-    chunks_by_source = {
-        chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks
-    }
-    changed = False
-    steps = []
-    for step in content.steps:
-        instruction = step.instruction
-        if instruction.strip() == placeholder:
-            chunk = next(
-                (
-                    chunks_by_source[source_id]
-                    for source_id in step.source_ref_ids
-                    if source_id in chunks_by_source
-                ),
-                None,
-            )
-            if chunk is not None:
-                grounded = _candidate_evidence_body(chunk.content).strip()
-                if grounded:
-                    instruction = grounded[:6000]
-                    changed = True
-        steps.append(step.model_copy(update={"instruction": instruction}))
-    if not changed:
-        return response
-    return response.model_copy(
-        update={"structured_content": content.model_copy(update={"steps": steps})}
-    )
-
-
-def _audited_quiz_slot_violations(
-    content: StructuredResourceContent,
-    audited_claims: dict[str, list[str]],
-) -> list[dict[str, object]]:
-    """Force affected quiz slots through the evidence-copying fallback.
-
-    Revising only an answer or explanation lets a model replace an unsupported
-    causal statement with a semantically equivalent one. Rebuilding the whole
-    affected slot from its assigned evidence keeps the question structure while
-    bounding every factual field to text present in the retrieved material.
-    """
-    if not isinstance(content, GradedQuizContent):
-        return []
-    indexes = {
-        int(match.group(1))
-        for path in audited_claims
-        if (match := re.match(r"^questions\[(\d+)\]\.", path)) is not None
-    }
-    return [
-        {
-            "question_id": content.questions[index].question_id,
-            "field": "assessment_content",
-        }
-        for index in sorted(indexes)
-        if 0 <= index < len(content.questions)
-    ]
 
 
 def _revision_field_fingerprints(
@@ -1600,59 +1302,6 @@ def _revision_field_fingerprints(
         normalized = re.sub(r"\s+", " ", str(value)).strip()
         result[path] = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
     return result
-
-
-def _merge_coverage_additions(
-    original: GeneratedContentResponse,
-    proposed: GeneratedContentResponse,
-    missing_knowledge_ids: set[str],
-    request: GenerateResourceInput,
-) -> GeneratedContentResponse:
-    """Accept only new teaching blocks whose sources cover missing targets."""
-    knowledge_by_source = {
-        chunk.source.source_ref_id: chunk.knowledge_id for chunk in request.retrieved_chunks
-    }
-
-    def covers_missing(source_ids: list[str]) -> bool:
-        return any(
-            knowledge_by_source.get(source_id) in missing_knowledge_ids
-            for source_id in source_ids
-        )
-
-    current = original.structured_content
-    candidate = proposed.structured_content
-    if isinstance(current, LectureContent) and isinstance(candidate, LectureContent):
-        existing = {repr(item.model_dump(mode="python")) for item in current.core_concepts}
-        additions = [
-            item
-            for item in candidate.core_concepts
-            if repr(item.model_dump(mode="python")) not in existing
-            and covers_missing(item.source_ref_ids)
-        ]
-        content = current.model_copy(
-            update={"core_concepts": [*current.core_concepts, *additions][:20]}
-        )
-    elif isinstance(current, PracticeGuideContent) and isinstance(
-        candidate, PracticeGuideContent
-    ):
-        existing = {repr(item.model_dump(mode="python")) for item in current.steps}
-        additions = [
-            item
-            for item in candidate.steps
-            if repr(item.model_dump(mode="python")) not in existing
-            and covers_missing(item.source_ref_ids)
-        ]
-        steps = [
-            item.model_copy(update={"order": index})
-            for index, item in enumerate([*current.steps, *additions][:30], start=1)
-        ]
-        content = current.model_copy(update={"steps": steps})
-    else:
-        return original
-    return GeneratedContentResponse(
-        structured_content=content,
-        difficulty=original.difficulty,
-    )
 
 
 _NON_PROSE_POLICY_FIELDS = {
@@ -1695,221 +1344,62 @@ def _content_policy_violations(
     for path, value in values:
         _cleaned, codes = sanitize_deterministic_text(path, value)
         violations.extend({"path": path, "code": code} for code in codes)
-        if path.endswith(".explanation") and _QUIZ_UNSUPPORTED_DISTRACTOR_RE.search(value):
+        if (
+            path.startswith("questions[")
+            and path.endswith(".explanation")
+            and _QUIZ_UNSUPPORTED_DISTRACTOR_RE.search(value)
+        ):
             violations.append({"path": path, "code": "unsupported_distractor_rationale"})
     return violations
 
 
-def _evidence_depth_violations(
+def normalize_generated_content(
     content: StructuredResourceContent,
-    request: GenerateResourceInput,
-    allowed_sources: list[SourceRef],
-    evidence_capabilities_by_knowledge: dict[str, list[str]] | None = None,
-) -> list[dict[str, str]]:
-    if not isinstance(content, PracticeGuideContent):
-        return []
-    chunks_by_source = {chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks}
-    policy = get_domain_evidence_policy(
-        request.context.domain_code, evidence_capabilities_by_knowledge
-    )
-
-    def capabilities(source_ids: list[str]) -> set[str]:
-        result: set[str] = set()
-        for source_id in source_ids:
-            chunk = chunks_by_source.get(source_id)
-            if chunk is not None:
-                result.update(item.value for item in policy.classify(chunk))
-        return result
-
-    violations: list[dict[str, str]] = []
-    all_capabilities = capabilities([source.source_ref_id for source in allowed_sources])
-    for index, requirement in enumerate(content.environment_requirements):
-        code = capability_violation_for_claim(
-            "environment_requirement", requirement, all_capabilities
-        )
-        if code:
-            violations.append(
-                {"path": f"environment_requirements[{index}]", "code": code}
-            )
-    for index, criterion in enumerate(content.acceptance_criteria):
-        code = capability_violation_for_claim(
-            "acceptance_criterion", criterion, all_capabilities
-        )
-        if code:
-            violations.append({"path": f"acceptance_criteria[{index}]", "code": code})
-    for index, step in enumerate(content.steps):
-        step_capabilities = capabilities(step.source_ref_ids)
-        fields = (
-            ("instruction", step.instruction),
-            ("code_or_command", step.code_or_command),
-            ("expected_result", step.expected_result),
-            ("troubleshooting", step.troubleshooting),
-        )
-        for field_group, value in fields:
-            if not value:
-                continue
-            code = capability_violation_for_claim(field_group, value, step_capabilities)
-            if code:
-                violations.append(
-                    {"path": f"steps[{index}].{field_group}", "code": code}
-                )
-    return violations
-
-
-def _apply_practice_evidence_fallback(
-    content: StructuredResourceContent,
-    violations: list[dict[str, str]],
 ) -> StructuredResourceContent:
-    """Deterministically remove unsupported operational detail after model repair."""
-    if not isinstance(content, PracticeGuideContent):
-        return content
-
-    codes_by_path: dict[str, set[str]] = {}
-    for violation in violations:
-        codes_by_path.setdefault(violation["path"], set()).add(violation["code"])
-
-    environment_requirements = list(content.environment_requirements)
-    for index in range(len(environment_requirements)):
-        path = f"environment_requirements[{index}]"
-        if codes_by_path.get(path, set()).intersection(
-            {
-                "environment_evidence_missing",
-                "version_boundary_missing",
-            }
-        ):
-            environment_requirements[index] = "准备练习所需的材料与受控环境。"
-
-    acceptance_criteria = list(content.acceptance_criteria)
-    for index in range(len(acceptance_criteria)):
-        path = f"acceptance_criteria[{index}]"
-        if "acceptance_evidence_missing" in codes_by_path.get(path, set()):
-            acceptance_criteria[index] = "形成学习记录并标注所依据的材料。"
+    """Apply structural-safe cleanup without deciding whether facts are supported."""
+    violations = _content_policy_violations(content)
+    deterministic_paths = {
+        item["path"]
+        for item in violations
+        if item["code"] in {"forbidden_meta_claim", "misplaced_field_content"}
+    }
+    normalized = _sanitize_deterministic_policy_claims(content, deterministic_paths)
+    distractor_paths = {
+        item["path"]
+        for item in violations
+        if item["code"] == "unsupported_distractor_rationale"
+    }
+    normalized = _sanitize_quiz_distractor_rationales(normalized, distractor_paths)
+    if not isinstance(normalized, PracticeGuideContent):
+        return normalized
 
     steps = []
-    for index, step in enumerate(content.steps):
+    for index, step in enumerate(normalized.steps):
         updates: dict[str, str | None] = {}
-        if "operation_evidence_missing" in codes_by_path.get(
-            f"steps[{index}].instruction", set()
-        ):
-            updates["instruction"] = "阅读并梳理引用材料中明确描述的处理流程。"
-        if "expected_result_evidence_missing" in codes_by_path.get(
-            f"steps[{index}].expected_result", set()
-        ):
-            updates["expected_result"] = "记录实际结果并与引用材料中的描述进行核对。"
-        if "executable_evidence_missing" in codes_by_path.get(
-            f"steps[{index}].code_or_command", set()
-        ):
-            updates["code_or_command"] = None
-        if "error_evidence_missing" in codes_by_path.get(
-            f"steps[{index}].troubleshooting", set()
-        ):
-            updates["troubleshooting"] = None
+        if not step.instruction.strip():
+            updates["instruction"] = _revision_fallback_text(
+                f"steps[{index}].instruction"
+            )
+        if not step.expected_result.strip():
+            updates["expected_result"] = _revision_fallback_text(
+                f"steps[{index}].expected_result"
+            )
+        for field in ("code_or_command", "troubleshooting"):
+            value = getattr(step, field)
+            if isinstance(value, str) and not value.strip():
+                updates[field] = None
         command = updates.get("code_or_command", step.code_or_command)
         if isinstance(command, str):
-            # A local revision can remove an unsupported separator from a
-            # multi-command field. Never publish the resulting token-glued
-            # string (for example ``git diffgit commit``).
-            normalized_command = re.sub(
+            command = re.sub(
                 r"(?<=[\w\"'<>])(?=git\s+(?:status|diff|add|commit|log|push|pull|"
                 r"fetch|switch|checkout|merge|rebase|restore)\b)",
                 "\n",
                 command,
                 flags=re.I,
             )
-            if normalized_command != command:
-                updates["code_or_command"] = normalized_command
+            updates["code_or_command"] = command
         steps.append(step.model_copy(update=updates) if updates else step)
-
-    return content.model_copy(
-        update={
-            "environment_requirements": environment_requirements,
-            "acceptance_criteria": acceptance_criteria,
-            "steps": steps,
-        }
-    )
-
-
-def _apply_content_policy_fallback(
-    content: StructuredResourceContent,
-    violations: list[dict[str, str]],
-) -> StructuredResourceContent:
-    """Remove policy-only provenance self-claims without relaxing factual safeguards."""
-    deterministic_paths = {
-        item["path"]
-        for item in violations
-        if item["code"] in {"forbidden_meta_claim", "misplaced_field_content"}
-    }
-    sanitized = _sanitize_deterministic_policy_claims(content, deterministic_paths)
-    distractor_paths = {
-        item["path"]
-        for item in violations
-        if item["code"] == "unsupported_distractor_rationale"
-    }
-    sanitized = _sanitize_quiz_distractor_rationales(sanitized, distractor_paths)
-    return _apply_practice_evidence_fallback(sanitized, violations)
-
-
-def _stabilize_lecture_summary(
-    content: StructuredResourceContent,
-) -> StructuredResourceContent:
-    """Keep a lecture summary within the facts actually taught by its blocks."""
-    if not isinstance(content, LectureContent):
-        return content
-    safe_actions = (
-        "请结合本讲义的核心概念",
-        "回顾本讲义涉及的核心知识",
-    )
-    if content.summary.startswith(safe_actions):
-        return content
-
-    taught_parts = [
-        value.strip()
-        for block in content.core_concepts
-        for value in (block.explanation, block.example)
-        if value and value.strip()
-    ]
-    taught_parts.extend(
-        block.correction.strip()
-        for block in content.misconceptions
-        if block.correction.strip()
-    )
-    taught_text = " ".join(taught_parts)
-    taught_tokens = _quiz_semantic_tokens(taught_text)
-    summary_sentences = [
-        item.strip()
-        for item in re.findall(r"[^。！？!?\n]+[。！？!?]?", content.summary)
-        if item.strip()
-    ]
-
-    def is_taught(sentence: str) -> bool:
-        normalized = sentence.strip().strip("。！？!?")
-        if normalized and normalized in taught_text:
-            return True
-        tokens = _quiz_semantic_tokens(normalized)
-        return bool(tokens) and len(tokens & taught_tokens) / len(tokens) >= 0.45
-
-    if summary_sentences and all(is_taught(sentence) for sentence in summary_sentences):
-        return content
-
-    selected: list[str] = []
-    for part in taught_parts:
-        first_sentence = next(
-            (
-                item.strip()
-                for item in re.findall(r"[^。！？!?\n]+[。！？!?]?", part)
-                if item.strip()
-            ),
-            "",
-        )
-        if not first_sentence:
-            continue
-        candidate = " ".join([*selected, first_sentence])
-        if len(candidate) > 2000:
-            break
-        selected.append(first_sentence)
-    if not selected:
-        return content
-    return content.model_copy(update={"summary": " ".join(selected)})
+    return normalized.model_copy(update={"steps": steps})
 
 
 def _sanitize_quiz_distractor_rationales(
@@ -1990,7 +1480,8 @@ def _sanitize_deterministic_policy_claims(
         except (KeyError, IndexError, TypeError):
             continue
         if isinstance(value, str):
-            parent[key] = _sanitize_policy_text(path, value, fallback(path))  # type: ignore[index]
+            cleaned = _sanitize_policy_text(path, value, None)
+            parent[key] = cleaned if cleaned else fallback(path)  # type: ignore[index]
     return type(content).model_validate(payload)
 
 
@@ -2019,36 +1510,56 @@ def _source_constrained_schema(
 
 
 def _quiz_blueprint(
-    request: GenerateResourceInput, allowed_sources: list[SourceRef]
+    request: GenerateResourceInput,
+    allowed_sources: list[SourceRef],
+    *,
+    excluded_question_ids: set[str] | None = None,
 ) -> list[dict[str, object]]:
-    """Fix quiz slots deterministically; the model only fills assessment prose."""
-    targets = request.requirements.resource_knowledge_targets[ResourceType.GRADED_QUIZ]
-    source_ids_by_knowledge: dict[str, list[str]] = {}
-    for source in allowed_sources:
-        source_ids_by_knowledge.setdefault(source.knowledge_id, []).append(source.source_ref_id)
-    reference_ids_by_knowledge: dict[str, list[str]] = {}
-    for question in request.reference_questions:
-        reference_ids_by_knowledge.setdefault(question.knowledge_id, []).append(question.question_id)
-    slots = [
-        (QuizLevel.FOUNDATION, QuestionType.SINGLE_CHOICE, -1),
-        (QuizLevel.FOUNDATION, QuestionType.SHORT_ANSWER, -1),
-        (QuizLevel.IMPROVEMENT, QuestionType.SINGLE_CHOICE, 0),
-        (QuizLevel.IMPROVEMENT, QuestionType.SHORT_ANSWER, 0),
-        (QuizLevel.CHALLENGE, QuestionType.MULTIPLE_CHOICE, 1),
-        (QuizLevel.CHALLENGE, QuestionType.SHORT_ANSWER, 1),
-    ]
+    """Fix quiz slots deterministically from the published formal question bank."""
+    if request.reference_questions:
+        content = build_graded_quiz_from_question_bank(
+            request,
+            allowed_sources,
+            excluded_question_ids=excluded_question_ids or (),
+        )
+        return [
+            {
+                "question_id": question.question_id,
+                "level": question.level.value,
+                "question_type": question.question_type.value,
+                "knowledge_id": question.knowledge_id,
+                "difficulty": question.difficulty,
+                "allowed_source_ref_ids": list(question.source_ref_ids),
+                "reference_question_ids": list(question.reference_question_ids),
+            }
+            for question in content.questions
+        ]
+    raise QuestionBankError("graded_quiz_question_bank_insufficient")
+
+
+def _quiz_blueprint_for_content(
+    request: GenerateResourceInput,
+    content: StructuredResourceContent,
+) -> list[dict[str, object]]:
+    """Build a formal-bank blueprint for a locally revised quiz."""
+
+    if not isinstance(content, GradedQuizContent):
+        raise QuestionBankError("graded_quiz_content_type_invalid")
+    references = {question.question_id: question for question in request.reference_questions}
     blueprint: list[dict[str, object]] = []
-    for index, (level, question_type, offset) in enumerate(slots, start=1):
-        knowledge_id = targets[(index - 1) % len(targets)]
+    for question in content.questions:
+        reference = references.get(question.question_id)
+        if reference is None or not reference.answer_key.get("source_ref_ids"):
+            raise QuestionBankError("graded_quiz_question_bank_scope_invalid")
         blueprint.append(
             {
-                "question_id": f"Q{index}",
-                "level": level.value,
-                "question_type": question_type.value,
-                "knowledge_id": knowledge_id,
-                "difficulty": min(5, max(1, request.requirements.target_difficulty + offset)),
-                "allowed_source_ref_ids": source_ids_by_knowledge[knowledge_id],
-                "reference_question_ids": reference_ids_by_knowledge.get(knowledge_id, [])[:3],
+                "question_id": reference.question_id,
+                "level": str(reference.answer_key.get("quiz_level") or ""),
+                "question_type": reference.question_type.value,
+                "knowledge_id": reference.knowledge_id,
+                "difficulty": reference.difficulty,
+                "allowed_source_ref_ids": list(reference.answer_key["source_ref_ids"]),
+                "reference_question_ids": [reference.question_id],
             }
         )
     return blueprint
@@ -2107,50 +1618,6 @@ def _quiz_blueprint_violations(
     return violations
 
 
-def _observable_policy_violations(
-    violations: list[dict[str, str]],
-    content: StructuredResourceContent,
-    request: GenerateResourceInput,
-    evidence_capabilities_by_knowledge: dict[str, list[str]],
-) -> list[dict[str, object]]:
-    """Build a privacy-safe failure summary without resource prose."""
-    chunks_by_source = {chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks}
-    source_ids_by_path: dict[str, list[str]] = {}
-    if isinstance(content, PracticeGuideContent):
-        for index, step in enumerate(content.steps):
-            for field in (
-                "title",
-                "instruction",
-                "code_or_command",
-                "expected_result",
-                "troubleshooting",
-            ):
-                source_ids_by_path[f"steps[{index}].{field}"] = list(step.source_ref_ids)
-    result = []
-    for violation in violations:
-        source_ids = source_ids_by_path.get(violation["path"], [])
-        capabilities = sorted(
-            {
-                capability
-                for source_id in source_ids
-                if source_id in chunks_by_source
-                for capability in evidence_capabilities_by_knowledge.get(
-                    chunks_by_source[source_id].knowledge_id, [EvidenceCapability.CONCEPT.value]
-                )
-            }
-        )
-        result.append(
-            {
-                "path": violation["path"],
-                "code": violation["code"],
-                "source_ref_ids": source_ids[:10],
-                "capabilities": capabilities,
-                "repair_attempts": MAX_CONTENT_POLICY_REPAIR_ATTEMPTS,
-            }
-        )
-    return result
-
-
 def _quiz_semantic_tokens(text: str) -> set[str]:
     lowered = text.lower()
     words = {word for word in re.findall(r"[a-z0-9_]+", lowered) if len(word) > 1}
@@ -2164,98 +1631,32 @@ def _quiz_question_matches_target(
     slot: dict[str, object],
     request: GenerateResourceInput,
 ) -> bool:
-    question_tokens = _quiz_semantic_tokens(
-        " ".join((question.prompt, question.correct_answer, question.explanation))
-    )
-    chunks_by_source = {chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks}
-    target_tokens = _quiz_semantic_tokens(
-        " ".join(
-            chunks_by_source[source_id].content
-            for source_id in slot["allowed_source_ref_ids"]
-            if source_id in chunks_by_source
-        )
-    )
-    target_overlap = len(question_tokens & target_tokens)
-    other_overlaps: list[int] = []
-    for knowledge_id in request.requirements.resource_knowledge_targets[
-        ResourceType.GRADED_QUIZ
-    ]:
-        if knowledge_id == slot["knowledge_id"]:
-            continue
-        other_tokens = _quiz_semantic_tokens(
-            " ".join(
-                chunk.content
-                for chunk in request.retrieved_chunks
-                if chunk.knowledge_id == knowledge_id
-            )
-        )
-        other_overlaps.append(len(question_tokens & other_tokens))
-    return not other_overlaps or max(other_overlaps) <= target_overlap + 2
+    """Validate a bank question's certified attribution deterministically.
 
+    The formal-question certification already establishes that the stem, answer
+    and rubric are supported by its primary knowledge item and declared real
+    relations.  Re-comparing CJK token overlap at runtime is both lossy and
+    incorrect for integrated questions: a question may legitimately use more
+    terms from a related item than from its primary item.  Runtime only needs
+    to confirm that the immutable blueprint attribution and certified evidence
+    links have survived assembly.
+    """
+    if question.knowledge_id != str(slot["knowledge_id"]):
+        return False
+    if question.reference_question_ids != list(slot["reference_question_ids"]):
+        return False
+    allowed_source_ids = {str(value) for value in slot["allowed_source_ref_ids"]}
+    question_source_ids = {str(value) for value in question.source_ref_ids}
+    if not question_source_ids or not question_source_ids.issubset(allowed_source_ids):
+        return False
 
-def _apply_quiz_blueprint_fallback(
-    content: StructuredResourceContent,
-    violations: list[dict[str, object]],
-    blueprint: list[dict[str, object]],
-    request: GenerateResourceInput,
-) -> StructuredResourceContent:
-    """Replace only invalid quiz slots with minimal facts copied from target evidence."""
-    if not isinstance(content, GradedQuizContent):
-        return content
-    invalid_ids = {
-        str(item["question_id"])
-        for item in violations
-        if str(item["question_id"]).startswith("Q")
-    }
-    slots = {str(slot["question_id"]): slot for slot in blueprint}
     chunks_by_source = {chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks}
-    questions = []
-    for question in content.questions:
-        if question.question_id not in invalid_ids or question.question_id not in slots:
-            questions.append(question)
-            continue
-        slot = slots[question.question_id]
-        evidence_text = "\n".join(
-            _candidate_evidence_body(chunks_by_source[source_id].content)
-            for source_id in slot["allowed_source_ref_ids"]
-            if source_id in chunks_by_source
-        )
-        facts = [
-            bounded_text(part.strip(), 220)
-            for part in re.split(r"[。！？!?\n]+", evidence_text)
-            if part.strip() and not part.lstrip().startswith("#")
-        ][:2]
-        if not facts:
-            return content
-        question_type = QuestionType(str(slot["question_type"]))
-        correct_facts = facts[:2] if question_type is QuestionType.MULTIPLE_CHOICE else facts[:1]
-        options = []
-        if question_type in {QuestionType.SINGLE_CHOICE, QuestionType.MULTIPLE_CHOICE}:
-            options = [
-                *correct_facts,
-                "材料未直接支持的干扰表述一",
-                "材料未直接支持的干扰表述二",
-            ][:4]
-        correct_answer = "，".join(correct_facts)
-        questions.append(
-            question.model_copy(
-                update={
-                    "level": QuizLevel(str(slot["level"])),
-                    "question_type": question_type,
-                    "prompt": "下列哪项是材料直接说明的要点？"
-                    if options
-                    else "请概括材料直接说明的关键要点。",
-                    "options": options,
-                    "correct_answer": correct_answer,
-                    "explanation": "。".join(correct_facts) + "。",
-                    "knowledge_id": str(slot["knowledge_id"]),
-                    "difficulty": int(slot["difficulty"]),
-                    "source_ref_ids": list(slot["allowed_source_ref_ids"]),
-                    "reference_question_ids": list(slot["reference_question_ids"]),
-                }
-            )
-        )
-    return content.model_copy(update={"questions": questions})
+    return all(
+        source_id in chunks_by_source
+        and chunks_by_source[source_id].knowledge_id
+        in {question.knowledge_id, *question.related_knowledge_ids}
+        for source_id in question_source_ids
+    )
 
 
 def _candidate_evidence_body(value: str) -> str:
@@ -2284,57 +1685,6 @@ def _choice_answer_matches_options(answer: str, options: list[str]) -> bool:
     if any(option in compact_answer or compact_answer in option for option in compact_options):
         return True
     return bool(re.fullmatch(r"(?:[A-ZＡ-Ｚ](?:[、,，/\s]+|$))+", answer.strip(), re.I))
-
-
-def _merge_quiz_slot_repairs(
-    original: GeneratedContentResponse,
-    repaired: GeneratedContentResponse,
-    violations: list[dict[str, object]],
-    blueprint: list[dict[str, object]],
-) -> GeneratedContentResponse:
-    if not isinstance(original.structured_content, GradedQuizContent) or not isinstance(
-        repaired.structured_content, GradedQuizContent
-    ):
-        return repaired
-    invalid_ids = {
-        str(item["question_id"]) for item in violations if str(item["question_id"]).startswith("Q")
-    }
-    if "<package>" in {str(item["question_id"]) for item in violations}:
-        return repaired
-    repaired_by_id = {
-        question.question_id: question for question in repaired.structured_content.questions
-    }
-    blueprint_by_id = {str(slot["question_id"]): slot for slot in blueprint}
-
-    def repaired_question(question):
-        candidate = repaired_by_id.get(question.question_id, question)
-        slot = blueprint_by_id.get(question.question_id)
-        if slot is None:
-            return candidate
-        question_type = QuestionType(str(slot["question_type"]))
-        return candidate.model_copy(
-            update={
-                "question_id": str(slot["question_id"]),
-                "level": QuizLevel(str(slot["level"])),
-                "question_type": question_type,
-                "knowledge_id": str(slot["knowledge_id"]),
-                "difficulty": int(slot["difficulty"]),
-                "source_ref_ids": list(slot["allowed_source_ref_ids"]),
-                "reference_question_ids": list(slot["reference_question_ids"]),
-                "options": (
-                    [] if question_type is QuestionType.SHORT_ANSWER else candidate.options
-                ),
-            }
-        )
-
-    questions = [
-        repaired_question(question)
-        if question.question_id in invalid_ids
-        else question
-        for question in original.structured_content.questions
-    ]
-    content = original.structured_content.model_copy(update={"questions": questions})
-    return original.model_copy(update={"structured_content": content})
 
 
 def _source_violations(

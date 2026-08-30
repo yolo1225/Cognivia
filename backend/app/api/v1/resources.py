@@ -15,6 +15,7 @@ from app.core.security import (
 )
 from app.models import (
     GenerationTask,
+    KnowledgeItem,
     Learner,
     LearningPackageResource,
     LearningResource,
@@ -32,10 +33,95 @@ from app.services.learner_service import get_or_create_demo_learner
 from app.services.profile_service import default_profile_for_learner
 from app.rag.readiness import CandidateRagNotReady, RAG_NOT_READY_CODE, require_candidate_rag
 from app.services.resource_export_service import export_resource, resolve_export_path
+from app.services.resource_quiz_attempt_service import complete as complete_quiz_attempt
+from app.services.resource_quiz_attempt_service import current as current_quiz_attempt
+from app.services.resource_quiz_attempt_service import current_or_create as create_quiz_attempt
+from app.services.resource_quiz_attempt_service import save_answer as save_quiz_answer
 from app.workers.generation_worker import run_generation_task
 from app.services.learning_package_service import current_package, ensure_package_members
 
 router = APIRouter()
+
+
+def _quiz_context(
+    db: Session, principal: Principal, resource_id: str, learner_id: str | None
+) -> tuple[Learner, LearningResource]:
+    resource = require_resource(db, principal, resource_id)
+    learner_public_id = principal_learner(principal, learner_id)
+    learner = db.scalar(select(Learner).where(Learner.public_id == learner_public_id))
+    if learner is None:
+        raise HTTPException(404, "Learner not found")
+    return learner, resource
+
+
+def _quiz_error(exc: ValueError) -> HTTPException:
+    code = str(exc).upper()
+    return HTTPException(404 if code.endswith("NOT_FOUND") else 409, code)
+
+
+@router.post("/{resource_id}/quiz-attempts", response_model=ApiResponse)
+def start_resource_quiz_attempt(
+    resource_id: str,
+    payload: dict[str, Any] | None = None,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    learner, resource = _quiz_context(db, principal, resource_id, (payload or {}).get("learner_id"))
+    try:
+        return ok(create_quiz_attempt(db, learner=learner, resource=resource))
+    except ValueError as exc:
+        raise _quiz_error(exc) from exc
+
+
+@router.get("/{resource_id}/quiz-attempts/current", response_model=ApiResponse)
+def get_current_resource_quiz_attempt(
+    resource_id: str,
+    learner_id: str | None = Query(None),
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    learner, resource = _quiz_context(db, principal, resource_id, learner_id)
+    try:
+        return ok(current_quiz_attempt(db, learner=learner, resource=resource))
+    except ValueError as exc:
+        raise _quiz_error(exc) from exc
+
+
+@router.put("/{resource_id}/quiz-attempts/{attempt_id}/answers/{question_id}", response_model=ApiResponse)
+def put_resource_quiz_answer(
+    resource_id: str,
+    attempt_id: str,
+    question_id: str,
+    payload: dict[str, Any],
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    learner, resource = _quiz_context(db, principal, resource_id, payload.get("learner_id"))
+    try:
+        return ok(save_quiz_answer(
+            db, learner=learner, resource=resource, attempt_id=attempt_id,
+            question_id=question_id, answer=payload.get("answer"),
+            self_checked=bool(payload.get("self_checked")),
+        ))
+    except ValueError as exc:
+        raise _quiz_error(exc) from exc
+
+
+@router.post("/{resource_id}/quiz-attempts/{attempt_id}/complete", response_model=ApiResponse)
+def finish_resource_quiz_attempt(
+    resource_id: str,
+    attempt_id: str,
+    payload: dict[str, Any] | None = None,
+    db: Session = Depends(get_db),
+    principal: Principal = Depends(get_current_user),
+) -> ApiResponse:
+    learner, resource = _quiz_context(db, principal, resource_id, (payload or {}).get("learner_id"))
+    try:
+        return ok(complete_quiz_attempt(
+            db, learner=learner, resource=resource, attempt_id=attempt_id
+        ))
+    except ValueError as exc:
+        raise _quiz_error(exc) from exc
 
 
 @router.get("", response_model=ApiResponse)
@@ -98,6 +184,19 @@ def list_resources(
     if domain_code:
         statement = statement.where(creation_task.domain_code == domain_code)
     rows = list(db.execute(statement))
+    knowledge_ids = {
+        str(source.get("knowledge_id") or "").strip()
+        for resource, _task in rows
+        for source in (resource.sources_json or [])
+        if str(source.get("knowledge_id") or "").strip()
+    }
+    knowledge_names = dict(
+        db.execute(
+            select(KnowledgeItem.public_id, KnowledgeItem.name).where(
+                KnowledgeItem.public_id.in_(knowledge_ids)
+            )
+        ).all()
+    ) if knowledge_ids else {}
     resource_ids = [resource.id for resource, _ in rows]
     reports = (
         list(
@@ -115,7 +214,7 @@ def list_resources(
         report_by_resource.setdefault(report.resource_id, report)
     data = []
     for resource, task in rows:
-        item = serialize_resource(resource, task)
+        item = serialize_resource(resource, task, knowledge_names=knowledge_names)
         item["quality_metrics"] = _quality_metrics(report_by_resource.get(resource.id))
         item["package_quality"] = task.package_quality_json or None
         item["package_status"] = task.status

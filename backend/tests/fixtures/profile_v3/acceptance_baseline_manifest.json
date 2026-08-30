@@ -2,7 +2,7 @@
   "baseline_version": "ai_app_dev_profile_v2_acceptance_1",
   "fixture_version": "ai_app_dev_profile_v2",
   "config_version": "ai_app_dev_profile_v2",
-  "seed_sha256": "12776c708fd2e0cea5787b5274fe1e2ff33a94d69795088cda5249ea9f1298d7",
+  "seed_sha256": "d3688e028c74927b84f946d64e0733508ef6b5bf5df91416e900e7d35a8a4e4b",
   "reviewed_on": "2026-08-19",
   "review_method": "rule-reviewed formula + unchanged profile inputs and relations + V6 evidence metadata, explicit minimal-call privacy boundary, explicit Git staging commands, clarified error wording, and automatic revision terminology",
   "case_sha256": {

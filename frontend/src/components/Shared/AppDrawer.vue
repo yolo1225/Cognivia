@@ -57,7 +57,7 @@ function onKeydown(event: KeyboardEvent) {
   inset: 0;
   z-index: 19;
   border: 0;
-  background: rgb(20 31 48 / .34);
+  background: var(--overlay);
   padding: 0;
 }
 

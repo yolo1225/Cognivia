@@ -5,8 +5,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION = "agent-contract-v6"
-QUALITY_RULE_VERSION = "quality-v6-20260818"
+CONTRACT_VERSION = "agent-contract-v10"
+QUALITY_RULE_VERSION = "quality-v8-official-gates"
 
 
 class ContractModel(BaseModel):
@@ -14,7 +14,7 @@ class ContractModel(BaseModel):
 
 
 class NodeContract(ContractModel):
-    contract_version: Literal["agent-contract-v6"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v10"] = CONTRACT_VERSION
     task_id: str = Field(min_length=1, max_length=64)
 
 
@@ -41,6 +41,14 @@ class ResourceType(StrEnum):
     LECTURE = "lecture"
     PRACTICE_GUIDE = "practice_guide"
     GRADED_QUIZ = "graded_quiz"
+
+
+class ReviewClaimKind(StrEnum):
+    PROFESSIONAL_FACT = "professional_fact"
+    OPERATIONAL_FACT = "operational_fact"
+    CODE_BEHAVIOR = "code_behavior"
+    EXPECTED_RESULT = "expected_result"
+    ERROR_HANDLING = "error_handling"
 
 
 class TriggerType(StrEnum):
@@ -186,7 +194,7 @@ class MessagePayload(ContractModel):
 
 
 class AgentMessage(ContractModel):
-    contract_version: Literal["agent-contract-v6"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v10"] = CONTRACT_VERSION
     message_id: str = Field(default_factory=lambda: str(uuid4()))
     sender: AgentName
     receiver: AgentName
@@ -261,12 +269,20 @@ class ProfileSnapshot(ContractModel):
 
 class LearningPathNodeSnapshot(ContractModel):
     path_node_id: str = Field(min_length=1, max_length=64)
-    knowledge_id: str = Field(min_length=1, max_length=64)
+    knowledge_ids: list[str] = Field(min_length=1, max_length=6)
+    focus_knowledge_ids: list[str] = Field(default_factory=list, max_length=3)
     title: str = Field(min_length=1, max_length=255)
     path_order: int = Field(ge=1)
     target_difficulty: int = Field(ge=1, le=5)
     learning_objective: str = Field(min_length=1, max_length=500)
+    recommendation_reason: str = Field(min_length=1, max_length=500)
     prerequisite_knowledge_ids: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_focus_knowledge(self) -> "LearningPathNodeSnapshot":
+        if not set(self.focus_knowledge_ids).issubset(self.knowledge_ids):
+            raise ValueError("focus_knowledge_ids must be a subset of knowledge_ids")
+        return self
 
 
 class LearningPathSnapshot(ContractModel):
@@ -315,7 +331,7 @@ class TaskRequest(ContractModel):
 
 
 class TaskContext(TaskRequest):
-    contract_version: Literal["agent-contract-v6"] = CONTRACT_VERSION
+    contract_version: Literal["agent-contract-v10"] = CONTRACT_VERSION
 
 
 class ContextNodeContract(NodeContract):
@@ -353,7 +369,7 @@ class RetrievalPlan(ContractModel):
     priority_knowledge_ids: list[str] = Field(default_factory=list, max_length=20)
     prerequisite_knowledge_ids: list[str] = Field(default_factory=list, max_length=20)
     query_terms: list[str] = Field(min_length=1, max_length=30)
-    n_results: int = Field(default=8, ge=1, le=12)
+    n_results: int = Field(default=12, ge=1, le=18)
 
     @model_validator(mode="after")
     def validate_unique_values(self) -> "RetrievalPlan":
@@ -529,6 +545,7 @@ class RetrievedChunk(ContractModel):
 class RetrievedQuestion(ContractModel):
     question_id: str = Field(min_length=1, max_length=64)
     knowledge_id: str = Field(min_length=1, max_length=64)
+    related_knowledge_ids: list[str] = Field(default_factory=list, max_length=10)
     question_type: QuestionType
     stem: str = Field(min_length=1, max_length=3000)
     options: list[str] = Field(default_factory=list, max_length=10)
@@ -546,7 +563,7 @@ class RetrieveKnowledgeInput(ContextNodeContract):
 
 class RetrieveKnowledgeOutput(NodeContract):
     query_text: str = Field(min_length=1, max_length=2000)
-    chunks: list[RetrievedChunk] = Field(default_factory=list, max_length=12)
+    chunks: list[RetrievedChunk] = Field(default_factory=list, max_length=18)
     covered_knowledge_ids: list[str] = Field(default_factory=list, max_length=50)
     missing_knowledge_ids: list[str] = Field(default_factory=list, max_length=50)
     warnings: list[str] = Field(default_factory=list, max_length=20)
@@ -645,6 +662,7 @@ class QuizQuestion(ContractModel):
     correct_answer: str = Field(min_length=1, max_length=3000)
     explanation: str = Field(min_length=1, max_length=3000)
     knowledge_id: str = Field(min_length=1, max_length=64)
+    related_knowledge_ids: list[str] = Field(default_factory=list, max_length=10)
     difficulty: int = Field(ge=1, le=5)
     source_ref_ids: list[str] = Field(min_length=1, max_length=10)
     reference_question_ids: list[str] = Field(default_factory=list, max_length=10)
@@ -664,14 +682,10 @@ class GradedQuizContent(ContractModel):
     title: str = Field(min_length=1, max_length=255)
     target_audience: str = Field(min_length=1, max_length=500)
     learning_objectives: list[str] = Field(min_length=1, max_length=10)
-    questions: list[QuizQuestion] = Field(min_length=6, max_length=30)
-
-    @model_validator(mode="after")
-    def validate_levels(self) -> "GradedQuizContent":
-        levels = {question.level for question in self.questions}
-        if levels != set(QuizLevel):
-            raise ValueError("graded quiz requires foundation, improvement, and challenge levels")
-        return self
+    # A resource quiz is selected from the certified formal bank for the current
+    # learning unit.  Its size and teaching-level mix are profile-dependent;
+    # question difficulty remains the certified, immutable item difficulty.
+    questions: list[QuizQuestion] = Field(min_length=3, max_length=8)
 
 
 StructuredResourceContent = Annotated[
@@ -700,6 +714,21 @@ def structured_source_ref_ids(content: StructuredResourceContent) -> set[str]:
     }
 
 
+class ReviewClaim(ContractModel):
+    claim_id: str = Field(min_length=8, max_length=64)
+    resource_type: ResourceType
+    field_path: str = Field(min_length=1, max_length=512)
+    claim_kind: ReviewClaimKind
+    claim: str = Field(min_length=1, max_length=2000)
+    source_ref_ids: list[str] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_claim_sources(self) -> "ReviewClaim":
+        if len(self.source_ref_ids) != len(set(self.source_ref_ids)):
+            raise ValueError("review claim source ids must be unique")
+        return self
+
+
 class GeneratedResourceArtifact(ContractModel):
     resource_type: ResourceType
     structured_content: StructuredResourceContent
@@ -707,6 +736,7 @@ class GeneratedResourceArtifact(ContractModel):
     difficulty: int = Field(ge=1, le=5)
     source_refs: list[SourceRef] = Field(min_length=1, max_length=30)
     knowledge_coverage: dict[str, list[str]] = Field(default_factory=dict)
+    review_claims: list[ReviewClaim] = Field(min_length=1, max_length=100)
 
     @model_validator(mode="after")
     def validate_resource_type(self) -> "GeneratedResourceArtifact":
@@ -718,12 +748,20 @@ class GeneratedResourceArtifact(ContractModel):
         used = structured_source_ref_ids(self.structured_content)
         if used != set(declared):
             raise ValueError("structured content source ids must exactly match source_refs")
+        claim_ids = [claim.claim_id for claim in self.review_claims]
+        if len(claim_ids) != len(set(claim_ids)):
+            raise ValueError("review claim ids must be unique")
+        for claim in self.review_claims:
+            if claim.resource_type is not self.resource_type:
+                raise ValueError("review claim resource type must match artifact")
+            if not set(claim.source_ref_ids).issubset(set(declared)):
+                raise ValueError("review claims may only cite artifact sources")
         return self
 
 
 class GenerateResourceInput(ContextNodeContract):
     profile: ProfileSnapshot
-    retrieved_chunks: list[RetrievedChunk] = Field(min_length=1, max_length=12)
+    retrieved_chunks: list[RetrievedChunk] = Field(min_length=1, max_length=18)
     reference_questions: list[RetrievedQuestion] = Field(default_factory=list, max_length=30)
     current_path_node: LearningPathNodeSnapshot | None = None
     requirements: GenerationRequirements
@@ -842,7 +880,7 @@ class ArbitrationResult(ContractModel):
 
 
 class ResourceQualityMetrics(ContractModel):
-    quality_rule_version: Literal["quality-v6-20260818"] = QUALITY_RULE_VERSION
+    quality_rule_version: Literal["quality-v8-official-gates"] = QUALITY_RULE_VERSION
     evaluated_claim_count: int = Field(ge=0)
     contradicted_claim_count: int = Field(ge=0)
     evidence_insufficient_claim_count: int = Field(ge=0)
@@ -868,10 +906,8 @@ class ResourceQualityMetrics(ContractModel):
         )
         if classified_failure_count > self.evaluated_claim_count:
             raise ValueError("claim verdict counts cannot exceed evaluated claims")
-        if self.hallucinated_claim_count != (
-            self.contradicted_claim_count + self.unresolved_claim_count
-        ):
-            raise ValueError("hallucinated claims must equal contradicted plus unresolved claims")
+        if self.hallucinated_claim_count != classified_failure_count:
+            raise ValueError("hallucinated claims must equal all non-supported reviewable claims")
         if self.hallucinated_claim_count > self.verifiable_claim_count:
             raise ValueError("hallucinated claims cannot exceed verifiable claims")
         if self.covered_core_knowledge_count > self.target_core_knowledge_count:
@@ -894,10 +930,10 @@ class ResourceQualityMetrics(ContractModel):
             raise ValueError("core_knowledge_coverage must be derived from knowledge counts")
         expected_passed = (
             self.evaluated_claim_count > 0
-            and self.contradicted_claim_count == 0
-            and self.evidence_insufficient_claim_count == 0
-            and self.unresolved_claim_count == 0
+            and self.hallucination_rate < 5
+            and self.difficulty_match_score >= 85
             and self.target_core_knowledge_count > 0
+            and self.core_knowledge_coverage >= 90
         )
         if self.passed != expected_passed:
             raise ValueError("resource passed must match V6 claim publication gates")
@@ -905,7 +941,7 @@ class ResourceQualityMetrics(ContractModel):
 
 
 class GenerationPackageQuality(ContractModel):
-    quality_rule_version: Literal["quality-v6-20260818"] = QUALITY_RULE_VERSION
+    quality_rule_version: Literal["quality-v8-official-gates"] = QUALITY_RULE_VERSION
     evaluated_claim_count: int = Field(ge=0)
     contradicted_claim_count: int = Field(ge=0)
     evidence_insufficient_claim_count: int = Field(ge=0)
@@ -931,10 +967,8 @@ class GenerationPackageQuality(ContractModel):
         )
         if classified_failure_count > self.evaluated_claim_count:
             raise ValueError("claim verdict counts cannot exceed evaluated claims")
-        if self.hallucinated_claim_count != (
-            self.contradicted_claim_count + self.unresolved_claim_count
-        ):
-            raise ValueError("hallucinated claims must equal contradicted plus unresolved claims")
+        if self.hallucinated_claim_count != classified_failure_count:
+            raise ValueError("hallucinated claims must equal all non-supported reviewable claims")
         if self.covered_core_knowledge_count > self.target_core_knowledge_count:
             raise ValueError("covered knowledge cannot exceed target knowledge")
         expected_hallucination = (
@@ -953,10 +987,9 @@ class GenerationPackageQuality(ContractModel):
             raise ValueError("core_knowledge_coverage must be derived from unique package targets")
         expected_passed = (
             self.evaluated_claim_count > 0
-            and self.evidence_insufficient_claim_count == 0
-            and self.unresolved_claim_count == 0
             and self.hallucination_rate < 5
             and self.difficulty_match_score >= 85
+            and self.target_core_knowledge_count > 0
             and self.core_knowledge_coverage >= 90
         )
         if self.passed != expected_passed:
@@ -965,7 +998,7 @@ class GenerationPackageQuality(ContractModel):
 
 
 class ReviewReport(ContractModel):
-    quality_rule_version: Literal["quality-v6-20260818"] = QUALITY_RULE_VERSION
+    quality_rule_version: Literal["quality-v8-official-gates"] = QUALITY_RULE_VERSION
     resource_type: ResourceType
     primary_review: ModelReview
     secondary_review: ModelReview
@@ -1001,7 +1034,7 @@ class ReviewReport(ContractModel):
 class ReviewResourceInput(ContextNodeContract):
     resources: list[GeneratedResourceArtifact] = Field(min_length=1, max_length=3)
     requirements: GenerationRequirements
-    evidence: list[RetrievedChunk] = Field(min_length=1, max_length=12)
+    evidence: list[RetrievedChunk] = Field(min_length=1, max_length=18)
 
     @model_validator(mode="after")
     def validate_review_scope(self) -> "ReviewResourceInput":

@@ -46,7 +46,7 @@ class DomainCreateBody(BaseModel):
     domain_code: str = Field(min_length=2, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
     name: str = Field(min_length=1, max_length=128)
     description: str = Field(default="", max_length=500)
-    learning_directions: list[LearningDirectionBody] = Field(min_length=1, max_length=6)
+    learning_directions: list[LearningDirectionBody] = Field(default_factory=list, max_length=6)
 
     @field_validator("domain_code", "name", "description", mode="before")
     @classmethod
@@ -66,7 +66,7 @@ class DomainPatchBody(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = Field(default=None, max_length=500)
     learning_directions: list[LearningDirectionBody] | None = Field(
-        default=None, min_length=1, max_length=6
+        default=None, max_length=6
     )
 
     @field_validator("name", "description", mode="before")

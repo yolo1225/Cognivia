@@ -17,6 +17,7 @@ from app.api.v1 import (
     learning_adjustments,
     learning_paths,
     model_settings,
+    mistake_review,
     reports,
     resources,
     tutoring,
@@ -88,6 +89,12 @@ api_router.include_router(
 )
 api_router.include_router(
     tutoring.router, prefix="/tutoring", tags=["tutoring"], dependencies=[Depends(get_current_user)]
+)
+api_router.include_router(
+    mistake_review.router,
+    prefix="/mistake-review",
+    tags=["mistake-review"],
+    dependencies=[Depends(get_current_user)],
 )
 api_router.include_router(
     reports.router, prefix="/reports", tags=["reports"], dependencies=[Depends(get_current_user)]

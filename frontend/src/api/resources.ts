@@ -1,4 +1,5 @@
-import { apiClient, getData, postData } from './client'
+import { apiClient, getData, postData, putData } from './client'
+import type { NodeGate } from './tutoring'
 
 export type QuizLevel = 'foundation' | 'improvement' | 'challenge'
 export type QuestionType = 'single_choice' | 'multiple_choice' | 'short_answer' | 'coding'
@@ -12,6 +13,7 @@ export interface QuizQuestion {
   correct_answer: string
   explanation: string
   knowledge_id: string
+  related_knowledge_ids?: string[]
   difficulty: number
   source_ref_ids: string[]
   reference_question_ids?: string[]
@@ -109,6 +111,51 @@ export interface ResourceQualityMetrics {
   revision_count: number
 }
 
+export interface ResourceQuizAttempt {
+  attempt_id: string
+  resource_version: number
+  status: 'in_progress' | 'completed'
+  current_question_id?: string | null
+  answers: Record<string, {
+    answer: string | string[]
+    checked: boolean
+    correct: boolean | null
+    self_checked: boolean
+    synced_at?: string
+  }>
+  objective_correct: number
+  objective_total: number
+  completed_at?: string | null
+  evidence_result?: {
+    materialized_count: number
+    evidence_ids: string[]
+    governance_results?: Array<Record<string, unknown>>
+  }
+  node_gate?: NodeGate | null
+}
+
+export function createQuizAttempt(resourceId: string, learnerId?: string) {
+  return postData<ResourceQuizAttempt>(`/resources/${resourceId}/quiz-attempts`, { learner_id: learnerId })
+}
+
+export function saveQuizAnswer(
+  resourceId: string,
+  attemptId: string,
+  questionId: string,
+  answer: string | string[],
+  learnerId?: string,
+  selfChecked = false,
+) {
+  return putData<ResourceQuizAttempt & { question_id: string; correct: boolean | null; synced: boolean }>(
+    `/resources/${resourceId}/quiz-attempts/${attemptId}/answers/${encodeURIComponent(questionId)}`,
+    { learner_id: learnerId, answer, self_checked: selfChecked },
+  )
+}
+
+export function completeQuizAttempt(resourceId: string, attemptId: string, learnerId?: string) {
+  return postData<ResourceQuizAttempt>(`/resources/${resourceId}/quiz-attempts/${attemptId}/complete`, { learner_id: learnerId })
+}
+
 export function listResources(filters: { taskId?: string; learnerId?: string; domainCode?: string } = {}) {
   const params = new URLSearchParams()
   if (filters.taskId) params.set('task_id', filters.taskId)
@@ -130,38 +177,27 @@ export function listResourceVersions(resourceId: string) {
   }>>(`/resources/${resourceId}/versions`)
 }
 
-export interface ResourceExportResult {
-  resource_version: number
-  file_name: string
-  file_hash: string
-  review_report_id: string | null
-  review_status: string
-  download_url: string
-}
-
 export function exportResource(
   resourceId: string,
-  format: 'markdown' | 'pdf',
+  format: 'markdown' | 'pdf' | 'word',
   audience: 'learner' | 'teacher' = 'learner',
 ) {
-  return postData<ResourceExportResult>(`/resources/${resourceId}/export`, { format, audience })
+  return postData<{
+    resource_version: number
+    file_name: string
+    file_hash: string
+    review_report_id: string | null
+    review_status: string
+    download_url: string
+  }>(`/resources/${resourceId}/export`, { format, audience })
 }
 
-export async function downloadResourceExport(downloadUrl: string, fileName: string) {
-  const baseUrl = apiClient.defaults.baseURL || window.location.origin
-  const response = await apiClient.get<Blob>(
-    new URL(downloadUrl, new URL(baseUrl, window.location.origin).origin).toString(),
-    { responseType: 'blob' },
-  )
-  const objectUrl = URL.createObjectURL(response.data)
-  const link = document.createElement('a')
-  link.href = objectUrl
-  link.download = fileName
-  link.style.display = 'none'
-  document.body.append(link)
-  link.click()
-  link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
+export async function downloadResourceExport(downloadUrl: string): Promise<Blob> {
+  // download_url is absolute from the backend root (e.g. /api/v1/resources/exports/x.pdf);
+  // the axios baseURL already includes /api/v1, so strip that prefix.
+  const path = downloadUrl.replace(/^\/api\/v1/, '')
+  const response = await apiClient.get(path, { responseType: 'blob' })
+  return response.data as Blob
 }
 
 export function submitFeedback(

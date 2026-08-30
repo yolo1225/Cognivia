@@ -9,6 +9,7 @@ from app.models import (
     Base,
     Feedback,
     GenerationTask,
+    KnowledgeItem,
     KnowledgeUpdateImpact,
     Learner,
     LearnerProfile,
@@ -24,7 +25,12 @@ from app.services.feedback_service import (
     FeedbackSourceCompatibilityError,
     create_feedback_task,
 )
-from app.services.learning_package_service import ensure_package_members, package_member_rows
+from app.services.learning_package_service import (
+    ensure_package_members,
+    package_member_rows,
+    serialize_package,
+)
+from app.services.node_mastery_service import affected_resource_types
 
 
 def _report(resource: LearningResource, task: GenerationTask) -> ReviewReport:
@@ -156,19 +162,78 @@ def test_feedback_refresh_preserves_single_resource_package_scope() -> None:
         assert source_task.is_current_package is False
 
 
+def test_package_serialization_resolves_knowledge_names_for_existing_resources() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        _learner, _profile, task, _resources = _package_fixture(db, ("lecture",))
+        db.add(
+            KnowledgeItem(
+                public_id="knowledge_lecture",
+                domain_code="ai_app_dev",
+                name="异步 API 调用",
+                category="实操技能",
+                difficulty=3,
+                tags_json=[],
+                content_md="异步调用基础知识。",
+                source_title="Python 文档",
+                license_note="官方文档",
+                status="published",
+            )
+        )
+        db.add(
+            KnowledgeItem(
+                public_id="knowledge_lecture_duplicate",
+                domain_code="ai_app_dev",
+                name="异步 API 调用",
+                category="实操技能",
+                difficulty=3,
+                tags_json=[],
+                content_md="同一知识点的另一条来源记录。",
+                source_title="Python 文档",
+                license_note="官方文档",
+                status="published",
+            )
+        )
+        _resources["lecture"].sources_json = [
+            {"knowledge_id": "knowledge_lecture"},
+            {"knowledge_id": "knowledge_lecture"},
+            {"knowledge_id": "knowledge_lecture_duplicate"},
+        ]
+        db.commit()
+
+        payload = serialize_package(db, task)
+
+    assert payload["resources"][0]["source_details"] == [
+        {"knowledge_id": "knowledge_lecture", "name": "异步 API 调用"}
+    ]
+
+
 def test_partial_refresh_composes_new_package_with_inherited_resource() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     with Session() as db:
         learner, profile, source_task, source_resources = _package_fixture(db)
+        source_task.resource_knowledge_targets_json = {
+            "lecture": ["knowledge_lecture"],
+            "practice_guide": ["knowledge_practice_guide"],
+            "graded_quiz": ["knowledge_lecture", "knowledge_practice_guide"],
+        }
+        selected_types = affected_resource_types(
+            package_task=source_task,
+            affected_knowledge_ids=["knowledge_practice_guide"],
+            fallback_resource_type="lecture",
+        )
+        assert selected_types == ["practice_guide", "graded_quiz"]
         refresh_task = GenerationTask(
             public_id="task_refresh",
             learner_id=learner.id,
             profile_id=profile.id,
             domain_code="ai_app_dev",
             status="running",
-            resource_types_json=["practice_guide", "graded_quiz"],
+            resource_types_json=selected_types,
             source_task_id=source_task.id,
             event_type="knowledge_refresh",
         )
@@ -236,8 +301,42 @@ def test_partial_refresh_composes_new_package_with_inherited_resource() -> None:
         assert refresh_task.package_coverage_json["primary_owner"] == {
             "knowledge_lecture": "lecture",
             "knowledge_practice_guide": "practice_guide",
-            "knowledge_graded_quiz": "graded_quiz",
         }
+        assert refresh_task.package_coverage_json["required_knowledge_ids"] == [
+            "knowledge_lecture",
+            "knowledge_practice_guide",
+        ]
+
+
+def test_package_quality_uses_teaching_resource_coverage_union() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        _learner, _profile, task, resources = _package_fixture(db)
+        reports = {
+            resource_type: db.scalar(
+                select(ReviewReport).where(ReviewReport.resource_id == resource.id)
+            )
+            for resource_type, resource in resources.items()
+        }
+        for report in reports.values():
+            report.target_knowledge_ids_json = ["k1", "k2", "k3"]
+        reports["lecture"].covered_knowledge_ids_json = ["k1", "k2"]
+        reports["practice_guide"].covered_knowledge_ids_json = ["k2", "k3"]
+        reports["graded_quiz"].covered_knowledge_ids_json = ["k1", "k2", "k3"]
+        db.flush()
+
+        _compose_published_package(db, task)
+        db.flush()
+
+        assert task.package_quality_json["core_knowledge_coverage"] == 100
+        assert task.package_quality_json["passed"] is True
+        assert task.package_coverage_json["covered_knowledge_ids"] == [
+            "k1",
+            "k2",
+            "k3",
+        ]
 
 
 def test_profile_feedback_task_composes_complete_package_from_new_profile() -> None:

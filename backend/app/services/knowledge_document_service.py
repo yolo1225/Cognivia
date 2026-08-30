@@ -11,13 +11,10 @@ from uuid import uuid4
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.core.db import SessionLocal
 from app.models import (
-    DiagnosticQuestion,
     KnowledgeDocument,
     KnowledgeImportCandidate,
     KnowledgeItem,
-    KnowledgeRelation,
 )
 from app.services.knowledge_update_service import mark_affected_content
 
@@ -66,7 +63,7 @@ def create_document(
         select(KnowledgeDocument).where(
             KnowledgeDocument.domain_code == domain_code,
             KnowledgeDocument.sha256 == digest,
-            KnowledgeDocument.status != "deleted",
+            KnowledgeDocument.status.not_in({"deleted", "withdrawn"}),
         )
     )
     if duplicate is not None:
@@ -110,79 +107,83 @@ def _document_path(document: KnowledgeDocument) -> Path:
     return path
 
 
-def process_knowledge_document(document_id: str) -> None:
-    with SessionLocal() as db:
-        document = db.scalar(
-            select(KnowledgeDocument).where(KnowledgeDocument.public_id == document_id)
-        )
-        if document is None or document.status == "deleted":
-            return
-        try:
-            document.status = "parsing"
-            document.error_summary = None
-            db.commit()
-            from app.services.knowledge_extraction_service import replace_candidates
-            from app.services.knowledge_import_validation_service import validate_import
-            from app.services.knowledge_parser_service import parse_document
-
-            sections = parse_document(document)
-            candidates = replace_candidates(db, document, sections)
-            document.status = "validating"
-            document.chunk_count = len(sections)
-            db.commit()
-            result = validate_import(db, document.id)
-            document = db.get(KnowledgeDocument, document.id)
-            document.status = "review_pending"
-            document.error_summary = (
-                None if not result["invalid"] else f"{result['invalid']} 个候选需要修改"
-            )
-            document.knowledge_item_count = sum(
-                item.candidate_type == "knowledge_item" for item in candidates
-            )
-            db.commit()
-        except Exception as exc:
-            db.rollback()
-            failed = db.scalar(
-                select(KnowledgeDocument).where(KnowledgeDocument.public_id == document_id)
-            )
-            if failed is not None and failed.status != "deleted":
-                failed.status = "failed"
-                failed.error_summary = str(exc)[:1000]
-                db.commit()
-
-
 def retry_document(db: Session, document: KnowledgeDocument) -> None:
     if document.file_type == "seed_package":
         raise KnowledgeDocumentError("系统知识包不需要重新处理")
-    if document.status not in {"failed", "queued", "review_pending"}:
-        raise KnowledgeDocumentError("只有失败或排队中的文件可以重新处理")
+    if document.status not in {
+        "failed", "needs_attention", "interrupted", "queued", "review_pending", "ready"
+    }:
+        raise KnowledgeDocumentError("只有已发布、失败或排队中的文件可以重新处理")
     document.status = "queued"
     document.error_summary = None
     db.commit()
 
 
-def delete_document(db: Session, document: KnowledgeDocument) -> None:
+def delete_document(db: Session, document: KnowledgeDocument) -> dict[str, object]:
     if document.file_type == "seed_package":
         raise KnowledgeDocumentError("系统内置知识包不能删除")
-    if document.status in {"parsing", "indexing"}:
-        raise KnowledgeDocumentError("文件正在处理中，暂时不能删除")
-    items = list(
-        db.scalars(select(KnowledgeItem).where(KnowledgeItem.source_document_id == document.id))
-    )
-    db.execute(
-        delete(KnowledgeImportCandidate).where(KnowledgeImportCandidate.document_id == document.id)
-    )
-    if items:
-        item_ids = [item.id for item in items]
-        db.execute(
-            delete(DiagnosticQuestion).where(DiagnosticQuestion.knowledge_item_id.in_(item_ids))
+    processing_statuses = {
+        "queued", "parsing", "extracting", "graph_generation", "graph_review",
+        "question_generation", "question_review", "question_repair", "validating",
+        "staging", "indexing", "smoke_testing", "publishing",
+    }
+    if document.status in processing_statuses:
+        from app.models import KnowledgeImportBatch, KnowledgeImportRun
+
+        latest_run = db.scalar(
+            select(KnowledgeImportRun)
+            .where(KnowledgeImportRun.document_id == document.id)
+            .order_by(KnowledgeImportRun.id.desc())
+            .limit(1)
         )
-        db.execute(
-            delete(KnowledgeRelation).where(
-                (KnowledgeRelation.source_item_id.in_(item_ids))
-                | (KnowledgeRelation.target_item_id.in_(item_ids))
+        if latest_run is None or latest_run.status != "cancel_requested":
+            raise KnowledgeDocumentError("文件正在处理中，请先中断任务后再删除")
+        latest_run.status = "cancelled"
+        latest_run.current_step = "cancelled"
+        latest_run.error_code = "import_cancelled"
+        latest_run.error_summary = "导入已取消"
+        latest_run.lease_owner = None
+        latest_run.lease_expires_at = None
+        latest_run.finished_at = datetime.now(UTC)
+        for batch in db.scalars(
+            select(KnowledgeImportBatch).where(
+                KnowledgeImportBatch.run_id == latest_run.id,
+                KnowledgeImportBatch.status.in_(("pending", "running")),
             )
-        )
+        ):
+            batch.status = "cancelled"
+            batch.error_code = "import_cancelled"
+            batch.error_summary = "导入已取消"
+            batch.lease_owner = None
+            batch.lease_expires_at = None
+        document.status = "cancelled"
+        document.error_summary = "导入已取消"
+        db.flush()
+    from app.models import (
+        AnswerRecord,
+        DiagnosticQuestion,
+        KnowledgeChunk,
+        KnowledgeImportBatch,
+        KnowledgeImportRun,
+        KnowledgeItemSource,
+        KnowledgeRelation,
+        PathNodeAssessment,
+    )
+
+    sources = list(db.scalars(select(KnowledgeItemSource).where(
+        KnowledgeItemSource.document_id == document.id,
+        KnowledgeItemSource.status.in_(("staged", "published")),
+    )))
+    item_ids = {source.knowledge_item_id for source in sources}
+    items = list(db.scalars(select(KnowledgeItem).where(KnowledgeItem.id.in_(item_ids)))) if item_ids else []
+    db.execute(delete(KnowledgeImportCandidate).where(KnowledgeImportCandidate.document_id == document.id))
+    db.execute(delete(KnowledgeImportBatch).where(KnowledgeImportBatch.run_id.in_(
+        select(KnowledgeImportRun.id).where(KnowledgeImportRun.document_id == document.id)
+    )))
+    db.execute(delete(KnowledgeImportRun).where(KnowledgeImportRun.document_id == document.id))
+    shared_item_ids: set[int] = set()
+    exclusive_item_ids: set[int] = set()
+    if items:
         mark_affected_content(
             db,
             domain_code=document.domain_code,
@@ -190,17 +191,49 @@ def delete_document(db: Session, document: KnowledgeDocument) -> None:
             reason="knowledge_document_deleted",
         )
         for item in items:
-            db.delete(item)
+            remaining = db.scalar(select(KnowledgeItemSource.id).where(
+                KnowledgeItemSource.knowledge_item_id == item.id,
+                KnowledgeItemSource.document_id != document.id,
+                KnowledgeItemSource.status.in_(("staged", "published")),
+            ))
+            (shared_item_ids if remaining is not None else exclusive_item_ids).add(item.id)
         db.flush()
-    path = _document_path(document)
-    if path.exists():
-        path.unlink()
-    if path.parent.exists():
-        path.parent.rmdir()
+    if exclusive_item_ids:
+        question_ids = set(db.scalars(select(DiagnosticQuestion.id).where(
+            DiagnosticQuestion.knowledge_item_id.in_(exclusive_item_ids)
+        )))
+        if question_ids:
+            db.execute(delete(PathNodeAssessment).where(PathNodeAssessment.question_id.in_(question_ids)))
+            db.execute(delete(AnswerRecord).where(AnswerRecord.question_id.in_(question_ids)))
+            db.execute(delete(DiagnosticQuestion).where(DiagnosticQuestion.id.in_(question_ids)))
+        db.execute(delete(KnowledgeRelation).where(
+            (KnowledgeRelation.source_item_id.in_(exclusive_item_ids))
+            | (KnowledgeRelation.target_item_id.in_(exclusive_item_ids))
+        ))
+        db.execute(delete(KnowledgeItem).where(KnowledgeItem.id.in_(exclusive_item_ids)))
+    if shared_item_ids:
+        db.execute(delete(KnowledgeItemSource).where(
+            KnowledgeItemSource.document_id == document.id,
+            KnowledgeItemSource.knowledge_item_id.in_(shared_item_ids),
+        ))
+    db.execute(delete(KnowledgeItemSource).where(KnowledgeItemSource.document_id == document.id))
+    db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
     document.status = "deleted"
     document.deleted_at = datetime.now(UTC)
     document.error_summary = None
     db.commit()
+    stored_path = (KNOWLEDGE_STORAGE_ROOT / str(document.stored_path or "")).resolve()
+    root = KNOWLEDGE_STORAGE_ROOT.resolve()
+    if stored_path.is_file() and root in stored_path.parents:
+        stored_path.unlink()
+    return {
+        "document_id": document.public_id,
+        "status": "deleted",
+        "sources_retracted": len(sources),
+        "knowledge_deleted": len(exclusive_item_ids),
+        "knowledge_preserved_shared": len(shared_item_ids),
+        "affected_knowledge": len(items),
+    }
 
 
 def serialize_document(document: KnowledgeDocument) -> dict[str, object]:

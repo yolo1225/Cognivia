@@ -70,7 +70,7 @@ def test_ai_app_dev_profile_config_maps_every_seed_knowledge_item() -> None:
         config.default_n_results,
         config.multi_priority_remedial_n_results,
         config.maximum_n_results,
-    ) == (8, 10, 12)
+    ) == (12, 15, 18)
     assert config.difficulty_weight(1) == pytest.approx(0.7)
     assert config.difficulty_weight(5) == pytest.approx(1.3)
 

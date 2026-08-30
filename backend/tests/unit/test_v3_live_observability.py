@@ -7,6 +7,7 @@ import pytest
 
 from app.agents.contract_adapters import render_resource_markdown
 from app.agents.contract_examples import initial_generation_flow_example
+from app.agents.contracts import QuestionType, ResourceType, RetrievedQuestion
 from app.agents.generation_agent import (
     OpenAICompatibleStructuredGenerator,
     ContentGenerationAgent,
@@ -151,19 +152,66 @@ def test_live_runner_resumes_only_matching_incomplete_checkpoint(
 
 def test_v3_generation_and_review_collect_safe_model_call_metadata() -> None:
     flow = initial_generation_flow_example()
+    request = flow["generate_resource"]["input"]
+    target_id = request.requirements.resource_knowledge_targets[ResourceType.GRADED_QUIZ][0]
+    source_locator = next(
+        chunk.source_locator
+        for chunk in request.retrieved_chunks
+        if chunk.knowledge_id == target_id
+    )
+    source_ref_id = next(
+        chunk.source.source_ref_id
+        for chunk in request.retrieved_chunks
+        if chunk.knowledge_id == target_id and chunk.source_locator == source_locator
+    )
+    reference_questions = []
+    for slot in range(1, 7):
+        is_choice = slot % 2 == 1
+        reference_questions.append(
+            RetrievedQuestion(
+                question_id=f"formal-{target_id}-{slot}",
+                knowledge_id=target_id,
+                question_type=(
+                    QuestionType.SINGLE_CHOICE if is_choice else QuestionType.SHORT_ANSWER
+                ),
+                stem=f"正式题库题目 {slot}",
+                options=["正确项", "干扰项一", "干扰项二", "干扰项三"] if is_choice else [],
+                answer_key={
+                    **(
+                        {"correct_option": 0}
+                        if is_choice
+                        else {"answer": "来源支持的答案", "rubric": ["要点一", "要点二"]}
+                    ),
+                    "explanation": "依据知识库材料作答。",
+                    "source_ref_ids": [source_ref_id],
+                    "source_locator": source_locator,
+                        "question_slot": slot,
+                        "question_bank_uses": ["graded_quiz"],
+                        "quiz_level": (
+                        "foundation"
+                        if slot <= 2
+                        else "improvement"
+                        if slot <= 4
+                        else "challenge"
+                    ),
+                },
+                explanation="依据知识库材料作答。",
+                difficulty=min(5, slot),
+            )
+        )
+    request = request.model_copy(update={"reference_questions": reference_questions})
     generation = ContentGenerationAgent(
         generator=OpenAICompatibleStructuredGenerator(model_gateway=_Gateway()),
         renderer=render_resource_markdown,
     )
     with collect_model_calls() as collector:
-        generation.execute(flow["generate_resource"]["input"])
+        generation.execute(request)
     generation_calls = collector.snapshot()
     assert {item["resource_type"] for item in generation_calls} == {
         "lecture",
         "practice_guide",
-        "graded_quiz",
     }
-    assert len(generation_calls) >= 3
+    assert len(generation_calls) >= 2
     assert all(item["role"] == "generation_model" for item in generation_calls)
     assert all(item["provider_mode"] == "live" for item in generation_calls)
 
@@ -179,7 +227,6 @@ def test_v3_generation_and_review_collect_safe_model_call_metadata() -> None:
     assert {item["resource_type"] for item in review_calls} == {
         "lecture",
         "practice_guide",
-        "graded_quiz",
     }
     assert all(item["estimated_input_tokens"] <= 10_000 for item in review_calls)
     assert all("truncated_evidence_count" in item for item in review_calls)

@@ -12,18 +12,20 @@
       </template>
       <template #actions>
         <button
+          type="button"
           class="btn"
           :disabled="loading || testing || !canTest"
           @click="runTest"
         >
-          {{ testing ? "正在测试..." : "测试连接" }}
+          {{ testing ? "正在测试" : "测试连接" }}
         </button>
         <button
+          type="button"
           class="btn primary"
           :disabled="loading || saving || !canSave"
           @click="requestSave"
         >
-          {{ saving ? "正在保存..." : "保存配置" }}
+          {{ saving ? "正在保存" : "保存配置" }}
         </button>
       </template>
     </PageHeader>
@@ -617,7 +619,7 @@ onMounted(load);
   grid-template-columns: repeat(4, minmax(0, 1fr));
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--panel);
+  background: var(--soft);
 }
 .readiness-item {
   display: grid;
@@ -674,7 +676,7 @@ onMounted(load);
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  border: 1px solid #cdd9ed;
+  border: 1px solid color-mix(in srgb, var(--blue) 36%, var(--line));
   border-radius: 9px;
   background: var(--soft);
   padding: 10px 13px;
@@ -689,7 +691,7 @@ onMounted(load);
   grid-template-columns: 30px minmax(0, 1fr) auto;
   gap: 11px;
   align-items: center;
-  border: 1px solid #f0d2ac;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line));
   border-radius: 10px;
   background: var(--amber2);
   padding: 12px 14px;
@@ -815,7 +817,7 @@ onMounted(load);
   gap: 11px;
   align-items: center;
   padding: 13px 0;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid var(--line);
 }
 .role-row:last-child {
   border-bottom: 0;
@@ -833,11 +835,11 @@ onMounted(load);
 }
 .role-icon.review {
   background: var(--blue2);
-  color: #6950b5;
+  color: var(--blue);
 }
 .role-icon.secondary {
   background: var(--green2);
-  color: #27776d;
+  color: var(--green);
 }
 .role-icon.embedding {
   background: var(--amber2);
@@ -860,7 +862,7 @@ onMounted(load);
   width: 100%;
 }
 .embedding-row {
-  background: linear-gradient(90deg, transparent, #fffbf5);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--amber2) 72%, transparent));
 }
 .test-panel {
   padding-bottom: 16px;
@@ -914,7 +916,7 @@ onMounted(load);
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: rgb(255 255 255/0.7);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
   font-weight: 800;
 }
 .test-result-title {
@@ -924,7 +926,7 @@ onMounted(load);
 }
 .test-result-title span {
   border-radius: 999px;
-  background: rgb(255 255 255/0.7);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
   padding: 3px 6px;
   font-size: 9px;
   font-weight: 700;
@@ -1006,7 +1008,7 @@ onMounted(load);
 .settings-skeleton i {
   height: 82px;
   border-radius: 10px;
-  background: linear-gradient(90deg, #eef1f5 25%, #f7f9fb 50%, #eef1f5 75%);
+  background: linear-gradient(90deg, var(--track) 25%, var(--soft) 50%, var(--track) 75%);
   background-size: 200% 100%;
   animation: skeleton 1.2s linear infinite;
 }

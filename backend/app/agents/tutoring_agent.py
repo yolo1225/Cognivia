@@ -1,4 +1,4 @@
-"""Standalone V3 tutoring Agent with model understanding and deterministic policy."""
+"""Standalone V10 tutoring Agent with model understanding and deterministic policy."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def build_system_prompt(domain_display_name: str | None) -> str:
 
 
 class TutoringAgentError(RuntimeError):
-    """Controlled boundary error for invalid V3 tutoring input or output."""
+    """Controlled boundary error for invalid tutoring input or output."""
 
 
 class TutoringSemanticInterpreter(Protocol):
@@ -181,7 +181,7 @@ class _StreamingCandidateReply:
 
 
 class TutoringAgent:
-    """V3 boundary: model semantics -> controlled policy -> contract-validated response."""
+    """V10 boundary: model semantics -> controlled policy -> validated response."""
 
     name = TUTORING_AGENT_NAME
     system_prompt = SYSTEM_PROMPT

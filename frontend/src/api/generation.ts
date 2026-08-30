@@ -6,7 +6,9 @@ export interface GenerationBasis {
   path_node_id: string
   path_node_title?: string | null
   path_node_order?: number | null
-  core_knowledge: { knowledge_id: string; name: string } | null
+  target_difficulty?: number
+  core_knowledge: Array<{ knowledge_id: string; name: string }>
+  focus_knowledge_ids?: string[]
   prerequisite_knowledge: Array<{ knowledge_id: string; name: string }>
   profile_id: string
   profile_version: number
@@ -26,6 +28,32 @@ export interface GenerationTaskResult {
   execution_mode: string
   resource_types: string[]
   generation_basis?: GenerationBasis | null
+  quiz_preflight?: {
+    ready: boolean
+    available_question_count: number
+    minimum_question_count: number
+    expected_question_count: number
+    target_knowledge_ids: string[]
+    focus_knowledge_ids: string[]
+    missing_primary_knowledge_ids: string[]
+    missing_mastery_reserve_knowledge_ids: string[]
+    counts_by_knowledge: Record<
+      string,
+      {
+        single_choice: number
+        short_answer: number
+        total: number
+        graded_quiz: number
+        mastery_reserve: number
+      }
+    >
+    target_difficulty: number
+    matching_target_difficulty_count: number
+    selected_question_ids: string[]
+    selected_difficulties: number[]
+    selected_question_types: string[]
+    warning?: string | null
+  } | null
   agent_graph: string
   decision: string
   agent_trace: Array<{
@@ -75,6 +103,18 @@ export interface GenerationTaskDetail {
   decision: string
   package_quality?: ResourceQualityMetrics | null
   failure_reason?: string | null
+  failed_metrics?: Array<{
+    metric: 'hallucination_rate' | 'difficulty_match_score' | 'core_knowledge_coverage'
+    actual: number
+    threshold: string
+  }>
+  failure_details?: {
+    failure_code?: string | null
+    failed_step?: string | null
+    resource_types?: string[]
+    field_paths?: string[]
+    recoverable: boolean
+  } | null
   package_coverage?: {
     required_knowledge_ids?: string[]
     covered_knowledge_ids?: string[]

@@ -2,6 +2,8 @@ import { getData, postData } from './client'
 
 export interface TutoringSession {
   session_id: string
+  context_type: 'resource' | 'mistake_review'
+  context_id: string | null
   status: string
   turn_count: number
   node_adjustment_state: 'collecting' | 'pending_validation' | 'confirmed' | 'none'
@@ -12,6 +14,7 @@ export interface TutoringSession {
     path_node_title: string | null
     generation_task_id: string
   } | null
+  node_gate?: NodeGate | null
   messages: Array<{
     message_id: string
     sender: string
@@ -43,7 +46,11 @@ export interface TutoringAssessment {
   status: 'pending' | 'scored'
   score?: number
   is_correct?: boolean
-  decision?: 'confirmed_mastery' | 'confirmed_support_need' | 'hypothesis_rejected'
+  submitted_option?: number
+  correct_option?: number
+  correct_answer?: string
+  explanation?: string
+  decision?: 'evidence_recorded' | 'confirmed_mastery' | 'confirmed_support_need' | 'hypothesis_rejected'
   profile_changed?: boolean
   resulting_profile_id?: string
   resulting_path_id?: string
@@ -51,6 +58,32 @@ export interface TutoringAssessment {
   current_node_id?: string | null
   resource_recommendation?: ResourceRecommendation | null
   resource_decision?: 'generate' | 'skip'
+  node_gate?: NodeGate | null
+}
+
+export interface NodeGate {
+  status: 'in_progress' | 'completed' | 'unavailable'
+  can_advance: boolean
+  reason: string
+  path_node_id?: string | null
+  core_knowledge_count?: number
+  mastered_knowledge_count?: number
+  mastered_knowledge_ids?: string[]
+  unmastered_knowledge_ids?: string[]
+  blocking_mistake_count: number
+  blocking_mistake_ids?: string[]
+  quiz_completed: boolean
+  completed_node_id?: string | null
+  current_node_id?: string | null
+  knowledge_progress: Array<{
+    knowledge_id: string
+    mastered: boolean
+    eligible_evidence_count: number
+    required_evidence_count: number
+    has_corroborating_evidence: boolean
+    has_target_difficulty_evidence: boolean
+    evidence_ids: string[]
+  }>
 }
 
 export interface ResourceRecommendation {
@@ -76,11 +109,12 @@ export interface TutoringDecision {
   evidence_reason?: string | null
 }
 
-export function createTutoringSession(resourceId: string, learnerId?: string) {
+export function createTutoringSession(resourceId: string, learnerId?: string, context?: { type: 'mistake_review'; id: string }) {
   const body: Record<string, unknown> = {
     resource_id: resourceId,
   }
   if (learnerId) body.learner_id = learnerId
+  if (context) { body.context_type = context.type; body.context_id = context.id }
   return postData<TutoringSession>('/tutoring/sessions', body)
 }
 
@@ -139,13 +173,18 @@ export function answerTutoringAssessment(sessionId: string, assessmentId: string
     task_id: string | null
     adjustment_proposal_id?: string
     hypothesis_type?: 'mastery_up' | 'support_down'
-    decision?: 'confirmed_mastery' | 'confirmed_support_need' | 'hypothesis_rejected'
+    decision?: 'evidence_recorded' | 'confirmed_mastery' | 'confirmed_support_need' | 'hypothesis_rejected'
     profile_changed?: boolean
     resulting_profile_id?: string
     resulting_path_id?: string
     completed_node_id?: string | null
     current_node_id?: string | null
     resource_recommendation?: ResourceRecommendation | null
+    node_gate?: NodeGate | null
+    submitted_option?: number
+    correct_option?: number
+    correct_answer?: string
+    explanation?: string
   }>(`/tutoring/sessions/${sessionId}/assessments/${assessmentId}/answers`, { answer })
 }
 

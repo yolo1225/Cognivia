@@ -80,24 +80,80 @@ def build_db(*, knowledge_count: int = 10, question_count: int = 10) -> Session:
     practice = next(
         (item for item in items if "operation" in item.evidence_capabilities_json), None
     )
-    for index, (question_type, operation) in enumerate(distribution[:question_count]):
-        item = practice if operation else theory
-        if item is None:
-            break
-        db.add(
-            DiagnosticQuestion(
-                public_id=f"question_{index}",
-                domain_code="test_domain",
-                knowledge_item_id=item.id,
-                question_type=question_type,
-                stem=f"question {index}",
-                options_json=["A", "B"] if question_type == "single_choice" else [],
-                answer_key_json={"correct_option": 0}
-                if question_type == "single_choice"
-                else {"rubric": ["x"]},
-                difficulty=2,
+    if question_count >= 10:
+        for item in items:
+            for slot in range(1, 9):
+                question_type = "single_choice" if slot <= 6 else "short_answer"
+                question_bank_uses = (
+                    ["diagnosis"]
+                    if slot in {1, 7, 8}
+                    else ["graded_quiz"]
+                    if slot in {2, 3, 4}
+                    else ["mastery_validation"]
+                )
+                db.add(
+                    DiagnosticQuestion(
+                        public_id=f"question_{item.id}_{slot}",
+                        domain_code="test_domain",
+                        knowledge_item_id=item.id,
+                        question_type=question_type,
+                        stem=f"question {item.id}-{slot}",
+                        options_json=["A", "B", "C", "D"]
+                        if question_type == "single_choice"
+                        else [],
+                        answer_key_json={
+                            **(
+                                {"correct_option": 0}
+                                if question_type == "single_choice"
+                                else {"answer": "A", "rubric": ["x", "y"]}
+                            ),
+                            "explanation": "source-backed",
+                            "source_ref_ids": [item.public_id],
+                            "question_slot": slot,
+                            "question_bank_uses": question_bank_uses,
+                            "assessment_dimension": (
+                                "operation"
+                                if "operation" in item.evidence_capabilities_json
+                                else "theory"
+                            ),
+                            "quiz_level": (
+                                "foundation"
+                                if slot <= 2
+                                else "improvement"
+                                if slot <= 4
+                                else "challenge"
+                            ),
+                        },
+                        difficulty=min(5, slot),
+                        status="active",
+                        certification_status="certified",
+                        certification_rule_version="question-cert-v1",
+                        source_content_hash="sha256:" + "a" * 64,
+                    )
+                )
+    else:
+        for index, (question_type, operation) in enumerate(distribution[:question_count]):
+            item = practice if operation else theory
+            if item is None:
+                break
+            db.add(
+                DiagnosticQuestion(
+                    public_id=f"question_{index}",
+                    domain_code="test_domain",
+                    knowledge_item_id=item.id,
+                    question_type=question_type,
+                    stem=f"question {index}",
+                    options_json=["A", "B"] if question_type == "single_choice" else [],
+                    answer_key_json={"correct_option": 0}
+                    if question_type == "single_choice"
+                    else {"rubric": ["x"]},
+                    difficulty=2,
+                    status="active",
+                    certification_status="certified",
+                    certification_rule_version="question-cert-v1",
+                    source_content_hash="sha256:" + "b" * 64,
+                )
             )
-        )
     db.add(
         IndexBuildJob(
             domain_code="test_domain",
@@ -126,6 +182,20 @@ def test_readiness_passes_with_runtime_and_matching_smoke(monkeypatch) -> None:
     assert result["passed"] is True
     assert result["generation_ready"] is True
     assert result["issues"] == []
+    assert result["evidence_coverage"] == {
+        "total_items": 10,
+        "capabilities": {
+            "concept": 10,
+            "operation": 5,
+            "command": 0,
+            "code_example": 0,
+            "expected_result": 0,
+            "error_handling": 0,
+            "version_boundary": 0,
+        },
+        "practice_generation_mode": "safe_conceptual",
+    }
+    assert result["passed"] is True
 
 
 def test_readiness_reports_candidate_failure_without_external_smoke(monkeypatch) -> None:
@@ -143,6 +213,33 @@ def test_readiness_reports_candidate_failure_without_external_smoke(monkeypatch)
 
     assert result["passed"] is False
     assert "Candidate RAG" in {issue["message"] for issue in result["issues"]}
+
+
+def test_practice_mode_requires_operation_and_expected_result(monkeypatch) -> None:
+    db = build_db()
+    concept_item = next(
+        item
+        for item in db.query(KnowledgeItem).filter_by(domain_code="test_domain")
+        if "operation" not in (item.evidence_capabilities_json or [])
+    )
+    for item in db.query(KnowledgeItem).filter_by(domain_code="test_domain"):
+        item.evidence_capabilities_json = ["concept"]
+    concept_item.evidence_capabilities_json = ["concept", "expected_result"]
+    db.commit()
+    monkeypatch.setattr(
+        "app.services.domain_api_service.candidate_rag_status",
+        lambda _domain: {"ready": True, "index_version": "index-v1", "indexed_chunk_count": 10},
+    )
+    monkeypatch.setattr(
+        "app.services.domain_runtime_service.candidate_rag_status",
+        lambda _domain: {"ready": True, "index_version": "index-v1", "indexed_chunk_count": 10},
+    )
+
+    result = DomainApiService(db).readiness("test_domain")
+
+    assert result["evidence_coverage"]["capabilities"]["expected_result"] == 1
+    assert result["evidence_coverage"]["capabilities"]["operation"] == 0
+    assert result["evidence_coverage"]["practice_generation_mode"] == "safe_conceptual"
 
 
 def test_readiness_keeps_domain_data_thresholds_as_blockers(monkeypatch) -> None:
@@ -237,12 +334,44 @@ def test_readiness_policy_cannot_be_lowered_below_server_minimum() -> None:
     )
 
     assert readiness_policy(primary) == {
-        "minimum_published_knowledge": 50,
-        "minimum_diagnostic_questions": 60,
+        "minimum_published_knowledge": 10,
+        "minimum_diagnostic_questions": 10,
     }
     assert readiness_policy(secondary) == {
         "minimum_published_knowledge": 10,
         "minimum_diagnostic_questions": 10,
+    }
+
+
+def test_readiness_policy_uses_domain_configuration_without_code_branch() -> None:
+    primary_named_domain = Domain(
+        domain_code="ai_app_dev",
+        name="主领域",
+        config_json={
+            "readiness_policy": {
+                "minimum_published_knowledge": 17,
+                "minimum_diagnostic_questions": 23,
+            }
+        },
+    )
+    differently_named_domain = Domain(
+        domain_code="imported_industry_domain",
+        name="导入领域",
+        config_json={
+            "readiness_policy": {
+                "minimum_published_knowledge": 50,
+                "minimum_diagnostic_questions": 60,
+            }
+        },
+    )
+
+    assert readiness_policy(primary_named_domain) == {
+        "minimum_published_knowledge": 17,
+        "minimum_diagnostic_questions": 23,
+    }
+    assert readiness_policy(differently_named_domain) == {
+        "minimum_published_knowledge": 50,
+        "minimum_diagnostic_questions": 60,
     }
 
 

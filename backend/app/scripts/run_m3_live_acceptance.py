@@ -13,7 +13,6 @@ from app.models import (
     Domain,
     GenerationTask,
     KnowledgeDocument,
-    KnowledgeImportCandidate,
     KnowledgeItem,
     Learner,
     LearnerProfile,
@@ -28,16 +27,12 @@ from app.services.diagnostic_service import (
 )
 from app.services.domain_api_service import DomainApiService
 from app.services.domain_runtime_service import DomainRuntimeError, require_ready_domain
-from app.services.knowledge_document_service import (
-    create_document,
-    process_knowledge_document,
-)
+from app.services.knowledge_document_service import create_document
 from app.services.knowledge_import_publish_service import (
-    approve_candidates,
-    publish_approved,
+    activate_import_candidate,
     smoke_import_index,
 )
-from app.services.knowledge_import_validation_service import validate_import
+from app.services.knowledge_import_orchestrator import create_import_run, resolve_run, run_import
 from app.services.profile_service import public_id
 from app.workers.generation_worker import run_generation_task
 
@@ -45,14 +40,6 @@ from app.workers.generation_worker import run_generation_task
 DOMAIN_CODE = "m3_live_acceptance"
 LEARNER_ID = "learner_m3_live_acceptance"
 REPORT_PATH = Path(__file__).resolve().parents[3] / "reports" / "m3-live-acceptance.json"
-WEIGHTS = {
-    "theory": 0.3,
-    "practice": 0.25,
-    "problem_solving": 0.2,
-    "knowledge_breadth": 0.25,
-    "learning_speed": 0.0,
-}
-
 
 SECTIONS = (
     ("变量与数据类型", "变量用于保存程序运行中的数据；字符串、整数和布尔值是常见类型。"),
@@ -111,66 +98,26 @@ def _create_domain_and_import() -> tuple[str, dict]:
             license_note="项目内部验收材料",
             uploaded_by="m3_acceptance",
         )
+        run = create_import_run(db, document)
         document_id = document.public_id
+        run_id = run.public_id
 
-    process_knowledge_document(document_id)
+    run_import(run_id)
     with SessionLocal() as db:
-        document = db.scalar(
-            select(KnowledgeDocument).where(KnowledgeDocument.public_id == document_id)
+        run, document = resolve_run(db, run_id)
+        if run.status != "ready_to_publish":
+            raise RuntimeError(f"orchestrated_import_failed:{run.status}:{run.error_summary}")
+        job = candidate_index_job.latest_job(
+            db, DOMAIN_CODE, source_document_id=document.id
         )
-        if document is None or document.status != "review_pending":
-            raise RuntimeError(
-                f"document_processing_failed:{document.status if document else 'missing'}:"
-                f"{document.error_summary if document else ''}"
-            )
-        candidates = list(
-            db.scalars(
-                select(KnowledgeImportCandidate)
-                .where(KnowledgeImportCandidate.document_id == document.id)
-                .order_by(KnowledgeImportCandidate.id)
-            )
-        )
-        knowledge = [item for item in candidates if item.candidate_type == "knowledge_item"]
-        questions = [item for item in candidates if item.candidate_type == "diagnostic_question"]
-        if len(knowledge) != 10 or len(questions) != 10:
-            raise RuntimeError(
-                f"unexpected_candidate_counts:knowledge={len(knowledge)},questions={len(questions)}"
-            )
-        knowledge_index = {item.public_id: index for index, item in enumerate(knowledge)}
-        for item in knowledge:
-            index = knowledge_index[item.public_id]
-            payload = dict(item.payload_json or {})
-            payload["ability_weights"] = dict(WEIGHTS)
-            payload["tags"] = ["m3-acceptance", "web"]
-            payload["evidence_capabilities"] = (
-                ["definition", "operation"] if index in {3, 4, 5, 8, 9} else ["definition"]
-            )
-            item.payload_json = payload
-        for item in questions:
-            payload = dict(item.payload_json or {})
-            index = knowledge_index[payload["knowledge_candidate_id"]]
-            if index < 6:
-                correct = f"正确选项：{SECTIONS[index][0]}的核心要求"
-                payload.update(
-                    {
-                        "question_type": "single_choice",
-                        "options": [correct, "与本知识点无关的描述"],
-                        "answer": correct,
-                    }
-                )
-            else:
-                payload["question_type"] = "short_answer"
-            item.payload_json = payload
-        db.commit()
-        validation = validate_import(db, document.id)
-        if validation["invalid"]:
-            raise RuntimeError(f"candidate_validation_failed:{validation}")
-        approved = approve_candidates(db, document)
-        published = publish_approved(db, document)
+        if job is None:
+            raise RuntimeError("orchestrated_import_index_missing")
+        activated = activate_import_candidate(db, document, job)
         return document_id, {
-            "candidate_validation": validation,
-            "approved_candidates": approved,
-            "published": published,
+            "run_id": run_id,
+            "input_version": run.input_version,
+            "status": run.status,
+            "published": activated,
         }
 
 
@@ -456,7 +403,7 @@ def _resume_import_state() -> tuple[str, dict]:
 def run(*, resume: bool = False) -> dict:
     started_at = datetime.now(UTC)
     document_id, imported = _resume_import_state() if resume else _create_domain_and_import()
-    if resume and candidate_rag_status(DOMAIN_CODE).get("ready"):
+    if candidate_rag_status(DOMAIN_CODE).get("ready"):
         indexed = {"resumed": True, "rag": candidate_rag_status(DOMAIN_CODE)}
     else:
         indexed = _build_and_smoke(document_id)

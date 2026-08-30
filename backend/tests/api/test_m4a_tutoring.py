@@ -24,8 +24,14 @@ from app.models import (
     LearningPath,
     LearningAdjustmentProposal,
     LearningResource,
+    MistakeReviewItem,
 )
 from app.api.v1.generation_tasks import _semantic_events
+from app.services.learning_path_service import unit_node_id_for
+
+
+RAG_NODE_ID = unit_node_id_for(["rag_pipeline_overview"])
+NEXT_NODE_ID = unit_node_id_for(["distractor_knowledge"])
 
 
 def _session_factory() -> sessionmaker[Session]:
@@ -100,9 +106,13 @@ def _seed(db: Session) -> None:
             options_json=["正确", "错误"],
             answer_key_json={"correct_option": 0},
             difficulty=1,
+            status="active",
+            certification_status="certified",
+            certification_rule_version="question-cert-v1",
+            source_content_hash="sha256:" + "b" * 64,
         )
     )
-    for index in range(2):
+    for index in range(3):
         db.add(
             DiagnosticQuestion(
                 public_id=f"m4a_q_{index}",
@@ -111,8 +121,15 @@ def _seed(db: Session) -> None:
                 question_type="single_choice",
                 stem=f"验证题 {index}",
                 options_json=["正确", "错误"],
-                answer_key_json={"correct_option": 0},
+                answer_key_json={
+                    "correct_option": 0,
+                    "question_bank_uses": ["mastery_validation"],
+                },
                 difficulty=3,
+                status="active",
+                certification_status="certified",
+                certification_rule_version="question-cert-v1",
+                source_content_hash="sha256:" + "c" * 64,
             )
         )
     db.flush()
@@ -143,29 +160,38 @@ def _seed(db: Session) -> None:
                     {"name": "RAG 验证", "knowledge_ids": ["rag_pipeline_overview"]},
                     {"name": "后续节点", "knowledge_ids": ["distractor_knowledge"]},
                 ],
-                "current_node_id": "knowledge:rag_pipeline_overview",
+                "current_node_id": RAG_NODE_ID,
                 "node_states": {
-                    "knowledge:rag_pipeline_overview": {
-                        "path_node_id": "knowledge:rag_pipeline_overview",
-                        "knowledge_id": "rag_pipeline_overview",
+                    RAG_NODE_ID: {
+                        "path_node_id": RAG_NODE_ID,
+                        "knowledge_ids": ["rag_pipeline_overview"],
+                        "focus_knowledge_ids": [],
+                        "title": "RAG 验证",
                         "status": "current",
                         "path_order": 1,
-                        "prerequisite_node_ids": [],
+                        "prerequisite_knowledge_ids": [],
+                        "learning_objective": "掌握 RAG 验证",
+                        "recommendation_reason": "根据当前学习目标安排。",
                     },
-                    "knowledge:distractor_knowledge": {
-                        "path_node_id": "knowledge:distractor_knowledge",
-                        "knowledge_id": "distractor_knowledge",
+                    NEXT_NODE_ID: {
+                        "path_node_id": NEXT_NODE_ID,
+                        "knowledge_ids": ["distractor_knowledge"],
+                        "focus_knowledge_ids": [],
+                        "title": "后续节点",
                         "status": "locked",
                         "path_order": 2,
-                        "prerequisite_node_ids": ["knowledge:rag_pipeline_overview"],
+                        "prerequisite_knowledge_ids": ["rag_pipeline_overview"],
+                        "learning_objective": "掌握后续节点",
+                        "recommendation_reason": "根据前置关系安排。",
                     },
                 },
+                "path_version": "dynamic-units-v1",
             },
         )
     db.add(path)
     db.flush()
     task.learning_path_id = path.id
-    task.path_node_id = "knowledge:rag_pipeline_overview"
+    task.path_node_id = RAG_NODE_ID
     db.add(
         LearningResource(
             public_id="resource_m4a",
@@ -239,6 +265,10 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             {"profile_changed": False, "ability_score_changes": {}},
         ),
     )
+    monkeypatch.setattr(
+        "app.services.learning_adjustment_service.graded_quiz_preflight",
+        lambda *_args, **_kwargs: {"ready": True},
+    )
     monkeypatch.setattr("app.api.v1.tutoring.run_generation_task", lambda _task_id: None)
     monkeypatch.setattr("app.api.v1.learning_adjustments.run_generation_task", lambda _task_id: None)
     app.dependency_overrides[get_db] = _override(factory)
@@ -302,21 +332,16 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
             f"/api/v1/tutoring/sessions/{session_id}/assessments/{second_assessment['assessment_id']}/answers",
             json={"answer": 0},
         ).json()["data"]
-        assert second_answer["decision"] == "confirmed_mastery"
-        assert second_answer["current_node_id"] == "knowledge:distractor_knowledge"
+        assert second_answer["decision"] == "evidence_recorded"
+        assert second_answer["current_node_id"] == RAG_NODE_ID
+        assert second_answer["completed_node_id"] is None
+        assert second_answer["node_gate"]["can_advance"] is False
         assert second_answer["task_id"] is None
         repeated = client.post(
             f"/api/v1/tutoring/sessions/{session_id}/assessments/{second_assessment['assessment_id']}/answers",
             json={"answer": 0},
         ).json()["data"]
         assert repeated["answer_record_id"] == second_answer["answer_record_id"]
-        resource_response = client.post(
-            f"/api/v1/learning-adjustments/{second_answer['adjustment_proposal_id']}/resource-decision",
-            json={"decision": "generate"},
-        )
-        assert resource_response.status_code == 200, resource_response.json()
-        resource_decision = resource_response.json()["data"]
-        assert resource_decision["task_id"] is not None
         with factory() as db:
             assert db.query(AnswerRecord).count() == 1
             tutoring_runs = db.query(AgentRun).filter_by(agent_name="tutoring_agent").all()
@@ -325,15 +350,142 @@ def test_m4a_stream_and_non_stream_share_real_turn_and_validation(monkeypatch) -
                 run.input_summary_json["session_id"] == session_id for run in tutoring_runs
             )
             assert db.query(Feedback).count() == 2
-            generated = db.query(GenerationTask).filter_by(public_id=resource_decision["task_id"]).one()
-            assert generated.path_node_id == "knowledge:distractor_knowledge"
-            assert generated.resource_knowledge_targets_json == {
-                "lecture": ["distractor_knowledge"],
-                "practice_guide": ["distractor_knowledge"],
-                "graded_quiz": ["distractor_knowledge"],
-            }
+            assert db.query(LearnerProfile).count() == 1
         assert calls == 2
         assert evidence_counts == [1, 1]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_manual_mastery_check_reports_when_current_node_has_no_choice_question() -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+        db.query(DiagnosticQuestion).filter_by(question_type="single_choice").delete()
+        db.commit()
+    app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
+    client = TestClient(app)
+    try:
+        session_id = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_m4a"}
+        ).json()["data"]["session_id"]
+        response = client.post(f"/api/v1/tutoring/sessions/{session_id}/mastery-check")
+        assert response.status_code == 409
+        assert response.json()["error"] == {
+            "code": "MASTERY_CHECK_QUESTION_UNAVAILABLE",
+            "message": "当前知识点缺少可判分的单选验证题，请联系管理员补题后重试。",
+            "details": None,
+        }
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_mistake_tutoring_session_is_isolated_and_restored() -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+        learner = db.query(Learner).filter_by(public_id="learner_001").one()
+        knowledge = db.query(KnowledgeItem).filter_by(public_id="rag_pipeline_overview").one()
+        resource = db.query(LearningResource).filter_by(public_id="resource_m4a").one()
+        db.add(
+            MistakeReviewItem(
+                public_id="mistake_m4a",
+                learner_id=learner.id,
+                domain_code="ai_app_dev",
+                knowledge_item_id=knowledge.id,
+                source_type="graded_quiz",
+                source_record_id="quiz:m4a:0",
+                source_resource_id=resource.id,
+                question_type="single_choice",
+                difficulty=3,
+                status="pending",
+                error_summary_json={},
+            )
+        )
+        db.commit()
+    app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
+    client = TestClient(app)
+    try:
+        resource_session = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_m4a"}
+        ).json()["data"]
+        mistake_payload = {
+            "resource_id": "resource_m4a",
+            "context_type": "mistake_review",
+            "context_id": "mistake_m4a",
+        }
+        mistake_session = client.post(
+            "/api/v1/tutoring/sessions", json=mistake_payload
+        ).json()["data"]
+        restored = client.post(
+            "/api/v1/tutoring/sessions", json=mistake_payload
+        ).json()["data"]
+
+        assert resource_session["session_id"] != mistake_session["session_id"]
+        assert restored["session_id"] == mistake_session["session_id"]
+        assert restored["context_type"] == "mistake_review"
+        assert restored["context_id"] == "mistake_m4a"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_mastery_retry_keeps_wrong_question_and_hides_answer_disclosure() -> None:
+    factory = _session_factory()
+    with factory() as db:
+        _seed(db)
+    app.dependency_overrides[get_db] = _override(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "learner_user", "learner", "learner_001"
+    )
+    client = TestClient(app)
+    try:
+        session_id = client.post(
+            "/api/v1/tutoring/sessions", json={"resource_id": "resource_m4a"}
+        ).json()["data"]["session_id"]
+        first = client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/mastery-check"
+        ).json()["data"]
+        result = client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/assessments/{first['assessment_id']}/answers",
+            json={"answer": 1},
+        ).json()["data"]
+        assert result["is_correct"] is False
+        assert result["submitted_option"] == 1
+        assert "correct_option" not in result
+        assert "correct_answer" not in result
+        assert "explanation" not in result
+
+        restored = client.get(f"/api/v1/tutoring/sessions/{session_id}").json()["data"]
+        scored = next(
+            message["assessment"]
+            for message in restored["messages"]
+            if message.get("assessment", {}).get("assessment_id") == first["assessment_id"]
+        )
+        assert scored["status"] == "scored"
+        assert scored["stem"] == first["stem"]
+        assert scored["options"] == first["options"]
+        assert scored["submitted_option"] == 1
+        assert "correct_answer" not in scored
+        assert "explanation" not in scored
+
+        retry = client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/mastery-check"
+        ).json()["data"]
+        assert retry["question_id"] == first["question_id"]
+        corrected = client.post(
+            f"/api/v1/tutoring/sessions/{session_id}/assessments/{retry['assessment_id']}/answers",
+            json={"answer": 0},
+        ).json()["data"]
+        assert corrected["is_correct"] is True
+        assert corrected["submitted_option"] == 0
+        assert corrected["correct_answer"] == first["options"][0]
+        assert "explanation" in corrected
     finally:
         app.dependency_overrides.clear()
 
@@ -454,7 +606,7 @@ def test_node_evidence_aggregates_across_resources_and_allows_cross_session_answ
             json={"answer": 0},
         )
         assert answered.status_code == 200, answered.json()
-        assert answered.json()["data"]["decision"] == "confirmed_mastery"
+        assert answered.json()["data"]["decision"] == "evidence_recorded"
 
         with factory() as db:
             feedback = db.query(Feedback).order_by(Feedback.id).all()
@@ -568,8 +720,8 @@ def test_support_hypothesis_wrong_answer_confirms_need_without_advancing(monkeyp
             json={"answer": 1},
         ).json()["data"]
         assert result["decision"] == "confirmed_support_need"
-        assert result["current_node_id"] == "knowledge:rag_pipeline_overview"
-        assert result["resource_recommendation"]["mode"] == "remedial"
+        assert result["current_node_id"] == RAG_NODE_ID
+        assert result["resource_recommendation"] is None
         assert result["task_id"] is None
     finally:
         app.dependency_overrides.clear()

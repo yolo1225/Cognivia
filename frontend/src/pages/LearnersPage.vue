@@ -1,10 +1,10 @@
 <template>
   <section class="page users-page">
-    <PageHeader title="用户管理" description="集中管理登录账号、访问状态与安全会话，并按需查看关联学习者的只读学习档案。">
+    <PageHeader title="用户管理" description="集中管理登录账号、访问状态与安全会话，并按需查看关联学习者的学情画像。">
       <template #actions>
         <span v-if="lastLoadedAt" class="last-updated"
           >更新于 {{ lastLoadedAt }}</span
-        ><button class="btn" :disabled="loading" @click="loadAll">
+        ><button type="button" class="btn" :disabled="loading" :aria-busy="loading" @click="loadAll">
           {{ loading ? "正在刷新" : "刷新列表" }}
         </button>
       </template>
@@ -152,12 +152,12 @@
                     "
                     :title="
                       account.learner_id
-                        ? '查看学习档案'
-                        : '该账号未关联学习档案'
+                        ? '查看学情画像'
+                        : '该账号未关联学习者档案'
                     "
                     @click="account.learner_id && openProfile(account)"
                   >
-                    查看档案
+                    查看画像
                   </button>
                   <div class="action-menu">
                     <button
@@ -207,11 +207,11 @@
 
     <AppDrawer
       v-model="profileOpen"
-      title="学习档案"
+      title="学情画像"
       :subtitle="
         profileTarget
-          ? `${profileTarget.display_name || profileTarget.username} · 只读档案`
-          : '只读档案'
+          ? `${profileTarget.display_name || profileTarget.username} · 管理视图`
+          : '管理视图'
       "
     >
       <div v-if="profileTarget" class="drawer-account">
@@ -234,7 +234,7 @@
       </div>
       <div v-if="profileLoading" class="profile-loading"><i /><i /><i /></div>
       <div v-else-if="profileError" class="drawer-error" role="alert">
-        <strong>学习档案加载失败</strong>
+        <strong>学情画像加载失败</strong>
         <p>{{ profileError }}</p>
         <button class="btn" @click="retryProfile">重新加载</button>
       </div>
@@ -244,87 +244,33 @@
       >
         <span aria-hidden="true">○</span><strong>尚未完成首次诊断</strong>
         <p>
-          完成学习背景采集和诊断测评后，这里将显示能力画像、薄弱知识点与推荐学习路径。
+          完成学习背景采集和诊断测评后，这里将显示能力结构、学习重点和个性化路线。
         </p>
       </div>
       <template v-else-if="profile">
-        <div class="profile-summary">
-          <div>
-            <span>画像类型</span
-            ><strong>{{ profile.profile_type || "未分类" }}</strong>
-          </div>
-          <div>
-            <span>诊断正确率</span
-            ><strong
-              >{{
-                Math.round(profile.diagnostic_summary.accuracy || 0)
-              }}%</strong
-            >
-          </div>
-          <div>
-            <span>答题数量</span
-            ><strong>{{ profile.diagnostic_summary.answer_count }}</strong>
-          </div>
-          <div>
-            <span>学习风格</span
-            ><strong>{{ profile.learning_style || "未识别" }}</strong>
-          </div>
-        </div>
-        <section class="profile-section">
-          <h3>五维能力</h3>
-          <div class="ability-list">
-            <div v-for="(score, index) in profile.radar" :key="index">
-              <span>{{ radarLabels[index] }}</span>
-              <div>
-                <i
-                  :style="{
-                    width: `${Math.max(0, Math.min(100, Number(score) || 0))}%`,
-                  }"
-                />
-              </div>
-              <strong>{{ score }}</strong>
-            </div>
+        <section class="admin-profile-overview">
+          <span>当前学情</span>
+          <h3>{{ profileTypeLabel(profile.profile_type) }}</h3>
+          <p>{{ profile.education_level || '学习背景待补充' }}<template v-if="profile.major"> · {{ profile.major }}</template></p>
+          <div class="admin-profile-stats">
+            <div><span>诊断表现</span><strong>{{ Math.round(profile.diagnostic_summary.accuracy || 0) }}%</strong><small>{{ profile.diagnostic_summary.correct_count }}/{{ profile.diagnostic_summary.answer_count }} 题答对</small></div>
+            <div><span>待加强</span><strong>{{ profile.weak_knowledge.length }}</strong><small>项重点知识</small></div>
+            <div><span>学习路线</span><strong>{{ profileRouteItems.length }}</strong><small>个学习节点</small></div>
           </div>
         </section>
+        <section class="profile-section profile-insight-section">
+          <div class="section-title"><h3>能力结论</h3><span>诊断依据</span></div>
+          <div class="profile-insights"><article v-for="item in profileInsights" :key="item.label" :class="`insight-${item.tone}`"><span>{{ item.label }}</span><strong>{{ item.value }}</strong><p>{{ item.description }}</p></article></div>
+        </section>
         <section class="profile-section">
-          <div class="section-title">
-            <h3>薄弱知识点</h3>
-            <span>{{ profile.weak_knowledge.length }} 项</span>
-          </div>
-          <div v-if="profile.weak_knowledge.length" class="weak-list">
-            <div
-              v-for="item in profile.weak_knowledge"
-              :key="item.knowledge_id"
-            >
-              <strong>{{ item.name }}</strong
-              ><span
-                >{{ item.category }} · 薄弱等级 {{ item.weakness_level }}</span
-              >
-            </div>
-          </div>
+          <div class="section-title"><h3>当前学习重点</h3><span>{{ profile.weak_knowledge.length }} 项</span></div>
+          <div v-if="profile.weak_knowledge.length" class="profile-focus-list"><article v-for="(item, index) in profile.weak_knowledge.slice(0, 5)" :key="item.knowledge_id"><span>{{ index + 1 }}</span><div><strong>{{ item.name }}</strong><small>{{ item.category }}</small></div><em :class="weaknessTone(item.weakness_level)">{{ weaknessLabel(item.weakness_level) }}</em></article></div>
           <p v-else class="section-empty">当前没有已确认的薄弱知识点。</p>
         </section>
         <section class="profile-section">
-          <div class="section-title">
-            <h3>推荐学习路径</h3>
-            <span>{{ profile.learning_path?.stages?.length || 0 }} 个阶段</span>
-          </div>
-          <div
-            v-if="profile.learning_path?.stages?.length"
-            class="learning-path"
-          >
-            <div
-              v-for="(stage, index) in profile.learning_path.stages"
-              :key="index"
-            >
-              <span>{{ index + 1 }}</span>
-              <div>
-                <strong>{{ stage.name }}</strong>
-                <p>{{ stage.description || "按诊断结果推荐" }}</p>
-              </div>
-            </div>
-          </div>
-          <p v-else class="section-empty">尚未生成学习路径。</p>
+          <div class="section-title"><h3>个性化学习路线</h3><span>{{ profileRouteItems.length }} 个节点</span></div>
+          <div v-if="profileRouteItems.length" class="profile-route-list"><article v-for="item in profileRouteItems" :key="item.id" :class="`route-${item.status}`"><span>{{ String(item.order).padStart(2, '0') }}</span><div><strong>{{ item.title }}</strong><p>{{ item.description }}</p></div><em>{{ pathStatusLabel(item.status) }}</em></article></div>
+          <p v-else class="section-empty">尚未生成学习路线。</p>
         </section>
       </template>
     </AppDrawer>
@@ -461,13 +407,7 @@ const resetDialog = ref<InstanceType<typeof AppDialog> | null>(null),
   newPassword = ref(""),
   resetError = ref(""),
   resetting = ref(false);
-const radarLabels = [
-  "理论基础",
-  "实操能力",
-  "问题解决",
-  "知识广度",
-  "学习速度",
-];
+const radarLabels = ["理论掌握", "实操应用", "场景解决", "知识广度", "学习速度"];
 const activeCount = computed(
   () => accounts.value.filter((a) => a.status === "active").length,
 );
@@ -509,6 +449,48 @@ const resultSummary = computed(() =>
     ? `已从 ${accounts.value.length} 个账号中筛选出 ${filteredAccounts.value.length} 个`
     : `管理 ${accounts.value.length} 个登录账号的访问状态与安全设置`,
 );
+const profileRouteItems = computed(() => {
+  const nodes = profile.value?.learning_path?.nodes || [];
+  if (nodes.length) {
+    return [...nodes]
+      .sort((left, right) => left.path_order - right.path_order)
+      .map((node) => ({
+        id: node.path_node_id,
+        order: node.path_order,
+        title: node.title,
+        description: node.learning_objective || "按当前学情推荐",
+        status: node.status,
+      }));
+  }
+  return (profile.value?.learning_path?.stages || []).map((stage, index) => ({
+    id: `legacy-stage-${index}`,
+    order: index + 1,
+    title: stage.name,
+    description: stage.description || "按当前学情推荐",
+    status: (index === 0 ? "current" : "locked") as "current" | "locked",
+  }));
+});
+const profileInsights = computed(() => {
+  if (!profile.value) return [];
+  const scores = profile.value.radar.map((value, index) => ({
+    label: radarLabels[index] || `能力维度 ${index + 1}`,
+    value: Math.max(0, Math.min(100, Number(value) || 0)),
+  }));
+  const strongest = [...scores].sort((left, right) => right.value - left.value)[0];
+  const weakest = [...scores].sort((left, right) => left.value - right.value)[0];
+  const focus = [...profile.value.weak_knowledge].sort(
+    (left, right) => right.weakness_level - left.weakness_level,
+  )[0];
+  return [
+    strongest && { label: "当前优势", value: strongest.label, description: "当前诊断中表现相对稳定。", tone: "strength" },
+    {
+      label: "优先提升",
+      value: focus?.name || weakest?.label || "持续练习",
+      description: focus ? "已纳入学习重点，建议优先完成相关路线。" : "通过当前学习路线继续巩固。",
+      tone: "focus",
+    },
+  ].filter(Boolean) as Array<{ label: string; value: string; description: string; tone: "strength" | "focus" }>;
+});
 const confirmCopy = computed(() => {
   const action = pendingAction.value;
   const username = action?.account.username || "该账号";
@@ -561,6 +543,27 @@ function accountInitial(account: AdminUser) {
     .trim()
     .slice(0, 1)
     .toUpperCase();
+}
+function profileTypeLabel(type?: string) {
+  return ({
+    beginner: "基础起步型学习者",
+    intermediate: "进阶提升型学习者",
+    advanced: "综合应用型学习者",
+    practice_oriented: "实操导向型学习者",
+  } as Record<string, string>)[type || ""] || type || "画像待确认";
+}
+function weaknessLabel(level: number) {
+  if (level >= 4) return "优先补强";
+  if (level === 3) return "重点巩固";
+  return "持续练习";
+}
+function weaknessTone(level: number) {
+  if (level >= 4) return "high";
+  if (level === 3) return "mid";
+  return "low";
+}
+function pathStatusLabel(status: "locked" | "current" | "completed" | "skipped") {
+  return ({ locked: "待解锁", current: "当前学习", completed: "已完成", skipped: "已跳过" } as const)[status];
 }
 function toggleMenu(account: AdminUser, event: MouseEvent) {
   if (openMenuId.value === account.user_id) {
@@ -654,7 +657,7 @@ async function loadProfile(learnerId: string) {
   try {
     profile.value = await getLearnerProfile(learnerId);
   } catch {
-    profileError.value = "无法读取该学习者的画像与学习路径，请稍后重试。";
+    profileError.value = "无法读取该学习者的学情画像，请稍后重试。";
   } finally {
     profileLoading.value = false;
   }
@@ -717,6 +720,11 @@ onUnmounted(() => {
   align-self: center;
   color: var(--muted);
   font-size: 12px;
+}
+/* 保持原有四项指标布局，仅统一管理侧边框与浅色底面。 */
+.users-page :deep(.metric-strip) {
+  border-color: var(--line);
+  background: var(--soft);
 }
 .account-metrics {
   display: grid;
@@ -792,7 +800,7 @@ onUnmounted(() => {
 }
 .search-field:focus-within {
   border-color: var(--blue);
-  box-shadow: 0 0 0 3px rgb(49 95 206/0.14);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 22%, transparent);
 }
 .search-field input {
   width: 100%;
@@ -860,7 +868,7 @@ onUnmounted(() => {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #b6c0cd;
+  background: var(--muted);
 }
 .profile-link-state.linked {
   color: var(--body);
@@ -900,7 +908,7 @@ onUnmounted(() => {
   font-weight: 650;
 }
 .more-button:hover {
-  border-color: #a9bad1;
+  border-color: var(--body);
   background: var(--soft);
 }
 .menu-popover {
@@ -913,7 +921,7 @@ onUnmounted(() => {
   border-radius: 9px;
   background: var(--panel);
   padding: 5px;
-  box-shadow: 0 8px 14px rgb(22 35 55/0.12);
+  box-shadow: var(--shadow-hover);
   text-align: left;
 }
 .floating-menu {
@@ -968,13 +976,13 @@ onUnmounted(() => {
   gap: 28px;
   align-items: center;
   min-height: 60px;
-  border-bottom: 1px solid #edf0f4;
+  border-bottom: 1px solid var(--line);
 }
 .skeleton-row i,
 .profile-loading i {
   height: 12px;
   border-radius: 5px;
-  background: linear-gradient(90deg, #eef1f5 25%, #f7f9fb 50%, #eef1f5 75%);
+  background: linear-gradient(90deg, var(--track) 25%, var(--soft) 50%, var(--track) 75%);
   background-size: 200% 100%;
   animation: skeleton 1.2s linear infinite;
 }
@@ -1044,30 +1052,6 @@ onUnmounted(() => {
   color: var(--blue);
   font-weight: 800;
 }
-.profile-summary {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1px;
-  margin-top: 16px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--line);
-}
-.profile-summary div {
-  background: var(--panel);
-  padding: 13px;
-}
-.profile-summary span {
-  display: block;
-  color: var(--muted);
-  font-size: 11px;
-}
-.profile-summary strong {
-  display: block;
-  margin-top: 6px;
-  font-size: 15px;
-}
 .profile-section {
   padding-top: 20px;
 }
@@ -1081,83 +1065,6 @@ onUnmounted(() => {
   color: var(--muted);
   font-size: 11px;
 }
-.ability-list {
-  display: grid;
-  gap: 11px;
-  margin-top: 13px;
-}
-.ability-list > div {
-  display: grid;
-  grid-template-columns: 70px 1fr 30px;
-  align-items: center;
-  gap: 9px;
-  font-size: 11px;
-}
-.ability-list > div > div {
-  height: 6px;
-  border-radius: 4px;
-  background: var(--track);
-  overflow: hidden;
-}
-.ability-list i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--blue);
-}
-.ability-list strong {
-  text-align: right;
-}
-.weak-list {
-  display: grid;
-  margin-top: 10px;
-}
-.weak-list > div {
-  padding: 11px 0;
-  border-bottom: 1px solid #edf0f4;
-}
-.weak-list strong,
-.weak-list span {
-  display: block;
-}
-.weak-list span {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 11px;
-}
-.learning-path {
-  display: grid;
-  margin-top: 13px;
-}
-.learning-path > div {
-  position: relative;
-  display: grid;
-  grid-template-columns: 26px 1fr;
-  gap: 10px;
-  padding-bottom: 16px;
-}
-.learning-path > div:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  top: 25px;
-  bottom: 2px;
-  left: 12px;
-  width: 1px;
-  background: var(--line);
-}
-.learning-path > div > span {
-  z-index: 1;
-  width: 25px;
-  height: 25px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--blue2);
-  color: var(--blue);
-  font-size: 11px;
-  font-weight: 800;
-}
-.learning-path p,
 .section-empty {
   margin: 5px 0 0;
   color: var(--muted);
@@ -1213,7 +1120,7 @@ onUnmounted(() => {
 .reset-form input:focus {
   border-color: var(--blue);
   outline: 0;
-  box-shadow: 0 0 0 3px rgb(49 95 206/0.16);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 24%, transparent);
 }
 .reset-hint {
   margin: 0;
@@ -1308,9 +1215,6 @@ onUnmounted(() => {
   .menu-popover button {
     min-height: 44px;
   }
-  .profile-summary {
-    grid-template-columns: 1fr;
-  }
   .drawer-account {
     grid-template-columns: 42px 1fr;
   }
@@ -1325,4 +1229,18 @@ onUnmounted(() => {
     animation: none;
   }
 }
+
+/* 管理侧学情画像：与学习者端保持相同的信息顺序，避免复刻旧版长列表。 */
+:global(.drawer) { width: min(500px, 95vw); }
+:global(.drawer-head) { padding: 18px 20px 16px; background: var(--panel); }
+:global(.drawer-body) { padding: 16px 18px 22px; background: var(--bg); }
+.drawer-account { margin: -1px -1px 0; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); padding: 13px; }
+.admin-profile-overview { margin-top: 14px; border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: 9px; background: var(--panel); padding: 15px 16px 0; }
+.admin-profile-overview > span { color: var(--blue); font-size: 10px; font-weight: 750; }.admin-profile-overview h3 { margin: 4px 0 0; color: var(--ink); font-size: 17px; line-height: 1.45; }.admin-profile-overview > p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+.admin-profile-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin: 15px -16px 0; border-top: 1px solid var(--line); background: var(--line); }.admin-profile-stats div { display: grid; gap: 4px; min-width: 0; background: var(--panel); padding: 12px; }.admin-profile-stats span,.admin-profile-stats small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.admin-profile-stats strong { color: var(--ink); font-size: 19px; line-height: 1.1; }
+.profile-section { padding-top: 18px; }.profile-insight-section { padding-top: 16px; }.section-title h3 { color: var(--ink); font-size: 14px; }.section-title span { border-radius: 5px; background: var(--soft); padding: 3px 6px; }
+.profile-insights { display: grid; gap: 8px; margin-top: 10px; }.profile-insights article { display: grid; gap: 3px; border-left: 3px solid var(--amber); background: var(--soft); padding: 11px 12px; }.profile-insights article.insight-strength { border-left-color: var(--green); }.profile-insights span { color: var(--muted); font-size: 10px; }.profile-insights strong { color: var(--ink); font-size: 13px; }.profile-insights p { color: var(--body); font-size: 11px; line-height: 1.55; }
+.profile-focus-list { display: grid; margin-top: 9px; }.profile-focus-list article { display: grid; grid-template-columns: 23px minmax(0, 1fr) auto; align-items: center; gap: 9px; border-top: 1px solid var(--line); padding: 9px 0; }.profile-focus-list article:first-child { border-top: 0; }.profile-focus-list article > span { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 6px; background: var(--soft); color: var(--muted); font-size: 10px; font-weight: 750; }.profile-focus-list div { min-width: 0; display: grid; gap: 2px; }.profile-focus-list strong { overflow: hidden; color: var(--ink); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.profile-focus-list small { color: var(--muted); font-size: 10px; }.profile-focus-list em { border-radius: 5px; padding: 3px 6px; font-size: 10px; font-style: normal; font-weight: 700; }.profile-focus-list em.high { background: var(--red2); color: var(--red); }.profile-focus-list em.mid { background: var(--amber2); color: var(--amber); }.profile-focus-list em.low { background: var(--green2); color: var(--green); }
+.profile-route-list { display: grid; gap: 0; margin-top: 10px; }.profile-route-list article { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 0 0 13px; }.profile-route-list article:last-child { padding-bottom: 0; }.profile-route-list article:not(:last-child)::before { position: absolute; top: 24px; bottom: 0; left: 13px; width: 1px; background: var(--line); content: ''; }.profile-route-list article > span { z-index: 1; display: grid; width: 27px; height: 27px; place-items: center; border-radius: 50%; background: var(--soft); color: var(--muted); font-size: 9px; font-weight: 800; }.profile-route-list div { min-width: 0; padding-top: 2px; }.profile-route-list strong { color: var(--ink); font-size: 12px; }.profile-route-list p { margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }.profile-route-list em { margin-top: 3px; border-radius: 5px; background: var(--soft); color: var(--muted); padding: 3px 6px; font-size: 9px; font-style: normal; font-weight: 700; white-space: nowrap; }.profile-route-list article.route-current > span { background: var(--blue); color: #fff; }.profile-route-list article.route-current em { background: var(--blue2); color: var(--blue); }.profile-route-list article.route-completed > span { background: var(--green); color: #fff; }.profile-route-list article.route-completed em { background: var(--green2); color: var(--green); }.profile-route-list article.route-locked { opacity: .72; }
+@media (max-width: 420px) { .admin-profile-stats div { padding: 10px; }.admin-profile-stats strong { font-size: 17px; }.profile-focus-list em { max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
 </style>

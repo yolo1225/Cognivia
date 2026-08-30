@@ -1,8 +1,8 @@
 <template>
   <div class="quality-grid">
-    <div><span>幻觉率</span><strong :class="metrics.hallucination_rate < 5 ? 'ok' : 'bad'">{{ format(metrics.hallucination_rate) }}%</strong><small v-if="showDetails">{{ metrics.hallucinated_claim_count }}/{{ metrics.verifiable_claim_count }} 条事实</small></div>
-    <div><span>画像-资源难度适配度</span><strong :class="metrics.difficulty_match_score >= 85 ? 'ok' : 'bad'">{{ format(metrics.difficulty_match_score) }}%</strong><small v-if="showDetails">达标线 ≥ 85%</small></div>
-    <div><span>核心知识点覆盖率</span><strong :class="metrics.core_knowledge_coverage >= 90 ? 'ok' : 'bad'">{{ format(metrics.core_knowledge_coverage) }}%</strong><small v-if="showDetails">{{ metrics.covered_core_knowledge_count }}/{{ metrics.target_core_knowledge_count }} 个知识点</small></div>
+    <div><span>本资源审核幻觉率</span><strong :class="metrics.hallucination_rate < 5 ? 'ok' : 'bad'">{{ format(metrics.hallucination_rate) }}%</strong><small v-if="showDetails">{{ metrics.hallucinated_claim_count }}/{{ metrics.verifiable_claim_count }} 条可核验声明</small></div>
+    <div><span>本资源难度适配</span><strong :class="metrics.difficulty_match_score >= 85 ? 'ok' : 'bad'">{{ format(metrics.difficulty_match_score) }}%</strong><small v-if="showDetails">达标线 ≥ 85%</small></div>
+    <div><span>本资源核心覆盖</span><strong :class="metrics.core_knowledge_coverage >= 90 ? 'ok' : 'bad'">{{ format(metrics.core_knowledge_coverage) }}%</strong><small v-if="showDetails">{{ metrics.covered_core_knowledge_count }}/{{ metrics.target_core_knowledge_count }} 个目标知识点</small></div>
   </div>
 </template>
 

@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models import Base, DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.scripts.seed_data import seed_diagnostic_questions, seed_knowledge_items
+from app.services.question_source_binding_service import bind_domain_question_sources
 from app.scripts.validate_rag_seed import (
     RETIRED_KNOWLEDGE_IDS,
     SeedValidationError,
@@ -37,9 +38,9 @@ def test_repository_rag_seed_meets_frozen_baseline() -> None:
     assert result["sources"]["required_field_completeness"] == 1.0
     assert result["content"]["over_800_characters"] >= 3
     assert result["diagnostic_questions"] == {
-        "total": 60,
-        "unique_question_ids": 60,
-        "single_choice": 50,
+        "total": 61,
+        "unique_question_ids": 61,
+        "single_choice": 51,
         "short_answer": 10,
         "invalid_knowledge_references": 0,
     }
@@ -68,10 +69,49 @@ def test_validated_seed_loads_through_existing_database_seed_path() -> None:
         db.flush()
 
         assert len(seeded) == 50
-        assert len(questions) == 60
+        assert len(questions) == 315
         assert db.scalar(select(func.count()).select_from(KnowledgeItem)) == 50
         assert db.scalar(select(func.count()).select_from(KnowledgeRelation)) == 81
-        assert db.scalar(select(func.count()).select_from(DiagnosticQuestion)) == 60
+        assert db.scalar(select(func.count()).select_from(DiagnosticQuestion)) == 315
+        assert db.scalar(
+            select(func.count())
+            .select_from(DiagnosticQuestion)
+            .where(DiagnosticQuestion.question_type == "single_choice")
+        ) == 301
+        assert db.scalar(
+            select(func.count())
+            .select_from(DiagnosticQuestion)
+            .where(DiagnosticQuestion.question_type == "short_answer")
+        ) == 14
+        assert bind_domain_question_sources(db, domain_code="ai_app_dev") == 0
+        assert db.scalar(
+            select(func.count())
+            .select_from(DiagnosticQuestion)
+            .where(DiagnosticQuestion.certification_status == "certified")
+        ) == 315
+        purpose_counts: dict[str, int] = {}
+        for answer_key in db.scalars(select(DiagnosticQuestion.answer_key_json)):
+            purposes = list((answer_key or {}).get("question_bank_uses") or [])
+            assert len(purposes) == 1
+            purpose_counts[purposes[0]] = purpose_counts.get(purposes[0], 0) + 1
+        assert purpose_counts == {
+            "diagnosis": 65,
+            "graded_quiz": 150,
+            "mastery_validation": 100,
+        }
+        dimensions: dict[tuple[str, str | None], int] = {}
+        for question_type, answer_key in db.execute(
+            select(
+                DiagnosticQuestion.question_type,
+                DiagnosticQuestion.answer_key_json,
+            )
+        ):
+            key = (question_type, answer_key.get("assessment_dimension"))
+            dimensions[key] = dimensions.get(key, 0) + 1
+        assert dimensions[("single_choice", "theory")] >= 3
+        assert dimensions[("single_choice", "operation")] >= 3
+        assert dimensions[("short_answer", "theory")] >= 2
+        assert dimensions[("short_answer", "operation")] >= 2
 
 
 @pytest.mark.parametrize(
