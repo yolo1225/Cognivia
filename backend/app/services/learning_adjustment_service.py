@@ -382,6 +382,7 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
         )
         .where(
             LearningAdjustmentProposal.learner_id == session.learner_id,
+            LearningAdjustmentProposal.tutoring_session_id == session.id,
             LearningResource.generation_task_id == task.id,
         )
         .order_by(LearningAdjustmentProposal.id.desc())
@@ -456,6 +457,7 @@ def node_adjustment_context(db: Session, *, session: TutoringSession) -> dict[st
         select(LearningAdjustmentProposal)
         .where(
             LearningAdjustmentProposal.learner_id == session.learner_id,
+            LearningAdjustmentProposal.tutoring_session_id == session.id,
             LearningAdjustmentProposal.learning_path_id == path.id,
             LearningAdjustmentProposal.path_node_id == node_id,
         )
@@ -807,7 +809,12 @@ def answer_adjustment_assessment(
         if assessment and assessment.adjustment_proposal_id
         else None
     )
-    if assessment is None or proposal is None or proposal.learner_id != session.learner_id:
+    if (
+        assessment is None
+        or proposal is None
+        or proposal.learner_id != session.learner_id
+        or proposal.tutoring_session_id != session.id
+    ):
         raise ValueError("learning_adjustment_assessment_not_found")
     feedback_id = (proposal.source_feedback_ids_json or [None])[-1]
     feedback = db.get(Feedback, feedback_id) if feedback_id is not None else None

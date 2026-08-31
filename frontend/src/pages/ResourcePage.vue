@@ -402,7 +402,9 @@ const quizContent = computed(() => {
 const isGradedQuiz = computed(() => Boolean(quizContent.value))
 const showToc = computed(() => !isGradedQuiz.value && headings.value.length > 1)
 const tutorMessages = computed(() => tutorSession.value?.messages || [])
-const nodeAssessment = computed(() => tutorSession.value?.pending_assessment || tutorSession.value?.node_adjustment_result || null)
+// Scored checks are rendered only on the tutoring message that created them.
+// This avoids presenting a historical adjustment from another session as a new answer result.
+const nodeAssessment = computed(() => tutorSession.value?.pending_assessment || null)
 const assessmentInMessages = computed(() => Boolean(nodeAssessment.value && tutorMessages.value.some(message => message.assessment?.assessment_id === nodeAssessment.value?.assessment_id)))
 const taskId = computed(() => String(route.query.task_id || '').trim())
 const currentLearnerId = computed(() => {

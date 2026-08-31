@@ -55,7 +55,6 @@ def _record(
         answer_key_json={"correct_option": 1},
         difficulty=3,
         status="active",
-        certification_status="certified",
     )
     db.add(question)
     db.flush()

@@ -126,6 +126,30 @@ def get_domain_stats(
             .select_from(KnowledgeItem)
             .where(
                 KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.status == "published",
+                KnowledgeItem.needs_reembedding.is_(True),
+            )
+        )
+        or 0
+    )
+    staged_knowledge_count = (
+        db.scalar(
+            select(func.count())
+            .select_from(KnowledgeItem)
+            .where(
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.status == "staged",
+            )
+        )
+        or 0
+    )
+    staged_pending_embedding_count = (
+        db.scalar(
+            select(func.count())
+            .select_from(KnowledgeItem)
+            .where(
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.status == "staged",
                 KnowledgeItem.needs_reembedding.is_(True),
             )
         )
@@ -159,6 +183,8 @@ def get_domain_stats(
             "diagnostic_questions": question_count,
             "knowledge_relations": relation_count,
             "pending_embeddings": pending_embedding_count,
+            "staged_knowledge_items": staged_knowledge_count,
+            "staged_pending_embeddings": staged_pending_embedding_count,
             "knowledge_documents": len(documents),
             "ready_documents": sum(item.status == "ready" for item in documents),
             "failed_documents": sum(item.status == "failed" for item in documents),

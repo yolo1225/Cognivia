@@ -24,6 +24,7 @@
           <span class="section-kicker">当前学情</span>
           <h2>{{ profileTypeLabel(report.profile_type) }}</h2>
           <p>基于诊断结果形成，后续学习和作答会持续更新。</p>
+          <p v-if="profileReliabilityMessage" class="profile-reliability">{{ profileReliabilityMessage }}</p>
           <div class="overview-tags"><span v-for="direction in directionList" :key="direction">{{ direction }}</span><span>{{ contextSnapshot.education_level || '学习背景待补充' }}</span></div>
           <small>画像 {{ profileVersionLabel }} · {{ formatDate(profileUpdatedAt) }} 更新</small>
         </div>
@@ -170,6 +171,12 @@ const pathNodes = computed<LearningPathNode[]>(() => report.value?.learning_path
 const currentPathNode = computed(() => pathNodes.value.find(node => node.status === 'current') || null)
 const completedPathNodeCount = computed(() => pathNodes.value.filter(node => node.status === 'completed').length)
 const blockingMistakeCount = computed(() => Number(report.value?.node_gate?.blocking_mistake_count || 0))
+const profileReliabilityMessage = computed(() => {
+  const evidence = (report.value?.ability_profile?.evidence_profile || {}) as Record<string, unknown>
+  return evidence.reliability_status === 'provisional'
+    ? String(evidence.reliability_message || '当前为初步画像，后续正式评估会继续提高可靠度。')
+    : ''
+})
 const selectedPathNodeId = ref('')
 const selectedPathNode = computed(() => (
   pathNodes.value.find(node => node.path_node_id === selectedPathNodeId.value)
@@ -380,10 +387,7 @@ function nodeGenerationErrorMessage(error: unknown) {
   const detail = (error as { response?: { data?: { error?: { code?: string; message?: string } } } })
     ?.response?.data?.error
   if (detail?.code === 'GRADED_QUIZ_QUESTION_BANK_NOT_READY') {
-    return '当前学习单元的正式认证题不足 3 道，暂不能生成分级测验。'
-  }
-  if (detail?.message?.includes('DOMAIN_GENERATION_NOT_READY:question_source_binding_invalid')) {
-    return '领域题目来源校验未通过，系统已阻止生成以保证内容可追溯。'
+    return '当前学习单元的正式题目不足 3 道，暂不能生成分级测验。'
   }
   if (detail?.code === 'http_409' && detail.message === 'PATH_NODE_CHANGED') {
     return '学习路线已更新，请刷新报告后按新的当前节点生成资源。'
@@ -602,7 +606,7 @@ onBeforeUnmount(() => {
 /* 画像总览 */
 .profile-overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .9fr) minmax(230px, .78fr); gap: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .overview-copy,.overview-stats,.overview-action { min-width: 0; padding: 23px 24px; }
-.overview-copy h2 { margin-top: 5px; color: var(--ink); font-size: 23px; line-height: 1.35; }.overview-copy > p { margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.65; }.overview-copy > small { display: block; margin-top: 12px; color: var(--muted); font-size: 11px; }
+.overview-copy h2 { margin-top: 5px; color: var(--ink); font-size: 23px; line-height: 1.35; }.overview-copy > p { margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.65; }.overview-copy > p.profile-reliability { color: var(--amber); font-size: 12px; }.overview-copy > small { display: block; margin-top: 12px; color: var(--muted); font-size: 11px; }
 .overview-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }.overview-tags span { border-radius: 6px; background: var(--soft); color: var(--body); padding: 4px 7px; font-size: 11px; }
 .overview-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; border-left: 1px solid var(--line); }.overview-stats div { display: grid; align-content: center; gap: 4px; min-width: 0; }.overview-stats span,.overview-stats small { color: var(--muted); font-size: 10px; }.overview-stats strong { color: var(--ink); font-size: 22px; line-height: 1.1; }.overview-stats small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .overview-action { display: grid; align-content: center; gap: 7px; border-left: 1px solid var(--line); background: var(--blue2); }.overview-action > span { color: var(--blue); font-size: 10px; font-weight: 750; }.overview-action strong { color: var(--ink); font-size: 15px; line-height: 1.4; }.overview-action p { color: var(--body); font-size: 11px; line-height: 1.55; }.overview-action .btn { justify-self: start; margin-top: 3px; }

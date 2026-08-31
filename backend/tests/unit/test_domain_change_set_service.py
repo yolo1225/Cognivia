@@ -103,7 +103,7 @@ def test_deleting_unactivated_change_document_cancels_only_staged_assets() -> No
         public_id="dq_staged", external_id="staged-question", domain_code="incremental",
         knowledge_item_id=staged_item.id, question_type="single_choice", stem="待启用题目",
         options_json=["A", "B"], answer_key_json={"pending_change_set_id": change_set.id},
-        difficulty=2, status="staged", certification_status="certified",
+        difficulty=2, status="staged",
     )
     question_run = QuestionImportRun(
         public_id="qir_cancel", domain_code="incremental", template_version="v1",

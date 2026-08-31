@@ -66,8 +66,9 @@ class OpenAICompatibleTutoringInterpreter:
                 "feedback_request": request.model_dump(mode="json"),
                 "resource_context": self._resource_context,
                 "reply_requirement": (
-                    "candidate_reply 必须直接回答学习者问题，并严格依据 resource_context；"
-                    "不得只复述分类结论。"
+                    "candidate_reply 必须直接回答学习者问题。优先使用 resource_context，"
+                    "其次使用其中的 knowledge_sources；只有两者都不能支持解释时可使用"
+                    "通用知识，并将 answer_basis 标记为 general_knowledge_fallback。"
                 ),
             },
             fixture_factory=lambda: _fixture_semantics(request),
@@ -92,8 +93,9 @@ class OpenAICompatibleTutoringInterpreter:
                     "feedback_request": request.model_dump(mode="json"),
                     "resource_context": self._resource_context,
                     "reply_requirement": (
-                        "candidate_reply 必须直接回答学习者问题，并严格依据 resource_context；"
-                        "不得只复述分类结论。"
+                        "candidate_reply 必须直接回答学习者问题。优先使用 resource_context，"
+                        "其次使用其中的 knowledge_sources；只有两者都不能支持解释时可使用"
+                        "通用知识，并将 answer_basis 标记为 general_knowledge_fallback。"
                     ),
                 },
                 fixture_factory=lambda: _fixture_semantics(request),
@@ -199,6 +201,8 @@ class TutoringAgent:
         )
         self._logger = logger or logging.getLogger(__name__)
         self.system_prompt = build_system_prompt(domain_display_name)
+        self.last_answer_basis = "resource_context"
+        self.last_semantic_status = "model"
 
     def execute(self, request: InterpretFeedbackInput) -> InterpretFeedbackOutput:
         if not isinstance(request, InterpretFeedbackInput):
@@ -281,6 +285,8 @@ class TutoringAgent:
         semantic_status: str,
     ) -> InterpretFeedbackOutput:
         decision = decide_tutoring_action(request, semantic)
+        self.last_answer_basis = semantic.answer_basis
+        self.last_semantic_status = semantic_status
         reply = _select_reply(decision.reply_template, semantic, decision.use_candidate_reply)
         try:
             output = InterpretFeedbackOutput(
@@ -336,6 +342,7 @@ def _fixture_semantics(request: InterpretFeedbackInput) -> dict[str, object]:
         "unresolved": False,
         "mastery_evidence_present": False,
         "candidate_reply": None,
+        "answer_basis": "resource_context",
         "confidence": 0.5,
     }
 
@@ -353,16 +360,19 @@ def _safe_fallback_semantics(request: InterpretFeedbackInput) -> TutoringSemanti
         # never treats this phrase alone as a profile update.
         return TutoringSemanticResult(
             intent="too_easy",
+            answer_basis="resource_context",
             confidence=1.0,
         )
     if "太难" in summary or "没看懂" in summary or "仍然答错" in summary:
         return TutoringSemanticResult(
             intent="too_hard",
+            answer_basis="resource_context",
             unresolved=any(marker in summary for marker in ("仍然", "还是", "再次")),
             confidence=1.0,
         )
     return TutoringSemanticResult(
         intent=request.feedback.quick_tag,
+        answer_basis="resource_context",
         confidence=0.0,
     )
 

@@ -29,12 +29,9 @@ from app.models import (
     MistakeReviewItem,
     PathNodeAssessment,
 )
-from app.services.question_certification_service import (
-    ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS,
-)
-
-
 QUESTION_PURPOSES = frozenset({"diagnosis", "graded_quiz", "mastery_validation"})
+INITIAL_DIAGNOSTIC_TYPES = frozenset({"single_choice", "short_answer"})
+INITIAL_DIAGNOSTIC_MINIMUM = 10
 _LOGGER = logging.getLogger(__name__)
 QUIZ_QUESTION_USES = frozenset({"graded_quiz"})
 MASTERY_QUESTION_USES = frozenset({"mastery_validation"})
@@ -64,6 +61,53 @@ def question_bank_uses(question: DiagnosticQuestion) -> set[str]:
 
 def question_supports_use(question: DiagnosticQuestion, use: str) -> bool:
     return use in question_bank_uses(question)
+
+
+def initial_diagnostic_inventory(
+    db: Session, *, domain_code: str
+) -> list[tuple[DiagnosticQuestion, KnowledgeItem]]:
+    """Return the single eligible inventory used by readiness and session creation."""
+
+    rows = list(
+        db.execute(
+            select(DiagnosticQuestion, KnowledgeItem)
+            .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
+            .where(
+                DiagnosticQuestion.domain_code == domain_code,
+                DiagnosticQuestion.status == "active",
+                KnowledgeItem.domain_code == domain_code,
+                KnowledgeItem.status == "published",
+            )
+            .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.public_id)
+        )
+    )
+    return [
+        (question, item)
+        for question, item in rows
+        if question.question_type in INITIAL_DIAGNOSTIC_TYPES
+        and question_supports_use(question, "diagnosis")
+    ]
+
+
+def initial_diagnostic_inventory_payload(
+    db: Session, *, domain_code: str
+) -> dict[str, object]:
+    rows = initial_diagnostic_inventory(db, domain_code=domain_code)
+    by_type = {
+        question_type: sum(question.question_type == question_type for question, _ in rows)
+        for question_type in sorted(INITIAL_DIAGNOSTIC_TYPES)
+    }
+    return {
+        "eligible_count": len(rows),
+        "minimum_required": INITIAL_DIAGNOSTIC_MINIMUM,
+        "ready": len(rows) >= INITIAL_DIAGNOSTIC_MINIMUM,
+        "by_question_type": by_type,
+        "reason": (
+            None
+            if len(rows) >= INITIAL_DIAGNOSTIC_MINIMUM
+            else "首次诊断至少需要 10 道可用诊断题"
+        ),
+    }
 
 
 def question_assessment_fingerprint(question: DiagnosticQuestion) -> tuple[int, tuple[str, ...]]:
@@ -193,9 +237,6 @@ def select_mastery_question(
                 KnowledgeItem.public_id.in_(ordered_ids),
                 DiagnosticQuestion.question_type == "single_choice",
                 DiagnosticQuestion.status == "active",
-                DiagnosticQuestion.certification_status == "certified",
-                DiagnosticQuestion.certification_rule_version
-                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS),
             )
         )
     )
@@ -286,7 +327,7 @@ def select_graded_quiz_candidates(
     target_difficulty: int = 3,
     profile_type: str = "intermediate",
 ) -> list[QuestionCandidate]:
-    """Select a profile-specific certified quiz without inventing filler items.
+    """Select a profile-specific formal-bank quiz without inventing filler items.
 
     Primary knowledge alignment always outranks relation-only alignment.  The
     caller has already applied the active+certified gate; this selector only
@@ -427,8 +468,6 @@ def _eligible_question_values(
 ) -> bool:
     if not str(answer_key.get("explanation") or "").strip():
         return False
-    if not list(answer_key.get("source_ref_ids") or []):
-        return False
     if answer_key.get("quiz_level") not in {level.value for level in QuizLevel}:
         return False
     if question_type == QuestionType.SINGLE_CHOICE.value:
@@ -451,10 +490,6 @@ def _eligible_question_values(
 def is_question_bank_eligible(question: DiagnosticQuestion) -> bool:
     return (
         getattr(question, "status", None) == "active"
-        and getattr(question, "certification_status", None) == "certified"
-        and getattr(question, "certification_rule_version", None)
-        in ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS
-        and bool(getattr(question, "source_content_hash", None))
         and bool(str(question.stem or "").strip())
         and _eligible_question_values(
             str(question.question_type),
@@ -518,9 +553,6 @@ def question_bank_coverage(
             select(DiagnosticQuestion).where(
                 DiagnosticQuestion.domain_code == domain_code,
                 DiagnosticQuestion.status == "active",
-                DiagnosticQuestion.certification_status == "certified",
-                DiagnosticQuestion.certification_rule_version
-                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS),
                 DiagnosticQuestion.knowledge_item_id.in_(item_by_id),
             )
         )
@@ -625,10 +657,6 @@ def graded_quiz_preflight(
             .where(
                 DiagnosticQuestion.domain_code == domain_code,
                 DiagnosticQuestion.status == "active",
-                DiagnosticQuestion.certification_status == "certified",
-                DiagnosticQuestion.certification_rule_version.in_(
-                    ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS
-                ),
             )
             .order_by(DiagnosticQuestion.id)
         )
@@ -747,19 +775,6 @@ def _select_reference_questions(
     ]
 
 
-def selected_graded_quiz_source_ref_ids(request: GenerateResourceInput) -> list[str]:
-    """Return the exact evidence chunks needed by the deterministic quiz selection."""
-
-    return list(
-        dict.fromkeys(
-            str(source_ref_id)
-            for _, _, question in _select_reference_questions(request)
-            for source_ref_id in question.answer_key.get("source_ref_ids") or []
-            if str(source_ref_id)
-        )
-    )
-
-
 def build_graded_quiz_from_question_bank(
     request: GenerateResourceInput,
     allowed_sources: list[SourceRef],
@@ -833,36 +848,17 @@ def _build_quiz_questions(
     selected: list[tuple[str, QuizLevel, RetrievedQuestion]],
 ) -> list[QuizQuestion]:
     allowed_ids = {source.source_ref_id for source in allowed_sources}
-    chunks_by_source_ref = {
-        chunk.source.source_ref_id: chunk
-        for chunk in request.retrieved_chunks
+    chunks = [
+        chunk for chunk in request.retrieved_chunks
         if chunk.source.source_ref_id in allowed_ids
-    }
+    ]
     questions: list[QuizQuestion] = []
     for knowledge_id, level, question in selected:
-        source_ref_ids = [
-            str(value) for value in question.answer_key.get("source_ref_ids") or []
-        ]
-        source_chunks = [
-            chunks_by_source_ref.get(source_ref_id) for source_ref_id in source_ref_ids
-        ]
-        source_locators = dict(question.answer_key.get("source_locators") or {})
-        if len(source_ref_ids) == 1 and not source_locators:
-            legacy_locator = str(question.answer_key.get("source_locator") or "")
-            if legacy_locator:
-                source_locators[source_ref_ids[0]] = legacy_locator
         allowed_knowledge_ids = {knowledge_id, *question.related_knowledge_ids}
-        if (
-            not 1 <= len(source_ref_ids) <= 3
-            or any(source_chunk is None for source_chunk in source_chunks)
-            or any(
-                source_chunk.knowledge_id not in allowed_knowledge_ids
-                or source_chunk.source_locator
-                != str(source_locators.get(source_chunk.source.source_ref_id) or "")
-                for source_chunk in source_chunks
-                if source_chunk is not None
-            )
-        ):
+        source_chunks = [
+            chunk for chunk in chunks if chunk.knowledge_id in allowed_knowledge_ids
+        ][:3]
+        if not source_chunks:
             raise QuestionBankError("graded_quiz_question_source_missing")
         if question.question_type is QuestionType.SINGLE_CHOICE:
             correct_index = int(question.answer_key["correct_option"])
@@ -884,7 +880,6 @@ def _build_quiz_questions(
                 source_ref_ids=[
                     source_chunk.source.source_ref_id
                     for source_chunk in source_chunks
-                    if source_chunk is not None
                 ],
                 reference_question_ids=[question.question_id],
             )

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +38,12 @@ class TutoringSemanticResult(BaseModel):
     unresolved: bool = False
     mastery_evidence_present: bool = False
     candidate_reply: str | None = Field(default=None, max_length=2000)
+    answer_basis: Literal[
+        "resource_context",
+        "knowledge_base",
+        "general_knowledge_fallback",
+        "knowledge_conflict",
+    ] = "resource_context"
     confidence: float = Field(ge=0, le=1)
 
 

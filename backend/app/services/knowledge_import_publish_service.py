@@ -27,10 +27,7 @@ from app.rag.database_manifest_store import DatabaseManifestStore
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.rag.vector_store import VectorStore
 from app.services.ability_weight_service import normalize_ability_weights
-from app.services.question_source_binding_service import bind_domain_question_sources
-from app.services.question_certification_service import (
-    mark_question_certifications_stale,
-)
+from app.services.knowledge_update_service import mark_affected_questions_stale
 
 
 class KnowledgeImportPublishError(ValueError):
@@ -129,7 +126,7 @@ def activate_import_candidate(
         item for item in candidates if item.candidate_type == "knowledge_relation"
     ]
     mapped_item_ids = {item.id for item in knowledge_map.values()}
-    mark_question_certifications_stale(
+    mark_affected_questions_stale(
         db,
         domain_code=document.domain_code,
         knowledge_ids={item.public_id for item in knowledge_map.values()},
@@ -457,20 +454,6 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
         "knowledge_items": len(knowledge_map),
         "relations": sum(item.candidate_type == "knowledge_relation" for item in candidates),
     }
-
-
-def ensure_import_source_locators(db: Session, document: KnowledgeDocument) -> int:
-    """Refresh source validity for existing formal questions affected by this document."""
-    items = list(
-        db.scalars(select(KnowledgeItem).where(KnowledgeItem.source_document_id == document.id))
-    )
-    if not items:
-        return 0
-    return bind_domain_question_sources(
-        db,
-        domain_code=document.domain_code,
-        items=items,
-    )
 
 
 def _smoke_context(

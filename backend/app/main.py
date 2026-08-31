@@ -81,13 +81,6 @@ def create_app() -> FastAPI:
         except Exception:
             # Fresh databases may not have the import run table yet.
             pass
-        try:
-            from app.services.question_import_service import recover_pending_import_validations
-
-            recover_pending_import_validations()
-        except Exception:
-            # A restart must not strand a persisted question-bank certification run.
-            pass
         yield
 
     app = FastAPI(

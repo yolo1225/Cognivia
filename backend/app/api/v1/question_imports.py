@@ -4,7 +4,6 @@ from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,21 +16,13 @@ from app.services.question_import_service import (
     build_question_template,
     create_import_run,
     publish_import_run,
-    queue_import_validation,
-    schedule_import_row_retries,
-    schedule_import_validation,
     serialize_row,
     serialize_run,
-    set_row_source_binding,
+    validate_import_run,
 )
 
 
 router = APIRouter()
-
-
-class SourceBindingBody(BaseModel):
-    source_ref_ids: list[str] = Field(min_length=1, max_length=3)
-    quotes: dict[str, str] = Field(default_factory=dict)
 
 
 def _run(db: Session, run_id: str) -> QuestionImportRun:
@@ -98,11 +89,10 @@ async def upload_question_import(
             content=content,
             created_by=principal.user_id,
             change_set_id=change_set_id,
-            validate_immediately=False,
+            validate_immediately=True,
         )
     except QuestionImportError as exc:
         raise _error(exc) from exc
-    schedule_import_validation(run.public_id)
     return ok(serialize_run(db, run))
 
 
@@ -134,56 +124,17 @@ def list_question_import_rows(
     return ok({"run_id": run_id, "rows": [serialize_row(row) for row in rows]})
 
 
-@router.patch("/{run_id}/rows/{row_id}/source-binding", response_model=ApiResponse)
-def patch_source_binding(
-    run_id: str,
-    row_id: str,
-    payload: SourceBindingBody,
-    db: Session = Depends(get_db),
-    _principal: Principal = Depends(require_admin),
-) -> ApiResponse:
-    try:
-        row = set_row_source_binding(
-            db,
-            run=_run(db, run_id),
-            row_id=row_id,
-            source_ref_ids=payload.source_ref_ids,
-            quotes=payload.quotes,
-        )
-        db.commit()
-        run = queue_import_validation(db, _run(db, run_id))
-        schedule_import_validation(run.public_id)
-    except QuestionImportError as exc:
-        raise _error(exc) from exc
-    return ok(serialize_row(row))
-
-
 @router.post("/{run_id}/validate", response_model=ApiResponse)
 def validate_question_import(
     run_id: str,
     db: Session = Depends(get_db),
     _principal: Principal = Depends(require_admin),
 ) -> ApiResponse:
-    run = _run(db, run_id)
-    from app.models import QuestionImportRow
-
-    has_service_errors = db.scalar(
-        select(QuestionImportRow.id).where(
-            QuestionImportRow.run_id == run.id,
-            QuestionImportRow.status == "certification_service_error",
-        ).limit(1)
-    ) is not None
-    if has_service_errors:
-        run.status = "validating"
-        run.error_summary = None
-        db.commit()
-        schedule_import_row_retries(run.public_id, {"certification_service_error"})
-        return ok(serialize_run(db, run))
     try:
-        run = queue_import_validation(db, run)
+        run = validate_import_run(db, _run(db, run_id))
+        db.commit()
     except QuestionImportError as exc:
         raise _error(exc) from exc
-    schedule_import_validation(run.public_id)
     return ok(serialize_run(db, run))
 
 

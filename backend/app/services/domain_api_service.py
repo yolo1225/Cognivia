@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from app.agents.profile_analysis_config import ABILITY_DIMENSIONS
 from app.models import (
-    DiagnosticQuestion,
     Domain,
     IndexBuildJob,
     KnowledgeItem,
@@ -24,9 +23,9 @@ from app.services.domain_runtime_service import (
     load_domain_runtime,
     practice_generation_mode_for_items,
 )
-from app.services.question_bank_service import question_bank_coverage
-from app.services.question_certification_service import (
-    ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS,
+from app.services.question_bank_service import (
+    initial_diagnostic_inventory_payload,
+    question_bank_coverage,
 )
 
 
@@ -219,23 +218,10 @@ class DomainApiService:
             relation.source_item_id not in item_ids or relation.target_item_id not in item_ids
             for relation in relations
         )
-        valid_question_count = len(
-            list(
-                self.db.execute(
-                    select(DiagnosticQuestion.id)
-                    .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
-                    .where(
-                        DiagnosticQuestion.domain_code == domain_code,
-                        DiagnosticQuestion.status == "active",
-                        DiagnosticQuestion.certification_status == "certified",
-                        DiagnosticQuestion.certification_rule_version
-                        .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS),
-                        KnowledgeItem.domain_code == domain_code,
-                        KnowledgeItem.status == "published",
-                    )
-                )
-            )
+        diagnostic_inventory = initial_diagnostic_inventory_payload(
+            self.db, domain_code=domain_code
         )
+        valid_question_count = int(diagnostic_inventory["eligible_count"])
         missing_weights = sum(
             set(item.ability_weights_json or {}) != set(ABILITY_DIMENSIONS)
             or abs(sum(float(value) for value in (item.ability_weights_json or {}).values()) - 1)
@@ -254,9 +240,6 @@ class DomainApiService:
             "capabilities": evidence_counts,
             "practice_generation_mode": practice_generation_mode_for_items(items),
         }
-        require_full_practice_evidence = bool(
-            (domain.config_json or {}).get("practice_evidence_required_for_all", False)
-        )
         quiz_question_bank = question_bank_coverage(
             self.db,
             domain_code=domain_code,
@@ -264,10 +247,29 @@ class DomainApiService:
         )
         directions = list((domain.config_json or {}).get("learning_directions") or [])
         rag = candidate_rag_status(domain_code)
-        latest_job = self.db.scalar(
-            select(IndexBuildJob)
-            .where(IndexBuildJob.domain_code == domain_code, IndexBuildJob.status == "success")
-            .order_by(IndexBuildJob.id.desc())
+        # A staged candidate can become the active index after a later rebuild
+        # of the still-active catalog.  Select smoke evidence by index version,
+        # rather than by job recency, so that rebuild does not invalidate the
+        # candidate's already-verified activation result.
+        latest_job = next(
+            (
+                job
+                for job in self.db.scalars(
+                    select(IndexBuildJob)
+                    .where(
+                        IndexBuildJob.domain_code == domain_code,
+                        IndexBuildJob.status == "success",
+                    )
+                    .order_by(IndexBuildJob.id.desc())
+                )
+                if str(
+                    (job.result_json or {}).get("index_version")
+                    or ((job.result_json or {}).get("smoke_test") or {}).get("index_version")
+                    or ""
+                )
+                == str(rag.get("index_version") or "")
+            ),
+            None,
         )
         smoke = dict(((latest_job.result_json or {}).get("smoke_test") or {})) if latest_job else {}
         smoke_matches = bool(
@@ -315,26 +317,6 @@ class DomainApiService:
             ("learning_directions", len(directions), 1, ">=", "学习方向"),
             ("missing_ability_weights", missing_weights, 0, "==", "缺失能力权重"),
             ("missing_sources", missing_sources, 0, "==", "缺失来源定位"),
-            *(
-                [
-                    (
-                        "practice_operation_coverage",
-                        evidence_counts[EvidenceCapability.OPERATION.value],
-                        len(items),
-                        "==",
-                        "实操操作证据覆盖",
-                    ),
-                    (
-                        "practice_expected_result_coverage",
-                        evidence_counts[EvidenceCapability.EXPECTED_RESULT.value],
-                        len(items),
-                        "==",
-                        "实操结果证据覆盖",
-                    ),
-                ]
-                if require_full_practice_evidence
-                else []
-            ),
             ("invalid_relations", cross_domain_relations, 0, "==", "无效或跨领域关系"),
             (
                 "prerequisite_cycles",
@@ -420,6 +402,7 @@ class DomainApiService:
             "rag_ready": bool(runtime.get("rag_ready")),
             "generation_ready": bool(runtime.get("generation_ready")),
             "runtime_reasons": list(runtime.get("reasons") or []),
+            "diagnostic_inventory": runtime.get("diagnostic_inventory", diagnostic_inventory),
             "evidence_coverage": evidence_coverage,
             "question_bank_coverage": quiz_question_bank,
         }

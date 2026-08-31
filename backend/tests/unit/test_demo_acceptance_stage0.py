@@ -73,7 +73,7 @@ def test_stage0_task_evidence_requires_resources_sources_quality_and_dual_review
                 "thread_id": "task-1",
                 "runs": [
                     {
-            "contract_version": "agent-contract-v9",
+            "contract_version": "agent-contract-v10",
                         "prompt_hash": "a" * 64,
                     }
                 ],
@@ -122,20 +122,20 @@ def test_stage0_error_reporting_redacts_embedded_response_payloads():
     assert "完整资源正文" not in summary
 
 
-def test_current_resource_uses_current_v6_successor_instead_of_stale_baseline(
+def test_current_resource_uses_current_v8_successor_instead_of_stale_baseline(
     monkeypatch,
 ):
     stale = {
         "resource_id": "res-baseline-v1",
         "resource_type": "lecture",
         "review_status": "passed",
-        "package_quality": {"quality_rule_version": "quality-v6-20260818"},
+        "package_quality": {"quality_rule_version": "quality-v8-official-gates"},
     }
     current = {
         "resource_id": "res-successor-v2",
         "resource_type": "lecture",
         "review_status": "passed",
-        "package_quality": {"quality_rule_version": "quality-v6-20260818"},
+        "package_quality": {"quality_rule_version": "quality-v8-official-gates"},
     }
     monkeypatch.setattr(
         demo_acceptance,
@@ -164,7 +164,7 @@ def test_current_resource_rejects_legacy_current_package(monkeypatch):
         ],
     )
 
-    with pytest.raises(AssertionError, match="current passed V6"):
+    with pytest.raises(AssertionError, match="current passed V8"):
         demo_acceptance._current_resource(
             "http://example.test/api/v1", "learner-1"
         )

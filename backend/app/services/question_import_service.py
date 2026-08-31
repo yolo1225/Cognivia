@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import re
-from threading import Lock, Thread
 from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any
@@ -24,7 +22,6 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.core.db import SessionLocal
 from app.models import (
     DiagnosticQuestion,
     Domain,
@@ -34,19 +31,12 @@ from app.models import (
     QuestionImportRow,
     QuestionImportRun,
 )
-from app.rag.candidate_chunker import CHUNKER_VERSION
 from app.services.domain_api_service import DomainApiService
 from app.services.question_bank_service import question_bank_coverage
-from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
-    certify_question_payloads,
-    knowledge_item_content_hash,
-    normalize_evidence_text,
-)
-from app.services.question_source_binding_service import candidate_chunks_for_item, candidate_source_locator
+from app.services.knowledge_version_service import knowledge_item_content_hash
 
 
-TEMPLATE_VERSION = "question-bank-xlsx-v2"
+TEMPLATE_VERSION = "question-bank-xlsx-v3"
 SHEET_QUESTIONS = "题目"
 SHEET_GUIDE = "填写说明"
 SHEET_ENUMS = "枚举"
@@ -88,9 +78,6 @@ PURPOSE_SLOTS = {
 VALID_PURPOSES = set(PURPOSE_SLOTS)
 VALID_TYPES = {"single_choice", "short_answer"}
 VALID_LEVELS = {"foundation", "improvement", "challenge"}
-logger = logging.getLogger(__name__)
-_validation_lock = Lock()
-_active_validations: set[str] = set()
 
 
 class QuestionImportError(ValueError):
@@ -98,18 +85,8 @@ class QuestionImportError(ValueError):
 
 
 def _attention_summary(rows: list[QuestionImportRow]) -> str | None:
-    labels = (
-        ("source_confirmation_required", "待确认来源"),
-        ("content_rejected", "内容不合格"),
-        ("certification_service_error", "认证异常"),
-        ("template_invalid", "模板字段错误"),
-    )
-    parts = [
-        f"{sum(row.status == status for row in rows)} 题{label}"
-        for status, label in labels
-        if any(row.status == status for row in rows)
-    ]
-    return "；".join(parts) or None
+    invalid = sum(row.status == "template_invalid" for row in rows)
+    return f"{invalid} 题模板字段错误" if invalid else None
 
 
 def _text(value: object) -> str:
@@ -199,7 +176,6 @@ def question_gap_slots(
             .where(
                 DiagnosticQuestion.domain_code == domain_code,
                 DiagnosticQuestion.status == "active",
-                DiagnosticQuestion.certification_status == "certified",
                 KnowledgeItem.status == "published",
             )
         )
@@ -220,7 +196,6 @@ def question_gap_slots(
                 select(DiagnosticQuestion).where(
                     DiagnosticQuestion.domain_code == domain_code,
                     DiagnosticQuestion.status == "staged",
-                    DiagnosticQuestion.certification_status == "certified",
                 )
             )
         )
@@ -404,7 +379,7 @@ def build_question_template(
         "系统已安排知识点、用途和题目槽位；请勿修改受保护字段。",
         "single_choice 必须填写 4 个不重复选项，正确答案填 A、B、C 或 D。",
         "short_answer 不填写选项，正确答案填写参考答案，评分点用换行分隔并填写 2-8 条。",
-        "系统会自动绑定来源；仅未能确认来源的行需要在管理页选择并圈选原文。",
+        "题目必须准确对应预填知识点；题目数据在导入前完成内容复核。",
     ]:
         guide.append([text])
     guide.column_dimensions["A"].width = 110
@@ -483,92 +458,6 @@ def _normalize_row(record: dict[str, Any]) -> dict[str, Any]:
         "answer": answer_value,
         "explanation": _text(record["解析"]),
         "rubric": [item.strip() for item in re.split(r"[\n|]", _text(record["评分点"])) if item.strip()],
-    }
-
-
-def _candidate_sources(item: KnowledgeItem, payload: dict[str, Any]) -> list[dict[str, str]]:
-    needle = normalize_evidence_text(
-        " ".join(
-            [payload.get("stem", ""), str(payload.get("answer", "")), payload.get("explanation", "")]
-        )
-    )
-    scored: list[tuple[float, Any]] = []
-    for chunk in candidate_chunks_for_item(item):
-        source = normalize_evidence_text(chunk.content)
-        overlap = len(set(needle) & set(source)) / max(1, len(set(needle)))
-        scored.append((overlap, chunk))
-    scored.sort(key=lambda value: (-value[0], value[1].chunk_index))
-    return [
-        {
-            "source_ref_id": chunk.chunk_id,
-            "source_locator": candidate_source_locator(item, chunk),
-            "knowledge_id": item.public_id,
-            "excerpt": chunk.content[:500],
-            "score": round(score, 4),
-        }
-        for score, chunk in scored[:3]
-    ]
-
-
-def _automatic_binding(item: KnowledgeItem, candidates: list[dict[str, str]]) -> dict[str, Any] | None:
-    if not candidates or float(candidates[0]["score"]) < 0.45:
-        return None
-    candidate = candidates[0]
-    chunks = {chunk.chunk_id: chunk for chunk in candidate_chunks_for_item(item)}
-    chunk = chunks.get(candidate["source_ref_id"])
-    if chunk is None:
-        return None
-    quote = chunk.content[: min(320, len(chunk.content))].strip()
-    return {"source_ref_ids": [chunk.chunk_id], "quotes": {chunk.chunk_id: quote}}
-
-
-def _binding_payload(item: KnowledgeItem, payload: dict[str, Any], binding: dict[str, Any]) -> dict[str, Any]:
-    chunks = {chunk.chunk_id: chunk for chunk in candidate_chunks_for_item(item)}
-    source_ref_ids = [str(value) for value in binding.get("source_ref_ids") or []]
-    quotes = dict(binding.get("quotes") or {})
-    if not 1 <= len(source_ref_ids) <= 3 or len(source_ref_ids) != len(set(source_ref_ids)):
-        raise QuestionImportError("QUESTION_SOURCE_SELECTION_INVALID")
-    max_sources = {"foundation": 1, "improvement": 2, "challenge": 3}.get(
-        str(payload.get("quiz_level")), 0
-    )
-    if len(source_ref_ids) > max_sources:
-        raise QuestionImportError("QUESTION_SOURCE_SELECTION_EXCEEDS_LEVEL")
-    source_chunks = []
-    evidence_quotes = []
-    source_hashes = {}
-    for source_ref_id in source_ref_ids:
-        chunk = chunks.get(source_ref_id)
-        quote = _text(quotes.get(source_ref_id))
-        if chunk is None or not quote or normalize_evidence_text(quote) not in normalize_evidence_text(chunk.content):
-            raise QuestionImportError("QUESTION_SOURCE_QUOTE_INVALID")
-        locator = candidate_source_locator(item, chunk)
-        source_chunks.append(
-            {
-                "chunk_id": source_ref_id,
-                "chunk_index": chunk.chunk_index,
-                "source_locator": locator,
-                "knowledge_candidate_id": item.public_id,
-                "knowledge_id": item.public_id,
-                "content": chunk.content,
-                "source_content_hash": knowledge_item_content_hash(item),
-                "chunker_version": CHUNKER_VERSION,
-            }
-        )
-        evidence_quotes.append({"source_ref_id": source_ref_id, "quote": quote})
-        source_hashes[source_ref_id] = knowledge_item_content_hash(item)
-    aggregate_hash = "sha256:" + hashlib.sha256(
-        json.dumps(source_hashes, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    return {
-        **payload,
-        "source_quote": evidence_quotes[0]["quote"],
-        "source_chunks": source_chunks,
-        "source_ref_ids": source_ref_ids,
-        "source_locators": {item_["chunk_id"]: item_["source_locator"] for item_ in source_chunks},
-        "source_content_hashes": source_hashes,
-        "source_content_hash": aggregate_hash,
-        "evidence_quotes": evidence_quotes,
-        "chunker_version": CHUNKER_VERSION,
     }
 
 
@@ -655,9 +544,6 @@ def create_import_run(
                 slot_key=_text(record["slot_key"]),
                 knowledge_ref=_text(record["knowledge_ref"]),
                 payload_json=_normalize_row(record),
-                candidate_sources_json=[],
-                source_binding_json={},
-                certification_report_json={},
                 status="pending",
                 validation_errors_json=[],
             )
@@ -666,7 +552,7 @@ def create_import_run(
     if validate_immediately:
         validate_import_run(db, run, current_fingerprint=fingerprint)
     else:
-        run.status = "validating"
+        run.status = "needs_attention"
         run.error_summary = None
     db.commit()
     db.refresh(run)
@@ -735,9 +621,7 @@ def validate_import_run(
     item_by_ref = {item.public_id: item for item in items}
     seen_slots: set[tuple[str, str]] = set()
     valid_count = 0
-    eligible: list[tuple[str, dict[str, Any]]] = []
-    row_by_id = {row.public_id: row for row in rows}
-    run.status = "validating"
+    run.status = "needs_attention"
     run.error_summary = None
     for row in rows:
         payload = dict(row.payload_json or {})
@@ -791,44 +675,13 @@ def validate_import_run(
             not _text(payload.get("answer")) or not 2 <= len(payload.get("rubric") or []) <= 8
         ):
             errors.append("SHORT_ANSWER_VALUES_INVALID")
-        if item is not None:
-            candidates = _candidate_sources(item, payload)
-            row.candidate_sources_json = candidates
-            binding = dict(row.source_binding_json or {}) or _automatic_binding(item, candidates)
-            if binding is None:
-                errors.append("SOURCE_CONFIRMATION_REQUIRED")
-            else:
-                try:
-                    payload = _binding_payload(item, payload, binding)
-                    row.source_binding_json = binding
-                except QuestionImportError as exc:
-                    errors.append(str(exc))
         row.payload_json = payload
         row.validation_errors_json = list(dict.fromkeys(errors))
-        row.certification_report_json = {}
         if not errors:
-            row.status = "pending"
-            eligible.append((row.public_id, payload))
-        elif "SOURCE_CONFIRMATION_REQUIRED" in errors:
-            row.status = "source_confirmation_required"
+            row.status = "valid"
+            valid_count += 1
         else:
             row.status = "template_invalid"
-        if commit_progress:
-            db.commit()
-
-    def persist_batch(batch_results):
-        nonlocal valid_count
-        for row_id, result in batch_results.items():
-            row = row_by_id[row_id]
-            row.certification_report_json = result.report
-            row.validation_errors_json = [] if result.issue_kind == "valid" else [result.issue_kind]
-            row.status = result.issue_kind
-            valid_count += int(result.issue_kind == "valid")
-        run.valid_row_count = valid_count
-        if commit_progress:
-            db.commit()
-
-    certify_question_payloads(eligible, on_batch_complete=persist_batch)
     run.valid_row_count = valid_count
     run.status = "ready_to_publish" if rows and valid_count == len(rows) else "needs_attention"
     run.error_summary = None if run.status == "ready_to_publish" else _attention_summary(rows)
@@ -837,176 +690,6 @@ def validate_import_run(
     else:
         db.flush()
     return run
-
-
-def queue_import_validation(db: Session, run: QuestionImportRun) -> QuestionImportRun:
-    """Reset an unpublished run so a worker can persist row-level progress."""
-
-    if run.status == "published":
-        raise QuestionImportError("QUESTION_IMPORT_ALREADY_PUBLISHED")
-    rows = list(db.scalars(select(QuestionImportRow).where(QuestionImportRow.run_id == run.id)))
-    for row in rows:
-        row.status = "pending"
-        row.validation_errors_json = []
-        row.certification_report_json = {}
-    run.status = "validating"
-    run.valid_row_count = 0
-    run.error_summary = None
-    db.commit()
-    db.refresh(run)
-    return run
-
-
-def retry_question_import_rows(
-    db: Session,
-    run: QuestionImportRun,
-    *,
-    statuses: set[str],
-    commit_progress: bool = True,
-) -> QuestionImportRun:
-    """Retry selected semantic outcomes without re-calling completed rows."""
-
-    rows = list(
-        db.scalars(select(QuestionImportRow).where(QuestionImportRow.run_id == run.id))
-    )
-    targets = [row for row in rows if row.status in statuses]
-    if not targets:
-        return run
-    row_by_id = {row.public_id: row for row in targets}
-    valid_count = sum(row.status in {"valid", "published"} for row in rows)
-    run.status = "validating"
-    run.valid_row_count = valid_count
-    run.error_summary = None
-    for row in targets:
-        row.status = "pending"
-        row.validation_errors_json = []
-        row.certification_report_json = {}
-    if commit_progress:
-        db.commit()
-
-    def persist_batch(batch_results):
-        nonlocal valid_count
-        for row_id, result in batch_results.items():
-            row = row_by_id[row_id]
-            row.certification_report_json = result.report
-            row.validation_errors_json = [] if result.issue_kind == "valid" else [result.issue_kind]
-            row.status = result.issue_kind
-            valid_count += int(result.issue_kind == "valid")
-        run.valid_row_count = valid_count
-        if commit_progress:
-            db.commit()
-
-    certify_question_payloads(
-        [(row.public_id, dict(row.payload_json or {})) for row in targets],
-        on_batch_complete=persist_batch,
-    )
-    run.valid_row_count = sum(row.status in {"valid", "published"} for row in rows)
-    run.status = (
-        "ready_to_publish"
-        if rows and run.valid_row_count == len(rows)
-        else "needs_attention"
-    )
-    run.error_summary = None if run.status == "ready_to_publish" else _attention_summary(rows)
-    if commit_progress:
-        db.commit()
-    else:
-        db.flush()
-    return run
-
-
-def run_import_validation(run_id: str) -> None:
-    try:
-        with SessionLocal() as db:
-            run = db.scalar(select(QuestionImportRun).where(QuestionImportRun.public_id == run_id))
-            if run is None or run.status == "published":
-                return
-            validate_import_run(db, run, commit_progress=True)
-    except Exception:
-        logger.exception("question import validation failed run_id=%s", run_id)
-        with SessionLocal() as db:
-            run = db.scalar(select(QuestionImportRun).where(QuestionImportRun.public_id == run_id))
-            if run is not None and run.status != "published":
-                run.status = "needs_attention"
-                run.error_summary = "题库认证任务异常，请重新校验"
-                db.commit()
-    finally:
-        with _validation_lock:
-            _active_validations.discard(run_id)
-
-
-def run_import_row_retries(run_id: str, statuses: set[str]) -> None:
-    try:
-        with SessionLocal() as db:
-            run = db.scalar(
-                select(QuestionImportRun).where(QuestionImportRun.public_id == run_id)
-            )
-            if run is None or run.status == "published":
-                return
-            retry_question_import_rows(db, run, statuses=statuses)
-    except Exception:
-        logger.exception("question import row retry failed run_id=%s", run_id)
-        with SessionLocal() as db:
-            run = db.scalar(
-                select(QuestionImportRun).where(QuestionImportRun.public_id == run_id)
-            )
-            if run is not None and run.status != "published":
-                run.status = "needs_attention"
-                run.error_summary = "题库认证任务异常，请重新校验"
-                db.commit()
-    finally:
-        with _validation_lock:
-            _active_validations.discard(run_id)
-
-
-def schedule_import_validation(run_id: str) -> None:
-    with _validation_lock:
-        if run_id in _active_validations:
-            return
-        _active_validations.add(run_id)
-    Thread(
-        target=run_import_validation,
-        args=(run_id,),
-        name=f"question-import-validation-{run_id}",
-        daemon=True,
-    ).start()
-
-
-def schedule_import_row_retries(run_id: str, statuses: set[str]) -> None:
-    with _validation_lock:
-        if run_id in _active_validations:
-            return
-        _active_validations.add(run_id)
-    Thread(
-        target=run_import_row_retries,
-        args=(run_id, statuses),
-        name=f"question-import-row-retry-{run_id}",
-        daemon=True,
-    ).start()
-
-
-def recover_pending_import_validations() -> list[str]:
-    with SessionLocal() as db:
-        run_ids = list(
-            db.scalars(
-                select(QuestionImportRun.public_id).where(QuestionImportRun.status == "validating")
-            )
-        )
-    for run_id in run_ids:
-        schedule_import_validation(run_id)
-    return run_ids
-
-
-def set_row_source_binding(
-    db: Session, *, run: QuestionImportRun, row_id: str, source_ref_ids: list[str], quotes: dict[str, str]
-) -> QuestionImportRow:
-    row = db.scalar(
-        select(QuestionImportRow).where(QuestionImportRow.run_id == run.id, QuestionImportRow.public_id == row_id)
-    )
-    if row is None:
-        raise QuestionImportError("QUESTION_IMPORT_ROW_NOT_FOUND")
-    row.source_binding_json = {"source_ref_ids": source_ref_ids, "quotes": quotes}
-    db.flush()
-    return row
 
 
 def publish_import_run(db: Session, run: QuestionImportRun) -> dict[str, Any]:
@@ -1047,27 +730,20 @@ def publish_import_run(db: Session, run: QuestionImportRun) -> dict[str, Any]:
             "question_slot": payload["question_slot"],
             "quiz_level": payload["quiz_level"],
             "question_bank_uses": payload["question_bank_uses"],
-            "source_quote": payload["source_quote"],
-            "source_ref_ids": payload["source_ref_ids"],
-            "source_locators": payload["source_locators"],
-            "source_content_hashes": payload["source_content_hashes"],
-            "evidence_quotes": payload["evidence_quotes"],
-            "chunker_version": payload["chunker_version"],
             "question_import_run_id": run.public_id,
             "question_import_row_id": row.public_id,
         }
         if run.change_set_id:
             answer_key["pending_change_set_id"] = run.change_set_id
-        # A stale question is historical evidence, not a writable record.  A
-        # replacement workbook therefore disables it only after the new,
-        # independently certified question has been staged for publication.
+        # A stale question remains part of historical answer records. A
+        # replacement workbook disables the matching slot after the new one is
+        # staged, preserving those historical references.
         stale_slot_questions = list(
             db.scalars(
                 select(DiagnosticQuestion).where(
                     DiagnosticQuestion.domain_code == run.domain_code,
                     DiagnosticQuestion.knowledge_item_id == item.id,
-                    DiagnosticQuestion.status == "active",
-                    DiagnosticQuestion.certification_status == "stale",
+                    DiagnosticQuestion.status == "stale",
                 )
             )
         )
@@ -1091,11 +767,6 @@ def publish_import_run(db: Session, run: QuestionImportRun) -> dict[str, Any]:
                 answer_key_json=answer_key,
                 difficulty=payload["difficulty"],
                 status="staged" if run.change_set_id else "active",
-                certification_status="certified",
-                certification_rule_version=QUESTION_CERTIFICATION_RULE_VERSION,
-                certification_report_json=row.certification_report_json,
-                source_content_hash=payload["source_content_hash"],
-                certified_at=datetime.now(UTC).replace(tzinfo=None),
             )
         )
         row.status = "published"
@@ -1147,16 +818,8 @@ def serialize_row(row: QuestionImportRow) -> dict[str, Any]:
         "rubric": list(payload.get("rubric") or []),
         "purpose": next(iter(payload.get("question_bank_uses") or []), None),
         "quiz_level": payload.get("quiz_level"),
-        "candidate_sources": row.candidate_sources_json or [],
-        "source_binding": row.source_binding_json or {},
-        "certification_report": row.certification_report_json or {},
         "status": row.status,
         "validation_errors": row.validation_errors_json or [],
-        "issue_kind": None if row.status in {"valid", "published", "pending"} else row.status,
-        "issue_fields": list((row.certification_report_json or {}).get("failed_fields") or []),
-        "issue_reason": str((row.certification_report_json or {}).get("reason") or ""),
-        "warnings": list((row.certification_report_json or {}).get("warnings") or []),
-        "can_confirm_source": row.status == "source_confirmation_required",
     }
 
 
@@ -1178,17 +841,8 @@ def serialize_run(db: Session, run: QuestionImportRun) -> dict[str, Any]:
         "error_summary": run.error_summary,
         "row_count": run.row_count,
         "valid_row_count": run.valid_row_count,
-        "processed_row_count": sum(row.status != "pending" for row in rows),
-        "is_validating": run.status == "validating",
         "needs_attention_count": sum(
-            row.status not in {"valid", "published", "pending"} for row in rows
-        ),
-        "source_confirmation_count": sum(
-            row.status == "source_confirmation_required" for row in rows
-        ),
-        "content_rejected_count": sum(row.status == "content_rejected" for row in rows),
-        "certification_service_error_count": sum(
-            row.status == "certification_service_error" for row in rows
+            row.status not in {"valid", "published"} for row in rows
         ),
         "template_invalid_count": sum(row.status == "template_invalid" for row in rows),
         "published_at": run.published_at.isoformat() if run.published_at else None,

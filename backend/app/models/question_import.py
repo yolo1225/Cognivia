@@ -47,9 +47,6 @@ class QuestionImportRow(TimestampMixin, Base):
     slot_key: Mapped[str] = mapped_column(String(160))
     knowledge_ref: Mapped[str] = mapped_column(String(64), index=True)
     payload_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    candidate_sources_json: Mapped[list] = mapped_column(JSON, default=list)
-    source_binding_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    certification_report_json: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
     validation_errors_json: Mapped[list] = mapped_column(JSON, default=list)
 

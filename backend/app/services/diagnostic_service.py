@@ -42,16 +42,12 @@ from app.services.learner_service import get_or_create_demo_learner
 from app.services.learning_path_service import normalize_path_for_domain, serialize_learning_path
 from app.services.domain_runtime_service import (
     DomainRuntime,
-    practice_generation_mode_for_items,
     require_ready_domain,
 )
 from app.services.diagnostic_scoring_service import score_short_answer_batch
 from app.services.llm_service import ModelGatewayError
 from app.services.mistake_review_service import sync_existing_mistakes
-from app.services.question_certification_service import (
-    ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS,
-)
-from app.services.question_bank_service import question_supports_use
+from app.services.question_bank_service import initial_diagnostic_inventory
 from app.services.profile_service import (
     build_learning_path_from_snapshot,
     default_profile_for_learner,
@@ -288,50 +284,38 @@ def _sample_diagnostic_questions(
     if int(question_count) != 10:
         raise ValueError("initial_diagnostic_requires_ten_questions")
 
-    evidence_buckets: dict[
-        tuple[str, bool], list[tuple[DiagnosticQuestion, KnowledgeItem, int]]
-    ] = {
-        ("single_choice", False): [],
-        ("single_choice", True): [],
-        ("short_answer", False): [],
-        ("short_answer", True): [],
-    }
+    candidates_by_type: dict[
+        str, list[tuple[DiagnosticQuestion, KnowledgeItem, int]]
+    ] = {"single_choice": [], "short_answer": []}
     for question in available_questions:
         knowledge = knowledge_rows.get(question.knowledge_item_id)
         if knowledge is None or question.question_type not in {"single_choice", "short_answer"}:
             continue
-        evidence_buckets[(question.question_type, _is_practice_question(question, knowledge))].append(
+        candidates_by_type[question.question_type].append(
             (question, knowledge, _direction_score(knowledge, direction_tags, runtime))
         )
 
+    all_candidates = [
+        item for candidates in candidates_by_type.values() for item in candidates
+    ]
+    if len(all_candidates) < question_count:
+        raise ValueError("diagnostic_question_distribution_unavailable")
+
     selected: list[DiagnosticQuestion] = []
-    mode = (
-        runtime.practice_generation_mode
-        if runtime is not None
-        else practice_generation_mode_for_items(list(knowledge_rows.values()))
-    )
-    if mode == "evidence_backed":
-        targets = {
-            ("single_choice", False): 3,
-            ("single_choice", True): 3,
-            ("short_answer", False): 2,
-            ("short_answer", True): 2,
-        }
-        for bucket, target in targets.items():
-            selected.extend(
-                question
-                for question, _, _ in _take_questions(evidence_buckets[bucket], target, rng=rng)
-            )
-    else:
-        type_targets = {"single_choice": 6, "short_answer": 4}
-        for question_type, target in type_targets.items():
-            candidates = [
-                item
-                for (bucket_type, _practice), bucket_items in evidence_buckets.items()
-                if bucket_type == question_type
-                for item in bucket_items
-            ]
-            selected.extend(question for question, _, _ in _take_questions(candidates, target, rng=rng))
+    selected_ids: set[int] = set()
+
+    def take_preferred(candidates: list[tuple[DiagnosticQuestion, KnowledgeItem, int]], count: int) -> None:
+        remaining = [item for item in candidates if item[0].id not in selected_ids]
+        if not remaining:
+            return
+        for question, _, _ in _take_questions(remaining, min(count, len(remaining)), rng=rng):
+            selected.append(question)
+            selected_ids.add(question.id)
+
+    # Prefer a varied 6/4 mix, but activity follows the current bank inventory.
+    take_preferred(candidates_by_type["single_choice"], 6)
+    take_preferred(candidates_by_type["short_answer"], 4)
+    take_preferred(all_candidates, question_count - len(selected))
     (rng or random.Random()).shuffle(selected)
     return selected
 
@@ -399,9 +383,6 @@ def prepare_diagnostic_submission(
                 DiagnosticQuestion.public_id.in_(question_ids),
                 DiagnosticQuestion.domain_code == domain_code,
                 DiagnosticQuestion.status == "active",
-                DiagnosticQuestion.certification_status == "certified",
-                DiagnosticQuestion.certification_rule_version
-                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS),
                 KnowledgeItem.domain_code == domain_code,
                 KnowledgeItem.status == "published",
             )
@@ -507,38 +488,9 @@ def create_diagnostic_session(
     profile = default_profile_for_learner(db, learner)
     if is_initial_profile_ready(profile):
         raise ValueError("initial_profile_already_ready")
-    available_questions = list(
-        db.scalars(
-            select(DiagnosticQuestion)
-            .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
-            .where(DiagnosticQuestion.domain_code == domain_code)
-            .where(DiagnosticQuestion.status == "active")
-            .where(DiagnosticQuestion.certification_status == "certified")
-            .where(
-                DiagnosticQuestion.certification_rule_version
-                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS)
-            )
-            .where(KnowledgeItem.domain_code == domain_code)
-            .where(KnowledgeItem.status == "published")
-            .order_by(DiagnosticQuestion.difficulty, DiagnosticQuestion.public_id)
-        )
-    )
-    available_questions = [
-        question
-        for question in available_questions
-        if question_supports_use(question, "diagnosis")
-    ]
-    knowledge_rows = {
-        item.id: item
-        for item in db.scalars(
-            select(KnowledgeItem).where(
-                KnowledgeItem.id.in_(
-                    {question.knowledge_item_id for question in available_questions}
-                ),
-                KnowledgeItem.domain_code == domain_code,
-            )
-        )
-    }
+    diagnostic_rows = initial_diagnostic_inventory(db, domain_code=domain_code)
+    available_questions = [question for question, _item in diagnostic_rows]
+    knowledge_rows = {item.id: item for _question, item in diagnostic_rows}
     session_id = public_id("diag")
     selection_seed = int(sha256(session_id.encode()).hexdigest()[:16], 16)
     questions = _sample_diagnostic_questions(
@@ -664,9 +616,6 @@ def submit_diagnostic_session(
                 DiagnosticQuestion.public_id.in_(question_ids),
                 DiagnosticQuestion.domain_code == domain_code,
                 DiagnosticQuestion.status == "active",
-                DiagnosticQuestion.certification_status == "certified",
-                DiagnosticQuestion.certification_rule_version
-                .in_(ACCEPTED_QUESTION_CERTIFICATION_RULE_VERSIONS),
                 KnowledgeItem.domain_code == domain_code,
                 KnowledgeItem.status == "published",
             )
@@ -997,12 +946,9 @@ def submit_diagnostic_session(
             runtime.practice_generation_mode != "evidence_backed"
             or (accepted_practice >= 2 and len(accepted_assessments) - accepted_practice >= 2)
         )
-        projection_state = knowledge_state
-        if not evidence_sufficient:
-            projection_state = {**knowledge_state, "accepted_evidence_ids": []}
         analysis, profile_projection = project_analysis_with_knowledge_state(
             analysis=analysis,
-            state=projection_state,
+            state=knowledge_state,
             previous_state=previous_state,
             config=runtime.profile_config,
             context=context_snapshot,
@@ -1021,6 +967,13 @@ def submit_diagnostic_session(
                 "assessed_knowledge_count": knowledge_state["coverage"]["assessed_count"],
                 "coverage": knowledge_state["coverage"],
                 "excluded_uncertain_count": len(uncertain_evidence_ids),
+                "evidence_sufficient": evidence_sufficient,
+                "reliability_status": "evidence_sufficient" if evidence_sufficient else "provisional",
+                "reliability_message": (
+                    "诊断证据覆盖充分"
+                    if evidence_sufficient
+                    else "已形成初步画像，建议在后续学习中补充理论或实操评估证据"
+                ),
                 "learning_speed_status": profile_projection["dimension_status"].get(
                     "learning_speed"
                 ),
@@ -1097,7 +1050,13 @@ def submit_diagnostic_session(
             "evidence_sufficient": evidence_sufficient,
             "evidence_reason": None
             if evidence_sufficient
-            else "至少需要 6 道有效评分，并满足理论/实操最低证据覆盖",
+            else "已形成初步画像，建议在后续学习中补充理论或实操评估证据",
+            "profile_reliability_status": "evidence_sufficient" if evidence_sufficient else "provisional",
+            "profile_reliability_message": (
+                "诊断证据覆盖充分"
+                if evidence_sufficient
+                else "初步画像已保留已确认的薄弱知识点，后续评估会继续提高可靠度"
+            ),
             "profile_type": str(
                 (active_profile.ability_profile_json or {}).get("profile_type")
                 or analysis.profile.profile_type.value
@@ -1107,7 +1066,7 @@ def submit_diagnostic_session(
             "learning_path_id": path.public_id if path else None,
             "learning_path": serialize_learning_path(path) if path else None,
             "answer_results": answer_results,
-            "next_action": "create_generation_task" if evidence_sufficient else "retry_diagnostic",
+            "next_action": "create_generation_task",
         }
         output_summary = {
             "session_id": session_id,

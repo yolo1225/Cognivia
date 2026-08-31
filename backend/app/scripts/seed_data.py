@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,15 +18,7 @@ from app.models import (
     KnowledgeDocument,
     KnowledgeRelation,
 )
-from app.rag.candidate_chunker import CHUNKER_VERSION, chunk_knowledge_item
-from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
-    knowledge_item_content_hash,
-)
-from app.services.question_source_binding_service import (
-    candidate_chunks_for_item,
-    resolve_question_source_binding,
-)
+from app.rag.candidate_chunker import chunk_knowledge_item
 
 
 SEED_DIR = Path("/app/data/seed")
@@ -159,9 +149,6 @@ def seed_domain(db: Session) -> Domain:
                 "ability_dimensions": payload.get("ability_dimensions", []),
                 "learning_directions": payload.get("learning_directions", []),
                 "mvp_targets": payload.get("mvp_targets", {}),
-                "practice_evidence_required_for_all": bool(
-                    payload.get("practice_evidence_required_for_all", False)
-                ),
                 "readiness_policy": {
                     "minimum_published_knowledge": 50,
                     "minimum_diagnostic_questions": 60,
@@ -328,55 +315,26 @@ def seed_diagnostic_questions(
             "explanation",
             f"正确答案为“{correct_text}”，对应知识点“{item.name}”的核心要求。",
         )
-        answer_key.setdefault("source_quote", item.content_md[:300])
-        source_chunks = candidate_chunks_for_item(item)
-        source_binding = resolve_question_source_binding(
-            item,
-            source_quote=answer_key["source_quote"],
-            chunks=source_chunks,
-        )
-        bound_chunk = next(
-            chunk
-            for chunk in source_chunks
-            if chunk.chunk_id == source_binding["source_ref_ids"][0]
-        )
-        source_quote = str(answer_key["source_quote"])
-        if source_quote not in bound_chunk.content:
-            source_quote = bound_chunk.content[:300]
-        answer_key["source_quote"] = source_quote
-        answer_key.update(source_binding)
-        source_ref_id = str(answer_key["source_ref_ids"][0])
-        source_hashes = {source_ref_id: knowledge_item_content_hash(item)}
-        aggregate_source_hash = "sha256:" + hashlib.sha256(
-            json.dumps(
-                source_hashes, sort_keys=True, separators=(",", ":")
-            ).encode()
-        ).hexdigest()
-        answer_key.update(
-            {
-                "source_ref_ids": [source_ref_id],
-                "source_locators": {
-                    source_ref_id: str(answer_key.pop("source_locator"))
-                },
-                "source_content_hashes": source_hashes,
-                "evidence_quotes": [
-                    {
-                        "source_ref_id": source_ref_id,
-                        "quote": str(answer_key["source_quote"]),
+        answer_key["assessment_dimension"] = (
+            str(payload["assessment_dimension"])
+            if payload.get("assessment_dimension") in {"theory", "operation"}
+            else (
+                "operation"
+                if (
+                    "operation" in classify_evidence_capabilities(item.content_md)
+                    and item.category
+                    in {
+                        "后端开发",
+                        "前端开发",
+                        "系统集成",
+                        "Python API 调用基础",
+                        "HTTP 与 REST 基础",
+                        "Git 协作与变更管理",
+                        "应用数据结构设计",
                     }
-                ],
-                "chunker_version": CHUNKER_VERSION,
-                "assessment_dimension": (
-                    str(payload["assessment_dimension"])
-                    if payload.get("assessment_dimension") in {"theory", "operation"}
-                    else (
-                        "operation"
-                        if "operation"
-                        in classify_evidence_capabilities(bound_chunk.embedding_text)
-                        else "theory"
-                    )
-                ),
-            }
+                )
+                else "theory"
+            )
         )
         quiz_level = str(payload.get("quiz_level") or (
             "foundation" if int(payload.get("difficulty", item.difficulty)) <= 2
@@ -397,6 +355,7 @@ def seed_diagnostic_questions(
             payload["question_id"],
             {
                 "public_id": payload["question_id"],
+                "external_id": payload["question_id"],
                 "domain_code": payload.get("domain_code", item.domain_code),
                 "knowledge_item_id": item.id,
                 "related_knowledge_ids_json": [],
@@ -406,19 +365,6 @@ def seed_diagnostic_questions(
                 "answer_key_json": answer_key,
                 "difficulty": payload.get("difficulty", item.difficulty),
                 "status": "active",
-                "certification_status": "certified",
-                "certification_rule_version": QUESTION_CERTIFICATION_RULE_VERSION,
-                "certification_report_json": {
-                    "rule_version": QUESTION_CERTIFICATION_RULE_VERSION,
-                    "deterministic_passed": True,
-                    "certification_method": payload.get(
-                        "certification_method", "curated_seed_exact_evidence"
-                    ),
-                    "failed_fields": [],
-                    "source_content_hash": aggregate_source_hash,
-                },
-                "source_content_hash": aggregate_source_hash,
-                "certified_at": datetime.now(UTC).replace(tzinfo=None),
             },
         )
         questions.append(question)

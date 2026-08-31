@@ -13,11 +13,11 @@ from app.repositories.knowledge_repo import KnowledgeRepository
 from app.schemas.api_requests import KnowledgeItemCreateRequest, KnowledgeItemUpdateRequest
 from app.agents.domain_evidence_policy import get_domain_evidence_policy
 from app.services.knowledge_update_service import (
+    mark_affected_questions_stale,
     mark_affected_content,
     related_knowledge_ids,
     replace_item_relations,
 )
-from app.services.question_certification_service import mark_question_certifications_stale
 
 
 def serialize_knowledge_item(item: KnowledgeItem) -> dict[str, Any]:
@@ -101,7 +101,7 @@ class KnowledgeApiService:
         item.needs_reembedding = True
         self.db.flush()
         affected_ids.update(related_knowledge_ids(self.db, item))
-        mark_question_certifications_stale(
+        mark_affected_questions_stale(
             self.db,
             domain_code=item.domain_code,
             knowledge_ids={item.public_id},

@@ -21,6 +21,7 @@ from app.agents.contracts import (
     PracticeGuideContent,
     QuestionType,
     QuizQuestion,
+    RetrievedQuestion,
     ResourceType,
     SourceRef,
     StructuredResourceContent,
@@ -359,11 +360,15 @@ class ContentGenerationAgent:
 
             def generate_one(resource_type: ResourceType) -> GeneratedResourceArtifact:
                 target_ids = set(validated.requirements.resource_knowledge_targets[resource_type])
-                question_source_ids = (
+                question_knowledge_ids = (
                     {
-                        str(source_ref_id)
+                        knowledge_id
                         for question in validated.reference_questions
-                        for source_ref_id in question.answer_key.get("source_ref_ids") or []
+                        if {question.knowledge_id, *question.related_knowledge_ids} & target_ids
+                        for knowledge_id in {
+                            question.knowledge_id,
+                            *question.related_knowledge_ids,
+                        }
                     }
                     if resource_type is ResourceType.GRADED_QUIZ
                     else set()
@@ -374,7 +379,7 @@ class ContentGenerationAgent:
                     if chunk.source.source_ref_id in validated.requirements.source_whitelist
                     and (
                         chunk.knowledge_id in target_ids
-                        or chunk.source.source_ref_id in question_source_ids
+                        or chunk.knowledge_id in question_knowledge_ids
                     )
                 ]
                 if not allowed_sources:
@@ -612,7 +617,11 @@ class ContentGenerationAgent:
 
                 if resource_type == ResourceType.GRADED_QUIZ:
                     blueprint = (
-                        _quiz_blueprint_for_content(validated, response.structured_content)
+                        _quiz_blueprint_for_content(
+                            validated,
+                            response.structured_content,
+                            allowed_sources,
+                        )
                         if targeted_quiz_revision
                         else _quiz_blueprint(
                             validated,
@@ -1570,6 +1579,7 @@ def _quiz_blueprint(
 def _quiz_blueprint_for_content(
     request: GenerateResourceInput,
     content: StructuredResourceContent,
+    allowed_sources: list[SourceRef],
 ) -> list[dict[str, object]]:
     """Build a formal-bank blueprint for a locally revised quiz."""
 
@@ -1579,7 +1589,14 @@ def _quiz_blueprint_for_content(
     blueprint: list[dict[str, object]] = []
     for question in content.questions:
         reference = references.get(question.question_id)
-        if reference is None or not reference.answer_key.get("source_ref_ids"):
+        if reference is None:
+            raise QuestionBankError("graded_quiz_question_bank_scope_invalid")
+        source_ref_ids = _runtime_question_source_ref_ids(
+            request,
+            allowed_sources,
+            reference,
+        )
+        if not source_ref_ids:
             raise QuestionBankError("graded_quiz_question_bank_scope_invalid")
         blueprint.append(
             {
@@ -1588,7 +1605,7 @@ def _quiz_blueprint_for_content(
                 "question_type": reference.question_type.value,
                 "knowledge_id": reference.knowledge_id,
                 "difficulty": reference.difficulty,
-                "allowed_source_ref_ids": list(reference.answer_key["source_ref_ids"]),
+                "allowed_source_ref_ids": source_ref_ids,
                 "reference_question_ids": [reference.question_id],
             }
         )
@@ -1661,16 +1678,7 @@ def _quiz_question_matches_target(
     slot: dict[str, object],
     request: GenerateResourceInput,
 ) -> bool:
-    """Validate a bank question's certified attribution deterministically.
-
-    The formal-question certification already establishes that the stem, answer
-    and rubric are supported by its primary knowledge item and declared real
-    relations.  Re-comparing CJK token overlap at runtime is both lossy and
-    incorrect for integrated questions: a question may legitimately use more
-    terms from a related item than from its primary item.  Runtime only needs
-    to confirm that the immutable blueprint attribution and certified evidence
-    links have survived assembly.
-    """
+    """Check that a formal question preserves its runtime evidence scope."""
     if question.knowledge_id != str(slot["knowledge_id"]):
         return False
     if question.reference_question_ids != list(slot["reference_question_ids"]):
@@ -1687,6 +1695,22 @@ def _quiz_question_matches_target(
         in {question.knowledge_id, *question.related_knowledge_ids}
         for source_id in question_source_ids
     )
+
+
+def _runtime_question_source_ref_ids(
+    request: GenerateResourceInput,
+    allowed_sources: list[SourceRef],
+    question: RetrievedQuestion,
+) -> list[str]:
+    """Select current evidence for a formal question without persisting Chunk links."""
+    allowed_ids = {source.source_ref_id for source in allowed_sources}
+    knowledge_ids = {question.knowledge_id, *question.related_knowledge_ids}
+    return [
+        chunk.source.source_ref_id
+        for chunk in request.retrieved_chunks
+        if chunk.source.source_ref_id in allowed_ids
+        and chunk.knowledge_id in knowledge_ids
+    ][:3]
 
 
 def _candidate_evidence_body(value: str) -> str:

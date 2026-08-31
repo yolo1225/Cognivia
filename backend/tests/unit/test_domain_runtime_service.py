@@ -175,9 +175,6 @@ def test_second_domain_can_complete_an_isolated_diagnostic_and_profile(monkeypat
                     },
                     difficulty=2,
                     status="active",
-                    certification_status="certified",
-                    certification_rule_version="question-cert-v1",
-                    source_content_hash="sha256:" + "c" * 64,
                 )
             )
     for index in range(2):
@@ -196,9 +193,6 @@ def test_second_domain_can_complete_an_isolated_diagnostic_and_profile(monkeypat
                     },
                     difficulty=2,
                     status="active",
-                    certification_status="certified",
-                    certification_rule_version="question-cert-v1",
-                    source_content_hash="sha256:" + "d" * 64,
                 )
             )
     db.commit()
@@ -306,9 +300,6 @@ def test_safe_conceptual_runtime_does_not_require_operation_question_buckets(
                 },
                 difficulty=2,
                 status="active",
-                certification_status="certified",
-                certification_rule_version="question-cert-v1",
-                source_content_hash="sha256:" + "e" * 64,
             )
         )
     for index in range(4):
@@ -325,9 +316,6 @@ def test_safe_conceptual_runtime_does_not_require_operation_question_buckets(
                 },
                 difficulty=2,
                 status="active",
-                certification_status="certified",
-                certification_rule_version="question-cert-v1",
-                source_content_hash="sha256:" + "f" * 64,
             )
         )
     db.commit()
@@ -341,3 +329,154 @@ def test_safe_conceptual_runtime_does_not_require_operation_question_buckets(
     assert runtime.practice_generation_mode == "safe_conceptual"
     assert runtime.diagnostic_ready is True
     assert not any("operation" in reason for reason in runtime.reasons)
+
+
+def test_initial_diagnostic_readiness_uses_only_shared_eligible_inventory(monkeypatch) -> None:
+    db = _db()
+    _domain(db, "inventory_domain")
+    assessed = _item(db, "inventory_domain", "assessed")
+    _item(db, "inventory_domain", "unassessed")
+    for index, question_type in enumerate(["single_choice"] * 6 + ["short_answer"] * 4):
+        db.add(
+            DiagnosticQuestion(
+                public_id=f"eligible_{index}",
+                domain_code="inventory_domain",
+                knowledge_item_id=assessed.id,
+                question_type=question_type,
+                stem=f"eligible {index}",
+                options_json=["A", "B"] if question_type == "single_choice" else [],
+                answer_key_json={
+                    "correct_option": 0,
+                    "rubric": ["x"],
+                    "question_bank_uses": ["diagnosis"],
+                },
+                difficulty=2,
+                status="active",
+            )
+        )
+    # This active question is deliberately not part of the initial-diagnosis inventory.
+    db.add(
+        DiagnosticQuestion(
+            public_id="other_purpose",
+            domain_code="inventory_domain",
+            knowledge_item_id=assessed.id,
+            question_type="single_choice",
+            stem="other purpose",
+            options_json=["A", "B"],
+            answer_key_json={"correct_option": 0, "question_bank_uses": ["graded_quiz"]},
+            difficulty=2,
+            status="active",
+        )
+    )
+    db.commit()
+    monkeypatch.setattr(
+        "app.services.domain_runtime_service.candidate_rag_status",
+        lambda code: {"ready": True, "domain_code": code},
+    )
+
+    ready = load_domain_runtime(db, "inventory_domain")
+
+    assert ready.diagnostic_ready is True
+    assert ready.diagnostic_inventory["eligible_count"] == 10
+    assert ready.diagnostic_inventory["reason"] is None
+
+    db.query(DiagnosticQuestion).filter_by(public_id="eligible_9").one().status = "disabled"
+    db.commit()
+    unavailable = load_domain_runtime(db, "inventory_domain")
+
+    assert unavailable.diagnostic_ready is False
+    assert unavailable.diagnostic_inventory["eligible_count"] == 9
+    assert unavailable.diagnostic_inventory["reason"] == "首次诊断至少需要 10 道可用诊断题"
+
+
+def test_provisional_diagnostic_still_projects_weakness_and_path(monkeypatch) -> None:
+    db = _db()
+    _domain(db, "provisional_domain")
+    theory = _item(db, "provisional_domain", "theory")
+    practice = _item(
+        db,
+        "provisional_domain",
+        "practice",
+        capabilities=["concept", "operation", "expected_result"],
+    )
+    db.add(
+        Learner(
+            public_id="provisional_learner",
+            target_domain="provisional_domain",
+            education_level="本科",
+            major="软件工程",
+            direction_tags_json=["general"],
+        )
+    )
+    for index, question_type in enumerate(["single_choice"] * 6 + ["short_answer"] * 4):
+        item = practice if index == 0 else theory
+        db.add(
+            DiagnosticQuestion(
+                public_id=f"provisional_{index}",
+                domain_code="provisional_domain",
+                knowledge_item_id=item.id,
+                question_type=question_type,
+                stem=f"provisional {index}",
+                options_json=["A", "B"] if question_type == "single_choice" else [],
+                answer_key_json={
+                    "correct_option": 0,
+                    "rubric": ["x"],
+                    "question_bank_uses": ["diagnosis"],
+                },
+                difficulty=2,
+                status="active",
+            )
+        )
+    db.commit()
+    monkeypatch.setattr(
+        "app.services.domain_runtime_service.candidate_rag_status",
+        lambda code: {"ready": True, "domain_code": code},
+    )
+    monkeypatch.setattr(
+        "app.services.diagnostic_service.score_short_answer_batch",
+        lambda items, **_kwargs: (
+            {
+                question.public_id: {
+                    "question_id": question.public_id,
+                    "total_score": 0.0,
+                    "is_correct": False,
+                    "rubric_version": "test-v1",
+                    "confidence": 1.0,
+                    "scoring_uncertain": False,
+                    "ai_comment": "未通过",
+                    "criteria": [],
+                    "matched_points": [],
+                    "missing_points": ["x"],
+                    "factual_errors": [],
+                }
+                for question, _answer in items
+            },
+            {"tokens_input": 0, "tokens_output": 0, "model_name": "fixture"},
+        ),
+    )
+
+    session = create_diagnostic_session(
+        db,
+        learner_id="provisional_learner",
+        domain_code="provisional_domain",
+        question_count=10,
+    )
+    result = submit_diagnostic_session(
+        db,
+        session_id=session["session_id"],
+        learner_id="provisional_learner",
+        domain_code="provisional_domain",
+        answers=[
+            {
+                "question_id": question["question_id"],
+                "answer": 1 if question["question_type"] == "single_choice" else "错误回答",
+            }
+            for question in session["questions"]
+        ],
+    )
+
+    assert result["evidence_sufficient"] is False
+    assert result["profile_reliability_status"] == "provisional"
+    assert result["profile_id"]
+    assert result["weak_knowledge"]
+    assert result["learning_path_id"]

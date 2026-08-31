@@ -330,9 +330,11 @@ watch(showSummary, async value => {
 const completionMessage = computed(() => {
   const result = completionResult.value
   if (!result) return ''
+  if (result.requires_regeneration) return result.invalidation_message || '当前测试引用的正式题已不可用，请重新生成当前节点测试。'
   const gate = result.node_gate
   if (gate?.can_advance) return '当前节点的核心知识、错题和分阶测验门槛均已满足，可申请进入下一阶段。'
   if (gate?.blocking_mistake_count) return `测验证据已记录，仍有 ${gate.blocking_mistake_count} 道当前节点错题需要巩固。`
+  if (gate?.evidence_recommendation) return gate.evidence_recommendation
   if (gate) return `测验证据已记录，核心知识已确认 ${gate.mastered_knowledge_count || 0}/${gate.core_knowledge_count || 0}。`
   return result.evidence_result?.materialized_count ? '测验结果已记录为正式画像证据。' : ''
 })

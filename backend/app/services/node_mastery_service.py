@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -78,7 +78,6 @@ def _formal_positive_records(
                 AnswerRecord.is_correct.is_(True),
                 AnswerRecord.confidence >= FORMAL_EVIDENCE_CONFIDENCE_FLOOR,
                 DiagnosticQuestion.status == "active",
-                DiagnosticQuestion.certification_status == "certified",
             )
             .order_by(AnswerRecord.created_at, AnswerRecord.id)
         )
@@ -202,6 +201,20 @@ def build_node_gate(
             )
         )
     ) if core_ids else []
+    retired_mistake_count = int(
+        db.scalar(
+            select(func.count())
+            .select_from(MistakeReviewItem)
+            .join(KnowledgeItem, KnowledgeItem.id == MistakeReviewItem.knowledge_item_id)
+            .where(
+                MistakeReviewItem.learner_id == profile.learner_id,
+                MistakeReviewItem.domain_code == path.domain_code,
+                KnowledgeItem.public_id.in_(core_ids),
+                MistakeReviewItem.status == "retired",
+            )
+        )
+        or 0
+    ) if core_ids else 0
     quiz_completed = _quiz_completed(
         db,
         learner_id=profile.learner_id,
@@ -230,6 +243,12 @@ def build_node_gate(
         "knowledge_progress": progress,
         "blocking_mistake_count": len(unresolved),
         "blocking_mistake_ids": [item.public_id for item in unresolved],
+        "retired_mistake_count": retired_mistake_count,
+        "evidence_recommendation": (
+            "部分历史错题的原题已停用，建议使用当前题库完成补测。"
+            if retired_mistake_count
+            else None
+        ),
         "quiz_completed": quiz_completed,
     }
 

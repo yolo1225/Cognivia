@@ -23,15 +23,6 @@ class DiagnosticQuestion(TimestampMixin, Base):
     answer_key_json: Mapped[dict] = mapped_column(JSON, default=dict)
     difficulty: Mapped[int] = mapped_column(default=1)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
-    certification_status: Mapped[str] = mapped_column(
-        String(32), default="pending", index=True
-    )
-    certification_rule_version: Mapped[str | None] = mapped_column(
-        String(64), nullable=True
-    )
-    certification_report_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    source_content_hash: Mapped[str | None] = mapped_column(String(71), nullable=True)
-    certified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     disabled_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
 

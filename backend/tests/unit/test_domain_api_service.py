@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -126,9 +126,6 @@ def build_db(*, knowledge_count: int = 10, question_count: int = 10) -> Session:
                         },
                         difficulty=min(5, slot),
                         status="active",
-                        certification_status="certified",
-                        certification_rule_version="question-cert-v1",
-                        source_content_hash="sha256:" + "a" * 64,
                     )
                 )
     else:
@@ -149,9 +146,6 @@ def build_db(*, knowledge_count: int = 10, question_count: int = 10) -> Session:
                     else {"rubric": ["x"]},
                     difficulty=2,
                     status="active",
-                    certification_status="certified",
-                    certification_rule_version="question-cert-v1",
-                    source_content_hash="sha256:" + "b" * 64,
                 )
             )
     db.add(
@@ -215,6 +209,33 @@ def test_readiness_reports_candidate_failure_without_external_smoke(monkeypatch)
     assert "Candidate RAG" in {issue["message"] for issue in result["issues"]}
 
 
+def test_readiness_uses_smoke_for_current_index_instead_of_newest_job(monkeypatch) -> None:
+    db = build_db()
+    db.add(
+        IndexBuildJob(
+            domain_code="test_domain",
+            status="success",
+            finished_at=datetime.now(UTC),
+            result_json={"smoke_test": {"passed": True, "index_version": "index-old"}},
+        )
+    )
+    db.commit()
+    monkeypatch.setattr(
+        "app.services.domain_api_service.candidate_rag_status",
+        lambda _domain: {"ready": True, "index_version": "index-v1", "indexed_chunk_count": 10},
+    )
+    monkeypatch.setattr(
+        "app.services.domain_runtime_service.candidate_rag_status",
+        lambda _domain: {"ready": True, "index_version": "index-v1", "indexed_chunk_count": 10},
+    )
+
+    result = DomainApiService(db).readiness("test_domain")
+    checks = {item["key"]: item for item in result["checks"]}
+
+    assert checks["retrieval_smoke_passed"]["passed"] is True
+    assert result["passed"] is True
+
+
 def test_practice_mode_requires_operation_and_expected_result(monkeypatch) -> None:
     db = build_db()
     concept_item = next(
@@ -239,6 +260,32 @@ def test_practice_mode_requires_operation_and_expected_result(monkeypatch) -> No
 
     assert result["evidence_coverage"]["capabilities"]["expected_result"] == 1
     assert result["evidence_coverage"]["capabilities"]["operation"] == 0
+    assert result["evidence_coverage"]["practice_generation_mode"] == "safe_conceptual"
+
+
+def test_readiness_keeps_evidence_coverage_as_non_blocking_observability(monkeypatch) -> None:
+    db = build_db()
+    domain = db.scalar(select(Domain).where(Domain.domain_code == "test_domain"))
+    assert domain is not None
+    domain.config_json = {
+        **domain.config_json,
+        "practice_evidence_required_for_all": True,
+    }
+    for item in db.query(KnowledgeItem).filter_by(domain_code="test_domain"):
+        item.evidence_capabilities_json = ["concept"]
+    db.commit()
+    monkeypatch.setattr(
+        "app.services.domain_api_service.candidate_rag_status",
+        lambda _domain: {"ready": True, "index_version": "index-v1", "indexed_chunk_count": 10},
+    )
+    monkeypatch.setattr(
+        "app.services.domain_runtime_service.candidate_rag_status",
+        lambda _domain: {"ready": True, "index_version": "index-v1", "indexed_chunk_count": 10},
+    )
+
+    result = DomainApiService(db).readiness("test_domain")
+
+    assert result["passed"] is True
     assert result["evidence_coverage"]["practice_generation_mode"] == "safe_conceptual"
 
 

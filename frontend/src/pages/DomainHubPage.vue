@@ -379,34 +379,32 @@
             </article>
           </div>
           <p class="asset-summary-note" aria-live="polite">
-            共 {{ questionBank.length }} 道题，已认证 {{ certifiedQuestionCount }} 道；每道正式题均绑定来源并按唯一用途运行。
+            活动正式题 {{ activeQuestionBankTotal }} 道；当前筛选范围 {{ questionBankTotal }} 道，生成资源时根据关联知识点动态检索当前证据。
           </p>
           <div class="filterbar asset-filters">
-            <label class="search-field"><span aria-hidden="true">⌕</span><input v-model="questionFilters.keyword" type="search" placeholder="搜索知识点、题干或来源编号" /></label>
+            <label class="search-field"><span aria-hidden="true">⌕</span><input v-model="questionFilters.keyword" type="search" placeholder="搜索知识点或题干" /></label>
             <select v-model="questionFilters.purpose" class="field"><option value="all">全部用途</option><option value="diagnosis">诊断题</option><option value="graded_quiz">分阶测验</option><option value="mastery_validation">掌握检查</option></select>
             <select v-model="questionFilters.level" class="field"><option value="all">全部层级</option><option value="foundation">基础巩固</option><option value="improvement">能力提升</option><option value="challenge">挑战突破</option></select>
             <select v-model="questionFilters.difficulty" class="field"><option value="all">全部难度</option><option v-for="level in 5" :key="level" :value="String(level)">难度 {{ level }}</option></select>
-            <select v-model="questionFilters.certification" class="field"><option value="all">全部认证</option><option value="certified">已认证</option><option value="pending">待认证</option><option value="stale">需复核</option><option value="rejected">未通过</option></select>
-            <select v-model="questionFilters.status" class="field"><option value="all">全部状态</option><option value="active">启用</option><option value="disabled">已停用</option></select>
+            <select v-model="questionFilters.status" class="field" @change="loadQuestionBankForStatus"><option value="all">全部状态</option><option value="active">启用</option><option value="staged">待启用</option><option value="stale">待替换</option><option value="disabled">已停用</option></select>
             <button v-if="hasQuestionFilters" class="btn text" type="button" @click="clearQuestionFilters">清除筛选</button>
           </div>
-          <p class="asset-results" aria-live="polite">显示 {{ filteredQuestionBank.length }} 道，共 {{ questionBank.length }} 道题</p>
+          <p class="asset-results" aria-live="polite">显示 {{ filteredQuestionBank.length }} 道，共 {{ questionBankTotal }} 道题</p>
           <div v-if="filteredQuestionBank.length === 0" class="empty-view">
-            <strong>{{ questionBank.length ? '没有符合条件的题目' : '当前领域暂无正式题目' }}</strong>
-            <p>{{ questionBank.length ? '调整筛选条件后再试。' : '下载缺口模板后填写并导入正式题目。' }}</p>
-            <button v-if="!questionBank.length" class="btn primary" type="button" @click="downloadQuestionBankTemplate">下载补题模板</button>
-            <button v-if="questionBank.length" class="btn" type="button" @click="clearQuestionFilters">清除筛选</button>
+            <strong>{{ questionBankTotal ? '没有符合条件的题目' : '当前领域暂无正式题目' }}</strong>
+            <p>{{ questionBankTotal ? '调整筛选条件后再试。' : '下载缺口模板后填写并导入正式题目。' }}</p>
+            <button v-if="!questionBankTotal" class="btn primary" type="button" @click="downloadQuestionBankTemplate">下载补题模板</button>
+            <button v-if="questionBankTotal" class="btn" type="button" @click="clearQuestionFilters">清除筛选</button>
           </div>
           <div v-else class="table-wrap asset-table-wrap">
             <table class="knowledge-table">
-              <thead><tr><th>主要知识点</th><th>用途</th><th>层级与难度</th><th>认证</th><th>运营状态</th><th class="table-actions">操作</th></tr></thead>
+              <thead><tr><th>主要知识点</th><th>用途</th><th>层级与难度</th><th>数据状态</th><th class="table-actions">操作</th></tr></thead>
               <tbody>
                 <tr v-for="question in filteredQuestionBank" :key="question.question_id">
                   <td><strong>{{ question.knowledge_name }}</strong><small v-if="question.related_knowledge_ids.length">关联 {{ question.related_knowledge_ids.length }} 个知识点</small></td>
                   <td>{{ questionPoolLabel(question) }}</td>
                   <td>{{ quizLevelLabel(question.quiz_level) }} / 难度 {{ question.difficulty }}</td>
-                  <td><StatusBadge :label="certificationStatusLabel(question.certification_status)" :type="question.certification_status === 'certified' ? 'ok' : question.certification_status === 'rejected' ? 'error' : 'wait'" /></td>
-                  <td><StatusBadge :label="question.status === 'active' ? '启用' : '已停用'" :type="question.status === 'active' ? 'ok' : 'wait'" /></td>
+                  <td><StatusBadge :label="questionStatusLabel(question.status)" :type="question.status === 'active' ? 'ok' : question.status === 'stale' ? 'warning' : 'wait'" /></td>
                   <td class="table-actions"><div class="row-actions"><button class="btn text" @click="openQuestionDetail(question)">查看</button><button v-if="question.status === 'active'" class="btn text danger" :disabled="questionActionLoading === question.question_id" @click="disableBankQuestion(question)">停用</button><span v-else class="system-label">等待补槽</span></div></td>
                 </tr>
               </tbody>
@@ -631,7 +629,7 @@
           </li>
         </ol>
         <section v-if="currentTask.tone === 'ready'" class="operation-normal">
-          <div><strong>领域可用</strong><span>来源材料、检索索引、领域校验和发布状态均正常。</span></div>
+          <div><strong>领域可用</strong><span>{{ activeChangeSet ? '活动知识、检索索引、领域校验和发布状态均正常；待启用变更不会影响当前学习者运行。' : '来源材料、检索索引、领域校验和发布状态均正常。' }}</span></div>
           <button class="btn text" type="button" @click="showValidationDetails = !showValidationDetails">{{ showValidationDetails ? '收起检查明细' : '查看检查明细' }}</button>
         </section>
         <section v-else class="operation-focus" :class="currentTask.tone">
@@ -649,6 +647,13 @@
             <div v-for="row in validationRows" :key="row.key"><span>{{ row.label }}</span><strong>{{ row.actual }} / {{ row.target }}</strong><StatusBadge :label="row.passed ? '达标' : '未达标'" :type="row.passed ? 'ok' : 'wait'" /></div>
             <div v-for="issue in validationResult.issues" :key="issue.message" class="validation-issue"><span>!</span><p>{{ issue.message }}<small v-if="issue.actual !== undefined">实际 {{ issue.actual }}，目标 {{ issue.target }}</small></p></div>
           </div>
+        </section>
+        <section v-if="activeChangeSet" class="operation-change-set">
+          <div>
+            <strong>待启用知识变更</strong>
+            <p>{{ pendingChangeOperationDescription }}</p>
+          </div>
+          <button class="btn" type="button" @click="openAssetView('questions')">查看补题进度</button>
         </section>
         <section v-if="currentTask.tone === 'ready' && showValidationDetails && validationResult" class="validation-details">
           <div class="validation-list">
@@ -791,7 +796,7 @@
         <div class="question-detail-meta">
           <span>{{ selectedQuestion.question_type === 'single_choice' ? '单选题' : '简答题' }}</span>
           <span>{{ quizLevelLabel(selectedQuestion.quiz_level) }} · 难度 {{ selectedQuestion.difficulty }}</span>
-          <StatusBadge :label="certificationStatusLabel(selectedQuestion.certification_status)" :type="selectedQuestion.certification_status === 'certified' ? 'ok' : selectedQuestion.certification_status === 'rejected' ? 'error' : 'wait'" />
+          <StatusBadge :label="questionStatusLabel(selectedQuestion.status)" :type="selectedQuestion.status === 'active' ? 'ok' : selectedQuestion.status === 'stale' ? 'warning' : 'wait'" />
         </div>
         <section class="question-detail-block">
           <h3>题干</h3>
@@ -800,15 +805,7 @@
             <li v-for="(option, index) in selectedQuestion.options" :key="`${index}-${option}`">{{ String.fromCharCode(65 + index) }}. {{ option }}</li>
           </ul>
         </section>
-        <section class="question-detail-block">
-          <h3>精确来源</h3>
-          <p>{{ selectedQuestion.source_quote || '未提供来源摘录' }}</p>
-          <small>{{ selectedQuestion.source_ref_ids.join('、') || '未标注来源编号' }}</small>
-        </section>
-        <section v-if="selectedQuestion.certification_summary.failed_fields.length" class="question-detail-block question-detail-warning">
-          <h3>认证待处理项</h3>
-          <p>{{ selectedQuestion.certification_summary.failed_fields.join('、') }}</p>
-        </section>
+        <section class="question-detail-block"><h3>答案与解析</h3><p><strong>答案：</strong>{{ selectedQuestion.answer }}</p><p>{{ selectedQuestion.explanation }}</p></section>
       </div>
       <template #footer><div class="drawer-footer"><button class="btn" @click="questionDrawerOpen = false">关闭</button></div></template>
     </AppDrawer>
@@ -968,35 +965,33 @@
       <template v-if="!activeQuestionImport">
         <div class="upload-warning">
           <strong>按缺口补齐题库</strong>
-          <p>模板预填知识点、用途和槽位。上传后将在此处完成来源绑定、认证进度和题目预览。</p>
+          <p>模板预填知识点、用途和槽位。上传后执行字段与库存一致性校验，并预览题目数据。</p>
         </div>
         <div class="upload-compact question-upload-dropzone">
           <span>⇧</span><strong>选择已填写的 XLSX 模板</strong>
-          <p>一次导入必须全部通过认证后才能发布</p>
+          <p>一次导入必须全部通过数据校验后才能发布</p>
           <button class="btn primary" :disabled="questionImportActionLoading" @click="questionImportFile?.click()">选择 XLSX</button>
           <input ref="questionImportFile" class="hidden" type="file" accept=".xlsx" @change="handleQuestionImportFile" />
         </div>
       </template>
-      <div v-if="questionImportLoading" class="empty-view"><strong>正在加载题目认证结果</strong></div>
+      <div v-if="questionImportLoading" class="empty-view"><strong>正在加载题目校验结果</strong></div>
       <template v-else-if="activeQuestionImport">
         <article class="import-stage-card question-import-stage">
           <div>
             <span class="import-stage-label">当前阶段</span>
-            <strong>{{ activeQuestionImport.is_validating ? '正在绑定来源并认证题目' : questionImportStatusLabel(activeQuestionImport.status) }}</strong>
-            <p>{{ activeQuestionImport.is_validating ? `已处理 ${activeQuestionImport.processed_row_count} / ${activeQuestionImport.row_count} 题，关闭面板不会中断。` : '逐题预览字段、来源和认证结论后再确认发布。' }}</p>
+            <strong>{{ questionImportStatusLabel(activeQuestionImport.status) }}</strong>
+            <p>逐题预览模板字段与题目数据；题目证据在运行时按关联知识点检索。</p>
           </div>
           <StatusBadge :label="questionImportStatusLabel(activeQuestionImport.status)" :type="activeQuestionImport.status === 'ready_to_publish' || activeQuestionImport.status === 'published' ? 'ok' : activeQuestionImport.needs_attention_count ? 'warning' : 'wait'" />
         </article>
         <section class="import-metrics question-import-metrics" aria-label="题库导入摘要">
           <article><span>模板题目</span><strong>{{ activeQuestionImport.row_count }}</strong><small>本次需全部通过</small></article>
-          <article><span>{{ activeQuestionImport.is_validating ? '已认证' : '已通过' }}</span><strong>{{ activeQuestionImport.valid_row_count }}</strong><small>{{ activeQuestionImport.is_validating ? `已处理 ${activeQuestionImport.processed_row_count} / ${activeQuestionImport.row_count}` : '含来源与认证' }}</small></article>
-          <article :class="{ 'has-gap': activeQuestionImport.source_confirmation_count }"><span>待确认来源</span><strong>{{ activeQuestionImport.source_confirmation_count }}</strong><small>可选择原文后重试</small></article>
-          <article :class="{ 'has-gap': activeQuestionImport.content_rejected_count }"><span>内容不合格</span><strong>{{ activeQuestionImport.content_rejected_count }}</strong><small>需修正题目内容</small></article>
-          <article :class="{ 'has-gap': activeQuestionImport.certification_service_error_count }"><span>认证异常</span><strong>{{ activeQuestionImport.certification_service_error_count }}</strong><small>可重新认证</small></article>
+          <article><span>字段有效</span><strong>{{ activeQuestionImport.valid_row_count }}</strong><small>结构、答案、解析与用途有效</small></article>
+          <article :class="{ 'has-gap': activeQuestionImport.template_invalid_count }"><span>字段错误</span><strong>{{ activeQuestionImport.template_invalid_count }}</strong><small>修正后重新上传</small></article>
         </section>
         <p v-if="activeQuestionImport.error_summary" class="document-error">{{ activeQuestionImport.error_summary }}</p>
         <div class="question-preview-toolbar">
-          <div class="segmented" aria-label="题目认证状态">
+          <div class="segmented" aria-label="题目校验状态">
             <button v-for="item in questionImportStatusFilters" :key="item.value" type="button" :class="{ active: questionImportPreview.status === item.value }" @click="questionImportPreview.status = item.value">{{ item.label }} <span>{{ item.count }}</span></button>
           </div>
           <select v-model="questionImportPreview.purpose" class="field"><option value="all">全部用途</option><option value="diagnosis">诊断题</option><option value="graded_quiz">分阶测验</option><option value="mastery_validation">掌握检查</option></select>
@@ -1005,7 +1000,7 @@
         <p class="question-preview-count">显示 {{ filteredQuestionImportRows.length }} / {{ questionImportRows.length }} 题</p>
         <div class="question-import-preview">
           <article v-for="row in filteredQuestionImportRows" :key="row.row_id" class="question-import-card" :class="{ 'has-issue': questionRowIssue(row) }">
-            <header><div><span class="question-import-kicker">{{ questionImportKnowledgeName(row) }}</span><strong>第 {{ row.row_number }} 行 · {{ questionPurposeLabel(row.purpose) }} · {{ questionLevelLabel(row.quiz_level) }}</strong></div><StatusBadge :label="questionRowStatusLabel(row)" :type="questionRowIssue(row) ? 'warning' : row.status === 'pending' ? 'wait' : 'ok'" /></header>
+            <header><div><span class="question-import-kicker">{{ questionImportKnowledgeName(row) }}</span><strong>第 {{ row.row_number }} 行 · {{ questionPurposeLabel(row.purpose) }} · {{ questionLevelLabel(row.quiz_level) }}</strong></div><StatusBadge :label="questionRowStatusLabel(row)" :type="questionRowIssue(row) ? 'warning' : 'ok'" /></header>
             <p class="question-import-meta">{{ questionTypeLabel(row.question_type) }} · 难度 {{ row.difficulty || '--' }}</p>
             <h3>{{ row.stem || '题干尚未填写' }}</h3>
             <ol v-if="row.question_type === 'single_choice'" class="question-option-preview">
@@ -1017,18 +1012,10 @@
               <div><strong>{{ questionRowIssue(row)?.title }}</strong><p>{{ questionRowIssue(row)?.description }}</p></div>
               <small v-if="questionRowIssue(row)?.fields.length">涉及：{{ questionRowIssue(row)?.fields.join('、') }}</small>
             </section>
-            <p v-for="warning in row.warnings" :key="warning" class="question-row-warning">提示：{{ warning }}</p>
-            <div v-if="row.can_confirm_source && row.candidate_sources.length" class="source-confirmation">
-              <select :value="row.source_binding.source_ref_ids?.[0] || row.candidate_sources[0].source_ref_id" @change="sourceQuotes[row.row_id] = String(($event.target as HTMLSelectElement).value)">
-                <option v-for="source in row.candidate_sources" :key="source.source_ref_id" :value="source.source_ref_id">{{ source.source_ref_id }} · 匹配 {{ Math.round(source.score * 100) }}%</option>
-              </select>
-              <textarea v-model="sourceQuotes[`${row.row_id}:quote`]" rows="3" :placeholder="row.candidate_sources[0].excerpt"></textarea>
-              <button class="btn text" :disabled="questionImportActionLoading" @click="confirmQuestionSource(row)">确认来源并重新认证</button>
-            </div>
           </article>
         </div>
       </template>
-      <template #footer><div class="drawer-footer"><template v-if="activeQuestionImport"><button class="btn" :disabled="questionImportActionLoading || activeQuestionImport.is_validating" @click="startNewQuestionImport">导入另一份</button><button class="btn" :disabled="questionImportActionLoading || activeQuestionImport.is_validating" @click="reloadQuestionImport">重新校验</button><button v-if="activeQuestionImport.change_set_id && activeQuestionImport.status === 'published'" class="btn primary" :disabled="questionImportActionLoading" @click="activatePendingChangeSet">一次启用变更</button><button v-else class="btn primary" :disabled="questionImportActionLoading || activeQuestionImport.status !== 'ready_to_publish'" @click="publishImportedQuestions">确认发布</button></template><template v-else><button class="btn" @click="questionImportOpen = false">取消</button><button class="btn" :disabled="questionImportActionLoading" @click="downloadQuestionBankTemplate">重新下载模板</button></template></div></template>
+      <template #footer><div class="drawer-footer"><template v-if="activeQuestionImport"><button class="btn" :disabled="questionImportActionLoading" @click="startNewQuestionImport">导入另一份</button><button class="btn" :disabled="questionImportActionLoading || activeQuestionImport.status === 'published'" @click="reloadQuestionImport">重新校验</button><button v-if="activeQuestionImport.change_set_id && activeQuestionImport.status === 'published'" class="btn primary" :disabled="questionImportActionLoading" @click="activatePendingChangeSet">一次启用变更</button><button v-else class="btn primary" :disabled="questionImportActionLoading || activeQuestionImport.status !== 'ready_to_publish'" @click="publishImportedQuestions">确认发布</button></template><template v-else><button class="btn" @click="questionImportOpen = false">取消</button><button class="btn" :disabled="questionImportActionLoading" @click="downloadQuestionBankTemplate">重新下载模板</button></template></div></template>
     </AppDrawer>
 
     <AppDialog
@@ -1122,7 +1109,6 @@ import {
   type KnowledgeImportSummary,
 } from "@/api/knowledgeImports";
 import {
-  bindQuestionImportSource,
   downloadQuestionTemplate,
   getQuestionImport,
   listQuestionImportRows,
@@ -1179,6 +1165,8 @@ const stats = ref<DomainStats | null>(null),
   documents = ref<KnowledgeDocumentItem[]>([]),
   knowledgeItems = ref<KnowledgeItem[]>([]),
   questionBank = ref<QuestionBankItem[]>([]),
+  questionBankTotal = ref(0),
+  activeQuestionBankTotal = ref(0),
   questionCoverage = ref<QuestionBankResponse["coverage"] | null>(null),
   relations = ref<KnowledgeRelation[]>([]);
 const loading = ref(false),
@@ -1219,8 +1207,7 @@ const questionFilters = reactive<QuestionFilters>({
   purpose: "all",
   level: "all",
   difficulty: "all",
-  certification: "all",
-  status: "all",
+  status: "active",
 });
 const documentFilters = reactive<DocumentFilters>({
   keyword: "",
@@ -1339,7 +1326,6 @@ const deleteDialog = ref<InstanceType<typeof AppDialog> | null>(null),
   deleting = ref(false);
 let pollTimer: number | undefined,
   rebuildPollTimer: number | undefined,
-  questionImportPollTimer: number | undefined,
   highlightTimer: number | undefined,
   loadVersion = 0;
 
@@ -1373,7 +1359,6 @@ const hasQuestionFilters = computed(
     questionFilters.purpose !== "all" ||
     questionFilters.level !== "all" ||
     questionFilters.difficulty !== "all" ||
-    questionFilters.certification !== "all" ||
     questionFilters.status !== "all",
 );
 const filteredDocuments = computed(() =>
@@ -1402,25 +1387,18 @@ const questionImportOpen = ref(false),
   questionImportFile = ref<HTMLInputElement | null>(null),
   activeQuestionImport = ref<QuestionImportRun | null>(null),
   questionImportChangeSetId = ref(""),
-  questionImportRows = ref<QuestionImportRow[]>([]),
-  sourceQuotes = reactive<Record<string, string>>({});
+  questionImportRows = ref<QuestionImportRow[]>([]);
 const questionImportPreview = reactive({ status: "all", purpose: "all", keyword: "" });
 const questionImportStatusFilters = computed(() => [
   { value: "all", label: "全部", count: questionImportRows.value.length },
   { value: "passed", label: "已通过", count: questionImportRows.value.filter((row) => ["valid", "published"].includes(row.status)).length },
-  { value: "source", label: "待确认来源", count: questionImportRows.value.filter((row) => row.issue_kind === "source_confirmation_required").length },
-  { value: "content", label: "内容不合格", count: questionImportRows.value.filter((row) => row.issue_kind === "content_rejected").length },
-  { value: "service", label: "认证异常", count: questionImportRows.value.filter((row) => row.issue_kind === "certification_service_error").length },
-  { value: "pending", label: "认证中", count: questionImportRows.value.filter((row) => row.status === "pending").length },
+  { value: "invalid", label: "字段错误", count: questionImportRows.value.filter((row) => row.status === "template_invalid").length },
 ]);
 const filteredQuestionImportRows = computed(() => {
   const keyword = questionImportPreview.keyword.trim().toLowerCase();
   return questionImportRows.value.filter((row) => {
     if (questionImportPreview.status === "passed" && !["valid", "published"].includes(row.status)) return false;
-    if (questionImportPreview.status === "source" && row.issue_kind !== "source_confirmation_required") return false;
-    if (questionImportPreview.status === "content" && row.issue_kind !== "content_rejected") return false;
-    if (questionImportPreview.status === "service" && row.issue_kind !== "certification_service_error") return false;
-    if (questionImportPreview.status === "pending" && row.status !== "pending") return false;
+    if (questionImportPreview.status === "invalid" && row.status !== "template_invalid") return false;
     if (questionImportPreview.purpose !== "all" && row.purpose !== questionImportPreview.purpose) return false;
     return !keyword || [row.stem, questionImportKnowledgeName(row), row.knowledge_ref].join(" ").toLowerCase().includes(keyword);
   });
@@ -1431,6 +1409,19 @@ const activeChangeSet = computed(() =>
     ["preparing", "ready_for_questions", "questions_preparing", "ready_to_activate"].includes(changeSet.status),
   ) || null,
 );
+const pendingChangeOperationDescription = computed(() => {
+  const changeSet = activeChangeSet.value;
+  if (!changeSet) return "";
+  const stagedCount = stats.value?.staged_knowledge_items || 0;
+  const label = changeSetStatusLabel(changeSet.status);
+  if (changeSet.status === "ready_to_activate") {
+    return `${stagedCount} 个新增知识及其候选索引已准备完成，点击“一次启用变更”后才会切换活动索引。`;
+  }
+  if (["ready_for_questions", "questions_preparing"].includes(changeSet.status)) {
+    return `${stagedCount} 个新增知识不属于当前活动索引；候选索引已准备，当前阶段为“${label}”。`;
+  }
+  return `${stagedCount} 个新增知识正在准备，尚未影响当前活动索引。当前阶段为“${label}”。`;
+});
 const graphView = ref<"active" | "pending">("active");
 const pendingGraph = ref<GraphPreview | null>(null);
 const pendingGraphLoading = ref(false);
@@ -1508,7 +1499,7 @@ const evidenceCapabilityItems = computed(() => {
 });
 const assetViews = computed(() => [
   { id: "items" as const, label: "知识点", count: knowledgeItems.value.length },
-  { id: "questions" as const, label: "题库", count: questionBank.value.length },
+  { id: "questions" as const, label: "题库", count: activeQuestionBankTotal.value },
   {
     id: "documents" as const,
     label: "来源文档",
@@ -1913,7 +1904,7 @@ async function loadDomain() {
       listKnowledgeDocuments(selectedCode.value),
       listKnowledgeRelations(selectedCode.value),
       listKnowledgeItems(selectedCode.value, 500),
-      listQuestionBank(selectedCode.value),
+      listQuestionBank(selectedCode.value, "active"),
       getDomainReadiness(selectedCode.value),
       listDomainChangeSets(selectedCode.value),
     ]);
@@ -1923,6 +1914,8 @@ async function loadDomain() {
     relations.value = r;
     knowledgeItems.value = i.items;
     questionBank.value = q.items;
+    questionBankTotal.value = q.total;
+    activeQuestionBankTotal.value = q.total;
     questionCoverage.value = q.coverage;
     validationResult.value = validation;
     domainChangeSets.value = changeSets;
@@ -1985,8 +1978,27 @@ function clearQuestionFilters() {
   questionFilters.purpose = "all";
   questionFilters.level = "all";
   questionFilters.difficulty = "all";
-  questionFilters.certification = "all";
-  questionFilters.status = "all";
+  const statusChanged = questionFilters.status !== "active";
+  questionFilters.status = "active";
+  if (statusChanged) void loadQuestionBankForStatus();
+}
+
+let questionBankLoadVersion = 0;
+async function loadQuestionBankForStatus() {
+  const requestVersion = ++questionBankLoadVersion;
+  const status = questionFilters.status === "all" ? undefined : questionFilters.status;
+  try {
+    const result = await listQuestionBank(selectedCode.value, status);
+    if (requestVersion !== questionBankLoadVersion) return;
+    questionBank.value = result.items;
+    questionBankTotal.value = result.total;
+    questionCoverage.value = result.coverage;
+    if (status === "active") activeQuestionBankTotal.value = result.total;
+  } catch {
+    if (requestVersion === questionBankLoadVersion) {
+      showToast("题库列表加载失败，请稍后重试", "error");
+    }
+  }
 }
 function clearDocumentFilters() {
   documentFilters.keyword = "";
@@ -2247,11 +2259,8 @@ function questionPoolLabel(question: QuestionBankItem) {
   if (question.question_bank_uses.includes('graded_quiz')) return '分阶测验题'
   return '掌握检查题'
 }
-const certifiedQuestionCount = computed(
-  () => questionBank.value.filter((item) => item.certification_status === "certified").length,
-);
-function certificationStatusLabel(status: QuestionBankItem["certification_status"]) {
-  return { pending: "待认证", certified: "已认证", rejected: "已拒绝", stale: "已失效" }[status];
+function questionStatusLabel(status: QuestionBankItem["status"]) {
+  return { active: "启用", staged: "待启用", stale: "待替换", disabled: "已停用" }[status];
 }
 async function disableBankQuestion(question: QuestionBankItem) {
   const reason = window.prompt("请输入停用原因（停用后该知识点需要补齐对应槽位）", "题目质量不符合要求");
@@ -2298,42 +2307,14 @@ function startNewQuestionImport() {
   questionImportPreview.purpose = "all";
   questionImportPreview.keyword = "";
 }
-function stopQuestionImportPolling() {
-  if (questionImportPollTimer !== undefined) {
-    window.clearTimeout(questionImportPollTimer);
-    questionImportPollTimer = undefined;
-  }
-}
-function scheduleQuestionImportPolling() {
-  stopQuestionImportPolling();
-  if (activeQuestionImport.value?.is_validating) {
-    questionImportPollTimer = window.setTimeout(pollQuestionImport, 1500);
-  }
-}
-async function pollQuestionImport() {
-  const runId = activeQuestionImport.value?.run_id;
-  if (!runId) return;
-  try {
-    const run = await getQuestionImport(runId);
-    if (activeQuestionImport.value?.run_id !== runId) return;
-    await loadQuestionImport(run, true);
-  } catch {
-    scheduleQuestionImportPolling();
-  }
-}
 async function loadQuestionImport(run: QuestionImportRun, silent = false) {
   if (!silent) questionImportLoading.value = true;
   activeQuestionImport.value = run;
   try {
     questionImportRows.value = await listQuestionImportRows(run.run_id);
-    for (const row of questionImportRows.value) {
-      const source = row.candidate_sources[0];
-      if (source) sourceQuotes[row.row_id] ||= source.source_ref_id;
-    }
     questionImportOpen.value = true;
   } finally {
     if (!silent) questionImportLoading.value = false;
-    scheduleQuestionImportPolling();
   }
 }
 async function handleQuestionImportFile(event: Event) {
@@ -2347,7 +2328,7 @@ async function handleQuestionImportFile(event: Event) {
       questionImportChangeSetId.value || undefined,
     );
     await loadQuestionImport(run);
-    showToast("题库已接收，正在后台逐题认证");
+    showToast("题库已完成字段校验");
   } catch (error: any) {
     showToast(questionImportErrorMessage(error, "题库导入失败"), "error");
   } finally {
@@ -2364,25 +2345,6 @@ async function reloadQuestionImport() {
     showToast("题库已重新校验");
   } catch (error: any) {
     showToast(questionImportErrorMessage(error, "重新校验失败"), "error");
-  } finally {
-    questionImportActionLoading.value = false;
-  }
-}
-async function confirmQuestionSource(row: QuestionImportRow) {
-  if (!activeQuestionImport.value) return;
-  const sourceRefId = sourceQuotes[row.row_id] || row.candidate_sources[0]?.source_ref_id;
-  const quote = sourceQuotes[`${row.row_id}:quote`]?.trim();
-  if (!sourceRefId || !quote) {
-    showToast("请选择来源并填写支持答案的原文片段", "error");
-    return;
-  }
-  questionImportActionLoading.value = true;
-  try {
-    await bindQuestionImportSource(activeQuestionImport.value.run_id, row.row_id, sourceRefId, quote);
-    const run = await getQuestionImport(activeQuestionImport.value.run_id);
-    await loadQuestionImport(run);
-  } catch (error: any) {
-    showToast(questionImportErrorMessage(error, "来源确认失败"), "error");
   } finally {
     questionImportActionLoading.value = false;
   }
@@ -2671,11 +2633,11 @@ function changeSetStatusLabel(status: DomainChangeSet["status"]) {
 }
 function questionImportStatusLabel(status: QuestionImportRun["status"]) {
   return {
-    validating: "正在认证",
     uploaded: "已接收",
     needs_attention: "待处理",
     ready_to_publish: "可发布",
     published: "已发布",
+    cancelled: "已取消",
   }[status];
 }
 function questionImportErrorMessage(error: any, fallback: string) {
@@ -2688,7 +2650,7 @@ function questionImportErrorMessage(error: any, fallback: string) {
     QUESTION_TEMPLATE_KNOWLEDGE_SCOPE_INVALID: "模板中的知识点范围已变化，请重新下载模板",
     QUESTION_IMPORT_FILE_EMPTY: "上传文件为空",
     QUESTION_IMPORT_FILE_TOO_LARGE: "题库文件不能超过 20MB",
-    QUESTION_IMPORT_NOT_READY_TO_PUBLISH: "题库仍在认证或存在待处理题目，暂不能发布",
+    QUESTION_IMPORT_NOT_READY_TO_PUBLISH: "题库存在字段错误或尚未完成校验，暂不能发布",
     QUESTION_IMPORT_ALREADY_PUBLISHED: "该题库已发布，无需重复校验",
   };
   return messages[code] || code || fallback;
@@ -2719,22 +2681,11 @@ function questionAnswerDisplay(row: QuestionImportRow) {
   return String(row.answer || "未填写");
 }
 function questionRowStatusLabel(row: QuestionImportRow) {
-  if (row.status === "pending") return "认证中";
   if (["valid", "published"].includes(row.status)) return "已通过";
   return questionRowIssue(row)?.title || "待处理";
 }
 function questionRowIssue(row: QuestionImportRow) {
-  const fields = row.issue_fields.map((field) => ({ stem: "题干", options: "选项", answer: "答案", explanation: "解析", rubric: "评分点", difficulty: "难度", source: "来源" }[field] || field));
-  if (row.issue_kind === "source_confirmation_required") {
-    return { title: "待确认来源", description: "系统找到了候选知识片段，但自动匹配的可信度不足。请选择支持答案的原文片段后重新认证。", fields: ["来源引用"] };
-  }
-  if (row.issue_kind === "certification_service_error") {
-    return { title: "认证服务异常", description: row.issue_reason || "认证模型连续返回无效结构或服务暂时不可用，可重新认证；该题不会被发布。", fields: fields.length ? fields : ["认证结论"] };
-  }
-  if (row.issue_kind === "content_rejected") {
-    return { title: "内容认证未通过", description: row.issue_reason || "题目存在答案不唯一、来源不足、歧义或解析不一致，请修正后重新上传。", fields: fields.length ? fields : ["题目内容"] };
-  }
-  if (row.issue_kind === "template_invalid") {
+  if (row.status === "template_invalid") {
     return { title: "字段校验未通过", description: "模板中的必填字段或预填元数据不符合导入规则，请修正对应字段后重新上传。", fields: row.validation_errors };
   }
   return null;
@@ -2789,7 +2740,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   stopPolling();
   stopRebuildPolling();
-  stopQuestionImportPolling();
   if (highlightTimer) window.clearTimeout(highlightTimer);
 });
 </script>
@@ -3425,6 +3375,9 @@ onBeforeUnmount(() => {
 .operation-focus.info { background: var(--blue2); }
 .operation-focus h3 { font-size: 14px; }
 .operation-focus .section-head p { max-width: 650px; }
+.operation-change-set { display: flex; align-items: center; justify-content: space-between; gap: 16px; border: 1px solid var(--blue); border-radius: 8px; background: var(--blue2); padding: 14px; }
+.operation-change-set strong { display: block; color: var(--blue); font-size: 13px; }
+.operation-change-set p { max-width: 720px; margin: 5px 0 0; color: var(--body); font-size: 11px; line-height: 1.55; }
 .validation-details { border-top: 1px solid var(--line); padding-top: 2px; }
 .operation-stats {
   display: grid;
@@ -3929,6 +3882,7 @@ onBeforeUnmount(() => {
   .operation-steps.compact li { grid-template-columns: 24px 1fr; }
   .operation-normal { align-items: flex-start; flex-direction: column; }
   .operation-focus .section-head { align-items: flex-start; flex-direction: column; }
+  .operation-change-set { align-items: flex-start; flex-direction: column; }
   .operation-focus .section-head .btn { width: 100%; }
   .table-actions {
     width: auto;

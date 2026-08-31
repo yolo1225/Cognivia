@@ -58,7 +58,6 @@ from app.agents.review_agent import (
     build_review_resource_output,
     extract_atomic_claims,
 )
-from app.services.question_bank_service import selected_graded_quiz_source_ref_ids
 from app.agents.tutoring_agent import TutoringAgent
 
 
@@ -178,16 +177,10 @@ def _partial_generation_input(
 ) -> GenerateResourceInput:
     requirements = _partial_requirements(node_input.requirements, resource_types)
     target_ids = set(requirements.required_knowledge_ids)
-    partial_input = node_input.model_copy(update={"requirements": requirements})
-    quiz_source_ids = (
-        set(selected_graded_quiz_source_ref_ids(partial_input))
-        if ResourceType.GRADED_QUIZ in resource_types
-        else set()
-    )
     chunks = [
         chunk
         for chunk in node_input.retrieved_chunks
-        if chunk.knowledge_id in target_ids or chunk.source.source_ref_id in quiz_source_ids
+        if chunk.knowledge_id in target_ids
     ]
     source_ids = [chunk.source.source_ref_id for chunk in chunks]
     requirements = requirements.model_copy(update={"source_whitelist": source_ids})

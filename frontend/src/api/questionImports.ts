@@ -10,16 +10,11 @@ export interface QuestionImportRun {
   knowledge_scope: string[]
   change_set_id: string | null
   original_name: string
-  status: 'validating' | 'uploaded' | 'needs_attention' | 'ready_to_publish' | 'published'
+  status: 'uploaded' | 'needs_attention' | 'ready_to_publish' | 'published' | 'cancelled'
   error_summary: string | null
   row_count: number
   valid_row_count: number
-  processed_row_count: number
-  is_validating: boolean
   needs_attention_count: number
-  source_confirmation_count: number
-  content_rejected_count: number
-  certification_service_error_count: number
   template_invalid_count: number
   published_at: string | null
 }
@@ -39,16 +34,8 @@ export interface QuestionImportRow {
   rubric: string[]
   purpose: string | null
   quiz_level: string | null
-  candidate_sources: Array<{ source_ref_id: string; source_locator: string; excerpt: string; score: number }>
-  source_binding: { source_ref_ids?: string[]; quotes?: Record<string, string> }
-  certification_report: Record<string, unknown>
   status: string
   validation_errors: string[]
-  issue_kind: 'source_confirmation_required' | 'content_rejected' | 'certification_service_error' | 'template_invalid' | null
-  issue_fields: string[]
-  issue_reason: string
-  warnings: string[]
-  can_confirm_source: boolean
 }
 
 export async function downloadQuestionTemplate(
@@ -78,14 +65,6 @@ export async function getQuestionImport(runId: string) {
 export async function listQuestionImportRows(runId: string) {
   const response = await apiClient.get<ApiResponse<{ run_id: string; rows: QuestionImportRow[] }>>(`/question-imports/${runId}/rows`)
   return response.data.data.rows
-}
-
-export async function bindQuestionImportSource(runId: string, rowId: string, sourceRefId: string, quote: string) {
-  const response = await apiClient.patch<ApiResponse<QuestionImportRow>>(
-    `/question-imports/${runId}/rows/${rowId}/source-binding`,
-    { source_ref_ids: [sourceRefId], quotes: { [sourceRefId]: quote } },
-  )
-  return response.data.data
 }
 
 export async function validateQuestionImport(runId: string) {

@@ -216,9 +216,6 @@ def test_verified_server_evidence_completes_and_unlocks_next_node() -> None:
         answer_key_json={},
         difficulty=2,
         status="active",
-        certification_status="certified",
-        certification_rule_version="question-cert-v1",
-        source_content_hash="sha256:" + "1" * 64,
     )
     db.add(question)
     db.flush()
@@ -319,9 +316,6 @@ def test_prerequisites_keep_nodes_locked_and_choose_first_successor() -> None:
         answer_key_json={"correct_option": 0},
         difficulty=2,
         status="active",
-        certification_status="certified",
-        certification_rule_version="question-cert-v1",
-        source_content_hash="sha256:" + "2" * 64,
     )
     db.add(question)
     db.flush()

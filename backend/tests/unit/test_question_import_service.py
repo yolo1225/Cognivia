@@ -1,7 +1,6 @@
 from io import BytesIO
 
 from openpyxl import load_workbook
-import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -23,31 +22,6 @@ from app.services.question_import_service import (
     publish_import_run,
     validate_import_run,
 )
-from app.services.question_certification_service import QuestionCertificationResult
-
-
-@pytest.fixture(autouse=True)
-def _successful_certification(monkeypatch):
-    def certify(questions, **kwargs):
-        results = {
-            question_id: QuestionCertificationResult(
-                question_id=question_id,
-                issue_kind="valid",
-                report={"rule_version": "question-cert-v2", "warnings": []},
-            )
-            for question_id, _payload in questions
-        }
-        if kwargs.get("on_batch_complete"):
-            kwargs["on_batch_complete"](results)
-        return results
-
-    monkeypatch.setattr(
-        question_import_service,
-        "certify_question_payloads",
-        certify,
-    )
-
-
 def _session():
     engine = create_engine("sqlite+pysqlite:///:memory:", poolclass=StaticPool)
     Base.metadata.create_all(engine)
@@ -127,7 +101,7 @@ def test_question_import_can_persist_row_level_validation_progress(monkeypatch) 
         created_by="tester",
         validate_immediately=False,
     )
-    assert run.status == "validating"
+    assert run.status == "needs_attention"
     assert run.valid_row_count == 0
 
     result = validate_import_run(db, run, commit_progress=True)
@@ -237,7 +211,7 @@ def test_question_import_replaces_stale_questions_without_overwriting_history(mo
     )
     publish_import_run(db, first)
     for question in db.scalars(select(DiagnosticQuestion)):
-        question.certification_status = "stale"
+        question.status = "stale"
     db.commit()
 
     replacement_template, _fingerprint, slot_count = build_question_template(db, "question_replace")

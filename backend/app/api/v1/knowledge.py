@@ -15,8 +15,8 @@ from app.schemas.common import ApiResponse, ok
 from app.services import candidate_index_job
 from app.services.domain_api_service import default_ability_weights, mark_domain_preparing
 from app.services.question_bank_service import question_bank_coverage
-from app.services.question_certification_service import mark_question_certifications_stale
 from app.services.knowledge_update_service import (
+    mark_affected_questions_stale,
     mark_affected_content,
     related_knowledge_ids,
     replace_item_relations,
@@ -31,7 +31,6 @@ class QuestionDisableRequest(BaseModel):
 
 def _serialize_question(question: DiagnosticQuestion, item: KnowledgeItem) -> dict[str, Any]:
     answer_key = dict(question.answer_key_json or {})
-    certification_report = dict(question.certification_report_json or {})
     return {
         "question_id": question.public_id,
         "domain_code": question.domain_code,
@@ -48,19 +47,8 @@ def _serialize_question(question: DiagnosticQuestion, item: KnowledgeItem) -> di
         "options": list(question.options_json or []),
         "answer": answer_key.get("correct_option", answer_key.get("answer")),
         "explanation": answer_key.get("explanation"),
-        "source_ref_ids": list(answer_key.get("source_ref_ids") or []),
-        "source_quote": answer_key.get("source_quote"),
-        "evidence_quotes": list(answer_key.get("evidence_quotes") or []),
         "difficulty": question.difficulty,
         "status": question.status,
-        "certification_status": question.certification_status,
-        "certification_rule_version": question.certification_rule_version,
-        "certified_at": question.certified_at,
-        "certification_summary": {
-            "deterministic_passed": certification_report.get("deterministic_passed"),
-            "failed_fields": list(certification_report.get("failed_fields") or []),
-            "source_content_hash": question.source_content_hash,
-        },
         "disabled_at": question.disabled_at,
         "disabled_reason": question.disabled_reason,
     }
@@ -72,10 +60,7 @@ def list_question_bank(
     knowledge_id: str | None = Query(default=None),
     question_type: str | None = Query(default=None),
     quiz_level: str | None = Query(default=None),
-    status: str | None = Query(default=None, pattern="^(active|disabled)$"),
-    certification_status: str | None = Query(
-        default=None, pattern="^(pending|certified|rejected|stale)$"
-    ),
+    status: str | None = Query(default=None, pattern="^(active|staged|stale|disabled)$"),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -87,10 +72,6 @@ def list_question_bank(
         filters.append(DiagnosticQuestion.question_type == question_type)
     if status:
         filters.append(DiagnosticQuestion.status == status)
-    if certification_status:
-        filters.append(
-            DiagnosticQuestion.certification_status == certification_status
-        )
     rows = list(
         db.execute(
             select(DiagnosticQuestion, KnowledgeItem)
@@ -397,7 +378,7 @@ def update_knowledge_item(
     item.needs_reembedding = True
     db.flush()
     affected_ids.update(related_knowledge_ids(db, item))
-    mark_question_certifications_stale(
+    mark_affected_questions_stale(
         db,
         domain_code=item.domain_code,
         knowledge_ids={item.public_id},

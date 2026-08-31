@@ -31,7 +31,11 @@ export interface DomainStats {
   knowledge_items: number;
   diagnostic_questions: number;
   knowledge_relations: number;
+  /** Pending embeddings in the active, published Candidate index only. */
   pending_embeddings: number;
+  /** Staged change-set records are reported separately and never block the active index. */
+  staged_knowledge_items: number;
+  staged_pending_embeddings: number;
   knowledge_documents: number;
   ready_documents: number;
   failed_documents: number;
@@ -64,6 +68,13 @@ export interface DomainValidationResult {
   rag_ready: boolean;
   generation_ready: boolean;
   runtime_reasons?: string[];
+  diagnostic_inventory?: {
+    eligible_count: number;
+    minimum_required: number;
+    ready: boolean;
+    by_question_type: Record<string, number>;
+    reason?: string | null;
+  };
   evidence_coverage?: {
     total_items: number;
     capabilities: Record<

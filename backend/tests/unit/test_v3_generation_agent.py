@@ -414,7 +414,7 @@ def test_formal_question_bank_does_not_mix_unrelated_knowledge() -> None:
     assert all(question.knowledge_id != "FOREIGN-K001" for _, _, question in selected)
 
 
-def test_formal_question_with_declared_locator_cannot_fall_back_to_other_chunk() -> None:
+def test_formal_question_ignores_historical_locator_and_uses_current_chunk() -> None:
     request = _with_formal_question_bank(
         initial_generation_flow_example()["generate_resource"]["input"]
     )
@@ -430,14 +430,14 @@ def test_formal_question_with_declared_locator_cannot_fall_back_to_other_chunk()
         update={"reference_questions": [first, *request.reference_questions[1:]]}
     )
 
-    with pytest.raises(QuestionBankError, match="graded_quiz_question_source_missing"):
-        build_graded_quiz_from_question_bank(
-            request,
-            [chunk.source for chunk in request.retrieved_chunks],
-        )
+    content = build_graded_quiz_from_question_bank(
+        request,
+        [chunk.source for chunk in request.retrieved_chunks],
+    )
+    assert content.questions[0].source_ref_ids
 
 
-def test_quiz_only_revision_preserves_selected_related_question_source() -> None:
+def test_quiz_only_revision_uses_current_related_chunk_when_whitelisted() -> None:
     request = _with_formal_question_bank(
         initial_generation_flow_example()["generate_resource"]["input"]
     )
@@ -481,7 +481,7 @@ def test_quiz_only_revision_preserves_selected_related_question_source() -> None
 
     partial = _partial_generation_input(request, [ResourceType.GRADED_QUIZ])
 
-    assert related_source_id in partial.requirements.source_whitelist
+    assert related_source_id not in partial.requirements.source_whitelist
     content = build_graded_quiz_from_question_bank(
         partial, [chunk.source for chunk in partial.retrieved_chunks]
     )

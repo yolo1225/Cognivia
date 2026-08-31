@@ -22,7 +22,6 @@ from app.services.knowledge_import_publish_service import (
     KnowledgeImportPublishError,
     activate_import_candidate,
     approve_candidates,
-    ensure_import_source_locators,
     publish_approved,
     smoke_domain_index,
     smoke_import_index,
@@ -404,7 +403,6 @@ def build_index(
     )
     if document.status != "index_pending" and not failed_retry:
         raise HTTPException(status_code=409, detail="导入尚未批准或已进入其他阶段")
-    ensure_import_source_locators(db, document)
     job = candidate_index_job.try_start(
         db,
         document.domain_code,

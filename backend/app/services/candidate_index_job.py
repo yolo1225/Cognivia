@@ -166,13 +166,6 @@ def run_rebuild(job_id: int, domain_code: str, *, reset: bool = False) -> None:
     result: dict[str, Any] | None = None
     activated = False
     try:
-        from app.services.question_source_binding_service import (
-            bind_domain_question_sources,
-        )
-
-        with SessionLocal() as db:
-            bind_domain_question_sources(db, domain_code=domain_code)
-            db.commit()
         result = _build(domain_code, reset=reset)
         with SessionLocal() as db:
             from app.services.knowledge_import_publish_service import smoke_domain_index

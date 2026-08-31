@@ -22,7 +22,11 @@ router = APIRouter()
 
 def _raise(exc: ValueError) -> HTTPException:
     code = str(exc).upper()
-    return HTTPException(404 if code.endswith("NOT_FOUND") else 409, code)
+    messages = {
+        "MISTAKE_REVIEW_ITEM_RETIRED": "原题已停用，无法继续错题巩固；请使用当前题库完成补测。",
+        "CONSOLIDATION_QUESTION_RETIRED": "原题已停用，无法继续错题巩固；请使用当前题库完成补测。",
+    }
+    return HTTPException(404 if code.endswith("NOT_FOUND") else 409, messages.get(code, code))
 
 
 def _learner(

@@ -168,7 +168,6 @@ export type QuestionFilters = {
   purpose: "all" | QuestionBankItem["question_bank_uses"][number];
   level: "all" | QuestionBankItem["quiz_level"];
   difficulty: "all" | string;
-  certification: "all" | QuestionBankItem["certification_status"];
   status: "all" | QuestionBankItem["status"];
 };
 
@@ -178,7 +177,7 @@ export function filterQuestionBank(
 ) {
   const keyword = filters.keyword.trim().toLocaleLowerCase("zh-CN");
   return items.filter((item) => {
-    const text = `${item.knowledge_name} ${item.stem} ${item.source_ref_ids.join(" ")}`.toLocaleLowerCase(
+    const text = `${item.knowledge_name} ${item.stem}`.toLocaleLowerCase(
       "zh-CN",
     );
     return (
@@ -188,8 +187,6 @@ export function filterQuestionBank(
       (filters.level === "all" || item.quiz_level === filters.level) &&
       (filters.difficulty === "all" ||
         item.difficulty === Number(filters.difficulty)) &&
-      (filters.certification === "all" ||
-        item.certification_status === filters.certification) &&
       (filters.status === "all" || item.status === filters.status)
     );
   });

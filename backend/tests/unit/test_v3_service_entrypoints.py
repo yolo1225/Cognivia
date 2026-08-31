@@ -45,9 +45,6 @@ def certified_question(**values) -> DiagnosticQuestion:
     values["answer_key_json"] = answer_key
     return DiagnosticQuestion(
         status="active",
-        certification_status="certified",
-        certification_rule_version="question-cert-v1",
-        source_content_hash="sha256:" + "a" * 64,
         **values,
     )
 

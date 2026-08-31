@@ -236,7 +236,6 @@ def delete_document(db: Session, document: KnowledgeDocument) -> dict[str, objec
         )
         for question in retired_questions:
             question.status = "disabled"
-            question.certification_status = "stale"
             question.disabled_at = datetime.now(UTC).replace(tzinfo=None)
             question.disabled_reason = "知识来源已撤回"
         for item in items:

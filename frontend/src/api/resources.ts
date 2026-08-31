@@ -114,7 +114,7 @@ export interface ResourceQualityMetrics {
 export interface ResourceQuizAttempt {
   attempt_id: string
   resource_version: number
-  status: 'in_progress' | 'completed'
+  status: 'in_progress' | 'completed' | 'invalidated'
   current_question_id?: string | null
   answers: Record<string, {
     answer: string | string[]
@@ -126,6 +126,9 @@ export interface ResourceQuizAttempt {
   objective_correct: number
   objective_total: number
   completed_at?: string | null
+  requires_regeneration?: boolean
+  invalidation_reason?: string | null
+  invalidation_message?: string | null
   evidence_result?: {
     materialized_count: number
     evidence_ids: string[]

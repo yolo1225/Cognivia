@@ -68,9 +68,6 @@ def _seed(factory: sessionmaker[Session]) -> list[dict[str, str | int]]:
                 answer_key_json={"correct_option": 0} if index < 6 else {"rubric": ["要点"]},
                 difficulty=2,
                 status="active",
-                certification_status="certified",
-                certification_rule_version="question-cert-v1",
-                source_content_hash="sha256:" + "a" * 64,
             )
             db.add(question)
             question_ids.append(question.public_id)

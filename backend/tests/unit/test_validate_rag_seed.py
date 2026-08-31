@@ -6,7 +6,6 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models import Base, DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.scripts.seed_data import seed_diagnostic_questions, seed_knowledge_items
-from app.services.question_source_binding_service import bind_domain_question_sources
 from app.scripts.validate_rag_seed import (
     RETIRED_KNOWLEDGE_IDS,
     SeedValidationError,
@@ -83,11 +82,10 @@ def test_validated_seed_loads_through_existing_database_seed_path() -> None:
             .select_from(DiagnosticQuestion)
             .where(DiagnosticQuestion.question_type == "short_answer")
         ) == 14
-        assert bind_domain_question_sources(db, domain_code="ai_app_dev") == 0
         assert db.scalar(
             select(func.count())
             .select_from(DiagnosticQuestion)
-            .where(DiagnosticQuestion.certification_status == "certified")
+            .where(DiagnosticQuestion.status == "active")
         ) == 315
         purpose_counts: dict[str, int] = {}
         for answer_key in db.scalars(select(DiagnosticQuestion.answer_key_json)):

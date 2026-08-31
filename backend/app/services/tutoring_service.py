@@ -409,6 +409,8 @@ def add_learner_message(
         )
     model_calls = collector.snapshot()
     output = output_model.model_dump(mode="json")
+    answer_basis = agent.last_answer_basis
+    provider_fallback = agent.last_semantic_status == "fallback"
     action = output_model.recommended_action.value
     all_evidence = [
         *[item.model_dump(mode="json") for item in output_model.evidence],
@@ -422,7 +424,11 @@ def add_learner_message(
     feedback.decision_reason = output_model.decision_reason
     feedback.evidence_status = (
         "eligible"
-        if output_model.feedback_intent.value in {"too_easy", "too_hard"}
+        if (
+            output_model.feedback_intent.value in {"too_easy", "too_hard"}
+            and answer_basis not in {"general_knowledge_fallback", "knowledge_conflict"}
+            and not provider_fallback
+        )
         else "supporting_only"
     )
     db.flush()
@@ -434,6 +440,7 @@ def add_learner_message(
         "needs_generation": output_model.needs_generation,
         "evidence_count": len(all_evidence),
         "provider_mode": model_calls[0]["provider_mode"] if model_calls else "fallback",
+        "answer_basis": answer_basis,
         "model_calls": model_calls,
     }
     run.llm_calls = len(model_calls)
@@ -455,10 +462,19 @@ def add_learner_message(
             "needs_generation": output_model.needs_generation,
         },
     )
+    scope_status = (
+        "provider_fallback"
+        if provider_fallback
+        else answer_basis
+    )
     contextual_answer = TutoringAnswer(
         answer=output_model.reply,
-        sources=tutoring_sources,
-        scope_status=tutoring_scope,
+        sources=(
+            []
+            if scope_status in {"general_knowledge_fallback", "provider_fallback"}
+            else tutoring_sources
+        ),
+        scope_status=scope_status,
         assessment=None,
     )
     output["reply"] = contextual_answer.answer
@@ -477,12 +493,13 @@ def add_learner_message(
         }.get(output_model.feedback_intent.value, "本轮未形成可用于画像判断的证据")
     )
     try:
-        assessment = maybe_create_automatic_assessment(
-            db,
-            session=session,
-            profile=profile,
-            resource=resource,
-        )
+        if scope_status not in {"general_knowledge_fallback", "provider_fallback", "knowledge_conflict"}:
+            assessment = maybe_create_automatic_assessment(
+                db,
+                session=session,
+                profile=profile,
+                resource=resource,
+            )
     except ValueError as exc:
         if str(exc) in {
             "learning_adjustment_assessment_unavailable",

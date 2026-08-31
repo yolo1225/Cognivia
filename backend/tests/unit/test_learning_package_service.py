@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.api.v1 import learning_packages as learning_packages_api
+from app.agents.contracts import QUALITY_RULE_VERSION
 from app.core.security import Principal
 from app.models import (
     Base,
@@ -43,8 +44,8 @@ def _report(resource: LearningResource, task: GenerationTask) -> ReviewReport:
         passed=True,
         quality_passed=True,
         decision="passed",
-        review_rule_version="quality-v6-20260818",
-        quality_rule_version="quality-v6-20260818",
+        review_rule_version=QUALITY_RULE_VERSION,
+        quality_rule_version=QUALITY_RULE_VERSION,
         verifiable_claim_count=10,
         evaluated_claim_count=10,
         contradicted_claim_count=0,
@@ -85,7 +86,7 @@ def _package_fixture(
         learning_goal="[[evaluation_case:V4-EVAL-041]] 反馈任务目标继承验证",
         resource_types_json=list(resource_types),
         is_current_package=True,
-        package_quality_json={"quality_rule_version": "quality-v6-20260818"},
+        package_quality_json={"quality_rule_version": QUALITY_RULE_VERSION},
     )
     db.add(source_task)
     db.flush()
@@ -301,11 +302,13 @@ def test_partial_refresh_composes_new_package_with_inherited_resource() -> None:
         assert refresh_task.package_coverage_json["primary_owner"] == {
             "knowledge_lecture": "lecture",
             "knowledge_practice_guide": "practice_guide",
+            "knowledge_graded_quiz": "graded_quiz",
         }
-        assert refresh_task.package_coverage_json["required_knowledge_ids"] == [
+        assert set(refresh_task.package_coverage_json["required_knowledge_ids"]) == {
             "knowledge_lecture",
             "knowledge_practice_guide",
-        ]
+            "knowledge_graded_quiz",
+        }
 
 
 def test_package_quality_uses_teaching_resource_coverage_union() -> None:

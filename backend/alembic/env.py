@@ -16,10 +16,30 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def include_object(object_, name, type_, reflected, compare_to):
+    """Ignore legacy MySQL identity-index aliases during schema comparison.
+
+    Early migrations created a unique constraint plus a separately named index
+    for these identity columns. SQLAlchemy 2 represents ``unique=True,
+    index=True`` as a single unique index, while MySQL reflects the historical
+    pair as two indexes. Their names differ but their lookup guarantees do not.
+    Other indexes and every column, constraint and foreign key remain checked.
+    """
+
+    if type_ != "index":
+        return True
+    columns = tuple(column.name for column in object_.columns)
+    return not (
+        len(columns) == 1
+        and columns[0] in {"public_id", "domain_code", "task_id", "username", "role"}
+    )
+
+
 def run_migrations_offline() -> None:
     context.configure(
         url=settings.database_url,
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -36,7 +56,11 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
+        )
 
         with context.begin_transaction():
             context.run_migrations()
