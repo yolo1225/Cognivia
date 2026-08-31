@@ -16,11 +16,13 @@ from app.agents.contracts import (
     RetrievedQuestion,
     ResourceType,
     RevisionPlan,
+    SourceRef,
 )
 from app.agents.generation_agent import (
     GeneratedContentResponse,
     ContentGenerationAgent,
     GenerationError,
+    LectureGenerationResponse,
     RevisionFieldPatch,
     RevisionPatchResponse,
     _apply_revision_patches,
@@ -315,6 +317,61 @@ def _input() -> GenerateResourceInput:
         }
     )
     return request.model_copy(update={"requirements": requirements})
+
+
+def test_fixture_caps_per_field_sources_to_the_contract_limit() -> None:
+    request = _input()
+    template_chunk = request.retrieved_chunks[0]
+    chunks = [
+        template_chunk.model_copy(
+            update={
+                "source": template_chunk.source.model_copy(
+                    update={"source_ref_id": f"fixture-source-{index}"}
+                )
+            }
+        )
+        for index in range(11)
+    ]
+    source_ids = [chunk.source.source_ref_id for chunk in chunks]
+    requirements = request.requirements.model_copy(
+        update={"source_whitelist": source_ids}
+    )
+    expanded = request.model_copy(
+        update={"retrieved_chunks": chunks, "requirements": requirements}
+    )
+
+    response = _fixture_response(
+        expanded, ResourceType.LECTURE, [chunk.source for chunk in chunks]
+    )
+
+    assert isinstance(response.structured_content, LectureContent)
+    assert response.structured_content.core_concepts[0].source_ref_ids == source_ids[:10]
+
+
+def test_live_generation_response_caps_overlong_source_reference_lists() -> None:
+    source_ids = [f"model-source-{index}" for index in range(11)]
+
+    response = LectureGenerationResponse.model_validate(
+        {
+            "difficulty": 3,
+            "structured_content": {
+                "resource_type": "lecture",
+                "title": "来源上限测试",
+                "target_audience": "beginner",
+                "learning_objectives": ["理解来源引用上限"],
+                "core_concepts": [
+                    {
+                        "title": "引用范围",
+                        "explanation": "单个概念字段只保留契约允许数量的来源。",
+                        "source_ref_ids": source_ids,
+                    }
+                ],
+                "summary": "超出字段上限的引用会在结构解析前归一化。",
+            },
+        }
+    )
+
+    assert response.structured_content.core_concepts[0].source_ref_ids == source_ids[:10]
 
 
 def _with_formal_question_bank(request: GenerateResourceInput) -> GenerateResourceInput:
@@ -1043,10 +1100,38 @@ def test_revision_patch_sanitizer_keeps_valid_fields_and_truncates_expansion() -
     assert rejected == ["title"]
     assert sanitized.patches == [
         RevisionFieldPatch(
-            path="steps[0].expected_result",
+            path="steps[0].expected_result[0]",
             value="保留第一项受控结论。",
         )
     ]
+
+
+def test_atomic_revision_patch_replaces_only_the_target_sentence() -> None:
+    request = _input()
+    source = request.retrieved_chunks[0].source
+    original = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
+    content = original.structured_content.model_copy(deep=True)
+    assert isinstance(content, PracticeGuideContent)
+    content.steps[0].instruction = "保留来源支持的前提。删除无依据的实施建议。"
+    original = original.model_copy(update={"structured_content": content})
+
+    revised = _apply_revision_patches(
+        original,
+        RevisionPatchResponse(
+            patches=[
+                RevisionFieldPatch(
+                    path="steps[0].instruction[1]",
+                    value="依据引用材料记录核验结论。",
+                )
+            ]
+        ),
+        ["steps[0].instruction[1]"],
+    )
+
+    assert isinstance(revised.structured_content, PracticeGuideContent)
+    assert revised.structured_content.steps[0].instruction == (
+        "保留来源支持的前提。依据引用材料记录核验结论。"
+    )
 
 
 def test_revision_merge_rejects_expanded_claim_surface() -> None:
@@ -1399,6 +1484,87 @@ def test_generation_agent_accepts_pedagogical_revision_without_field_capability(
     revised = output.resources[0].structured_content
     assert isinstance(revised, PracticeGuideContent)
     assert revised.steps[0].expected_result == "记录实际结果并与引用材料核对。"
+
+
+def test_claim_free_revision_regenerates_only_the_affected_practice_resource() -> None:
+    class ClaimFreeRevisionGenerator:
+        def __init__(self) -> None:
+            self.generate_calls = 0
+            self.revise_calls = 0
+
+        def revise(self, *_args) -> RevisionPatchResponse:
+            self.revise_calls += 1
+            return RevisionPatchResponse()
+
+        def generate(
+            self,
+            request: GenerateResourceInput,
+            resource_type: ResourceType,
+            allowed_sources: list[SourceRef],
+        ) -> GeneratedContentResponse:
+            self.generate_calls += 1
+            return _fixture_response(request, resource_type, allowed_sources)
+
+    request = _input()
+    source = request.retrieved_chunks[0].source
+    requirements = request.requirements.model_copy(
+        update={
+            "resource_types": [ResourceType.PRACTICE_GUIDE],
+            "required_knowledge_ids": [source.knowledge_id],
+            "resource_knowledge_targets": {
+                ResourceType.PRACTICE_GUIDE: [source.knowledge_id]
+            },
+            "source_whitelist": [source.source_ref_id],
+            "revision_plan": RevisionPlan(
+                revision_count=1,
+                resource_types=[ResourceType.PRACTICE_GUIDE],
+                field_paths_by_resource={
+                    ResourceType.PRACTICE_GUIDE: ["steps[0].instruction[0]"]
+                },
+            ),
+        }
+    )
+    context = request.context.model_copy(
+        update={"resource_types": [ResourceType.PRACTICE_GUIDE]}
+    )
+    request = request.model_copy(update={"context": context, "requirements": requirements})
+    candidate = _fixture_response(request, ResourceType.PRACTICE_GUIDE, [source])
+    content = candidate.structured_content.model_copy(deep=True)
+    assert isinstance(content, PracticeGuideContent)
+    rejected = "系统固定返回成功状态。"
+    content.steps = [
+        step.model_copy(
+            update={
+                "instruction": rejected if index == 0 else "整理学习记录并核对材料。",
+                "code_or_command": None,
+                "expected_result": "记录实际观察结果。",
+                "troubleshooting": None,
+            }
+        )
+        for index, step in enumerate(content.steps)
+    ]
+    previous = GeneratedResourceArtifact(
+        resource_type=ResourceType.PRACTICE_GUIDE,
+        structured_content=content,
+        review_claims=build_review_claims(ResourceType.PRACTICE_GUIDE, content),
+        content_md="上一轮候选资源",
+        difficulty=candidate.difficulty,
+        source_refs=[source],
+        knowledge_coverage={source.knowledge_id: [source.source_ref_id]},
+    )
+    generator = ClaimFreeRevisionGenerator()
+
+    output = ContentGenerationAgent(
+        generator=generator, renderer=render_resource_markdown
+    ).revise(
+        request,
+        [previous],
+        {ResourceType.PRACTICE_GUIDE: {"steps[0].instruction[0]": [rejected]}},
+    )
+
+    assert generator.revise_calls == 1
+    assert generator.generate_calls == 1
+    assert output.resources[0].review_claims
 
 
 def test_revision_structure_failure_replaces_rejected_practice_field() -> None:

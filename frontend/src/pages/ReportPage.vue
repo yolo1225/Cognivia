@@ -103,6 +103,7 @@ import PageHeader from '@/components/Shared/PageHeader.vue'
 import PageState from '@/components/Shared/PageState.vue'
 import { useAuthStore } from '@/stores/authStore'
 import { useDomainStore } from '@/stores/domainStore'
+import { learningDecision } from '@/utils/learningDecision'
 
 const router = useRouter()
 const route = useRoute()
@@ -172,7 +173,10 @@ const currentPathNode = computed(() => pathNodes.value.find(node => node.status 
 const completedPathNodeCount = computed(() => pathNodes.value.filter(node => node.status === 'completed').length)
 const blockingMistakeCount = computed(() => Number(report.value?.node_gate?.blocking_mistake_count || 0))
 const profileReliabilityMessage = computed(() => {
-  const evidence = (report.value?.ability_profile?.evidence_profile || {}) as Record<string, unknown>
+  const evidence = (report.value?.evidence_profile || report.value?.ability_profile?.evidence_profile || {}) as Record<string, unknown>
+  if (evidence.status === 'accumulating') {
+    return String(evidence.message || '正式证据正在累计，达到独立验证门槛后才会更新画像版本。')
+  }
   return evidence.reliability_status === 'provisional'
     ? String(evidence.reliability_message || '当前为初步画像，后续正式评估会继续提高可靠度。')
     : ''
@@ -236,21 +240,21 @@ type CurrentTask = {
 }
 
 const currentTask = computed<CurrentTask | null>(() => {
-  if (blockingMistakeCount.value) return {
-    tone: 'mistake', eyebrow: '当前优先任务', title: `先完成 ${blockingMistakeCount.value} 道错题巩固`,
-    description: '这些错题与当前学习节点直接相关，完成后才能继续推进路线。', button: '开始错题巩固', disabled: false, action: 'mistake',
-  }
   const proposal = activeAdjustment.value
   if (proposal) {
     if (proposal.status === 'resource_pending' || proposal.recovery_available || proposal.generation_task?.status === 'failed') return {
-      tone: 'resource', eyebrow: '当前学习安排', title: proposal.resource_recommendation.mode === 'remedial' ? '补充当前节点学习内容' : '准备下一节点学习内容',
-      description: '画像已更新，确认后将生成与当前状态匹配的学习资源。', button: adjustmentGenerateLabel(proposal, Boolean(proposal.recovery_available || proposal.generation_task?.status === 'failed')),
+      tone: 'resource', eyebrow: '当前学习安排', title: learningDecision(proposal).title,
+      description: learningDecision(proposal).description, button: adjustmentGenerateLabel(proposal, Boolean(proposal.recovery_available || proposal.generation_task?.status === 'failed')),
       disabled: adjustmentSubmitting.value === proposal.proposal_id, action: 'adjustment_generate', proposal,
     }
     if (proposal.generation_task?.task_id) return {
       tone: 'resource', eyebrow: '当前学习安排', title: '学习内容正在准备',
       description: '资源生成与质量校验完成后，可直接进入学习。', button: adjustmentTaskAction(proposal), disabled: false, action: 'adjustment_view', proposal,
     }
+  }
+  if (blockingMistakeCount.value) return {
+    tone: 'mistake', eyebrow: '当前优先任务', title: `先完成 ${blockingMistakeCount.value} 道错题巩固`,
+    description: '这些错题与当前学习节点直接相关，完成后才能继续推进路线。', button: '开始错题巩固', disabled: false, action: 'mistake',
   }
   const node = currentPathNode.value
   if (!node) return null
@@ -279,12 +283,12 @@ function knowledgeStateLabel(state: string) {
 
 function adjustmentTaskAction(proposal: LearningAdjustmentSummary) {
   if (proposal.generation_task?.status !== 'completed') return '查看生成进度'
-  return proposal.resource_recommendation.mode === 'remedial' ? '查看补救资源' : '查看下一节点资源'
+  return learningDecision(proposal).type === 'next_stage' ? '查看下一节点资源' : '查看适配资源'
 }
 
 function adjustmentGenerateLabel(proposal: LearningAdjustmentSummary, retry = false) {
-  const label = proposal.resource_recommendation.mode === 'remedial' ? '补救资源' : '下一节点学习包'
-  return `${retry ? '重新生成' : '生成'}${label}`
+  const label = learningDecision(proposal).generateLabel || '适配资源'
+  return retry ? `重新生成${label.replace(/^生成/, '')}` : label
 }
 
 function profileChangeLabel(change: NonNullable<LearningReport['profile_changes']>[number]) {

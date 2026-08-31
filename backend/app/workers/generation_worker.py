@@ -671,6 +671,12 @@ def _persist_profile_update(
     return next_profile
 
 
+def _persist_finalization_revision_count(task: GenerationTask, patch: GRAPH_STATE) -> None:
+    finalized = patch.get("finalize_task")
+    if finalized is not None:
+        task.revision_count = max(task.revision_count, int(finalized.revision_count))
+
+
 def _observable_node(
     db: Session,
     task: GenerationTask,
@@ -750,6 +756,7 @@ def _observable_node(
                         feedback.profile_update_required = False
                         feedback.decision_reason = patch["analyze_profile"].decision_reason
             if step == "finalize_task":
+                _persist_finalization_revision_count(task, patch)
                 persist_generated_resources(
                     db, task, db.get(LearnerProfile, task.profile_id) or profile, next_state
                 )

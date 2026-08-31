@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -13,10 +13,10 @@ from app.models import (
     KnowledgeItem,
     LearnerProfile,
     LearningPath,
+    LearningResource,
     MistakeReviewItem,
     ResourceQuizAttempt,
 )
-from app.services.learning_package_service import package_member_rows
 REQUIRED_EVIDENCE_COUNT = 2
 # MySQL FLOAT stores 0.9 as a value marginally below the decimal literal.
 # Keep the product threshold at 90%, while accepting that representational drift.
@@ -93,9 +93,6 @@ def _formal_positive_records(
             or evidence_type not in FORMAL_EVIDENCE_TYPES
         ):
             continue
-        consumed_by = summary.get("consumed_by_profile_id")
-        if consumed_by not in {None, profile.id}:
-            continue
         knowledge_id = knowledge_by_id.get(record.knowledge_item_id)
         if not knowledge_id or question.id in seen[knowledge_id]:
             continue
@@ -108,24 +105,57 @@ def _quiz_completed(
     db: Session,
     *,
     learner_id: int,
-    package_task: GenerationTask | None,
+    path: LearningPath,
+    path_node_id: str,
 ) -> bool:
-    if package_task is None:
-        return False
-    quiz_ids = [
-        resource.id
-        for _member, resource in package_member_rows(db, package_task)
-        if resource.resource_type == "graded_quiz"
-    ]
-    if not quiz_ids:
-        return False
-    return db.scalar(
-        select(ResourceQuizAttempt.id).where(
-            ResourceQuizAttempt.learner_id == learner_id,
-            ResourceQuizAttempt.resource_id.in_(quiz_ids),
-            ResourceQuizAttempt.status == "completed",
+    """Recognize effective quiz evidence for this node across package revisions."""
+    attempts = list(
+        db.execute(
+            select(ResourceQuizAttempt, LearningResource, GenerationTask)
+            .join(LearningResource, LearningResource.id == ResourceQuizAttempt.resource_id)
+            .join(GenerationTask, GenerationTask.id == LearningResource.generation_task_id)
+            .where(
+                ResourceQuizAttempt.learner_id == learner_id,
+                ResourceQuizAttempt.status == "completed",
+                LearningResource.resource_type == "graded_quiz",
+                or_(
+                    GenerationTask.learning_path_id == path.id,
+                    GenerationTask.learning_path_id.is_(None),
+                ),
+                or_(
+                    GenerationTask.path_node_id == path_node_id,
+                    GenerationTask.path_node_id.is_(None),
+                ),
+                GenerationTask.domain_code == path.domain_code,
+            )
+            .order_by(ResourceQuizAttempt.completed_at.desc(), ResourceQuizAttempt.id.desc())
         )
-    ) is not None
+    )
+    for attempt, _resource, _task in attempts:
+        records = list(
+            db.execute(
+                select(AnswerRecord, DiagnosticQuestion, KnowledgeItem)
+                .join(DiagnosticQuestion, DiagnosticQuestion.id == AnswerRecord.question_id)
+                .join(KnowledgeItem, KnowledgeItem.id == AnswerRecord.knowledge_item_id)
+                .where(
+                    AnswerRecord.learner_id == learner_id,
+                    AnswerRecord.session_id == attempt.public_id,
+                )
+            )
+        )
+        # Compatibility for historical completed attempts that predate
+        # objective-evidence materialization. Newly completed attempts always
+        # have materialized records and use the strict branch below.
+        if not records and int(attempt.objective_total or 0) == 0:
+            return True
+        if records and len(records) >= int(attempt.objective_total or 0) and all(
+            question.status == "active"
+            and question.domain_code == path.domain_code
+            and knowledge.domain_code == path.domain_code
+            for _record, question, knowledge in records
+        ):
+            return True
+    return False
 
 
 def build_node_gate(
@@ -218,7 +248,8 @@ def build_node_gate(
     quiz_completed = _quiz_completed(
         db,
         learner_id=profile.learner_id,
-        package_task=package_task,
+        path=path,
+        path_node_id=str(node_id),
     )
     unmastered_ids = [item for item in core_ids if item not in mastered_ids]
     can_advance = bool(core_ids) and not unmastered_ids and not unresolved and quiz_completed

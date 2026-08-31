@@ -30,6 +30,12 @@ export interface LearningPackage {
   event_type: string
   source_task_id?: string | null
   is_current_package: boolean
+  profile_adaptation?: {
+    status: 'current' | 'pending' | 'generating' | 'historical'
+    label: string
+    description: string
+    proposal_id?: string | null
+  }
   resources: Array<ResourceSummary & {
     membership_type: 'generated' | 'inherited'
     freshness_status: 'current' | 'knowledge_changed'

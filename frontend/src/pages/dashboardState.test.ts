@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { GenerationTaskDetail } from '@/api/generation'
 import type { ResourceSummary } from '@/api/resources'
 import { getDashboardState } from './dashboardState'
+import type { LearningAdjustmentSummary } from '@/api/learningAdjustments'
 
 const task = (overrides: Partial<GenerationTaskDetail> = {}): GenerationTaskDetail => ({
   task_id: 'task_001',
@@ -19,6 +20,20 @@ const resource = (overrides: Partial<ResourceSummary> = {}): ResourceSummary => 
   difficulty: 2,
   review_status: 'passed',
   sources: [],
+  ...overrides,
+})
+
+const adjustment = (overrides: Partial<LearningAdjustmentSummary> = {}): LearningAdjustmentSummary => ({
+  proposal_id: 'adjustment_001',
+  hypothesis_type: 'support_down',
+  status: 'resource_pending',
+  resource_recommendation: {
+    proposal_id: 'adjustment_001',
+    path_id: 'path_001',
+    path_node_id: 'node_001',
+    resource_types: ['lecture', 'practice_guide'],
+    mode: 'remedial',
+  },
   ...overrides,
 })
 
@@ -64,6 +79,12 @@ describe('dashboard state', () => {
     })
 
     expect(state.kind).toBe('preparing')
+  })
+
+  it('prioritizes a confirmed resource adjustment over the existing package', () => {
+    const state = getDashboardState(null, [resource()], [], null, adjustment())
+
+    expect(state.kind).toBe('adjustment')
   })
 
   it('shows a published resource instead of an unreviewed resource', () => {

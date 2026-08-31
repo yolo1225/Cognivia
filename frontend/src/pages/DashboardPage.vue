@@ -31,6 +31,21 @@
         <template v-else-if="dashboardState.kind === 'preparing'">
           <span class="stage-label">{{ dashboardState.feedbackTriggered ? '正在根据反馈调整学习内容' : '正在生成学习包' }}</span><h2>{{ dashboardState.task.decision === 'revision_required' ? '资源正在自动修订' : '正在准备个性化学习资源' }}</h2><p>检索、生成和自动质量校验会依次完成；仅达到质量门槛的资源会发布到学习资源页。</p><div class="task-progress"><span><i :style="{ width: `${progressValue}%` }"></i></span><strong>{{ progressValue }}%</strong></div><div class="stage-actions"><button class="btn" type="button" @click="openResources(dashboardState.task.task_id)">查看生成进度</button></div>
         </template>
+        <template v-else-if="dashboardState.kind === 'adjustment'">
+          <span class="stage-label">当前学习安排</span>
+          <h2>{{ adjustmentDecision(dashboardState.proposal).title }}</h2>
+          <p>{{ adjustmentDecision(dashboardState.proposal).description }}</p>
+          <div class="resource-meta">
+            <span v-if="dashboardState.proposal.previous_profile_version">画像 V{{ dashboardState.proposal.previous_profile_version }} → V{{ dashboardState.proposal.profile_version }}</span>
+            <span v-if="dashboardState.proposal.current_node?.title">当前节点：{{ dashboardState.proposal.current_node.title }}</span>
+            <span>{{ adjustmentDecision(dashboardState.proposal).resourceLabel }}</span>
+          </div>
+          <div class="stage-actions">
+            <button v-if="adjustmentDecision(dashboardState.proposal).generateLabel" class="btn primary stage-primary" type="button" :disabled="adjustmentSubmitting === dashboardState.proposal.proposal_id" @click="startAdjustment(dashboardState.proposal)">{{ adjustmentSubmitting === dashboardState.proposal.proposal_id ? '正在创建资源...' : adjustmentDecision(dashboardState.proposal).generateLabel }}</button>
+            <button v-if="adjustmentDecision(dashboardState.proposal).skipLabel" class="btn" type="button" :disabled="adjustmentSubmitting === dashboardState.proposal.proposal_id" @click="skipAdjustment(dashboardState.proposal)">{{ adjustmentDecision(dashboardState.proposal).skipLabel }}</button>
+            <button class="btn" type="button" @click="openReport">查看画像变化</button>
+          </div>
+        </template>
         <template v-else-if="dashboardState.kind === 'mistake_review'">
           <span class="stage-label">当前节点优先任务</span>
           <h2>先完成 {{ dashboardState.blockingMistakeCount }} 道错题巩固</h2>
@@ -80,6 +95,7 @@ import { createGenerationTask, getActiveGenerationTask, listGenerationTasks, ret
 import { getLearnerProfile, type LearnerProfileDetail } from '@/api/learners'
 import { listResources, type ResourceSummary } from '@/api/resources'
 import { getLearningReport, type LearningReport } from '@/api/reports'
+import { decideLearningAdjustmentResource, type LearningAdjustmentSummary } from '@/api/learningAdjustments'
 import type { LearningPathNode } from '@/api/learningPaths'
 import { getDomainReadiness } from '@/api/domains'
 import { useToast } from '@/composables/useToast'
@@ -89,6 +105,7 @@ import { useDomainStore } from '@/stores/domainStore'
 import { getDashboardState } from './dashboardState'
 import { formatKnowledgeName } from '@/utils/knowledgeName'
 import { generationFailureCopy } from '@/utils/generationFailure'
+import { learningDecision } from '@/utils/learningDecision'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -99,6 +116,7 @@ const loading = ref(true)
 const retrying = ref(false)
 const switchingDomain = ref(false)
 const creatingGeneration = ref(false)
+const adjustmentSubmitting = ref('')
 const selectedDomainCode = ref('')
 const loadError = ref('')
 const profile = ref<LearnerProfileDetail | null>(null)
@@ -108,14 +126,20 @@ const resources = ref<ResourceSummary[]>([])
 const report = ref<LearningReport | null>(null)
 const currentLearnerId = computed(() => authStore.user?.learner_id || '')
 const profileReady = computed(() => profile.value?.profile_status === 'ready')
+const activeAdjustment = computed(() => (report.value?.learning_adjustments || []).find(proposal => (
+  proposal.status === 'resource_pending'
+  || proposal.recovery_available
+  || proposal.generation_task?.status === 'failed'
+)) || null)
 const dashboardState = computed(() => getDashboardState(
   activeTask.value,
   resources.value,
   recentTasks.value,
   report.value?.node_gate,
+  activeAdjustment.value,
 ))
 const progressValue = computed(() => Math.min(100, Math.max(0, dashboardState.value.kind === 'preparing' ? dashboardState.value.task.progress ?? 0 : 0)))
-const visualLabel = computed(() => ({ assessment: '路线已就绪', preparing: '正在处理', mistake_review: '优先完成', resource: '可以开始', failed: '需要重试' })[dashboardState.value.kind])
+const visualLabel = computed(() => ({ assessment: '路线已就绪', preparing: '正在处理', adjustment: '等待确认', mistake_review: '优先完成', resource: '可以开始', failed: '需要重试' })[dashboardState.value.kind])
 const failedGenerationCopy = computed(() => generationFailureCopy(dashboardState.value.kind === 'failed' ? dashboardState.value.task.failure_reason : null))
 const pathNodes = computed<LearningPathNode[]>(() => report.value?.learning_path?.nodes || [])
 const currentPathNode = computed(() => pathNodes.value.find(node => node.status === 'current'))
@@ -133,6 +157,7 @@ const primaryAction = computed(() => {
     : action
 })
 const feedbackState = computed(() => {
+  if (activeAdjustment.value) return null
   if (!hasPublishedResources.value) return null
   const action = report.value?.feedback_summary?.latest_action
   if (!action || action === 'no_change') return null
@@ -143,7 +168,7 @@ const feedbackState = computed(() => {
     regenerate: { title: '资源正在调整', description: '系统会根据有效反馈生成更匹配当前水平的内容。' },
     ask_follow_up: { title: '等待补充学习证据', description: '系统需要更多作答或对话证据，再决定是否调整画像与路线。' },
     pending: { title: '反馈正在处理中', description: '系统正在理解你的反馈并判断是否需要调整学习内容。' },
-  } as Record<string, { title: string; description: string }>)[action] || { title: '反馈已记录', description: '系统已记录本次反馈，并会在后续学习中作为调整依据。' }
+  } as Record<string, { title: string; description: string }>)[action] || { title: '反馈将作为后续学习依据', description: '系统已保留本次反馈；形成足够正式证据后会明确展示下一步学习安排。' }
 })
 
 async function loadDashboard() {
@@ -181,6 +206,29 @@ function openReport() { router.push({ path: '/report', query: { learner_id: curr
 function openResources(taskId?: string | null) { router.push({ path: '/resources', query: { learner_id: currentLearnerId.value, ...(taskId ? { task_id: taskId } : {}) } }) }
 function openMistakeReview() { router.push({ path: '/mistake-review', query: { learner_id: currentLearnerId.value } }) }
 async function retryTask(taskId: string) { retrying.value = true; try { const task = await retryGenerationTask(taskId); activeTask.value = task; openResources(task.task_id) } catch { loadError.value = '重新生成失败，请稍后再试。' } finally { retrying.value = false } }
+function adjustmentDecision(proposal: LearningAdjustmentSummary) { return learningDecision(proposal) }
+async function startAdjustment(proposal: LearningAdjustmentSummary) {
+  if (adjustmentSubmitting.value) return
+  adjustmentSubmitting.value = proposal.proposal_id
+  try {
+    const result = await decideLearningAdjustmentResource(proposal.proposal_id, 'generate')
+    if (result.task_id) openResources(result.task_id)
+    else await loadDashboard()
+  } catch {
+    showToast('补救资源创建失败，请刷新页面后重试。', 'error')
+  } finally { adjustmentSubmitting.value = '' }
+}
+async function skipAdjustment(proposal: LearningAdjustmentSummary) {
+  if (adjustmentSubmitting.value) return
+  adjustmentSubmitting.value = proposal.proposal_id
+  try {
+    await decideLearningAdjustmentResource(proposal.proposal_id, 'skip')
+    showToast('已保留当前资源，正式路线门禁不受影响。', 'info')
+    await loadDashboard()
+  } catch {
+    showToast('暂不生成的选择未保存，请刷新后重试。', 'error')
+  } finally { adjustmentSubmitting.value = '' }
+}
 function pathStatusLabel(status: LearningPathNode['status']) { return ({ locked: '未解锁', current: '当前学习', completed: '已完成', skipped: '已跳过' } as const)[status] }
 function triggerPrimaryAction() { if (primaryAction.value) void handleNextAction(primaryAction.value); else openReport() }
 async function handleNextAction(action: LearningReport['next_actions'][number]) {

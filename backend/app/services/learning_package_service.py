@@ -11,6 +11,7 @@ from app.models import (
     KnowledgeItem,
     KnowledgeUpdateImpact,
     Learner,
+    LearningAdjustmentProposal,
     LearnerProfile,
     LearningPath,
     LearningPackageResource,
@@ -209,6 +210,13 @@ def serialize_package(
         .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
     )
     active_profile = db.get(LearnerProfile, active_path.profile_id) if active_path else None
+    adaptation = _profile_adaptation_status(
+        db,
+        task=task,
+        active_path=active_path,
+        active_profile=active_profile,
+        rows=rows,
+    )
     node_gate = None
     if active_path is not None and active_profile is not None:
         from app.services.node_mastery_service import build_node_gate
@@ -236,11 +244,73 @@ def serialize_package(
             db.get(GenerationTask, task.source_task_id).public_id if task.source_task_id else None
         ),
         "is_current_package": task.is_current_package,
+        "profile_adaptation": adaptation,
         "resources": resources,
         "knowledge_impact": impact_payload,
         "package_quality": task.package_quality_json or None,
         "node_gate": node_gate,
         "created_at": task.created_at.isoformat() if task.created_at else None,
+    }
+
+
+def _profile_adaptation_status(
+    db: Session,
+    *,
+    task: GenerationTask,
+    active_path: LearningPath | None,
+    active_profile: LearnerProfile | None,
+    rows: list[tuple[LearningPackageResource, LearningResource]],
+) -> dict:
+    """Describe profile fit without conflating it with knowledge freshness."""
+    if active_profile is None or active_path is None:
+        return {
+            "status": "current",
+            "label": "当前学习包",
+            "description": "该学习包可作为当前学习内容使用。",
+            "proposal_id": None,
+        }
+    if task.profile_id == active_profile.id and task.learning_path_id == active_path.id:
+        return {
+            "status": "current",
+            "label": f"已适配画像 V{active_profile.profile_version}",
+            "description": "该学习包与当前画像和学习节点一致。",
+            "proposal_id": None,
+        }
+
+    resource_ids = [resource.id for _member, resource in rows]
+    proposal = None
+    if resource_ids:
+        proposal = db.scalar(
+            select(LearningAdjustmentProposal)
+            .where(
+                LearningAdjustmentProposal.learner_id == task.learner_id,
+                LearningAdjustmentProposal.resulting_learning_path_id == active_path.id,
+                LearningAdjustmentProposal.resulting_profile_id == active_profile.id,
+                LearningAdjustmentProposal.source_resource_id.in_(resource_ids),
+                LearningAdjustmentProposal.status.in_({"resource_pending", "resource_started"}),
+            )
+            .order_by(LearningAdjustmentProposal.id.desc())
+        )
+    adjustment_task = db.get(GenerationTask, proposal.generation_task_id) if proposal and proposal.generation_task_id else None
+    if proposal is not None and proposal.status == "resource_pending":
+        return {
+            "status": "pending",
+            "label": "当前画像需要补充资源",
+            "description": "画像已更新；这份资源保留供回顾，补救资源尚待你确认生成。",
+            "proposal_id": proposal.public_id,
+        }
+    if proposal is not None and adjustment_task is not None and adjustment_task.status not in {"completed", "failed"}:
+        return {
+            "status": "generating",
+            "label": "补救资源正在生成",
+            "description": "当前资源保留供回顾，适配当前画像的新资源正在检索、生成和审核。",
+            "proposal_id": proposal.public_id,
+        }
+    return {
+        "status": "historical",
+        "label": "基于旧画像的历史资源",
+        "description": "该资源内容仍可回顾，但当前学习应以最新画像对应的学习安排为准。",
+        "proposal_id": proposal.public_id if proposal is not None else None,
     }
 
 

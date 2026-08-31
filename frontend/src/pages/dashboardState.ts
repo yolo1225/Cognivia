@@ -1,11 +1,13 @@
 import type { GenerationTaskDetail } from '@/api/generation'
 import type { ResourceSummary } from '@/api/resources'
 import type { NodeGate } from '@/api/tutoring'
+import type { LearningAdjustmentSummary } from '@/api/learningAdjustments'
 
 export type DashboardState =
   | { kind: 'assessment' }
   | { kind: 'preparing'; task: GenerationTaskDetail; feedbackTriggered: boolean }
   | { kind: 'mistake_review'; blockingMistakeCount: number }
+  | { kind: 'adjustment'; proposal: LearningAdjustmentSummary }
   | { kind: 'resource'; resource: ResourceSummary }
   | { kind: 'failed'; task: GenerationTaskDetail }
 
@@ -14,6 +16,7 @@ export function getDashboardState(
   resources: ResourceSummary[],
   recentTasks: GenerationTaskDetail[],
   nodeGate: NodeGate | null | undefined = null,
+  adjustment: LearningAdjustmentSummary | null = null,
 ): DashboardState {
   if (activeTask && !['completed', 'failed'].includes(activeTask.status)) {
     return {
@@ -21,6 +24,14 @@ export function getDashboardState(
       task: activeTask,
       feedbackTriggered: activeTask.trigger_type === 'resource_feedback',
     }
+  }
+
+  if (adjustment && (
+    adjustment.status === 'resource_pending'
+    || adjustment.recovery_available
+    || adjustment.generation_task?.status === 'failed'
+  )) {
+    return { kind: 'adjustment', proposal: adjustment }
   }
 
   const blockingMistakeCount = nodeGate?.blocking_mistake_count || 0

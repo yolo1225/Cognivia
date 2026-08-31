@@ -74,6 +74,7 @@ export interface LearningReport {
     latest_action?: string | null
     learning_path_needs_refresh: boolean
     path_refresh_performed?: boolean
+    current_adjustment?: LearningAdjustmentSummary | null
     recent: Array<{
       resource_id: string
       resource_title: string
@@ -133,6 +134,12 @@ export interface LearningReport {
   knowledge_state_derived_legacy?: boolean
   dimension_status?: Record<string, string>
   profile_confidence?: number
+  evidence_profile?: {
+    version?: string
+    status?: 'confirmed' | 'accumulating'
+    coverage?: Record<string, number>
+    message?: string
+  }
   progress_comparison?: LearningProgressComparison
   next_actions: Array<{
     type: string

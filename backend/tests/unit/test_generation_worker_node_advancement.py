@@ -5,7 +5,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.models import Base, GenerationTask, Learner, LearnerProfile, LearningResource
-from app.workers.generation_worker import _node_advancement_package_failure
+from app.workers.generation_worker import (
+    _node_advancement_package_failure,
+    _persist_finalization_revision_count,
+)
 
 
 def _session_factory() -> sessionmaker[Session]:
@@ -20,6 +23,21 @@ def _session_factory() -> sessionmaker[Session]:
 
 def _result(decision: str) -> SimpleNamespace:
     return SimpleNamespace(decision=SimpleNamespace(value=decision))
+
+
+def test_finalization_persists_the_latest_revision_count_before_later_node_failure() -> None:
+    task = GenerationTask(revision_count=0)
+
+    _persist_finalization_revision_count(
+        task,
+        {"finalize_task": SimpleNamespace(revision_count=1)},
+    )
+    _persist_finalization_revision_count(
+        task,
+        {"finalize_task": SimpleNamespace(revision_count=0)},
+    )
+
+    assert task.revision_count == 1
 
 
 def test_node_advancement_never_completes_without_all_three_passed_resources() -> None:

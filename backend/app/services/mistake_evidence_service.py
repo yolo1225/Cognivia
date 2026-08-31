@@ -19,6 +19,8 @@ from app.models import (
     DiagnosticQuestion,
 )
 from app.services.profile_service import public_id
+from app.services.resource_matching_service import decide_resource_matching
+from app.services.learning_path_service import reprioritize_future_nodes
 from app.services.tutoring_service import create_session
 
 
@@ -196,13 +198,16 @@ def _advance_ready_node_without_profile_revision(
         resulting_profile_id=profile.id,
         resulting_learning_path_id=path.id,
     )
-    recommendation = {
-        "proposal_id": proposal.public_id,
-        "path_id": path.public_id,
-        "path_node_id": current_node_id,
-        "resource_types": ["lecture", "practice_guide", "graded_quiz"],
-        "mode": "next_node",
-    }
+    recommendation = decide_resource_matching(
+        proposal_id=proposal.public_id,
+        path=path,
+        node_gate=node_gate,
+        package_task=package_task,
+        source_resource=resource,
+        affected_knowledge_ids=[],
+        hypothesis_type="mastery_up",
+        node_advanced=True,
+    )
     proposal.resource_recommendation_json = recommendation
     db.add(proposal)
     db.flush()
@@ -399,10 +404,7 @@ def evaluate_mistake_evidence(
     }
     resulting_path = next_path or path
     package_task = db.get(GenerationTask, resource.generation_task_id)
-    from app.services.node_mastery_service import (
-        affected_resource_types,
-        build_node_gate,
-    )
+    from app.services.node_mastery_service import build_node_gate
 
     node_gate = build_node_gate(
         db,
@@ -410,7 +412,7 @@ def evaluate_mistake_evidence(
         profile=next_profile,
         package_task=package_task,
     )
-    if mastered and profile_updated and node_gate["can_advance"]:
+    if mastered and node_gate["can_advance"]:
         from app.services.learning_path_service import _advance_path_node
 
         completed_node_id = str(node_gate["path_node_id"])
@@ -430,30 +432,38 @@ def evaluate_mistake_evidence(
         "resulting_path_id": resulting_path.public_id,
     }
     recommendation = None
-    if profile_updated and package_task is not None:
-        is_next_node = completed_node_id is not None
-        affected_ids = list(node_gate.get("unmastered_knowledge_ids") or [])
-        if knowledge.public_id not in affected_ids:
-            affected_ids.append(knowledge.public_id)
-        recommendation = {
-            "proposal_id": proposal.public_id,
-            "path_id": resulting_path.public_id,
-            "path_node_id": current_node_id,
-            "resource_types": (
-                ["lecture", "practice_guide", "graded_quiz"]
-                if is_next_node
-                else affected_resource_types(
-                    package_task=package_task,
-                    affected_knowledge_ids=affected_ids,
-                    fallback_resource_type=resource.resource_type,
-                )
-            ),
-            "mode": "next_node" if is_next_node else "remedial",
-        }
-        proposal.status = "resource_pending"
+    if profile_updated or completed_node_id is not None:
+        affected_ids = list(
+            dict.fromkeys(
+                [
+                    *list(change_summary.get("affected_knowledge_ids") or []),
+                    *list(node_gate.get("unmastered_knowledge_ids") or []),
+                    knowledge.public_id,
+                ]
+            )
+        )
+        recommendation = decide_resource_matching(
+            proposal_id=proposal.public_id,
+            path=resulting_path,
+            node_gate=node_gate,
+            package_task=package_task,
+            source_resource=resource,
+            affected_knowledge_ids=affected_ids,
+            hypothesis_type=proposal.hypothesis_type,
+            node_advanced=completed_node_id is not None,
+        )
+        if recommendation["decision_type"] == "future_path_reprioritize":
+            reprioritize_future_nodes(
+                resulting_path,
+                affected_knowledge_ids=affected_ids,
+                reason=str(recommendation["reason"]),
+            )
+        proposal.status = (
+            "resource_pending" if recommendation["requires_confirmation"] else "evidence_recorded"
+        )
         proposal.resource_recommendation_json = recommendation
     else:
-        proposal.status = "confirmed" if profile_updated else "no_change"
+        proposal.status = "no_change"
     result["node_gate"] = node_gate
     result["resource_recommendation"] = recommendation
     proposal.resulting_profile_id = next_profile.id

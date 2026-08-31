@@ -119,11 +119,17 @@ def persist_profile_revision(
             .order_by(LearningPath.created_at.desc(), LearningPath.id.desc())
         )
     )
-    previous_path = previous_paths[0] if previous_paths else None
-    for path in previous_paths:
-        path.needs_refresh = True
-        if path.status == "active":
-            path.status = "superseded"
+    previous_path = next((path for path in previous_paths if path.status == "active"), None)
+    if previous_path is None and previous_paths:
+        previous_path = previous_paths[0]
+    # A confirmed profile revision must not rebuild the active path and discard
+    # its current-node gate or completed-node evidence.  Keep the same path and
+    # let the matching layer reprioritize locked nodes when appropriate.
+    if previous_path is not None and previous_path.status == "active":
+        previous_path.profile_id = next_profile.id
+        previous_path.needs_refresh = False
+        return next_profile, previous_path
+
     path_payload = build_learning_path_from_snapshot(
         next_profile.ability_profile_json,
         next_profile.weak_knowledge_json,

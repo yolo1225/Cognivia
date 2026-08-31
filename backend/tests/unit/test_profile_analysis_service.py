@@ -193,8 +193,8 @@ def test_confirmed_validated_behavior_with_scored_assessment_updates_profile() -
         }
     ]
     result = analyze_profile(AnalyzeProfileInput.model_validate(payload))
-    assert result.profile_update_required
-    assert result.profile.profile_version == 2
+    assert not result.profile_update_required
+    assert result.profile.profile_version == 1
     assert [item.evidence_type for item in result.evidence_refs] == [
         EvidenceType.VALIDATED_BEHAVIOR
     ]

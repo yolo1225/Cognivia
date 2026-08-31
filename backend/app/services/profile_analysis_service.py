@@ -126,7 +126,6 @@ def _effective_assessments(
     allowed_types = {
         EvidenceType.DIAGNOSTIC_RESULT,
         EvidenceType.SCORED_QUIZ,
-        EvidenceType.VALIDATED_BEHAVIOR,
     }
     effective: list[KnowledgeAssessment] = []
     for assessment in node_input.knowledge_assessments:
