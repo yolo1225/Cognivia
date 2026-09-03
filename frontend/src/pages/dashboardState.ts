@@ -34,12 +34,14 @@ export function getDashboardState(
     return { kind: 'adjustment', proposal: adjustment }
   }
 
+  const publishedResource = resources.find((resource) => resource.review_status === 'passed')
   const blockingMistakeCount = nodeGate?.blocking_mistake_count || 0
-  if (blockingMistakeCount > 0) {
+  // Mistake consolidation gates progression to the next node. It must not
+  // prevent the learner from creating this node's first learning package.
+  if (publishedResource && blockingMistakeCount > 0) {
     return { kind: 'mistake_review', blockingMistakeCount }
   }
 
-  const publishedResource = resources.find((resource) => resource.review_status === 'passed')
   if (publishedResource) return { kind: 'resource', resource: publishedResource }
 
   const failedTask = [activeTask, ...recentTasks].find((task) => task?.status === 'failed')

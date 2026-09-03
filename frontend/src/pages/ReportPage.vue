@@ -252,15 +252,17 @@ const currentTask = computed<CurrentTask | null>(() => {
       description: '资源生成与质量校验完成后，可直接进入学习。', button: adjustmentTaskAction(proposal), disabled: false, action: 'adjustment_view', proposal,
     }
   }
+  const node = currentPathNode.value
+  if (!node) return null
+  // Consolidation blocks advancing beyond the node, not creation of the
+  // current node's initial learning package.
+  if (node.resource_state === 'generating') return { tone: 'resource', eyebrow: '当前学习节点', title: '学习内容正在准备', description: `正在为「${node.title}」生成学习内容。`, button: '查看生成进度', disabled: false, action: 'node_resource', node }
+  if (node.resource_state !== 'ready') return { tone: 'route', eyebrow: '当前学习节点', title: node.title, description: node.learning_objective, button: node.resource_state === 'failed' ? '重新生成学习内容' : '生成学习内容', disabled: creatingGeneration.value, action: 'node_generate', node }
   if (blockingMistakeCount.value) return {
     tone: 'mistake', eyebrow: '当前优先任务', title: `先完成 ${blockingMistakeCount.value} 道错题巩固`,
     description: '这些错题与当前学习节点直接相关，完成后才能继续推进路线。', button: '开始错题巩固', disabled: false, action: 'mistake',
   }
-  const node = currentPathNode.value
-  if (!node) return null
-  if (node.resource_state === 'ready') return { tone: 'route', eyebrow: '当前学习节点', title: node.title, description: node.learning_objective, button: '继续当前学习', disabled: false, action: 'node_resource', node }
-  if (node.resource_state === 'generating') return { tone: 'resource', eyebrow: '当前学习节点', title: '学习内容正在准备', description: `正在为「${node.title}」生成学习内容。`, button: '查看生成进度', disabled: false, action: 'node_resource', node }
-  return { tone: 'route', eyebrow: '当前学习节点', title: node.title, description: node.learning_objective, button: node.resource_state === 'failed' ? '重新生成学习内容' : '生成学习内容', disabled: creatingGeneration.value, action: 'node_generate', node }
+  return { tone: 'route', eyebrow: '当前学习节点', title: node.title, description: node.learning_objective, button: '继续当前学习', disabled: false, action: 'node_resource', node }
 })
 
 function percentOrEmpty(value?: number | null) { return value == null ? '暂无' : `${Math.round(value)}%` }

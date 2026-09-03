@@ -1,0 +1,10 @@
+{
+  "schema_version": "ai-app-dev-full-import-v1",
+  "domain_code": "ai_app_dev",
+  "mode": "empty_database_import_demo",
+  "knowledge_count": 75,
+  "file": "01-ai-app-dev-complete.md",
+  "sha256": "1d574c76b8fbc6aae96fbb5ff0a5920d06d30fc8e4757d00112411ea3198fe59",
+  "source_fixture_version": "ai_app_dev_submission_fixture_v1",
+  "note": "Use this full import source or the bootstrap fixture, never both in one database."
+}

@@ -68,6 +68,19 @@ describe('dashboard state', () => {
     expect(state).toEqual({ kind: 'mistake_review', blockingMistakeCount: 2 })
   })
 
+  it('keeps the first-node generation entry available when mistakes exist but no package has been published', () => {
+    const state = getDashboardState(null, [], [], {
+      status: 'in_progress',
+      can_advance: false,
+      reason: 'BLOCKING_MISTAKES_REMAIN',
+      blocking_mistake_count: 2,
+      quiz_completed: false,
+      knowledge_progress: [],
+    })
+
+    expect(state).toEqual({ kind: 'assessment' })
+  })
+
   it('keeps an active generation task visible while mistakes remain', () => {
     const state = getDashboardState(task(), [resource()], [], {
       status: 'in_progress',

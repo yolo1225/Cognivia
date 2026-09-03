@@ -1,0 +1,2608 @@
+{
+  "schema_version": "v4",
+  "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+  "script_version": "v6-live-evaluator-3.0",
+  "observed_result_policy": "Embedded observations are deterministic fixtures only; formal acceptance requires a separate live run.",
+  "cases": [
+    {
+      "case_id": "V4-EVAL-001",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-001",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "ai_app_dev_overview",
+        "python_api_basics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1215,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-002",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-002",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "ai_app_dev_overview",
+        "python_api_basics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1230,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-003",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-003",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "http_rest_basics",
+          "git_collaboration"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "http_rest_basics",
+        "git_collaboration"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "http_rest_basics",
+          "git_collaboration"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1245,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-004",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-004",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "git_collaboration",
+          "data_schema_design"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "git_collaboration",
+        "data_schema_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "git_collaboration",
+          "data_schema_design"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1260,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-005",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-005",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "http_rest_basics",
+          "git_collaboration"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "http_rest_basics",
+        "git_collaboration"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "http_rest_basics",
+          "git_collaboration"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1275,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-006",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-006",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "prompt_basic",
+          "prompt_context_design"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "prompt_basic",
+        "prompt_context_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_basic",
+          "prompt_context_design"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1290,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-007",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-007",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "prompt_context_design",
+          "prompt_output_format"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "prompt_context_design",
+        "prompt_output_format"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_context_design",
+          "prompt_output_format"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1305,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-008",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-008",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "prompt_basic",
+          "prompt_context_design"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "prompt_basic",
+        "prompt_context_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_basic",
+          "prompt_context_design"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1320,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-009",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-009",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "prompt_evaluation",
+          "llm_api_calling"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "prompt_evaluation",
+        "llm_api_calling"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_evaluation",
+          "llm_api_calling"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1335,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-010",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-010",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "llm_api_calling",
+          "openai_compatible_api"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "llm_api_calling",
+        "openai_compatible_api"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "llm_api_calling",
+          "openai_compatible_api"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1350,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-011",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-011",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "llm_api_calling",
+          "openai_compatible_api"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "llm_api_calling",
+        "openai_compatible_api"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "llm_api_calling",
+          "openai_compatible_api"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1365,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-012",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-012",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "token_context_budget",
+          "streaming_responses"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "token_context_budget",
+        "streaming_responses"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "token_context_budget",
+          "streaming_responses"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1380,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-013",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-013",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "streaming_responses",
+          "function_calling_tools"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "streaming_responses",
+        "function_calling_tools"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "streaming_responses",
+          "function_calling_tools"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1395,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-014",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-014",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "ai_app_dev_overview",
+        "python_api_basics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1410,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-015",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-015",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "structured_output_validation",
+          "embedding_basics"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "structured_output_validation",
+        "embedding_basics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "structured_output_validation",
+          "embedding_basics"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1425,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-016",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-016",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "embedding_basics",
+          "vector_similarity"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "embedding_basics",
+        "vector_similarity"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "embedding_basics",
+          "vector_similarity"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1440,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-017",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-017",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "http_rest_basics",
+          "git_collaboration"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "http_rest_basics",
+        "git_collaboration"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "http_rest_basics",
+          "git_collaboration"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1455,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-018",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-018",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "rag_pipeline_overview",
+          "rag_chunking"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "rag_pipeline_overview",
+        "rag_chunking"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "rag_pipeline_overview",
+          "rag_chunking"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1470,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-019",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-019",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "rag_chunking",
+          "metadata_filtering"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "rag_chunking",
+        "metadata_filtering"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "rag_chunking",
+          "metadata_filtering"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1485,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-020",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-020",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "prompt_basic",
+          "prompt_context_design"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "prompt_basic",
+        "prompt_context_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_basic",
+          "prompt_context_design"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1500,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-021",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-021",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "retrieval_reranking",
+          "citation_traceability"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "retrieval_reranking",
+        "citation_traceability"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "retrieval_reranking",
+          "citation_traceability"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1515,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-022",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-022",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "citation_traceability",
+          "hallucination_guardrails"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "citation_traceability",
+        "hallucination_guardrails"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "citation_traceability",
+          "hallucination_guardrails"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1530,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-023",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-023",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "llm_api_calling",
+          "openai_compatible_api"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "llm_api_calling",
+        "openai_compatible_api"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "llm_api_calling",
+          "openai_compatible_api"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1545,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-024",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-024",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "knowledge_base_ingestion",
+          "document_parsing"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "knowledge_base_ingestion",
+        "document_parsing"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "knowledge_base_ingestion",
+          "document_parsing"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1560,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-025",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-025",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "document_parsing",
+          "fastapi_endpoint_design"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "document_parsing",
+        "fastapi_endpoint_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "document_parsing",
+          "fastapi_endpoint_design"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1575,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-026",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-026",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "ai_app_dev_overview",
+        "python_api_basics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1590,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-027",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-027",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "pydantic_schema_validation",
+          "sqlalchemy_modeling"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "pydantic_schema_validation",
+        "sqlalchemy_modeling"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "pydantic_schema_validation",
+          "sqlalchemy_modeling"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1605,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-028",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-028",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "sqlalchemy_modeling",
+          "alembic_migrations"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "sqlalchemy_modeling",
+        "alembic_migrations"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "sqlalchemy_modeling",
+          "alembic_migrations"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1620,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-029",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-029",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "http_rest_basics",
+          "git_collaboration"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "http_rest_basics",
+        "git_collaboration"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "http_rest_basics",
+          "git_collaboration"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1635,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-030",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-030",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "mysql_indexing",
+          "chromadb_collections"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "mysql_indexing",
+        "chromadb_collections"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "mysql_indexing",
+          "chromadb_collections"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1650,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-031",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-031",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "chromadb_collections",
+          "frontend_vue_state"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "chromadb_collections",
+        "frontend_vue_state"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "chromadb_collections",
+          "frontend_vue_state"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1665,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-032",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-032",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "prompt_basic",
+          "prompt_context_design"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "prompt_basic",
+        "prompt_context_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_basic",
+          "prompt_context_design"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1680,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-033",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-033",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "frontend_api_client",
+          "agent_role_design"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "frontend_api_client",
+        "agent_role_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "frontend_api_client",
+          "agent_role_design"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1695,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-034",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-034",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "agent_role_design",
+          "langgraph_stategraph"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "agent_role_design",
+        "langgraph_stategraph"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "agent_role_design",
+          "langgraph_stategraph"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1710,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-035",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-035",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "llm_api_calling",
+          "openai_compatible_api"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "llm_api_calling",
+        "openai_compatible_api"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "llm_api_calling",
+          "openai_compatible_api"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1725,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-036",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-036",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "orchestrator_workflow",
+          "python_async_concurrency"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "orchestrator_workflow",
+        "python_async_concurrency"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "orchestrator_workflow",
+          "python_async_concurrency"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1740,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-037",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-037",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "python_async_concurrency",
+          "knowledge_retrieval_agent"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "python_async_concurrency",
+        "knowledge_retrieval_agent"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "python_async_concurrency",
+          "knowledge_retrieval_agent"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1755,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-038",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-038",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "ai_app_dev_overview",
+        "python_api_basics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1770,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-039",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-039",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "content_generation_agent",
+          "review_validation_agent"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "content_generation_agent",
+        "review_validation_agent"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "content_generation_agent",
+          "review_validation_agent"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1785,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-040",
+      "scenario_type": "initial_generation",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-040",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "review_validation_agent",
+          "automated_testing"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "review_validation_agent",
+        "automated_testing"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "review_validation_agent",
+          "automated_testing"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1800,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-041",
+      "scenario_type": "feedback_revision",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-041",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "http_rest_basics",
+          "git_collaboration"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "http_rest_basics",
+        "git_collaboration"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "http_rest_basics",
+          "git_collaboration"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1815,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-042",
+      "scenario_type": "feedback_revision",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-042",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "docker_containerization",
+          "secret_management"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "docker_containerization",
+        "secret_management"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "docker_containerization",
+          "secret_management"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1830,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-043",
+      "scenario_type": "feedback_revision",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-043",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "secret_management",
+          "observability_tracing"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "secret_management",
+        "observability_tracing"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "secret_management",
+          "observability_tracing"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1845,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-044",
+      "scenario_type": "feedback_revision",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-044",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "prompt_basic",
+          "prompt_context_design"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "prompt_basic",
+        "prompt_context_design"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_basic",
+          "prompt_context_design"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1860,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-045",
+      "scenario_type": "feedback_revision",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-045",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "prompt_injection_defense",
+          "api_resilience_retry"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "prompt_injection_defense",
+        "api_resilience_retry"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "prompt_injection_defense",
+          "api_resilience_retry"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "passed",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 4,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 4,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": true,
+        "covered_core_knowledge_count": 2,
+        "target_core_knowledge_count": 2,
+        "review_conclusion": "passed",
+        "profile_decision": "no_change",
+        "latency_ms": 1875,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-046",
+      "scenario_type": "challenge_task",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-046",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "api_resilience_retry",
+          "evaluation_metrics"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "api_resilience_retry",
+        "evaluation_metrics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "api_resilience_retry",
+          "evaluation_metrics"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "no_change",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 0,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 0,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": null,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 0,
+        "review_conclusion": "no_change",
+        "profile_decision": "no_change",
+        "latency_ms": 1890,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-047",
+      "scenario_type": "challenge_task",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-047",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "llm_api_calling",
+          "openai_compatible_api"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "llm_api_calling",
+        "openai_compatible_api"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "llm_api_calling",
+          "openai_compatible_api"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "no_change",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 0,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 0,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": null,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 0,
+        "review_conclusion": "no_change",
+        "profile_decision": "no_change",
+        "latency_ms": 1905,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-048",
+      "scenario_type": "challenge_task",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-advanced-048",
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 80,
+          "practice": 80,
+          "problem_solving": 80,
+          "knowledge_breadth": 80,
+          "learning_speed": 80
+        },
+        "weak_knowledge": [
+          "privacy_log_policy",
+          "sse_progress_events"
+        ]
+      },
+      "resource_type": "graded_quiz",
+      "target_difficulty": 4,
+      "target_core_knowledge_ids": [
+        "privacy_log_policy",
+        "sse_progress_events"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "privacy_log_policy",
+          "sse_progress_events"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "no_change",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 0,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 0,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": null,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 0,
+        "review_conclusion": "no_change",
+        "profile_decision": "no_change",
+        "latency_ms": 1920,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-049",
+      "scenario_type": "challenge_task",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-beginner-049",
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 45,
+          "practice": 45,
+          "problem_solving": 45,
+          "knowledge_breadth": 45,
+          "learning_speed": 45
+        },
+        "weak_knowledge": [
+          "sse_progress_events",
+          "llm_judge_reliability"
+        ]
+      },
+      "resource_type": "lecture",
+      "target_difficulty": 2,
+      "target_core_knowledge_ids": [
+        "sse_progress_events",
+        "llm_judge_reliability"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "sse_progress_events",
+          "llm_judge_reliability"
+        ],
+        "required_evidence_capability": "concept",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "no_change",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 0,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 0,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": null,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 0,
+        "review_conclusion": "no_change",
+        "profile_decision": "no_change",
+        "latency_ms": 1935,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    },
+    {
+      "case_id": "V4-EVAL-050",
+      "scenario_type": "challenge_task",
+      "profile_snapshot": {
+        "profile_id": "evaluation-profile-intermediate-050",
+        "profile_type": "intermediate",
+        "ability_scores": {
+          "theory": 60,
+          "practice": 60,
+          "problem_solving": 60,
+          "knowledge_breadth": 60,
+          "learning_speed": 60
+        },
+        "weak_knowledge": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ]
+      },
+      "resource_type": "practice_guide",
+      "target_difficulty": 3,
+      "target_core_knowledge_ids": [
+        "ai_app_dev_overview",
+        "python_api_basics"
+      ],
+      "gold_standard": {
+        "required_source_ids": [
+          "ai_app_dev_overview",
+          "python_api_basics"
+        ],
+        "required_evidence_capability": "operation",
+        "acceptance_note": "验证 V6 唯一目标覆盖、证据能力和双模型审核。"
+      },
+      "expected_review_conclusion": "no_change",
+      "expected_profile_decision": "no_change",
+      "knowledge_base_version": "ai_app_dev-kb-2026.08-v4",
+      "observed_result": {
+        "evaluated_claim_count": 0,
+        "contradicted_claim_count": 0,
+        "evidence_insufficient_claim_count": 0,
+        "unresolved_claim_count": 0,
+        "generated_fact_count": 0,
+        "hallucinated_fact_count": 0,
+        "difficulty_matched": null,
+        "covered_core_knowledge_count": 0,
+        "target_core_knowledge_count": 0,
+        "review_conclusion": "no_change",
+        "profile_decision": "no_change",
+        "latency_ms": 1950,
+        "agent_latency_ms": {},
+        "determinable": true
+      }
+    }
+  ]
+}

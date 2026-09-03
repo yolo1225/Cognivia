@@ -35,7 +35,7 @@ python test_script/run_live.py --stage formal --resume-run-id live-formal-YYYYMM
 通过记录；`formal` 同理只接受当前配置的 `regression`。单案例 `--case-id` 是独立诊断，固定
 标记为 `diagnostic_only`，不会成为后续阶段凭据。
 
-脚本会校验案例唯一性，计算幻觉率、难度匹配、核心知识覆盖、审核/画像结论准确率及任务和 Agent P50/P95，并输出：
+脚本会校验案例唯一性，计算幻觉率、难度匹配、核心知识覆盖、审核/画像结论准确率、任务成功率、端到端业务时延 P50/P95、超 120 秒延迟率及各 Agent P50/P95。`run_live.py` 同时记录触发请求返回 `task_id` 的接口确认时延；它与端到端业务时延分开统计，不能用异步入队确认代替资源可用时间。输出：
 
 - `reports/evaluation/latest.json`
 - `reports/evaluation/latest.md`

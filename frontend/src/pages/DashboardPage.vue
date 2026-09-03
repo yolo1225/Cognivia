@@ -144,6 +144,9 @@ const failedGenerationCopy = computed(() => generationFailureCopy(dashboardState
 const pathNodes = computed<LearningPathNode[]>(() => report.value?.learning_path?.nodes || [])
 const currentPathNode = computed(() => pathNodes.value.find(node => node.status === 'current'))
 const completedPathNodeCount = computed(() => pathNodes.value.filter(node => node.status === 'completed').length)
+const currentDomainDirections = computed(() => (
+  domainStore.domains.find(domain => domain.domain_code === domainStore.currentDomainCode)?.learning_directions || []
+))
 const visiblePathNodes = computed(() => {
   const currentIndex = pathNodes.value.findIndex(node => node.status === 'current')
   if (currentIndex < 0) return pathNodes.value.slice(0, 5)
@@ -247,7 +250,12 @@ async function handleNextAction(action: LearningReport['next_actions'][number]) 
   finally { creatingGeneration.value = false }
 }
 function resourceTypeLabel(type: string) { return ({ lecture: '讲义', practice_guide: '实操指南', graded_quiz: '测试题' } as Record<string, string>)[type] || type }
-function directionLabel(value: string) { return ({ llm_application: '大模型应用', prompt_engineering: 'Prompt 工程', rag_knowledge_base: 'RAG 知识库', agent_orchestration: 'Agent 编排' } as Record<string, string>)[value] || (value.startsWith('direction_') ? '专项学习方向' : formatKnowledgeName(value)) }
+function directionLabel(value: string) {
+  const code = String(value)
+  return currentDomainDirections.value.find(direction => direction.value === code)?.label
+    || ({ llm_application: '大模型应用', prompt_engineering: 'Prompt 工程', rag_knowledge_base: 'RAG 知识库', agent_orchestration: 'Agent 编排' } as Record<string, string>)[code]
+    || formatKnowledgeName(code)
+}
 onMounted(loadDashboard)
 </script>
 

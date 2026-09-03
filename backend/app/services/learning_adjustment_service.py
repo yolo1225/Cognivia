@@ -1239,7 +1239,7 @@ def decide_proposal_resource(
                 "recovered": False,
             }, existing
 
-    if decision_type in {"remedial", "challenge"} or recommendation.get("mode") == "remedial":
+    if decision_type == "remedial":
         resource = db.get(LearningResource, proposal.source_resource_id)
         feedback = db.get(Feedback, (proposal.source_feedback_ids_json or [None])[-1])
         if resource is None or feedback is None:
@@ -1259,10 +1259,9 @@ def decide_proposal_resource(
         feedback = db.get(Feedback, (proposal.source_feedback_ids_json or [None])[-1])
         if resource is None or feedback is None:
             raise ValueError("learning_adjustment_source_missing")
-        # A learner-confirmed next-node package is a new generation request,
-        # not an ordinary feedback interpretation.  It intentionally uses the
-        # existing initial-generation graph route while retaining feedback and
-        # source-resource links solely as audit evidence.
+        # A learner-confirmed challenge or next-node package is a new generation
+        # request, not a second feedback interpretation. It retains the source
+        # feedback chain for audit but enters the normal generation graph.
         task = GenerationTask(
             public_id=public_id("task"),
             learner_id=learner.id,
@@ -1277,13 +1276,20 @@ def decide_proposal_resource(
             trigger_type="initial_generation",
             execution_mode="auto",
             learning_goal=(
-                f"掌握验证已确认；基于画像 V{profile.profile_version} 为学习路线当前节点 "
-                f"{current_node_id} 生成完整学习包"
-            )[:512],
+                (
+                    f"掌握验证已确认；为学习路线当前节点 {current_node_id} "
+                    "生成更高难度的挑战练习。"
+                    if decision_type == "challenge"
+                    else f"掌握验证已确认；基于画像 V{profile.profile_version} 为学习路线当前节点 "
+                    f"{current_node_id} 生成完整学习包"
+                )[:512]
+            ),
             source_resource_id=resource.id,
             source_feedback_id=feedback.id,
             source_task_id=resource.generation_task_id,
-            event_type=NODE_ADVANCEMENT_EVENT_TYPE,
+            event_type=(
+                NODE_ADVANCEMENT_EVENT_TYPE if is_node_advancement else "challenge_task"
+            ),
             progress=0,
         )
         db.add(task)

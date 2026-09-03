@@ -508,6 +508,17 @@ def _observed_result(
     all_live = bool(model_calls) and all(
         call.get("provider_mode") == "live" for call in model_calls
     )
+    review_channels = _review_channels(report)
+    certified_question_bank = (
+        str(case.get("resource_type")) == "graded_quiz"
+        and len(review_channels) == 2
+        and all(
+            channel.get("model_name") == "deterministic-certified-question-validator"
+            and channel.get("passed") is True
+            for channel in review_channels
+        )
+    )
+    execution_evidence_valid = all_live or certified_question_bank
     quality = report.get("quality_metrics") or {}
     resource = next(
         (
@@ -533,7 +544,7 @@ def _observed_result(
     )
     evidence_insufficient_count = int(quality.get("evidence_insufficient_claim_count", 0))
     unresolved_count = int(quality.get("unresolved_claim_count", 0))
-    determinable = bool(report and evaluated_claim_count > 0 and all_live)
+    determinable = bool(report and evaluated_claim_count > 0 and execution_evidence_valid)
     result = {
         "evaluated_claim_count": evaluated_claim_count,
         "contradicted_claim_count": int(quality.get("contradicted_claim_count", 0)),
@@ -553,7 +564,13 @@ def _observed_result(
         "agent_latency_ms": agent_latency,
         "determinable": determinable,
         "unable_to_determine": [],
-        "provider_mode": "live" if all_live else "invalid",
+        "provider_mode": (
+            "live"
+            if all_live
+            else "deterministic_certified_question_bank"
+            if certified_question_bank
+            else "invalid"
+        ),
         "model_calls": [
             {
                 "model_name": call.get("model_name"),
@@ -598,7 +615,7 @@ def _create_case_task(
     profile_id: str,
     timeout_seconds: int,
     full_package: bool,
-) -> tuple[str, dict[str, Any]]:
+) -> tuple[str, dict[str, Any], int]:
     resource_types = (
         ["lecture", "practice_guide", "graded_quiz"]
         if full_package
@@ -613,9 +630,11 @@ def _create_case_task(
         "resource_types": resource_types,
         "learning_goal": _case_goal(case),
     }
+    request_started = time.perf_counter()
     created = _api_json(base_url, "POST", "/generation-tasks", payload)
+    trigger_response_ms = round((time.perf_counter() - request_started) * 1000)
     task_id = str(created["task_id"])
-    return task_id, _poll_task(base_url, task_id, timeout_seconds)
+    return task_id, _poll_task(base_url, task_id, timeout_seconds), trigger_response_ms
 
 
 def _published_resource(task: dict[str, Any], resource_type: str) -> dict[str, Any]:
@@ -646,8 +665,9 @@ def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[
     scenario_type = str(case.get("scenario_type") or "initial_generation")
     started = time.perf_counter()
     baseline_task_id: str | None = None
+    trigger_response_ms: int | None = None
     if scenario_type == "initial_generation":
-        task_id, task = _create_case_task(
+        task_id, task, trigger_response_ms = _create_case_task(
             base_url,
             case,
             learner_id=learner_id,
@@ -656,7 +676,7 @@ def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[
             full_package=False,
         )
     elif scenario_type in {"feedback_revision", "challenge_task"}:
-        baseline_task_id, baseline = _create_case_task(
+        baseline_task_id, baseline, _baseline_response_ms = _create_case_task(
             base_url,
             case,
             learner_id=learner_id,
@@ -671,6 +691,7 @@ def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[
         resource = _published_resource(baseline, str(case["resource_type"]))
         resource_id = str(resource["resource_id"])
         if scenario_type == "feedback_revision":
+            request_started = time.perf_counter()
             feedback = _api_json(
                 base_url,
                 "POST",
@@ -681,6 +702,7 @@ def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[
                     "selected_text": "评测复核：该处事实需要重新检索证据并局部修订。",
                 },
             )
+            trigger_response_ms = round((time.perf_counter() - request_started) * 1000)
             if feedback.get("recommended_action") != "review" or not feedback.get("task_id"):
                 raise ApiFailure("feedback case did not create a review task")
             task_id = str(feedback["task_id"])
@@ -691,6 +713,7 @@ def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[
                 "/tutoring/sessions",
                 {"learner_id": learner_id, "resource_id": resource_id},
             )
+            request_started = time.perf_counter()
             challenge = _api_json(
                 base_url,
                 "POST",
@@ -710,16 +733,19 @@ def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[
                 },
                 timeout=timeout_seconds,
             )
+            trigger_response_ms = round((time.perf_counter() - request_started) * 1000)
             if challenge.get("recommended_action") != "challenge":
                 raise ApiFailure("challenge case did not create a challenge task")
             if challenge.get("task_id"):
                 task_id = str(challenge["task_id"])
             elif challenge.get("feedback_id"):
+                request_started = time.perf_counter()
                 confirmed = _api_json(
                     base_url,
                     "POST",
                     f"/generation-tasks/feedback/{challenge['feedback_id']}/confirm",
                 )
+                trigger_response_ms = round((time.perf_counter() - request_started) * 1000)
                 task_id = str(confirmed["task_id"])
             else:
                 raise ApiFailure("challenge recommendation did not expose confirmation id")
@@ -734,7 +760,10 @@ def run_case(base_url: str, case: dict[str, Any], timeout_seconds: int) -> dict[
         "baseline_task_id": baseline_task_id,
         "task_id": task_id,
         "task_status": task.get("status"),
-        "observed_result": _observed_result(case, task, runs, elapsed_ms),
+        "observed_result": {
+            **_observed_result(case, task, runs, elapsed_ms),
+            "trigger_response_ms": trigger_response_ms,
+        },
     }
 
 

@@ -134,6 +134,30 @@ def _feedback_assessments(
 ) -> tuple[list[EvidenceRef], list[KnowledgeAssessment]]:
     if feedback is None:
         return [], []
+    # Confirmed mastery behavior is routing evidence for an already-created
+    # challenge task. It remains insufficient to change the learner profile.
+    evidence: list[EvidenceRef] = []
+    retained_types = {EvidenceType.SCORED_QUIZ, EvidenceType.VALIDATED_BEHAVIOR}
+    for item in feedback.profile_change_evidence_json or []:
+        if not isinstance(item, dict):
+            continue
+        evidence_type = str(item.get("evidence_type") or item.get("type") or "")
+        if evidence_type not in {value.value for value in retained_types}:
+            continue
+        try:
+            restored = EvidenceRef(
+                evidence_id=str(item.get("evidence_id") or "")[:64],
+                evidence_type=evidence_type,
+                summary=str(item.get("summary") or "结构化掌握证据")[:500],
+                knowledge_id=(str(item["knowledge_id"])[:64] if item.get("knowledge_id") else None),
+                source_ref_id=(str(item["source_ref_id"])[:128] if item.get("source_ref_id") else None),
+                confidence=max(0.0, min(1.0, float(item.get("confidence") or 0.0))),
+                confirmed=bool(item.get("confirmed", False)),
+            )
+        except (TypeError, ValueError):
+            continue
+        if restored.confirmed:
+            evidence.append(restored)
     explicit_ids = {
         str(item.get("evidence_id"))
         for item in (feedback.profile_change_evidence_json or [])
@@ -141,7 +165,6 @@ def _feedback_assessments(
     }
     if feedback.tutoring_session_id is None and not explicit_ids:
         return [], []
-    evidence: list[EvidenceRef] = []
     assessments: list[KnowledgeAssessment] = []
     for record in db.scalars(select(AnswerRecord).where(AnswerRecord.learner_id == learner.id)):
         summary = record.answer_summary_json or {}
@@ -165,17 +188,18 @@ def _feedback_assessments(
         ):
             continue
         confidence = max(0.0, min(1.0, float(summary.get("confidence") or 0.9)))
-        evidence.append(
-            EvidenceRef(
-                evidence_id=evidence_id,
-                evidence_type=EvidenceType.SCORED_QUIZ,
-                summary="导学正式验证题已由服务端评分",
-                knowledge_id=knowledge.public_id,
-                source_ref_id=question.public_id,
-                confidence=confidence,
-                confirmed=True,
+        if evidence_id not in {item.evidence_id for item in evidence}:
+            evidence.append(
+                EvidenceRef(
+                    evidence_id=evidence_id,
+                    evidence_type=EvidenceType.SCORED_QUIZ,
+                    summary="导学正式验证题已由服务端评分",
+                    knowledge_id=knowledge.public_id,
+                    source_ref_id=question.public_id,
+                    confidence=confidence,
+                    confirmed=True,
+                )
             )
-        )
         assessments.append(
             KnowledgeAssessment(
                 assessment_id=str(summary.get("assessment_id") or f"assessment_{record.id}"),

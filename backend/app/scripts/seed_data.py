@@ -397,12 +397,49 @@ def run_seed() -> dict[str, int]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed MVP domain data.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable summary.")
+    parser.add_argument(
+        "--fixture-dir",
+        type=Path,
+        help="Load or verify a versioned competition submission fixture instead of the default seed.",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Validate --fixture-dir without connecting to or changing the database.",
+    )
     args = parser.parse_args()
 
-    summary = run_seed()
+    if args.verify and args.fixture_dir is None:
+        parser.error("--verify requires --fixture-dir")
+    if args.fixture_dir is not None:
+        from app.scripts.submission_fixture import (
+            SubmissionFixtureError,
+            load_submission_fixture,
+            validate_submission_fixture,
+        )
+
+        try:
+            summary = (
+                validate_submission_fixture(args.fixture_dir)
+                if args.verify
+                else load_submission_fixture(args.fixture_dir)
+            )
+        except SubmissionFixtureError as exc:
+            parser.error(str(exc))
+    else:
+        summary = run_seed()
     if args.json:
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     else:
+        if args.fixture_dir is not None:
+            database = summary.get("database", {})
+            print(
+                "Submission fixture "
+                f"{summary['fixture_version']}: {summary['counts']['knowledge_items']} knowledge items, "
+                f"{summary['counts']['active_questions']} active questions, "
+                f"database={database.get('status', 'verified')}."
+            )
+            return
         print(
             "Seed complete: "
             f"{summary['knowledge_items']} knowledge items, "

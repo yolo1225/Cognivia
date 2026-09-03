@@ -555,6 +555,16 @@ try {
     }
 
     $manifest = @()
+    $fullImportPath = Join-Path $OutputDirectory "ai_app_dev/01-ai-app-dev-complete.md"
+    if (Test-Path -LiteralPath $fullImportPath) {
+        $manifest += [pscustomobject]@{
+            domain_code = "ai_app_dev"
+            file = "ai_app_dev/01-ai-app-dev-complete.md"
+            knowledge_count = 75
+            sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $fullImportPath).Hash.ToLowerInvariant()
+            mode = "empty_database_import_demo"
+        }
+    }
     $knownIds = @{}
     foreach ($package in $packages) {
         $domainDirectory = Join-Path $OutputDirectory $package.DomainCode
@@ -627,9 +637,10 @@ try {
         '',
         '## 导入顺序',
         '',
-        '1. `ai_app_dev/01-ai-application-foundations.md`：在现有“人工智能应用开发实训”领域中以增量模式上传。导入完成后，在变更集内完成候选校验、图谱、Candidate 索引和题库缺口补齐，再一次启用。',
-        '2. 新建领域 `smart_manufacturing`，名称为“智能制造实训”，上传 `smart_manufacturing/01-smart-manufacturing-complete.md`，并在同一变更集中完成发布。',
-        '3. 知识发布后，从题库管理下载系统生成的 XLSX 缺口模板，填写题目、来源绑定并通过认证；不得预先手写题库模板。',
+        '1. `ai_app_dev/01-ai-app-dev-complete.md`：用于空库导入演示，包含主领域完整 75 条知识点。它与 `data/submission_fixtures/ai_app_dev_v1/` 的启动夹具互斥，不能在同一数据库叠加执行。',
+        '2. `ai_app_dev/01-ai-application-foundations.md`：在现有“人工智能应用开发实训”领域中以增量模式上传。导入完成后，在变更集内完成候选校验、图谱、Candidate 索引和题库缺口补齐，再一次启用。',
+        '3. 新建领域 `smart_manufacturing`，名称为“智能制造实训”，上传 `smart_manufacturing/01-smart-manufacturing-complete.md`，并在同一变更集中完成发布。',
+        '4. 知识发布后，从题库管理下载系统生成的 XLSX 缺口模板，填写题目、来源绑定并通过认证；不得预先手写题库模板。',
         '',
         '## 稳定 ID 规则',
         '',
@@ -639,7 +650,8 @@ try {
         '',
         '## 内容范围',
         '',
-        '- `ai_app_dev` 包含 25 个与 AI 应用开发直接相关的基础点，不导入视觉、强化学习、完整优化算法等会扩大正式题库维护范围的条目。',
+        '- `ai_app_dev/01-ai-app-dev-complete.md` 包含当前主领域完整 75 条知识点，作为空库导入演示材料。',
+        '- `ai_app_dev/01-ai-application-foundations.md` 包含 25 个与 AI 应用开发直接相关的基础点，用于当前基础库的增量演示。',
         '- `smart_manufacturing` 包含 67 个智能制造、工业互联网、PLC 和工业机器人知识点，其中 14 条具备可识别的操作、验收与错误处理证据，用于演示领域迁移。',
         '',
         '## 文件清单与校验和',

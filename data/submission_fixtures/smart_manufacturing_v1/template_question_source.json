@@ -1,0 +1,2816 @@
+[
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_00040ffb65674150",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_b92d62fecdf1e9dfe080"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_00040ffb65674150",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_bcb7b2f1598cc07f377e"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_00040ffb65674150",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_9e1443a4aeeadd6c978f"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_00040ffb65674150",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_4c4f6e9402d5c5913763"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_00040ffb65674150",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_6333dd7e2dd46c9d78a6"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_00040ffb65674150",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_f962d5926de3ab1f07a1"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_07efe4e93e4a7f74",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_0a13ee6cba2d90a8a045"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_07efe4e93e4a7f74",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_f5b50997d9d782729068"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_07efe4e93e4a7f74",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_8f6dfc02073b0ae53de4"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_07efe4e93e4a7f74",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_7d2b6d0c84a4cb26a574"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_07efe4e93e4a7f74",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_2789a3eef1d8f0792b57"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_07efe4e93e4a7f74",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_c50db482a1365d735903"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_19881678b556ae7d",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_61b498c04998b60f05e8"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_19881678b556ae7d",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_d3596df9c1558d84dfac"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_19881678b556ae7d",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_0a59486c2b28197925da"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_19881678b556ae7d",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_9415a04f7039085d31e6"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_19881678b556ae7d",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_2c06c88f46472f22e296"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_19881678b556ae7d",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_e2af2dbb763ae152b550"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_1a479143e7e4a51c",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_e3c5d9f2a5476dc814ac"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_1a479143e7e4a51c",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_c1581448d493ea43a381"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_1a479143e7e4a51c",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_535aac9152a9ffb499de"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_1a479143e7e4a51c",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_0f19447e35aa99c43291"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_1a479143e7e4a51c",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_24e6082326944a9fe6d4"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_1a479143e7e4a51c",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_149e8b82c6d5fcb09a99"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_1fab2a5c6c5ad504",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_1a023c32f5378291404e"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_1fab2a5c6c5ad504",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_09dad077c5492937dd06"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_1fab2a5c6c5ad504",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_0d7ca650efcea4885c1c"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_1fab2a5c6c5ad504",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_054190c20e9fa6179472"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_1fab2a5c6c5ad504",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_d451c25ccc7963c2be3a"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_1fab2a5c6c5ad504",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_4675da9810a04bc732a4"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_1fe7f407915d15fb",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_981c71d0a7af7140dd5e"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_1fe7f407915d15fb",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_6db9dc10e9ea1a7ad2c7"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_1fe7f407915d15fb",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_20f3e95308e6b45d56d3"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_1fe7f407915d15fb",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_da46cacb6573222efc4b"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_1fe7f407915d15fb",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_97343fcec845452bfaaf"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_1fe7f407915d15fb",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_ee56188b3f9010c2cb4a"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_209aa3438fb46c68",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_7d44b09c93a98c03d1e4"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_209aa3438fb46c68",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_4a9f38a6861523bee92c"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_209aa3438fb46c68",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_4e2a378894c8e89381a3"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_209aa3438fb46c68",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_cb22a2003fcb8c40293d"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_209aa3438fb46c68",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_a2c4dda508c22deb21da"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_209aa3438fb46c68",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_3d4dcef6af1fc6ac671a"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_213f5f85ca840f54",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_785443861205ec0aa820"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_213f5f85ca840f54",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_6d4ec2b7bcce1717ec3a"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_213f5f85ca840f54",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_2c40343eae7636c88584"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_213f5f85ca840f54",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_593b4b4f6b0f70e988f3"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_213f5f85ca840f54",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_0e708b8ae9667d30ff3e"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_213f5f85ca840f54",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_6504f6105e49002f6e42"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_22ac9040e58bb0e2",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_abf9a2a67c171e95b0f6"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_22ac9040e58bb0e2",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_9ace90413119b8b6f8ec"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_22ac9040e58bb0e2",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_b8d8e2a89bcb0f0e6d15"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_22ac9040e58bb0e2",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_018d578e63350fcaa5ce"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_22ac9040e58bb0e2",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_d2e4e4174468763bfb40"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_22ac9040e58bb0e2",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_8d78daa2deacc989d11d"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_260b8a37072e8657",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_0c1e9de139a680a480e4"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_260b8a37072e8657",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_98350736c1459033d601"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_260b8a37072e8657",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_cbe57b4390ae14829e7e"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_260b8a37072e8657",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_65f79b14ab1b03a25674"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_260b8a37072e8657",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_c0333b4c05152c3dc14e"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_260b8a37072e8657",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_339ec5cafbc7f37d99c6"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_283a736369af182f",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_549423c39f5e40ddcd5e"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_283a736369af182f",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_37343d47a02c5ff443d9"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_283a736369af182f",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_9972c9001a97644aeef8"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_283a736369af182f",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_c789000a77b095bf8fbc"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_283a736369af182f",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_b392f6f166a9894951b7"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_283a736369af182f",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_d486ad3f9d3a5128866b"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_2e34400aa000b493",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_11d939220c848ba276ae"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_2e34400aa000b493",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_793e19e54424dde5a9ed"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_2e34400aa000b493",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_5b6a445c540a5870d7f7"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_2e34400aa000b493",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_b149f53e94930c2fd9be"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_2e34400aa000b493",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_3f5f6bef6f810dd2cd7d"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_2e34400aa000b493",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_a894e4fd558fcdfc74ed"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_310e5b610c687f24",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_5a8e999ffdbef5c64cfa"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_310e5b610c687f24",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_1dc43ff6c70877490533"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_310e5b610c687f24",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_e3930287a67a17dc5687"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_310e5b610c687f24",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_8ebc26a57e79b5c02c51"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_310e5b610c687f24",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_e361f7edb292c43daf8e"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_310e5b610c687f24",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_86e4ab6b7a673f31856f"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_34b6c891863fe3f7",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_538f0979061ad16e9919"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_34b6c891863fe3f7",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_e319248b422bec790d92"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_34b6c891863fe3f7",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_73fdfcd346e5ada405cf"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_34b6c891863fe3f7",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_2b0f7145fcbdc1582453"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_34b6c891863fe3f7",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_a332459e9f1c1cf10ef0"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_34b6c891863fe3f7",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_060f38a477a64c9c1f88"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_3631ce09e52555f7",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_bb4445b29554ea9fea1f"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_3631ce09e52555f7",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_4d1903305353d813c182"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_3631ce09e52555f7",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_cad95578361380024ffe"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_3631ce09e52555f7",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_72e39eb1e6bbf7c175c0"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_3631ce09e52555f7",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_5ea3634043b64f252d7d"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_3631ce09e52555f7",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_8b8f5c24e929410d3694"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_3b59eadd9e7bc4e2",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_c496c74ca022a4ee274f"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_3b59eadd9e7bc4e2",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_cacae6b2c450c68470cb"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_3b59eadd9e7bc4e2",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_e32968f5d5bcde40a57a"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_3b59eadd9e7bc4e2",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_284698507205f75aab6d"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_3b59eadd9e7bc4e2",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_c20d80aaaf10fc199f8a"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_3b59eadd9e7bc4e2",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_748771cbf162cf474bf0"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_3bebafdc01501051",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_d71793d6a510faef5d23"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_3bebafdc01501051",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_986f27b09042e5371c93"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_3bebafdc01501051",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_bff526b9f39da1423c96"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_3bebafdc01501051",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_c10ae7a87dd8812152cc"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_3bebafdc01501051",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_347937dbef340e7cc17f"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_3bebafdc01501051",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_57ed4607443305818d0c"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_448fb4aafa9eb2d8",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_94bcf67945ffd65eb17c"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_448fb4aafa9eb2d8",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_425cb079cfb85dc23f0a"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_448fb4aafa9eb2d8",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_ee8fecd78887ead2e5e9"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_448fb4aafa9eb2d8",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_7e65a7dc1cfc1441d353"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_448fb4aafa9eb2d8",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_7bff80537db69631560a"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_448fb4aafa9eb2d8",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_794fc48f82661ff75f50"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_4603d844f705d61b",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_93a58426626905ac1ee5"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_4603d844f705d61b",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_835ed7129aa3966c7b1c"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_4603d844f705d61b",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_dfa7c096abb8e108a540"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_4603d844f705d61b",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_f38e48d643015c20c8d7"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_4603d844f705d61b",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_55895639b575694a2c68"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_4603d844f705d61b",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_ff473e6176b9fba3ea1a"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_52b92f4c531b92d9",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_c7c6acd9b02a5d1f0142"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_52b92f4c531b92d9",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_e6a12002399b82468d16"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_52b92f4c531b92d9",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_13f6f9bfc18066bfbdf2"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_52b92f4c531b92d9",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_abff86558cb51859e095"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_52b92f4c531b92d9",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_67037f1e9c6ef37137b0"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_52b92f4c531b92d9",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_427785c46598d09773fd"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_5859dd9ae17dbc6d",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_45a53c6c1cabf949a3f8"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_5859dd9ae17dbc6d",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_6fc7c374b46973901480"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_5859dd9ae17dbc6d",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_0620b0fac62d4335e189"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_5859dd9ae17dbc6d",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_2e90ec625c26adff9573"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_5859dd9ae17dbc6d",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_036df37b215fa0da4459"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_5859dd9ae17dbc6d",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_74aad00b1fc2e6d3ca62"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_5b9572b29e6bbe6e",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_0405e89b7f88ef775001"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_5b9572b29e6bbe6e",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_7cf4fbcf2103890bd986"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_5b9572b29e6bbe6e",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_d56ee9f07745f9595ec4"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_5b9572b29e6bbe6e",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_4316aebbb877f376ab34"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_5b9572b29e6bbe6e",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_c92465a7ee5db783856a"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_5b9572b29e6bbe6e",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_b7045374f3fce859307d"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_5c03786f12f901c9",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_dc2b5e7fd6338ecdaec9"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_5c03786f12f901c9",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_38c49bcd7121552a9607"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_5c03786f12f901c9",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_d2ee805bed0cbd2190f8"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_5c03786f12f901c9",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_d2eb13c73b03937ad854"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_5c03786f12f901c9",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_445e5bcaca452f695b86"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_5c03786f12f901c9",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_aaaffebd89b56e9d273f"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_60615564b22f71ce",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_f771cb54ce14293f67dc"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_60615564b22f71ce",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_17c66435cf3bcd1a9404"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_60615564b22f71ce",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_077b1dedabc1f1b5c1e7"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_60615564b22f71ce",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_c7cb058b60bcef44319a"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_60615564b22f71ce",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_f544ddea8839817955ec"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_60615564b22f71ce",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_a61b90b4a28d295f92e0"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_617bc7cb95342cd3",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_6ce6661c79bb787b8040"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_617bc7cb95342cd3",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_3c9486ff1c793b4a2f47"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_617bc7cb95342cd3",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_60d56d7629f3f1351326"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_617bc7cb95342cd3",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_258a4ebf98000300fea7"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_617bc7cb95342cd3",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_ccad33596ff50b50dbac"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_617bc7cb95342cd3",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_928cbc1f6ca8790f7c61"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_6710db5cb6eefaed",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_f09e6e8c2215a4733b93"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_6710db5cb6eefaed",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_cc6ed6d6c1b6fb35a0a1"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_6710db5cb6eefaed",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_dd20d00db07a7756dfa5"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_6710db5cb6eefaed",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_4fc4942240bea53a100c"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_6710db5cb6eefaed",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_edc4453ad65f51e59407"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_6710db5cb6eefaed",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_18691c2fed4b7ae73390"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_679055329ed96aed",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_7e0d4ce4ec0f379d0b22"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_679055329ed96aed",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_0b53e669c60e66441d5d"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_679055329ed96aed",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_3c5363b54261ac671b65"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_679055329ed96aed",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_e5ec432b1fea398dcaf0"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_679055329ed96aed",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_dc1125f707b0142889ca"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_679055329ed96aed",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_432a2a504a17c05460e6"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_6848351a79846659",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_e4f030b6339a187a3e91"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_6848351a79846659",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_35928ece5ab82e3f2fc2"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_6848351a79846659",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_9d0dbc9a995d24c23fe2"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_6848351a79846659",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_e2bb1306768fade55c04"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_6848351a79846659",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_80104819cbbc49a2cd82"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_6848351a79846659",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_55ec16c9a22b32eef2ac"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_6923d61e529ace1a",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_4e2566310345c8796938"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_6923d61e529ace1a",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_cc7f575662f76b5672a1"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_6923d61e529ace1a",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_f7ad37e39181842e917a"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_6923d61e529ace1a",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_c31e493e14baa21d7125"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_6923d61e529ace1a",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_3399ece833261262e370"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_6923d61e529ace1a",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_62dc62b69ee0c8a4e2ca"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_69f5fe7eec5c477a",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_70fe0f3eb6db3b6fcb8c"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_69f5fe7eec5c477a",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_52550cdf10368996bb9a"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_69f5fe7eec5c477a",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_fb9559d4796bca353583"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_69f5fe7eec5c477a",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_61ce524f7d8e456683b9"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_69f5fe7eec5c477a",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_a966cb0d13f04b7afd5e"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_69f5fe7eec5c477a",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_8eeae15ca9d52bd507c6"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_6a818aa6404fb1b6",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_489d9b3f9a2cc7b5e6ce"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_6a818aa6404fb1b6",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_a0c888903eca72d49058"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_6a818aa6404fb1b6",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_5890f126613555281aed"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_6a818aa6404fb1b6",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_e4a63a55e60bfbfca980"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_6a818aa6404fb1b6",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_85de84ebe1acf273412a"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_6a818aa6404fb1b6",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_a58dd5c1f8293d19dbf5"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_713a457ebbd1ce6c",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_21a2d21b796e9aa61dca"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_713a457ebbd1ce6c",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_287e41f1ee3ce6e9c0c7"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_713a457ebbd1ce6c",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_4942cc27272629a3642b"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_713a457ebbd1ce6c",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_8cfff50ef53e2c6e83c8"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_713a457ebbd1ce6c",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_6585804a7abe31935c9f"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_713a457ebbd1ce6c",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_c3a69a5de7eb52fa972d"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_72210960f5fc02c9",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_7c55622a284a064dcdb9"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_72210960f5fc02c9",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_cd29bbd3b041ab53dc28"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_72210960f5fc02c9",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_f098297e40834465b6f3"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_72210960f5fc02c9",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_d25198f5b874b7949efd"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_72210960f5fc02c9",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_bbb468e4bcdaf0bbd3cd"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_72210960f5fc02c9",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_4a2019d528154af6f9fc"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_73040d5c55591199",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_5b8fdadf02252a1f69cb"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_73040d5c55591199",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_26a6453899d8b6fb1060"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_73040d5c55591199",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_ec9d2ad25813d3fe25f9"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_73040d5c55591199",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_9696b0cf68d7e5ded285"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_73040d5c55591199",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_b80ebc489e786028a438"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_73040d5c55591199",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_607e0b1309733aee5d08"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_735bd6082c73122d",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_5a35f7210e1b2b76539e"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_735bd6082c73122d",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_fb55b5f3f2328b5669ba"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_735bd6082c73122d",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_ccf276458319a9f171fb"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_735bd6082c73122d",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_18f3765f8677342dfaa1"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_735bd6082c73122d",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_42859f9e5c1deff390db"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_735bd6082c73122d",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_b494e07d3a6a222b67f6"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_73d2c3af2b54aa37",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_b5d6ff532da16451109e"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_73d2c3af2b54aa37",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_db555f94bc164a3955f3"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_73d2c3af2b54aa37",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_b6f1ceeec477eda598c8"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_73d2c3af2b54aa37",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_d399d2ca9ba763efc708"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_73d2c3af2b54aa37",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_0c32032596f2af14fdbe"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_73d2c3af2b54aa37",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_7c3dc0025a1d4d1a1c19"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_753a9cfe0d2d23b1",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_cec809a4a69609c2328d"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_753a9cfe0d2d23b1",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_5dd0915fc923f3ec980e"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_753a9cfe0d2d23b1",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_1bff97e60eee9ac06f2e"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_753a9cfe0d2d23b1",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_0f0f67c08d4eec2ad6e7"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_753a9cfe0d2d23b1",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_4d0c1404c4cded1c3307"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_753a9cfe0d2d23b1",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_f5424e1be52a96e0ac2c"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_7ed8333672c0dfbd",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_a514f3b5c730f348c334"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_7ed8333672c0dfbd",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_43e7646f6c47b027f93e"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_7ed8333672c0dfbd",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_e73c20bff3091ccbf0ce"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_7ed8333672c0dfbd",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_2b6184076e882167f8a2"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_7ed8333672c0dfbd",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_5ee133374076850d3681"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_7ed8333672c0dfbd",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_0118328fb7798d95a4a2"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_8aece8fc307b8651",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_cddaa70798e2485db7ca"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_8aece8fc307b8651",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_368164ded9bef07b8c1e"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_8aece8fc307b8651",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_bdab95077735ab9e2257"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_8aece8fc307b8651",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_38f6020b99ec170ad0e4"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_8aece8fc307b8651",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_e7a463603c3528030482"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_8aece8fc307b8651",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_93e6ee98b8945d5ab8fc"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_8e730c3cb5bd0867",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_635a597facba4af5e0c3"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_8e730c3cb5bd0867",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_822c001e7609af07357e"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_8e730c3cb5bd0867",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_3b08a5161e356259a869"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_8e730c3cb5bd0867",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_6f65e7ba11764ca4794c"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_8e730c3cb5bd0867",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_5e553cecd346f71bebf7"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_8e730c3cb5bd0867",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_b7a3fa5ad12307465022"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_91b9750c0d2d9f17",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_67200f2724dd6e378eaf"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_91b9750c0d2d9f17",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_52cf059a7fe157164960"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_91b9750c0d2d9f17",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_75e25274caa559a7b51d"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_91b9750c0d2d9f17",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_038b3917d24c327dd377"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_91b9750c0d2d9f17",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_b590578b46e148228eed"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_91b9750c0d2d9f17",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_dd4fad964130f35c9fea"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_a220d8b8126bb00d",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_817fffba7eda033bec42"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_a220d8b8126bb00d",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_b812e85231a875239991"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_a220d8b8126bb00d",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_5dacc2dbc4cc88d5ed14"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_a220d8b8126bb00d",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_98d19b0648f200f59be7"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_a220d8b8126bb00d",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_6712533c3f08f9f04c31"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_a220d8b8126bb00d",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_3d09591ab01dc47fd389"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_a78b4a9c7ed554d3",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_c217d7e82bbc9164722f"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_a78b4a9c7ed554d3",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_95a02dc273c603ae9910"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_a78b4a9c7ed554d3",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_5ac99900ff528bae2c32"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_a78b4a9c7ed554d3",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_9e945faebd5ed83d623a"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_a78b4a9c7ed554d3",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_36aa6335317938ac0e77"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_a78b4a9c7ed554d3",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_ab156962042bf7b410a0"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_ac8e095c5488fcb7",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_bd1f34a9633f2d903fbb"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_ac8e095c5488fcb7",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_7e90cf75d5f1eacc7fa6"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_ac8e095c5488fcb7",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_5596ae25b6300676fad6"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_ac8e095c5488fcb7",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_86d00c0c1fe3958da0c0"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_ac8e095c5488fcb7",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_cdfda5c5a340240027e3"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_ac8e095c5488fcb7",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_ce434e0239f78769f00f"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_b1213df508e39898",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_bc3c90cd78c6add4b86c"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_b1213df508e39898",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_4558a104a74b85f1a02b"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_b1213df508e39898",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_701f370e49ae80290033"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_b1213df508e39898",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_c2c99fe2a028fb396fe4"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_b1213df508e39898",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_8a9c7b47a46d1a9203b6"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_b1213df508e39898",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_7867c63d0ee4e0d42a36"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_bb473cf75ead8132",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_0dc81c31553a6d83d4c7"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_bb473cf75ead8132",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_0186d22c9bd9e24953fe"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_bb473cf75ead8132",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_c4ac327f91c91d146d8e"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_bb473cf75ead8132",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_fca7f648863fe32ad7ac"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_bb473cf75ead8132",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_5491a11d23fd724dfba7"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_bb473cf75ead8132",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_17d9cf10333efee76dc9"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_bbbeaa43f0da01bb",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_09fdaeaea3d8a95e5058"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_bbbeaa43f0da01bb",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_a33e59817198244afaec"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_bbbeaa43f0da01bb",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_d14989cc4c9ccba4a697"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_bbbeaa43f0da01bb",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_ed9139005dd23ddc3b72"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_bbbeaa43f0da01bb",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_6cbabef8de368a30eca2"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_bbbeaa43f0da01bb",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_b2ce541a23f3832b4acb"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_bdcc4bff0bd0bcd3",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_4fec918b33e41fc02917"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_bdcc4bff0bd0bcd3",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_ceeb7a7f5b0125bd46e1"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_bdcc4bff0bd0bcd3",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_86d2e0f510aad3325537"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_bdcc4bff0bd0bcd3",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_d6d0f5c30fdd02fd3c59"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_bdcc4bff0bd0bcd3",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_40f0d76e44180ba31b54"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_bdcc4bff0bd0bcd3",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_f078e0d12dd4ab9f8002"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_c2b42d638cc46952",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_7a463a5a674768b81bca"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_c2b42d638cc46952",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_1d485af6fc95125f10ab"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_c2b42d638cc46952",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_8c6497b27ee346d51f34"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_c2b42d638cc46952",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_a329015fa2ac81725961"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_c2b42d638cc46952",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_924e887808b672750757"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_c2b42d638cc46952",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_5773469a7992121603fd"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_c38752752b340900",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_e4b9923c9daf87cfa622"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_c38752752b340900",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_dd885d8832ec43849bde"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_c38752752b340900",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_8ce8bd1ff86fe1ffd535"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_c38752752b340900",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_b14517c783534bdf90a7"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_c38752752b340900",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_5c65ea894ec21b9c7f88"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_c38752752b340900",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_4d6d5a8da7fbf617707c"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_c5760abacfdf0dc5",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_f63455b4845166f38403"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_c5760abacfdf0dc5",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_df3eb8ad777e12b967fa"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_c5760abacfdf0dc5",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_570316a6939b03628ad1"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_c5760abacfdf0dc5",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_dc5cff9c99979e558591"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_c5760abacfdf0dc5",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_2bf7037bfe58b593d14b"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_c5760abacfdf0dc5",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_83ca3fa6a9d515939f59"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_c5a352abd66c1a00",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_b566bfaedd04f10e1449"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_c5a352abd66c1a00",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_437f37a832333ea9fde4"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_c5a352abd66c1a00",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_67c1e8fdffbb9ec8531a"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_c5a352abd66c1a00",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_1e46ba63e635836719a5"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_c5a352abd66c1a00",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_2fa514fb3f1403d03eae"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_c5a352abd66c1a00",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_8d591c4830f851ba5aaf"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_c6e0d437718ca065",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_3ace6851e2cea15230ea"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_c6e0d437718ca065",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_0499b726e13dc91e744b"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_c6e0d437718ca065",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_1387c1b4d874d5e95f8e"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_c6e0d437718ca065",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_bdcfc3100c20de97b27a"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_c6e0d437718ca065",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_754520013789b81a05a4"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_c6e0d437718ca065",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_dcf23667a0f36c6de31a"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_c98539cffb5cefac",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_a29131680b9a7ff0cb8e"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_c98539cffb5cefac",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_7803c5daffc339ba9386"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_c98539cffb5cefac",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_9fefe13610ed61d5ac71"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_c98539cffb5cefac",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_6da363dbf937e7efd648"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_c98539cffb5cefac",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_5ea3650f926e19fd1c0c"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_c98539cffb5cefac",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_0934f078e8e4fed91def"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_c9a83abb024336c3",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_af0bd75c6d976a20371d"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_c9a83abb024336c3",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_1d5010a1e48e1eed4b27"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_c9a83abb024336c3",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_7ea08c7078df9b066cbd"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_c9a83abb024336c3",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_bdf882d75733dcc1f1fe"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_c9a83abb024336c3",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_865fa12cf6dfb5f47b8c"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_c9a83abb024336c3",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_73f9b330bae2ced00c3a"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_cb0b853bacd206e7",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_31eebee700310a3ee42a"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_cb0b853bacd206e7",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_9b54990b822796a73dd6"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_cb0b853bacd206e7",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_7626a68a3e490eceb534"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_cb0b853bacd206e7",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_26b8448aab83a6274ef1"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_cb0b853bacd206e7",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_cd3d68003d6bba11db14"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_cb0b853bacd206e7",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_8375b41eb043b7e4f437"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_cd695947b8909427",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_90bc31567ca82f6debe6"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_cd695947b8909427",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_1b1953c778694aca04ce"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_cd695947b8909427",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_140d249f6d62db2fa7e4"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_cd695947b8909427",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_dca110a85ad539f247c9"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_cd695947b8909427",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_3d0de66f905fc3a191a0"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_cd695947b8909427",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_2efa6a3a7e9390a5be09"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_cf1639cb2c1f44b7",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_b8b51d91d8330a3a624b"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_cf1639cb2c1f44b7",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_793253c2a7a2e35fb230"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_cf1639cb2c1f44b7",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_4ebef5f8225dcaa24136"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_cf1639cb2c1f44b7",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_8125e1d41086062b7787"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_cf1639cb2c1f44b7",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_736221d54958b30b51d9"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_cf1639cb2c1f44b7",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_d6f225dedc75d49118fe"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_db57e4a1af87914e",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_4e46e796af1a530c6efc"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_db57e4a1af87914e",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_ce5dc89d2180c87bb027"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_db57e4a1af87914e",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_0defd506f3a50ff96491"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_db57e4a1af87914e",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_b0a40495c8308d0f2939"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_db57e4a1af87914e",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_204f56d4ff1b38fc8614"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_db57e4a1af87914e",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_868408f4405baeb36527"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_dea22bbd80be7245",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_b3ec839c62fda8c826c7"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_dea22bbd80be7245",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_2938c4329a814abad7fe"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_dea22bbd80be7245",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_c221f13704e97afc3d38"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_dea22bbd80be7245",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_1dc2de9b1938a7094c03"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_dea22bbd80be7245",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_b06930c1c1cdcb5b71fe"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_dea22bbd80be7245",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_f86f17982617c7db47f3"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_e0f0e68ceb532784",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_8211d82c48c564177938"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_e0f0e68ceb532784",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_0186c77baa9ca23c1a0b"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_e0f0e68ceb532784",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_7f03e1c3d778b09b395a"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_e0f0e68ceb532784",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_3014c507c14beb153ae8"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_e0f0e68ceb532784",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_548ac722e56053834b19"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_e0f0e68ceb532784",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_5149a0bc9d18f1abc55d"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_e2281032f2474e70",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_e912cc19fc273c982265"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_e2281032f2474e70",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_e1e1f4917044ddafc7ca"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_e2281032f2474e70",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_c0dfe58f232fd3887138"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_e2281032f2474e70",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_dd6c657630b7cb381e0a"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_e2281032f2474e70",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_bf0fab97f5a1710a78d6"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_e2281032f2474e70",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_e570f5607918772c998d"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_e2d7953ac404e27a",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_cc7b3e4696812104f9e0"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_e2d7953ac404e27a",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_fa888c1b52b96fcae6cd"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_e2d7953ac404e27a",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_bb455b7be77bbbae6abc"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_e2d7953ac404e27a",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_be26130fabe9900eea39"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_e2d7953ac404e27a",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_cce668f6f58827cca466"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_e2d7953ac404e27a",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_627dc0843f5ce6fbf50d"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_e41a07e08282bfe3",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_e4b7279066b5a4a9ebfc"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_e41a07e08282bfe3",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_f64a320d5fd30fa5fb09"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_e41a07e08282bfe3",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_9e66b2bbc497d404ffee"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_e41a07e08282bfe3",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_c881c619a09d42ffe8a9"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_e41a07e08282bfe3",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_23a5300b1797a418e2a2"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_e41a07e08282bfe3",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_d19333b97201a98f4d2a"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_e5d3342302e40e27",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_05e35966d5f2d876bda1"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_e5d3342302e40e27",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_59269e190bfceb260d3a"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_e5d3342302e40e27",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_d6bc3794c27e38f9f901"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_e5d3342302e40e27",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_799b48cee3f94b55614f"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_e5d3342302e40e27",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_9895676dc9c3670b6f37"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_e5d3342302e40e27",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_94bf0cb54491580a2f15"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_e9d43cf30b0f3f00",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_4bfad105c91ca977c15d"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_e9d43cf30b0f3f00",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_bc94a4bfdf2526dccc43"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_e9d43cf30b0f3f00",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_ac73b67fed1adfe00544"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_e9d43cf30b0f3f00",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_09576b206953745da35d"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_e9d43cf30b0f3f00",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_58601b7740bceee17c47"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_e9d43cf30b0f3f00",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_67761fd076f72b4e9e86"
+  },
+  {
+    "slot_key": "diagnosis_1",
+    "knowledge_id": "ki_f3c9136c20115ace",
+    "purpose": "diagnosis",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_c0e61d9c894648f886d1"
+  },
+  {
+    "slot_key": "graded_foundation",
+    "knowledge_id": "ki_f3c9136c20115ace",
+    "purpose": "graded_quiz",
+    "quiz_level": "foundation",
+    "source_question_id": "smq_2f151bae27f2dc8683c5"
+  },
+  {
+    "slot_key": "graded_improvement",
+    "knowledge_id": "ki_f3c9136c20115ace",
+    "purpose": "graded_quiz",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_2665304657929669eb01"
+  },
+  {
+    "slot_key": "graded_challenge",
+    "knowledge_id": "ki_f3c9136c20115ace",
+    "purpose": "graded_quiz",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_752caf9919a64c1d95ad"
+  },
+  {
+    "slot_key": "mastery_1",
+    "knowledge_id": "ki_f3c9136c20115ace",
+    "purpose": "mastery_validation",
+    "quiz_level": "improvement",
+    "source_question_id": "smq_a0c25b019bd8acf22ba9"
+  },
+  {
+    "slot_key": "mastery_2",
+    "knowledge_id": "ki_f3c9136c20115ace",
+    "purpose": "mastery_validation",
+    "quiz_level": "challenge",
+    "source_question_id": "smq_833add8bf775e96b5d11"
+  }
+]

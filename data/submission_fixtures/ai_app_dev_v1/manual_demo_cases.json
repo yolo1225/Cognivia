@@ -1,0 +1,101 @@
+{
+  "schema_version": "manual-demo-cases-v1",
+  "domain_code": "ai_app_dev",
+  "privacy": "all learner identifiers are synthetic; no full answer text or generated resource is stored",
+  "cases": [
+    {
+      "case_id": "DEMO-BEGINNER-INITIAL",
+      "scenario": "初学者完成诊断后触发补救型初始生成",
+      "trigger_type": "initial_generation",
+      "profile_input": {
+        "profile_type": "beginner",
+        "ability_scores": {
+          "theory": 32,
+          "practice": 24,
+          "problem_solving": 28,
+          "knowledge_breadth": 30,
+          "learning_speed": 45
+        },
+        "weak_knowledge_ids": [
+          "python_api_basics",
+          "prompt_basic",
+          "rag_pipeline_overview"
+        ]
+      },
+      "learning_goal": "掌握 AI 应用开发基础流程并完成一个可验证的 API 调用练习",
+      "expected_assertions": {
+        "terminal_status": "completed",
+        "resource_types": [
+          "lecture",
+          "practice_guide",
+          "graded_quiz"
+        ],
+        "target_knowledge_ids_include": [
+          "python_api_basics",
+          "prompt_basic"
+        ],
+        "review_status": "passed",
+        "source_refs_present": true,
+        "profile_update_decision": "no_change"
+      }
+    },
+    {
+      "case_id": "DEMO-INTERMEDIATE-FEEDBACK",
+      "scenario": "进阶学习者报告资源存在可疑事实，触发定向复核",
+      "trigger_type": "resource_feedback",
+      "requires_completed_case": "DEMO-BEGINNER-INITIAL",
+      "feedback_input": {
+        "rating": 2,
+        "quick_tags": [
+          "有错误"
+        ],
+        "message": "请核对资源中关于向量检索距离含义的表述，并给出来源依据。"
+      },
+      "expected_assertions": {
+        "terminal_status": "completed",
+        "review_action": "recheck_or_revision",
+        "source_refs_present": true,
+        "profile_update_decision": "no_change"
+      }
+    },
+    {
+      "case_id": "DEMO-ADVANCED-CHALLENGE",
+      "scenario": "高阶学习者请求挑战任务，生成更高难度资源",
+      "trigger_type": "resource_feedback",
+      "profile_input": {
+        "profile_type": "advanced",
+        "ability_scores": {
+          "theory": 86,
+          "practice": 80,
+          "problem_solving": 88,
+          "knowledge_breadth": 82,
+          "learning_speed": 78
+        },
+        "weak_knowledge_ids": [
+          "review_validation_agent"
+        ]
+      },
+      "feedback_input": {
+        "rating": 5,
+        "quick_tags": [
+          "太简单"
+        ],
+        "message": "当前内容已掌握，请提供多智能体审核仲裁的挑战任务。"
+      },
+      "expected_assertions": {
+        "terminal_status": "completed",
+        "resource_types": [
+          "lecture",
+          "practice_guide",
+          "graded_quiz"
+        ],
+        "target_knowledge_ids_include": [
+          "review_validation_agent"
+        ],
+        "review_status": "passed",
+        "source_refs_present": true,
+        "profile_update_decision": "challenge_or_update"
+      }
+    }
+  ]
+}

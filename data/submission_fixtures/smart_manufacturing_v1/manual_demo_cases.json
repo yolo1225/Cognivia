@@ -1,0 +1,71 @@
+{
+  "schema_version": "smart-manufacturing-live-demo-cases-v1",
+  "domain_code": "smart_manufacturing",
+  "privacy": "all identifiers are synthetic; no full answer text, raw Agent payload, or resource body is retained",
+  "cases": [
+    {
+      "case_id": "SM-DEMO-BEGINNER-INITIAL",
+      "scenario": "PLC 与工业互联网基础薄弱学习者的补救型初始生成",
+      "learner_id": "sm_fixture_learner_beginner",
+      "profile_id": "sm_fixture_profile_beginner_v1",
+      "profile_type": "beginner",
+      "weak_knowledge_ids": [
+        "ki_52b92f4c531b92d9",
+        "ki_07efe4e93e4a7f74",
+        "ki_00040ffb65674150"
+      ],
+      "learning_goal": "围绕 OpenPLC 仿真部署、PLC 循环扫描与工业互联网网络体系生成可追溯的基础学习包。",
+      "resource_types": [
+        "lecture",
+        "practice_guide",
+        "graded_quiz"
+      ],
+      "follow_up": {
+        "type": "initial_generation"
+      }
+    },
+    {
+      "case_id": "SM-DEMO-INTERMEDIATE-REVIEW",
+      "scenario": "TIA 组态与机器人 I/O 待巩固学习者提交疑似错误反馈并触发复核",
+      "learner_id": "sm_fixture_learner_intermediate",
+      "profile_id": "sm_fixture_profile_intermediate_v1",
+      "profile_type": "intermediate",
+      "weak_knowledge_ids": [
+        "ki_1fe7f407915d15fb",
+        "ki_22ac9040e58bb0e2"
+      ],
+      "learning_goal": "围绕项目创建硬件组态与机器人外设协同生成可追溯的进阶学习包。",
+      "resource_types": [
+        "lecture",
+        "practice_guide",
+        "graded_quiz"
+      ],
+      "follow_up": {
+        "type": "incorrect_feedback",
+        "expected_action": "review",
+        "profile_update_required": false
+      }
+    },
+    {
+      "case_id": "SM-DEMO-ADVANCED-CHALLENGE",
+      "scenario": "UR ROS 2 集成与恢复待提升学习者以已确认掌握证据请求挑战任务",
+      "learner_id": "sm_fixture_learner_advanced",
+      "profile_id": "sm_fixture_profile_advanced_v1",
+      "profile_type": "advanced",
+      "weak_knowledge_ids": [
+        "ki_f3c9136c20115ace",
+        "ki_c6e0d437718ca065"
+      ],
+      "learning_goal": "围绕 UR ROS 2 Driver 控制模式与 External Control 恢复生成迁移挑战学习包。",
+      "resource_types": [
+        "lecture",
+        "practice_guide",
+        "graded_quiz"
+      ],
+      "follow_up": {
+        "type": "challenge_request",
+        "expected_action": "challenge"
+      }
+    }
+  ]
+}
