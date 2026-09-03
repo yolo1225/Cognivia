@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Iterator
+import logging
 from typing import Any
 
 from sqlalchemy import select
@@ -19,11 +20,16 @@ from app.models import (
     TutoringMessage,
     TutoringSession,
 )
+from app.rag.candidate_index_access import CandidateIndexAccess
+from app.rag.database_manifest_store import DatabaseManifestStore
+from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
+from app.rag.vector_store import VectorStore
 from app.services.llm_service import ModelGatewayError, gateway
 
 MAX_RESOURCE_CHARS = 12000
 MAX_HISTORY = 10
 MAX_SOURCES = 3
+_LOGGER = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """你是垂直领域学习资源的导学助手。只能根据提供的当前学习资源、来源片段和对话历史回答。回答用中文，简洁但可操作；优先解释概念、给例子和拆解步骤。不得编造材料外的事实、来源、成绩或画像结论。若证据不足，要明确说明。不要自行宣布画像已更新。"""
 
@@ -79,27 +85,82 @@ def _resource_domain_display_name(db: Session, resource: LearningResource) -> st
     return domain.name.strip()
 
 
-def _fallback_search(
-    db: Session, domain_code: str, question: str, excluded_ids: set[str]
-) -> list[KnowledgeItem]:
-    terms = [
-        term for term in question.replace("，", " ").replace("。", " ").split() if len(term) >= 2
-    ]
-    query = select(KnowledgeItem).where(KnowledgeItem.domain_code == domain_code)
-    if excluded_ids:
-        query = query.where(KnowledgeItem.public_id.not_in(excluded_ids))
-    candidates = list(db.scalars(query.order_by(KnowledgeItem.id.desc()).limit(50)))
-    if not terms:
-        return candidates[:MAX_SOURCES]
-    matched = [
-        item
-        for item in candidates
-        if any(
-            term in f"{item.name} {item.content_md} {' '.join(item.tags_json or [])}"
-            for term in terms
+def _candidate_search(
+    db: Session,
+    *,
+    domain_code: str,
+    question: str,
+    knowledge_ids: list[str],
+) -> list[dict[str, str]]:
+    """Retrieve current Candidate chunks without persisting a resource-to-Chunk link."""
+
+    try:
+        access = CandidateIndexAccess(
+            VectorStore().client,
+            manifest_store=DatabaseManifestStore(db),
         )
-    ]
-    return matched[:MAX_SOURCES]
+        manifest, collection = access.active(domain_code)
+        vector = OpenAICompatibleEmbeddingProvider().embed_texts([question])[0]
+        if len(vector) != manifest.embedding_dimensions:
+            return []
+        normalized_ids = list(dict.fromkeys(value for value in knowledge_ids if value))
+        where: dict[str, Any] | None = None
+        if len(normalized_ids) == 1:
+            where = {"knowledge_id": normalized_ids[0]}
+        elif normalized_ids:
+            where = {"knowledge_id": {"$in": normalized_ids}}
+        result = collection.query(
+            query_embeddings=[vector],
+            n_results=min(MAX_SOURCES, collection.count()),
+            where=where,
+            include=["documents", "metadatas", "distances"],
+        )
+    except Exception as exc:
+        # Resource prose remains useful when the shared Candidate index is
+        # temporarily unavailable. It is never presented as a retrieved source.
+        # Keep the log safe: the question and retrieved text can contain learner
+        # content, while the exception type is enough for operational triage.
+        _LOGGER.warning(
+            "resource_tutoring_candidate_unavailable domain_code=%s error_type=%s",
+            domain_code,
+            type(exc).__name__,
+        )
+        return []
+
+    ids = list((result.get("ids") or [[]])[0] or [])
+    documents = list((result.get("documents") or [[]])[0] or [])
+    metadatas = list((result.get("metadatas") or [[]])[0] or [])
+    if not (len(ids) == len(documents) == len(metadatas)):
+        return []
+    chunks: list[dict[str, str]] = []
+    for index, source_ref_id in enumerate(ids):
+        metadata = dict(metadatas[index] or {})
+        knowledge_id = str(metadata.get("knowledge_id") or "")
+        if metadata.get("domain_code") != domain_code or not knowledge_id:
+            continue
+        if normalized_ids and knowledge_id not in normalized_ids:
+            continue
+        document = str(documents[index] or "").strip()
+        if not document:
+            continue
+        chunks.append(
+            {
+                "source_ref_id": str(source_ref_id),
+                "knowledge_id": knowledge_id,
+                "name": str(metadata.get("name") or knowledge_id),
+                "content": document[:4000],
+                "source_title": str(metadata.get("source_title") or ""),
+            }
+        )
+    return chunks
+
+
+def _candidate_source_record(chunk: dict[str, str]) -> dict[str, str]:
+    return {
+        "knowledge_id": chunk["knowledge_id"],
+        "name": chunk["name"],
+        "source_title": chunk["source_title"],
+    }
 
 
 def _needs_assessment(content: str, turn_count: int) -> dict[str, Any] | None:
@@ -120,36 +181,9 @@ def _needs_assessment(content: str, turn_count: int) -> dict[str, Any] | None:
 def answer_resource_question(
     db: Session, *, session: TutoringSession, resource: LearningResource, question: str
 ) -> TutoringAnswer:
-    scoped = _resource_knowledge(db, resource)
-    history = list(
-        db.scalars(
-            select(TutoringMessage)
-            .where(TutoringMessage.session_id == session.id)
-            .order_by(TutoringMessage.id.desc())
-            .limit(MAX_HISTORY)
-        )
+    payload, source_records, scope_status, assessment = build_resource_tutoring_context(
+        db, session=session, resource=resource, question=question
     )
-    history.reverse()
-    sources = scoped[:MAX_SOURCES]
-    scope_status = "resource"
-    if not sources:
-        sources = _fallback_search(db, _resource_domain_code(db, resource), question, set())
-        scope_status = "knowledge_base" if sources else "uncovered"
-    context = [
-        {
-            "knowledge_id": item.public_id,
-            "name": item.name,
-            "content": item.content_md[:4000],
-            "source_title": item.source_title,
-        }
-        for item in sources
-    ]
-    payload = {
-        "resource": {"title": resource.title, "content": resource.content_md[:MAX_RESOURCE_CHARS]},
-        "knowledge_sources": context,
-        "history": [{"sender": item.sender, "content": item.content[:800]} for item in history],
-        "question": question,
-    }
     try:
         answer, metadata = gateway.complete_text(
             model=settings.primary_llm_model,
@@ -162,9 +196,9 @@ def answer_resource_question(
         answer = f"我会围绕{basis}协助你理解。你可以指出具体概念、步骤或结果，我会据此逐步解释。"
     return TutoringAnswer(
         answer=answer[:4000],
-        sources=[_source_record(item) for item in sources],
+        sources=source_records,
         scope_status=scope_status,
-        assessment=_needs_assessment(question, session.turn_count),
+        assessment=assessment,
     )
 
 
@@ -181,28 +215,32 @@ def build_resource_tutoring_context(
         )
     )
     history.reverse()
-    sources = scoped[:MAX_SOURCES]
-    scope_status = "resource"
-    if not sources:
-        sources = _fallback_search(db, _resource_domain_code(db, resource), question, set())
-        scope_status = "knowledge_base" if sources else "uncovered"
+    domain_code = _resource_domain_code(db, resource)
+    resource_knowledge_ids = [item.public_id for item in scoped]
+    chunks = _candidate_search(
+        db,
+        domain_code=domain_code,
+        question=question,
+        knowledge_ids=resource_knowledge_ids,
+    )
+    scope_status = "resource_context" if resource_knowledge_ids else "knowledge_base"
+    if not chunks and not resource_knowledge_ids:
+        scope_status = "uncovered"
+    source_records = (
+        [_candidate_source_record(chunk) for chunk in chunks]
+        if chunks
+        else [_source_record(item) for item in scoped[:MAX_SOURCES]]
+    )
     payload = {
         "resource": {"title": resource.title, "content": resource.content_md[:MAX_RESOURCE_CHARS]},
-        "knowledge_sources": [
-            {
-                "knowledge_id": item.public_id,
-                "name": item.name,
-                "content": item.content_md[:4000],
-                "source_title": item.source_title,
-            }
-            for item in sources
-        ],
+        "knowledge_sources": chunks,
+        "candidate_evidence_available": bool(chunks),
         "history": [{"sender": item.sender, "content": item.content[:800]} for item in history],
         "question": question,
     }
     return (
         payload,
-        [_source_record(item) for item in sources],
+        source_records,
         scope_status,
         _needs_assessment(question, session.turn_count),
     )

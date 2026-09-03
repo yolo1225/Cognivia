@@ -16,12 +16,10 @@ import sqlalchemy as sa
 
 from app.models import KnowledgeItem
 from app.rag.candidate_chunker import CHUNKER_VERSION
-from app.services.question_certification_service import (
+from app.alembic_legacy_question_helpers import (
     QUESTION_CERTIFICATION_RULE_VERSION,
-    knowledge_item_content_hash,
-)
-from app.services.question_source_binding_service import (
     candidate_chunks_for_item,
+    knowledge_item_content_hash,
     resolve_question_source_binding,
 )
 
@@ -126,6 +124,12 @@ def _insert_records(connection: sa.Connection, records: list[dict]) -> None:
         "source_document_id, ability_weights_json FROM knowledge_items WHERE domain_code = :domain"
     ), {"domain": DOMAIN_CODE}).mappings()
     knowledge = {str(row["public_id"]): _knowledge_item(dict(row)) for row in rows}
+    required_knowledge_ids = {str(record["knowledge_id"]) for record in records}
+    missing_knowledge_ids = required_knowledge_ids - set(knowledge)
+    if missing_knowledge_ids == required_knowledge_ids:
+        return
+    if missing_knowledge_ids:
+        raise RuntimeError(f"question_bank_knowledge_missing:{sorted(missing_knowledge_ids)}")
     now = datetime.now(UTC).replace(tzinfo=None)
     for record in records:
         if connection.scalar(sa.text("SELECT 1 FROM diagnostic_questions WHERE public_id = :id"), {"id": record["question_id"]}):

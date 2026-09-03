@@ -47,6 +47,8 @@ export interface DiagnosticResult {
   }>
   evidence_sufficient?: boolean
   evidence_reason?: string | null
+  profile_reliability_status?: 'evidence_sufficient' | 'provisional'
+  profile_reliability_message?: string | null
   learning_path_id: string | null
   learning_path?: {
     nodes?: Array<{

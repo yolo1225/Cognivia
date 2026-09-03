@@ -42,6 +42,16 @@ class ProfileAnalysisConfig:
     knowledge_catalog: Mapping[str, "KnowledgeProfileMetadata"]
     mastery_baselines: Mapping[str, float]
     minimum_category_coverage_for_practice_oriented: int = 3
+    # Subsequent revisions use a deliberately slower evidence policy than the
+    # initial diagnostic batch.  These values are product rules, not Agent
+    # contract fields, so they can evolve without changing V10.
+    subsequent_rule_version: str = "profile-evidence-v2"
+    knowledge_min_distinct_questions: int = 2
+    knowledge_min_effective_weight: float = 1.4
+    ability_min_new_knowledge: int = 2
+    ability_min_score_delta: int = 5
+    breadth_min_new_knowledge: int = 2
+    initial_diagnostic_min_answers: int = 10
 
     def difficulty_weight(self, difficulty: int) -> float:
         if difficulty < 1 or difficulty > 5:

@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     # OpenAI-compatible providers consistently support json_object. A true
     # json_schema request also requires a provider-specific schema payload and
     # must not be enabled by changing only the response type string.
-    llm_json_schema_mode: Literal["json_object"] = "json_object"
+    llm_json_schema_mode: Literal["json_object", "json_schema"] = "json_object"
     generation_max_output_tokens: int = 4000
     graded_quiz_max_output_tokens: int = 6000
     review_max_output_tokens: int = 3000

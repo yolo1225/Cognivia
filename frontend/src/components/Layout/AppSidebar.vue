@@ -1,7 +1,7 @@
 <template>
   <aside ref="sidebarRoot" class="side" :class="{ collapsed }">
     <div class="brand">
-      <div class="mark">域</div>
+      <img class="mark" src="/favicon.svg" alt="" />
       <div class="brand-copy">
         <strong>云川智汇</strong>
         <small>学习决策工作台</small>

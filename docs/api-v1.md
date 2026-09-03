@@ -38,7 +38,7 @@
 | POST | `/learning-paths/{path_id}/nodes/{node_id}/complete` | 以已验证证据完成节点并解锁后继 |
 
 首次诊断从 `diagnosis` 池抽题，分阶测试从 `graded_quiz` 池组卷，导学掌握检查从
-`mastery_validation` 池选择未见题；三者都只接受 `active + certified`。错题巩固不重新选题，
+`mastery_validation` 池选择未见题；三者都只接受 `active`。错题巩固不重新选题，
 而是按错题项中的原始题目 ID 重做认证原题。题目不足不会跨领域或用临时题静默补齐；节点推进
 只接受服务端确认且具备掌握证据资格的记录，错题修正记录不单独推进节点。
 
@@ -101,18 +101,30 @@
 | GET | `/domains/{domain_code}/stats`、`/validate`、`/readiness` | 领域统计、配置检查和发布门禁 |
 | POST | `/domains/{domain_code}/publish`、`/disable` | 发布或停用领域 |
 | GET/POST | `/knowledge/documents` | 查询或上传 Markdown/PDF/TXT 等来源文档 |
-| GET/POST/DELETE | `/knowledge/documents/{document_id}`、`/{document_id}/retry` | 查看、重试或删除文档 |
+| GET/POST/DELETE | `/knowledge/documents/{document_id}`、`/{document_id}/retry` | 查看、重试或撤回来源文档（保留历史记录） |
 | GET/PATCH | `/knowledge/imports/{import_id}`、`/candidates/...` | 读取导入运行或修订候选 |
 | GET | `/knowledge/imports/{import_id}/summary`、`/graph-preview`、`/events` | 查看导入汇总、图谱预览或订阅进度 |
-| POST | `/knowledge/imports/{import_id}/validate`、`/approve`、`/build-index`、`/smoke-test`、`/publish`、`/confirm-publish` | 执行候选校验、批准、索引、冒烟与确认发布 |
+| POST | `/knowledge/imports/{import_id}/validate`、`/approve`、`/build-index`、`/smoke-test`、`/revalidate-graph`、`/publish`、`/confirm-publish` | 执行候选校验、批准、索引、冒烟、无重传图谱重校验与确认发布 |
 | GET/POST/PATCH | `/knowledge/items`、`/knowledge/items/{knowledge_id}` | 管理已发布知识条目 |
-| GET | `/knowledge/relations`、`/questions`、`/search` | 查询关系、认证题库或知识检索 |
+| GET | `/knowledge/relations`、`/questions`、`/search` | 查询关系、正式题库或知识检索 |
+| GET | `/question-imports/template?domain_code=...` | 下载仅包含当前题库缺口的 XLSX 模板 |
+| POST | `/question-imports?domain_code=...` | 上传填写后的 XLSX 正式题库模板 |
+| GET | `/question-imports/{run_id}`、`/rows` | 查看题库导入运行及逐行校验、认证和来源候选 |
+| GET/POST | `/domain-change-sets`、`/{id}` | 查询或创建增量领域变更集 |
+| POST | `/domain-change-sets/{id}/activate` | 在资料、索引和题库缺口均完成后一次启用增量变更 |
+| POST | `/question-imports/{run_id}/validate`、`/confirm-publish` | 重新执行字段校验或在全行有效后原子发布题目 |
 | POST | `/knowledge/rebuild-index` | 启动待处理知识的 Candidate 索引重建 |
 | GET | `/knowledge/rebuild-index/status` | 查询索引构建状态 |
 
-领域发布依赖 Candidate manifest、数据/模型版本一致性、检索冒烟、知识关系、题库密度与来源认证等
-readiness 门禁。正式题目生命周期为 `pending | certified | rejected | stale`，活动题必须唯一声明
-`diagnosis | graded_quiz | mastery_validation` 用途；各业务只读取对应用途的 `active + certified` 题目。
+题库行响应包含模板、字段校验状态、字段错误和非阻断警告。导入只校验模板目录、库存槽位、知识点、
+用途、题型、答案、解析和评分点，不调用模型、不绑定 Candidate Chunk。跨知识点的合理干扰项由题目
+制作流程负责；运行时会按题目的主知识点和关联知识点检索当前 Candidate Chunk 供生成与审核使用。
+
+领域发布依赖 Candidate manifest、数据/模型版本一致性、检索冒烟、知识关系与题库密度等
+readiness 门禁。正式题目生命周期为 `active | staged | stale | disabled`，活动题必须唯一声明
+`diagnosis | graded_quiz | mastery_validation` 用途；各业务只读取对应用途的 `active` 题目。
+增量导入的图谱重校验以“已发布知识 + 当前候选”为范围：没有充分标签重合的新主题会增加学习方向；
+手工维护的教学顺序记录为可追溯的 `curriculum_rule`，不伪造为原文事实引文。
 
 ## 运维与评测接口
 

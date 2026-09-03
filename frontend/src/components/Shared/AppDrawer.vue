@@ -1,13 +1,13 @@
 <template>
   <Teleport to="body">
     <button v-if="modelValue" class="drawer-backdrop" aria-label="关闭侧边面板" @click="$emit('update:modelValue', false)" />
-  <aside ref="drawerRef" class="drawer" :class="{ open: modelValue }" role="dialog" aria-modal="true" :aria-hidden="!modelValue" :aria-labelledby="titleId" @keydown="onKeydown">
+  <aside ref="drawerRef" class="drawer" :class="{ open: modelValue, 'drawer-wide': size === 'wide' }" role="dialog" aria-modal="true" :aria-hidden="!modelValue" :aria-labelledby="titleId" @keydown="onKeydown">
     <div class="drawer-head">
       <button class="close" aria-label="关闭侧边面板" @click="$emit('update:modelValue', false)">&times;</button>
       <h2 :id="titleId">{{ title }}</h2>
       <p v-if="subtitle" class="sub">{{ subtitle }}</p>
     </div>
-    <div class="drawer-body">
+    <div ref="bodyRef" class="drawer-body">
       <slot />
     </div>
     <div v-if="$slots.footer" class="drawer-foot">
@@ -25,10 +25,18 @@ const emit = defineEmits<{
 }>()
 
 const drawerRef = ref<HTMLElement | null>(null)
+const bodyRef = ref<HTMLElement | null>(null)
 const titleId = `drawer-title-${Math.random().toString(36).slice(2, 9)}`
 let triggerElement: HTMLElement | null = null
 
-const props = defineProps<{ modelValue: boolean; title: string; subtitle?: string }>()
+const props = withDefaults(defineProps<{
+  modelValue: boolean
+  title: string
+  subtitle?: string
+  size?: 'regular' | 'wide'
+}>(), {
+  size: 'regular',
+})
 watch(() => props.modelValue, async (open) => {
   if (open) {
     triggerElement = document.activeElement as HTMLElement | null
@@ -49,6 +57,16 @@ function onKeydown(event: KeyboardEvent) {
   if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
 }
+
+function getBodyScrollTop() {
+  return bodyRef.value?.scrollTop ?? 0
+}
+
+function setBodyScrollTop(value: number) {
+  if (bodyRef.value) bodyRef.value.scrollTop = value
+}
+
+defineExpose({ getBodyScrollTop, setBodyScrollTop })
 </script>
 
 <style scoped>

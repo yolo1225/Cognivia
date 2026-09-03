@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from pydantic import ValidationError
 
@@ -112,6 +114,30 @@ def test_safe_conceptual_diagnostic_uses_six_choice_and_four_short_answer() -> N
     assert len(selected) == 10
     assert sum(item.question_type == "single_choice" for item in selected) == 6
     assert sum(item.question_type == "short_answer" for item in selected) == 4
+
+
+def test_evidence_backed_diagnostic_falls_back_when_inventory_lacks_practice_buckets() -> None:
+    available: list[DiagnosticQuestion] = []
+    knowledge_rows: dict[int, KnowledgeItem] = {}
+    for question_type, count in (("single_choice", 8), ("short_answer", 2)):
+        for _ in range(count):
+            index = len(available) + 1
+            question, knowledge = _question(index, question_type, False)
+            available.append(question)
+            knowledge_rows[index] = knowledge
+
+    runtime = SimpleNamespace(practice_generation_mode="evidence_backed", learning_directions=())
+    selected = _sample_diagnostic_questions(
+        available,
+        knowledge_rows,
+        ["rag_knowledge_base"],
+        10,
+        runtime,
+    )
+
+    assert len(selected) == 10
+    assert sum(item.question_type == "single_choice" for item in selected) == 8
+    assert sum(item.question_type == "short_answer" for item in selected) == 2
 
 
 def test_context_snapshot_is_required_and_profile_readiness_requires_it() -> None:

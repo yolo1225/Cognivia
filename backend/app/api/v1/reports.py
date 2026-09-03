@@ -406,6 +406,7 @@ def get_learning_report(
             "assessment_coverage": knowledge_profile["coverage"],
             "knowledge_state_derived_legacy": knowledge_profile["derived_legacy"],
             "dimension_status": dict(internal_ability.get("dimension_status") or {}),
+            "evidence_profile": dict(internal_ability.get("evidence_profile") or {}),
             "profile_confidence": profile.confidence if profile else 0.0,
             "diagnostic_summary": diagnostic_summary,
             "loop_status": {
@@ -440,6 +441,7 @@ def get_learning_report(
                 else None,
                 "learning_path_needs_refresh": path_needs_refresh,
                 "path_refresh_performed": path_refresh_performed,
+                "current_adjustment": adjustment_proposals[0] if adjustment_proposals else None,
                 "recent": recent_feedback,
             },
             "learning_adjustments": adjustment_proposals,

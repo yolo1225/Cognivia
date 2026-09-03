@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -97,13 +98,17 @@ def _assert_partial_package(
 
 
 def _result_summary(
-    task: dict[str, Any], *, index: int, kind: str
+    task: dict[str, Any], *, index: int, kind: str,
+    trigger_response_ms: int | None = None,
+    latency_ms: int | None = None,
 ) -> dict[str, Any]:
     return {
         "index": index,
         "kind": kind,
         "task_id": task.get("task_id"),
         "source_task_id": task.get("source_task_id"),
+        "trigger_response_ms": trigger_response_ms,
+        "latency_ms": latency_ms,
         "package_quality": task.get("package_quality") or {},
         "package_coverage": task.get("package_coverage") or {},
         "primary_owner": (task.get("package_coverage") or {}).get("primary_owner", {}),
@@ -124,6 +129,46 @@ def _write_report(report: dict[str, Any]) -> None:
     payload = json.dumps(report, ensure_ascii=False, indent=2)
     (REPORT_DIR / f"{report['run_id']}.json").write_text(payload, encoding="utf-8")
     (REPORT_DIR / "latest.json").write_text(payload, encoding="utf-8")
+
+
+def _performance_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    def values(key: str, *, kind: str | None = None) -> list[int]:
+        return [
+            int(item[key])
+            for item in results
+            if item.get(key) is not None and (kind is None or item.get("kind") == kind)
+        ]
+
+    def summary(samples: list[int]) -> dict[str, Any]:
+        return {
+            "sample_count": len(samples),
+            "p50_ms": evaluator._percentile(samples, 0.50),
+            "p95_ms": evaluator._percentile(samples, 0.95),
+        }
+
+    all_latencies = values("latency_ms")
+    return {
+        "end_to_end_latency": summary(all_latencies),
+        "trigger_response": summary(values("trigger_response_ms")),
+        "full_generation": {
+            "end_to_end_latency": summary(values("latency_ms", kind="full_generation")),
+            "trigger_response": summary(values("trigger_response_ms", kind="full_generation")),
+        },
+        "partial_regeneration": {
+            "end_to_end_latency": summary(values("latency_ms", kind="partial_regeneration")),
+            "trigger_response": summary(values("trigger_response_ms", kind="partial_regeneration")),
+        },
+        "end_to_end_latency_sla": {
+            "threshold_ms": evaluator.END_TO_END_LATENCY_SLA_MS,
+            "numerator": sum(value > evaluator.END_TO_END_LATENCY_SLA_MS for value in all_latencies),
+            "denominator": len(all_latencies),
+            "ratio": round(
+                sum(value > evaluator.END_TO_END_LATENCY_SLA_MS for value in all_latencies)
+                / len(all_latencies),
+                4,
+            ) if all_latencies else None,
+        },
+    }
 
 
 def _safe_agent_runs(base_url: str, task: dict[str, Any]) -> list[dict[str, Any]]:
@@ -157,6 +202,7 @@ def _record_failure(
         status="failed",
         run_count=len(results),
         finished_at=datetime.now(UTC).isoformat(),
+        performance_metrics=_performance_summary(results),
     )
     _write_report(report)
 
@@ -232,6 +278,7 @@ def main() -> None:
         _authenticate(args.base_url, args.username, args.password)
         full: dict[str, Any] = {}
         try:
+            request_started = time.perf_counter()
             created = _api_json(
                 args.base_url,
                 "POST",
@@ -246,8 +293,10 @@ def main() -> None:
                     "learning_goal": f"V6 稳定性验证第 {index} 轮完整学习包",
                 },
             )
+            trigger_response_ms = round((time.perf_counter() - request_started) * 1000)
             full = {"task_id": created.get("task_id")}
             full = _poll_task(args.base_url, str(created["task_id"]), args.timeout_seconds)
+            latency_ms = round((time.perf_counter() - request_started) * 1000)
             _assert_completed(full, "full_generation")
             full_resources = _assert_full_package(full)
         except Exception as exc:
@@ -261,10 +310,19 @@ def main() -> None:
                 error=exc,
             )
             raise
-        results.append(_result_summary(full, index=index, kind="full_generation"))
+        results.append(
+            _result_summary(
+                full,
+                index=index,
+                kind="full_generation",
+                trigger_response_ms=trigger_response_ms,
+                latency_ms=latency_ms,
+            )
+        )
         report.update(
             run_count=len(results),
             full_generation_count=index,
+            performance_metrics=_performance_summary(results),
             updated_at=datetime.now(UTC).isoformat(),
         )
         _write_report(report)
@@ -272,6 +330,7 @@ def main() -> None:
         partial: dict[str, Any] = {}
         try:
             _authenticate(args.base_url, args.username, args.password)
+            request_started = time.perf_counter()
             feedback = _api_json(
                 args.base_url,
                 "POST",
@@ -282,10 +341,12 @@ def main() -> None:
                     "selected_text": "稳定性复核：请重新检索并局部修订此资源。",
                 },
             )
+            trigger_response_ms = round((time.perf_counter() - request_started) * 1000)
             partial = {"task_id": feedback.get("task_id")}
             partial = _poll_task(
                 args.base_url, str(feedback["task_id"]), args.timeout_seconds
             )
+            latency_ms = round((time.perf_counter() - request_started) * 1000)
             _assert_completed(partial, "partial_regeneration")
             _assert_partial_package(
                 partial,
@@ -307,10 +368,19 @@ def main() -> None:
             )
             _write_report(report)
             raise
-        results.append(_result_summary(partial, index=index, kind="partial_regeneration"))
+        results.append(
+            _result_summary(
+                partial,
+                index=index,
+                kind="partial_regeneration",
+                trigger_response_ms=trigger_response_ms,
+                latency_ms=latency_ms,
+            )
+        )
         report.update(
             run_count=len(results),
             partial_regeneration_count=index,
+            performance_metrics=_performance_summary(results),
             updated_at=datetime.now(UTC).isoformat(),
         )
         _write_report(report)
@@ -323,6 +393,7 @@ def main() -> None:
         partial_regeneration_count=5,
         evaluated_at=datetime.now(UTC).isoformat(),
         finished_at=datetime.now(UTC).isoformat(),
+        performance_metrics=_performance_summary(results),
     )
     _write_report(report)
     print(json.dumps(report, ensure_ascii=False, indent=2))

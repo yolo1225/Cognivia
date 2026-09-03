@@ -41,6 +41,13 @@ class KnowledgeDocument(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     public_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     domain_code: Mapped[str] = mapped_column(String(64), index=True)
+    change_set_id: Mapped[int | None] = mapped_column(
+        ForeignKey("domain_change_sets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    import_mode: Mapped[str] = mapped_column(String(16), default="append", index=True)
+    replaces_document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("knowledge_documents.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     original_name: Mapped[str] = mapped_column(String(255))
     stored_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     file_type: Mapped[str] = mapped_column(String(32))
@@ -152,6 +159,9 @@ class KnowledgeImportRun(TimestampMixin, Base):
         ForeignKey("knowledge_documents.id", ondelete="CASCADE"), index=True
     )
     domain_code: Mapped[str] = mapped_column(String(64), index=True)
+    change_set_id: Mapped[int | None] = mapped_column(
+        ForeignKey("domain_change_sets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     current_step: Mapped[str] = mapped_column(String(64), default="queued")
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     input_version: Mapped[str] = mapped_column(String(80), index=True)

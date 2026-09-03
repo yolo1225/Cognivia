@@ -27,6 +27,7 @@ from app.services.mistake_evidence_service import evaluate_mistake_evidence
 
 
 VERIFIED_STATUSES = {"consolidated", "needs_more_practice"}
+RETIRED_STATUS = "retired"
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -164,10 +165,66 @@ def sync_existing_mistakes(db: Session, *, learner: Learner, domain_code: str) -
                 "path_node_id": assessment.path_node_id,
             },
         )
+    retire_unavailable_items(db, learner=learner, domain_code=domain_code)
 
 
 def _knowledge(db: Session, item: MistakeReviewItem) -> KnowledgeItem | None:
     return db.get(KnowledgeItem, item.knowledge_item_id)
+
+
+def _source_question(db: Session, item: MistakeReviewItem) -> DiagnosticQuestion | None:
+    summary = item.error_summary_json or {}
+    question_ids = [
+        str(summary.get("formal_question_id") or ""),
+        *(str(value) for value in (summary.get("reference_question_ids") or [])),
+        str(summary.get("question_id") or ""),
+    ]
+    question_ids = list(dict.fromkeys(value for value in question_ids if value))
+    if not question_ids:
+        return None
+    return db.scalar(
+        select(DiagnosticQuestion)
+        .where(DiagnosticQuestion.public_id.in_(question_ids))
+        .order_by(DiagnosticQuestion.id)
+    )
+
+
+def retire_unavailable_items(
+    db: Session, *, learner: Learner, domain_code: str
+) -> int:
+    """Withdraw mistake items when the original formal question is no longer active."""
+
+    changed = 0
+    items = list(
+        db.scalars(
+            select(MistakeReviewItem).where(
+                MistakeReviewItem.learner_id == learner.id,
+                MistakeReviewItem.domain_code == domain_code,
+                MistakeReviewItem.status.not_in({"consolidated", RETIRED_STATUS}),
+            )
+        )
+    )
+    for item in items:
+        question = _source_question(db, item)
+        if question is None or question.status == "active":
+            continue
+        summary = dict(item.error_summary_json or {})
+        summary.update(
+            {
+                "retired_reason": "ORIGINAL_QUESTION_UNAVAILABLE",
+                "retired_message": "原题已停用，系统建议使用当前题库完成补测。",
+                "retired_question_status": question.status,
+                "retired_disabled_reason": question.disabled_reason,
+            }
+        )
+        item.error_summary_json = summary
+        item.status = RETIRED_STATUS
+        if item.latest_attempt_id:
+            attempt = db.get(MistakeReviewAttempt, item.latest_attempt_id)
+            if attempt is not None and attempt.status == "created":
+                attempt.status = RETIRED_STATUS
+        changed += 1
+    return changed
 
 
 def _active_path_context(
@@ -313,11 +370,14 @@ def serialize_item(
 
 
 def summary(db: Session, *, learner: Learner, domain_code: str) -> dict[str, Any]:
+    if retire_unavailable_items(db, learner=learner, domain_code=domain_code):
+        db.commit()
     items = list(
         db.scalars(
             select(MistakeReviewItem).where(
                 MistakeReviewItem.learner_id == learner.id,
                 MistakeReviewItem.domain_code == domain_code,
+                MistakeReviewItem.status != RETIRED_STATUS,
             )
         )
     )
@@ -377,6 +437,8 @@ def list_items(
     page: int,
     page_size: int,
 ) -> dict[str, Any]:
+    if retire_unavailable_items(db, learner=learner, domain_code=domain_code):
+        db.commit()
     path_context = _active_path_context(
         db, learner_id=learner.id, domain_code=domain_code
     )
@@ -386,6 +448,7 @@ def list_items(
     ).where(
         MistakeReviewItem.learner_id == learner.id,
         MistakeReviewItem.domain_code == domain_code,
+        MistakeReviewItem.status != RETIRED_STATUS,
     )
     if priority_scope == "current_node":
         statement = statement.where(
@@ -431,6 +494,10 @@ def require_item(db: Session, *, learner: Learner, item_id: str) -> MistakeRevie
     item = db.scalar(select(MistakeReviewItem).where(MistakeReviewItem.public_id == item_id))
     if item is None or item.learner_id != learner.id:
         raise ValueError("MISTAKE_REVIEW_ITEM_NOT_FOUND")
+    if retire_unavailable_items(db, learner=learner, domain_code=item.domain_code):
+        db.commit()
+    if item.status == RETIRED_STATUS:
+        raise ValueError("MISTAKE_REVIEW_ITEM_RETIRED")
     return item
 
 
@@ -443,7 +510,7 @@ def start_attempt(db: Session, *, learner: Learner, item_id: str) -> dict[str, A
             if current_attempt and current_attempt.status == "created"
             else None
         )
-        if current_attempt and current_question:
+        if current_attempt and current_question and current_question.status == "active":
             return {
                 "attempt_id": current_attempt.public_id,
                 "item_id": item.public_id,
@@ -462,7 +529,11 @@ def start_attempt(db: Session, *, learner: Learner, item_id: str) -> dict[str, A
             DiagnosticQuestion.public_id == str(original_question_id)
         )
     )
-    if question is None or question.knowledge_item_id != item.knowledge_item_id:
+    if (
+        question is None
+        or question.status != "active"
+        or question.knowledge_item_id != item.knowledge_item_id
+    ):
         raise ValueError("CONSOLIDATION_QUESTION_UNAVAILABLE")
     attempt = MistakeReviewAttempt(
         public_id=f"consolidation_{uuid4().hex[:12]}",
@@ -501,8 +572,16 @@ def answer_attempt(
     if attempt is None or attempt.mistake_item_id != item.id:
         raise ValueError("CONSOLIDATION_ATTEMPT_NOT_FOUND")
     question = db.get(DiagnosticQuestion, attempt.question_id)
-    if question is None or question.question_type not in {"single_choice", "short_answer"}:
-        raise ValueError("CONSOLIDATION_QUESTION_UNAVAILABLE")
+    if (
+        question is None
+        or question.status != "active"
+        or question.question_type not in {"single_choice", "short_answer"}
+    ):
+        item.status = RETIRED_STATUS
+        if attempt.status == "created":
+            attempt.status = RETIRED_STATUS
+        db.commit()
+        raise ValueError("CONSOLIDATION_QUESTION_RETIRED")
     if attempt.status in {"passed", "failed", "uncertain"}:
         from app.services.mistake_evidence_service import stored_governance_result
 

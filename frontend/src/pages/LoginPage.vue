@@ -12,7 +12,7 @@
       </div>
 
       <div class="brand-lockup">
-        <span class="brand-mark" aria-hidden="true">云</span>
+        <img class="brand-mark" src="/favicon.svg" alt="" />
         <div class="brand-text">
           <span>云川智汇</span>
           <small>Cognivia · 学习决策工作台</small>
@@ -20,7 +20,7 @@
       </div>
 
       <div class="intro-copy">
-        <p class="intro-context">人工智能应用开发实训</p>
+        <p class="intro-context">领域知识智能协同平台</p>
         <h1 id="product-title">让每一次学习，<br />都有可追溯的下一步。</h1>
         <p class="intro-summary">从诊断、知识检索到资源审核与反馈调整，为学习者生成可解释的实训路径。</p>
         <div class="intro-features">
@@ -175,7 +175,7 @@ async function submit() {
 .decor-dot.d4 { bottom: 140px; right: 46px; width: 6px; height: 6px; box-shadow: 0 0 12px rgb(125 167 255 / .8); }
 
 .brand-lockup { position: relative; z-index: 1; display: flex; align-items: center; gap: 12px; }
-.brand-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; background: #7da7ff; color: #10254b; font-size: 13px; font-weight: 800; box-shadow: 0 4px 14px rgb(0 0 0 / .22); }
+.brand-mark { width: 38px; height: 38px; display: block; border-radius: 10px; box-shadow: 0 4px 14px rgb(0 0 0 / .22); }
 .brand-text { display: grid; gap: 2px; }
 .brand-text span { font-size: 16px; font-weight: 760; letter-spacing: .01em; }
 .brand-text small { color: #93a9d6; font-size: 11px; letter-spacing: .04em; }

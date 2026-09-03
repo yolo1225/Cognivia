@@ -7,6 +7,7 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    DiagnosticQuestion,
     GenerationTask,
     KnowledgeItem,
     KnowledgeRelation,
@@ -56,6 +57,40 @@ def related_knowledge_ids(db: Session, item: KnowledgeItem) -> set[str]:
     )
 
 
+def mark_affected_questions_stale(
+    db: Session,
+    *,
+    domain_code: str,
+    knowledge_ids: set[str],
+) -> int:
+    """Retire active formal questions affected by changed knowledge.
+
+    Question rows deliberately retain only their knowledge-point reference.
+    Marking them stale keeps historical answers intact and requires a reviewed
+    replacement import before the updated knowledge becomes assessable again.
+    """
+    targets = {str(value) for value in knowledge_ids if str(value)}
+    if not targets:
+        return 0
+    rows = list(
+        db.execute(
+            select(DiagnosticQuestion, KnowledgeItem.public_id)
+            .join(KnowledgeItem, KnowledgeItem.id == DiagnosticQuestion.knowledge_item_id)
+            .where(
+                DiagnosticQuestion.domain_code == domain_code,
+                DiagnosticQuestion.status == "active",
+            )
+        )
+    )
+    count = 0
+    for question, primary_knowledge_id in rows:
+        related = {str(value) for value in (question.related_knowledge_ids_json or [])}
+        if str(primary_knowledge_id) in targets or related & targets:
+            question.status = "stale"
+            count += 1
+    return count
+
+
 def replace_item_relations(
     db: Session,
     *,
@@ -91,6 +126,13 @@ def replace_item_relations(
                 source_item_id=source.id,
                 target_item_id=item.id,
                 relation_type=relation_type,
+                evidence_json={
+                    "evidence_kind": "curriculum_rule",
+                    "rule_version": "admin-curriculum-rule-v1",
+                    "reason": "管理员维护的课程关系",
+                    "source_knowledge_ids": [source.public_id, item.public_id],
+                },
+                generation_method="admin_curriculum_rule",
             )
         )
     db.flush()

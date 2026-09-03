@@ -55,7 +55,6 @@ def _record(
         answer_key_json={"correct_option": 1},
         difficulty=3,
         status="active",
-        certification_status="certified",
     )
     db.add(question)
     db.flush()
@@ -236,6 +235,24 @@ def test_node_gate_uses_current_core_scope_and_requires_all_conditions() -> None
         assert ready["quiz_completed"] is True
         assert ready["can_advance"] is True
 
+        # A local resource replacement must not erase a completed formal quiz
+        # from the same active path node.
+        replacement_task = GenerationTask(
+            public_id="task_gate_replacement",
+            learner_id=learner.id,
+            profile_id=profile.id,
+            learning_path_id=path.id,
+            path_node_id="unit:current",
+            domain_code="ai_app_dev",
+            status="completed",
+            resource_types_json=["lecture"],
+        )
+        db.add(replacement_task)
+        db.flush()
+        assert build_node_gate(
+            db, path=path, profile=profile, package_task=replacement_task
+        )["quiz_completed"] is True
+
         # A profile can be revised before the final blocking mistake is cleared.
         # Evidence consumed by that current profile must still support route progress.
         for record in records:
@@ -260,13 +277,12 @@ def test_node_gate_uses_current_core_scope_and_requires_all_conditions() -> None
         assert result["profile_result"]["profile_updated"] is False
         assert result["path_result"]["completed_node_id"] == "unit:current"
         assert result["path_result"]["current_node_id"] == next_node_id
-        assert result["resource_recommendation"] == {
-            "proposal_id": result["resource_recommendation"]["proposal_id"],
-            "path_id": "path_gate",
-            "path_node_id": next_node_id,
-            "resource_types": ["lecture", "practice_guide", "graded_quiz"],
-            "mode": "next_node",
-        }
+        recommendation = result["resource_recommendation"]
+        assert recommendation["path_id"] == "path_gate"
+        assert recommendation["path_node_id"] == next_node_id
+        assert recommendation["resource_types"] == ["lecture", "practice_guide", "graded_quiz"]
+        assert recommendation["decision_type"] == "next_stage"
+        assert recommendation["mode"] == "next_node"
 
 
 def test_affected_resource_types_follow_knowledge_targets() -> None:

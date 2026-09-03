@@ -236,6 +236,52 @@ def test_no_profile_change_is_determinable_without_generated_resource() -> None:
     assert observed["failure_category"] is None
 
 
+def test_certified_question_bank_quiz_is_determinable_without_model_calls() -> None:
+    case = {
+        **_case(),
+        "resource_type": "graded_quiz",
+        "target_difficulty": 4,
+    }
+    report = {
+        "resource_type": "graded_quiz",
+        "decision": "passed",
+        "quality_metrics": {
+            "evaluated_claim_count": 3,
+            "difficulty_match_score": 100,
+            "covered_core_knowledge_count": 1,
+            "target_core_knowledge_count": 1,
+        },
+        "primary_review": {
+            "model_name": "deterministic-certified-question-validator",
+            "passed": True,
+        },
+        "secondary_review": {
+            "model_name": "deterministic-certified-question-validator",
+            "passed": True,
+        },
+    }
+    observed = run_live._observed_result(
+        case,
+        {
+            "status": "completed",
+            "decision": "completed",
+            "resources": [{"resource_type": "graded_quiz", "difficulty": 4}],
+        },
+        [
+            {
+                "input_summary": {"step": "review_resource"},
+                "output_summary": {"resource_reviews": [report]},
+                "duration_ms": 10,
+            }
+        ],
+        25,
+    )
+
+    assert observed["determinable"] is True
+    assert observed["provider_mode"] == "deterministic_certified_question_bank"
+    assert observed["failure_category"] is None
+
+
 def test_resume_rejects_changed_rag_configuration(tmp_path: Path, monkeypatch) -> None:
     run_id = "live-formal-20260819T010203Z"
     monkeypatch.setattr(run_live, "RUN_DIR", tmp_path)

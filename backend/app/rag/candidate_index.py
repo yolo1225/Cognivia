@@ -28,12 +28,7 @@ from app.rag.candidate_manifest import (
 from app.rag.embedding_provider import EmbeddingProvider
 from app.rag.database_manifest_store import DatabaseManifestStore
 from app.scripts.validate_rag_seed import source_data_version
-from app.services.question_source_binding_service import (
-    QuestionSourceBindingError,
-    candidate_source_locator,
-    validate_question_source_binding,
-)
-from app.services.question_certification_service import knowledge_item_content_hash
+from app.services.knowledge_version_service import knowledge_item_content_hash
 
 
 logger = logging.getLogger(__name__)
@@ -69,6 +64,12 @@ def _item_payload(item: KnowledgeItem) -> dict[str, Any]:
 
 def knowledge_item_source_content_hash(item: KnowledgeItem) -> str:
     return knowledge_item_content_hash(item)
+
+
+def candidate_source_locator(item: KnowledgeItem, chunk: CandidateChunk) -> str:
+    if item.source_document_id:
+        return f"document:{item.source_document_id}#chunk={chunk.chunk_index}"
+    return f"knowledge:{item.public_id}#chunk={chunk.chunk_index}"
 
 
 def database_source_snapshot(db: Session, items: list[KnowledgeItem]) -> list[dict[str, Any]]:
@@ -145,11 +146,7 @@ def validate_knowledge_integrity(
                 f"diagnostic question has no domain knowledge item: {question.public_id}"
             )
         answer = question.answer_key_json or {}
-        answer_payload = {
-            key: value
-            for key, value in answer.items()
-            if key not in {"explanation", "source_locator", "source_ref_ids"}
-        }
+        answer_payload = {key: value for key, value in answer.items() if key != "explanation"}
         if not question.stem.strip() or not any(
             value not in (None, "", [], {}) for value in answer_payload.values()
         ):
@@ -160,21 +157,6 @@ def validate_knowledge_integrity(
             raise CandidateIndexError(
                 f"diagnostic question has no explanation: {question.public_id}"
             )
-        if (
-            question.status != "active"
-            or question.certification_status != "certified"
-        ):
-            continue
-        try:
-            validate_question_source_binding(
-                item,
-                question,
-                chunks_by_id,
-            )
-        except QuestionSourceBindingError as exc:
-            raise CandidateIndexError(
-                f"diagnostic question has invalid source binding: {question.public_id}"
-            ) from exc
 
 
 def _as_utc(value: datetime) -> datetime:

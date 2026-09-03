@@ -14,6 +14,7 @@ CASES_DIR = ROOT / "data" / "evaluation_cases"
 CASES_MANIFEST = CASES_DIR / "manifest.json"
 REPORT_DIR = ROOT / "reports" / "evaluation"
 SCRIPT_VERSION = "live-evaluator-3.0-v6"
+END_TO_END_LATENCY_SLA_MS = 120_000
 EXPECTED_SCENARIOS = {
     "initial_generation": 40,
     "feedback_revision": 5,
@@ -69,6 +70,14 @@ def _percentile(values: list[int], percentile: float) -> int | None:
     return values[index]
 
 
+def _latency_summary(values: list[int]) -> dict[str, Any]:
+    return {
+        "sample_count": len(values),
+        "p50": _percentile(values, 0.50),
+        "p95": _percentile(values, 0.95),
+    }
+
+
 def load_live_run(run_id: str | None) -> dict[str, Any]:
     run_dir = REPORT_DIR / "runs"
     if run_id:
@@ -94,6 +103,9 @@ def merge_live_results(
             continue
         item = copy.deepcopy(source)
         item["observed_result"] = by_case[case_id].get("observed_result", {})
+        # Task terminal state is a live execution fact, not part of the gold case.
+        # Keep it when merging so the success-rate denominator remains auditable.
+        item["task_status"] = by_case[case_id].get("task_status")
         merged.append(item)
     return merged
 
@@ -155,6 +167,24 @@ def evaluate(
         for item in determinable
         if item["observed_result"].get("latency_ms") is not None
     ]
+    trigger_response_times = [
+        int(item["observed_result"].get("trigger_response_ms", 0))
+        for item in determinable
+        if item["observed_result"].get("trigger_response_ms") is not None
+    ]
+    task_status_observed = [
+        item for item in determinable if item.get("task_status") is not None
+    ]
+    completed_tasks = [
+        item
+        for item in task_status_observed
+        if item.get("task_status") == "completed"
+    ]
+    delayed_cases = [
+        item
+        for item in determinable
+        if int(item["observed_result"].get("latency_ms", 0)) > END_TO_END_LATENCY_SLA_MS
+    ]
     agent_latency_values: dict[str, list[int]] = {}
     for item in determinable:
         for agent_name, duration in (
@@ -212,7 +242,16 @@ def evaluate(
             "core_knowledge_coverage": coverage,
             "review_decision_accuracy": _ratio(len(review_pass), len(determinable)),
             "profile_decision_accuracy": _ratio(len(profile_pass), len(determinable)),
-            "latency_ms": {"p50": _percentile(latencies, 0.50), "p95": _percentile(latencies, 0.95)},
+            # `latency_ms` is the end-to-end business workflow duration from the
+            # evaluation trigger to a terminal task state. It deliberately
+            # includes the review gate, rather than reporting only async enqueue.
+            "latency_ms": _latency_summary(latencies),
+            "trigger_response_ms": _latency_summary(trigger_response_times),
+            "end_to_end_latency_sla": {
+                "threshold_ms": END_TO_END_LATENCY_SLA_MS,
+                **_ratio(len(delayed_cases), len(determinable)),
+            },
+            "task_success_rate": _ratio(len(completed_tasks), len(task_status_observed)),
             "agent_latency_ms": {
                 name: {"p50": _percentile(values, 0.50), "p95": _percentile(values, 0.95)}
                 for name, values in sorted(agent_latency_values.items())
@@ -247,6 +286,9 @@ def evaluate(
             ],
             "review_decision": [str(item["case_id"]) for item in determinable if str(item["case_id"]) not in review_pass],
             "profile_decision": [str(item["case_id"]) for item in determinable if str(item["case_id"]) not in profile_pass],
+            "end_to_end_latency_sla": [
+                str(item["case_id"]) for item in delayed_cases
+            ],
         },
         "unable_to_determine": {
             "count": len(undetermined),
@@ -268,6 +310,10 @@ def evaluate(
                     "classification_basis"
                 ),
                 "field_paths": (item.get("observed_result") or {}).get("field_paths", []),
+                "latency_ms": (item.get("observed_result") or {}).get("latency_ms"),
+                "trigger_response_ms": (item.get("observed_result") or {}).get(
+                    "trigger_response_ms"
+                ),
             }
             for item in cases
         ],
@@ -326,7 +372,16 @@ def write_reports(result: dict[str, Any], *, xlsx: bool) -> None:
     lines.extend(
         [
             "",
-            f"性能：P50 {metrics['latency_ms']['p50']} ms，P95 {metrics['latency_ms']['p95']} ms。",
+            "## 性能",
+            "",
+            "| 指标 | 样本量 | 结果 |",
+            "|---|---:|---:|",
+            f"| 端到端业务时延 P50 | {metrics['latency_ms']['sample_count']} | {metrics['latency_ms']['p50']} ms |",
+            f"| 端到端业务时延 P95 | {metrics['latency_ms']['sample_count']} | {metrics['latency_ms']['p95']} ms |",
+            f"| 触发接口确认时延 P50 | {metrics['trigger_response_ms']['sample_count']} | {metrics['trigger_response_ms']['p50'] if metrics['trigger_response_ms']['p50'] is not None else '未采集'} ms |",
+            f"| 触发接口确认时延 P95 | {metrics['trigger_response_ms']['sample_count']} | {metrics['trigger_response_ms']['p95'] if metrics['trigger_response_ms']['p95'] is not None else '未采集'} ms |",
+            f"| 超 {metrics['end_to_end_latency_sla']['threshold_ms']} ms 延迟率 | {metrics['end_to_end_latency_sla']['denominator']} | {metrics['end_to_end_latency_sla']['numerator']} / {metrics['end_to_end_latency_sla']['denominator']} = {metrics['end_to_end_latency_sla']['ratio']} |",
+            f"| 任务成功率 | {metrics['task_success_rate']['denominator']} | {metrics['task_success_rate']['numerator']} / {metrics['task_success_rate']['denominator']} = {metrics['task_success_rate']['ratio']} |",
             "",
             "## 失败案例",
             "",
@@ -377,6 +432,20 @@ def write_reports(result: dict[str, Any], *, xlsx: bool) -> None:
                 sheet.append([key, item["numerator"], item["denominator"], item["ratio"]])
         sheet.append(["latency_p50_ms", metrics["latency_ms"]["p50"], None, None])
         sheet.append(["latency_p95_ms", metrics["latency_ms"]["p95"], None, None])
+        sheet.append(["trigger_response_p50_ms", metrics["trigger_response_ms"]["p50"], None, None])
+        sheet.append(["trigger_response_p95_ms", metrics["trigger_response_ms"]["p95"], None, None])
+        sheet.append([
+            "end_to_end_latency_sla_breach_rate",
+            metrics["end_to_end_latency_sla"]["numerator"],
+            metrics["end_to_end_latency_sla"]["denominator"],
+            metrics["end_to_end_latency_sla"]["ratio"],
+        ])
+        sheet.append([
+            "task_success_rate",
+            metrics["task_success_rate"]["numerator"],
+            metrics["task_success_rate"]["denominator"],
+            metrics["task_success_rate"]["ratio"],
+        ])
         agent_sheet = workbook.create_sheet("agent_latency")
         agent_sheet.append(["agent", "p50_ms", "p95_ms"])
         for name, values in metrics.get("agent_latency_ms", {}).items():
@@ -393,6 +462,8 @@ def write_reports(result: dict[str, Any], *, xlsx: bool) -> None:
                 "failure_code",
                 "classification_basis",
                 "field_paths",
+                "latency_ms",
+                "trigger_response_ms",
             ]
         )
         for item in result.get("case_results", []):
@@ -407,6 +478,8 @@ def write_reports(result: dict[str, Any], *, xlsx: bool) -> None:
                     item.get("failure_code"),
                     item.get("classification_basis"),
                     json.dumps(item.get("field_paths") or [], ensure_ascii=False),
+                    item.get("latency_ms"),
+                    item.get("trigger_response_ms"),
                 ]
             )
         workbook.save(REPORT_DIR / f"{stem}.xlsx")

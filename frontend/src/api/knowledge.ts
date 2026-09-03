@@ -41,19 +41,8 @@ export interface QuestionBankItem {
   options: string[]
   answer: number | string
   explanation: string
-  source_ref_ids: string[]
-  source_quote: string | null
-  evidence_quotes: Array<{ source_ref_id: string; quote: string }>
   difficulty: number
-  status: 'active' | 'disabled'
-  certification_status: 'pending' | 'certified' | 'rejected' | 'stale'
-  certification_rule_version: string | null
-  certified_at: string | null
-  certification_summary: {
-    deterministic_passed: boolean | null
-    failed_fields: string[]
-    source_content_hash: string | null
-  }
+  status: 'active' | 'staged' | 'stale' | 'disabled'
   disabled_at: string | null
   disabled_reason: string | null
 }
@@ -206,15 +195,31 @@ export function listKnowledgeItems(domainCode: string, limit = 100) {
   return getData<KnowledgeItemsResponse>(`/knowledge/items?${params.toString()}`)
 }
 
-export function listQuestionBank(
+export async function listQuestionBank(
   domainCode: string,
-  status?: 'active' | 'disabled',
-  certificationStatus?: QuestionBankItem['certification_status'],
+  status?: QuestionBankItem['status'],
 ) {
-  const params = new URLSearchParams({ domain_code: domainCode, limit: '500' })
-  if (status) params.set('status', status)
-  if (certificationStatus) params.set('certification_status', certificationStatus)
-  return getData<QuestionBankResponse>(`/knowledge/questions?${params.toString()}`)
+  const pageSize = 500
+  const fetchPage = (offset: number) => {
+    const params = new URLSearchParams({
+      domain_code: domainCode,
+      limit: String(pageSize),
+      offset: String(offset),
+    })
+    if (status) params.set('status', status)
+    return getData<QuestionBankResponse>(`/knowledge/questions?${params.toString()}`)
+  }
+  const first = await fetchPage(0)
+  if (first.items.length >= first.total) return first
+  const remainingOffsets: number[] = []
+  for (let offset = first.items.length; offset < first.total; offset += pageSize) {
+    remainingOffsets.push(offset)
+  }
+  const remaining = await Promise.all(remainingOffsets.map(fetchPage))
+  return {
+    ...first,
+    items: [...first.items, ...remaining.flatMap((page) => page.items)],
+  }
 }
 
 export function disableQuestion(questionId: string, reason: string) {

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.agents.profile_analysis_config import (
@@ -12,23 +12,14 @@ from app.agents.profile_analysis_config import (
     KnowledgeProfileMetadata,
     ProfileAnalysisConfig,
 )
-from app.models import DiagnosticQuestion, Domain, KnowledgeItem, KnowledgeRelation
+from app.models import Domain, KnowledgeItem, KnowledgeRelation
 from app.rag.readiness import candidate_rag_status
-from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
+from app.services.question_bank_service import (
+    INITIAL_DIAGNOSTIC_MINIMUM,
+    initial_diagnostic_inventory,
+    initial_diagnostic_inventory_payload,
+    question_bank_coverage,
 )
-
-
-DIAGNOSTIC_DISTRIBUTION = {
-    ("single_choice", False): 3,
-    ("single_choice", True): 3,
-    ("short_answer", False): 2,
-    ("short_answer", True): 2,
-}
-SAFE_CONCEPTUAL_DIAGNOSTIC_DISTRIBUTION = {
-    "single_choice": 6,
-    "short_answer": 4,
-}
 
 
 def practice_generation_mode_for_items(items: list[KnowledgeItem]) -> str:
@@ -70,10 +61,12 @@ class DomainRuntime:
     profile_config: ProfileAnalysisConfig | None
     profile_ready: bool
     diagnostic_ready: bool
+    question_bank_ready: bool
     rag_ready: bool
     generation_ready: bool
     reasons: tuple[str, ...]
     rag: dict[str, Any]
+    diagnostic_inventory: dict[str, Any]
 
     def readiness_payload(self) -> dict[str, Any]:
         return {
@@ -82,11 +75,13 @@ class DomainRuntime:
             "status": self.status,
             "profile_ready": self.profile_ready,
             "diagnostic_ready": self.diagnostic_ready,
+            "question_bank_ready": self.question_bank_ready,
             "rag_ready": self.rag_ready,
             "generation_ready": self.generation_ready,
             "reasons": list(self.reasons),
             "knowledge_item_count": len(self.knowledge_ids),
             "diagnostic_question_count": self.diagnostic_question_count,
+            "diagnostic_inventory": self.diagnostic_inventory,
             "practice_generation_mode": self.practice_generation_mode,
             "relation_count": self.relation_count,
             "rag": self.rag,
@@ -231,72 +226,28 @@ def load_domain_runtime(db: Session, domain_code: str) -> DomainRuntime:
         profile_config = None
         reasons.append(str(exc))
 
-    total_questions = int(
-        db.scalar(
-            select(func.count())
-            .select_from(DiagnosticQuestion)
-            .where(DiagnosticQuestion.domain_code == domain_code)
-            .where(DiagnosticQuestion.status == "active")
-            .where(DiagnosticQuestion.certification_status == "certified")
-            .where(
-                DiagnosticQuestion.certification_rule_version
-                == QUESTION_CERTIFICATION_RULE_VERSION
-            )
-        )
-        or 0
-    )
-    valid_questions = list(
-        db.execute(
-            select(DiagnosticQuestion, KnowledgeItem)
-            .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
-            .where(
-                DiagnosticQuestion.domain_code == domain_code,
-                DiagnosticQuestion.status == "active",
-                DiagnosticQuestion.certification_status == "certified",
-                DiagnosticQuestion.certification_rule_version
-                == QUESTION_CERTIFICATION_RULE_VERSION,
-                KnowledgeItem.domain_code == domain_code,
-                KnowledgeItem.status == "published",
-            )
-        )
-    )
-    if len(valid_questions) != total_questions:
-        reasons.append("diagnostic_cross_domain_or_unpublished_knowledge")
     practice_generation_mode = practice_generation_mode_for_items(items)
-    if practice_generation_mode == "evidence_backed":
-        buckets = {key: 0 for key in DIAGNOSTIC_DISTRIBUTION}
-        for question, _item in valid_questions:
-            assessment_dimension = str(
-                (question.answer_key_json or {}).get("assessment_dimension") or ""
-            )
-            key = (
-                question.question_type,
-                assessment_dimension == "operation",
-            )
-            if key in buckets:
-                buckets[key] += 1
-        missing_buckets = [
-            f"{question_type}:{'operation' if operation else 'theory'}"
-            for (question_type, operation), required in DIAGNOSTIC_DISTRIBUTION.items()
-            if buckets[(question_type, operation)] < required
-        ]
-    else:
-        type_counts = {question_type: 0 for question_type in SAFE_CONCEPTUAL_DIAGNOSTIC_DISTRIBUTION}
-        for question, _item in valid_questions:
-            if question.question_type in type_counts:
-                type_counts[question.question_type] += 1
-        missing_buckets = [
-            f"{question_type}:overall"
-            for question_type, required in SAFE_CONCEPTUAL_DIAGNOSTIC_DISTRIBUTION.items()
-            if type_counts[question_type] < required
-        ]
-    if missing_buckets:
-        reasons.append(f"diagnostic_distribution_insufficient:{','.join(missing_buckets)}")
+    question_coverage = question_bank_coverage(
+        db, domain_code=domain_code, knowledge_ids=[item.public_id for item in items]
+    )
+    diagnostic_rows = initial_diagnostic_inventory(db, domain_code=domain_code)
+    diagnostic_inventory = initial_diagnostic_inventory_payload(db, domain_code=domain_code)
+    if len(diagnostic_rows) < INITIAL_DIAGNOSTIC_MINIMUM:
+        reasons.append("diagnostic_question_inventory_insufficient")
+    question_bank_ready = (
+        bool(items)
+        and int(question_coverage["ready_items"]) == len(items)
+        and int(question_coverage["distribution"]["invalid_purpose_count"]) == 0
+        and int(question_coverage["distribution"]["invalid_question_count"]) == 0
+    )
+    if not question_bank_ready:
+        reasons.append("formal_question_bank_incomplete")
 
     rag = candidate_rag_status(domain_code)
     profile_ready = profile_config is not None
     diagnostic_ready = (
-        profile_ready and not missing_buckets and len(valid_questions) == total_questions
+        profile_ready
+        and len(diagnostic_rows) >= INITIAL_DIAGNOSTIC_MINIMUM
     )
     rag_ready = bool(rag.get("ready"))
     return DomainRuntime(
@@ -305,20 +256,22 @@ def load_domain_runtime(db: Session, domain_code: str) -> DomainRuntime:
         status=domain.status,
         knowledge_ids=tuple(item.public_id for item in items),
         relation_count=len(relations),
-        diagnostic_question_count=total_questions,
+        diagnostic_question_count=len(diagnostic_rows),
         practice_generation_mode=practice_generation_mode,
         learning_directions=_learning_directions(domain),
         profile_config=profile_config,
         profile_ready=profile_ready,
         diagnostic_ready=diagnostic_ready,
+        question_bank_ready=question_bank_ready,
         rag_ready=rag_ready,
-        generation_ready=profile_ready and rag_ready,
+        generation_ready=profile_ready and diagnostic_ready and question_bank_ready and rag_ready,
         reasons=tuple(
             dict.fromkeys(
                 reasons + ([] if rag_ready else [str(rag.get("reason") or "rag_not_ready")])
             )
         ),
         rag=rag,
+        diagnostic_inventory=diagnostic_inventory,
     )
 
 

@@ -594,9 +594,6 @@ def test_related_question_under_minimum_density_stops_before_generation(tmp_path
                 },
                 difficulty=2,
                 status="active",
-                certification_status="certified",
-                certification_rule_version="question-cert-v1",
-                source_content_hash="sha256:" + "f" * 64,
             )
         )
         db.commit()
@@ -645,9 +642,6 @@ def test_lecture_only_retrieval_does_not_include_question_bank_sources(
                 },
                 difficulty=1,
                 status="active",
-                certification_status="certified",
-                certification_rule_version="question-cert-v1",
-                source_content_hash="sha256:" + "b" * 64,
             )
         )
         db.commit()
@@ -698,9 +692,6 @@ def test_two_questions_on_same_primary_knowledge_are_density_insufficient(
                     },
                     difficulty=2,
                     status="active",
-                    certification_status="certified",
-                    certification_rule_version="question-cert-v1",
-                    source_content_hash="sha256:" + "a" * 64,
                 )
             )
         db.commit()
@@ -768,9 +759,6 @@ def test_quiz_source_supplements_expand_within_v9_chunk_budget(tmp_path: Path) -
                     },
                     difficulty=2,
                     status="active",
-                    certification_status="certified",
-                    certification_rule_version="question-cert-v1",
-                    source_content_hash="sha256:" + "d" * 64,
                 )
             )
         db.commit()
@@ -784,11 +772,12 @@ def test_quiz_source_supplements_expand_within_v9_chunk_budget(tmp_path: Path) -
         )
 
     assert len(result.reference_questions) == 5
-    assert len(result.chunks) == 14
+    assert len(result.chunks) == 12
     chunk_knowledge_ids = {chunk.knowledge_id for chunk in result.chunks}
-    assert {
-        question.knowledge_id for question in result.reference_questions
-    } <= chunk_knowledge_ids
+    assert all(
+        {question.knowledge_id, *question.related_knowledge_ids} & chunk_knowledge_ids
+        for question in result.reference_questions
+    )
     assert set(target_ids) <= chunk_knowledge_ids
 
 
@@ -846,9 +835,6 @@ def test_six_knowledge_unit_and_six_external_quiz_sources_fit_chunk_budget(
                     },
                     difficulty=2,
                     status="active",
-                    certification_status="certified",
-                    certification_rule_version="question-cert-v1",
-                    source_content_hash="sha256:" + "e" * 64,
                 )
             )
         db.commit()
@@ -862,11 +848,13 @@ def test_six_knowledge_unit_and_six_external_quiz_sources_fit_chunk_budget(
         )
 
     chunk_knowledge_ids = {chunk.knowledge_id for chunk in result.chunks}
-    assert len(result.chunks) == 18
+    assert len(result.chunks) == 12
     assert len(result.reference_questions) == 6
     assert set(target_ids) <= chunk_knowledge_ids
-    assert set(question_primary_ids) <= chunk_knowledge_ids
-    assert set(filler_ids) <= chunk_knowledge_ids
+    assert all(
+        {question.knowledge_id, *question.related_knowledge_ids} & chunk_knowledge_ids
+        for question in result.reference_questions
+    )
 
 
 def test_v3_retrieval_excludes_missing_source_and_validates_collection_metadata(

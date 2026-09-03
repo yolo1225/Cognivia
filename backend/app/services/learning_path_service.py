@@ -538,6 +538,84 @@ def normalize_learning_path(path: LearningPath) -> dict[str, Any]:
     return normalized
 
 
+def reprioritize_future_nodes(
+    path: LearningPath,
+    *,
+    affected_knowledge_ids: list[str],
+    reason: str,
+) -> dict[str, Any]:
+    """Reorder only locked units, preserving current/completed evidence intact."""
+    payload = deepcopy(path.path_json or {})
+    states = payload.get("node_states") or {}
+    locked = [
+        dict(state)
+        for state in states.values()
+        if isinstance(state, dict) and state.get("status") == "locked"
+    ]
+    if len(locked) < 2:
+        return payload
+    affected = set(str(value) for value in affected_knowledge_ids if value)
+    before_order = [str(state.get("path_node_id")) for state in sorted(
+        locked, key=lambda value: int(value.get("path_order") or 0)
+    )]
+    node_for_knowledge = {
+        str(knowledge_id): str(state.get("path_node_id"))
+        for state in locked
+        for knowledge_id in state.get("knowledge_ids") or [state.get("knowledge_id")]
+        if knowledge_id
+    }
+    dependencies = {
+        str(state.get("path_node_id")): {
+            node_for_knowledge[prerequisite]
+            for prerequisite in state.get("prerequisite_knowledge_ids") or []
+            if prerequisite in node_for_knowledge
+            and node_for_knowledge[prerequisite] != str(state.get("path_node_id"))
+        }
+        for state in locked
+    }
+    remaining = {str(state.get("path_node_id")): state for state in locked}
+    reordered: list[dict[str, Any]] = []
+    while remaining:
+        eligible = [
+            state for node_id, state in remaining.items()
+            if not (dependencies.get(node_id) or set(remaining)) & set(remaining)
+        ]
+        if not eligible:
+            eligible = list(remaining.values())
+        chosen = min(
+            eligible,
+            key=lambda state: (
+                0 if affected & set(state.get("knowledge_ids") or [state.get("knowledge_id")]) else 1,
+                int(state.get("path_order") or 0),
+            ),
+        )
+        node_id = str(chosen.get("path_node_id"))
+        reordered.append(chosen)
+        remaining.pop(node_id, None)
+    after_order = [str(state.get("path_node_id")) for state in reordered]
+    if after_order == before_order:
+        return payload
+    completed_or_current = sorted(
+        [
+            state for state in states.values()
+            if isinstance(state, dict) and state.get("status") != "locked"
+        ],
+        key=lambda value: int(value.get("path_order") or 0),
+    )
+    for index, state in enumerate([*completed_or_current, *reordered], start=1):
+        states[str(state["path_node_id"])]["path_order"] = index
+    payload["revision_summary"] = {
+        "type": "future_reprioritized",
+        "message": "后续学习节点已按最新确认画像调整优先级",
+        "reason": reason,
+        "affected_knowledge_ids": sorted(affected),
+        "before_order": before_order,
+        "after_order": after_order,
+    }
+    path.path_json = payload
+    return payload
+
+
 def serialize_learning_path(path: LearningPath) -> dict[str, Any]:
     payload = normalize_learning_path(path)
     states = payload.get("node_states") or {}

@@ -72,6 +72,8 @@ export interface NodeGate {
   unmastered_knowledge_ids?: string[]
   blocking_mistake_count: number
   blocking_mistake_ids?: string[]
+  retired_mistake_count?: number
+  evidence_recommendation?: string | null
   quiz_completed: boolean
   completed_node_id?: string | null
   current_node_id?: string | null

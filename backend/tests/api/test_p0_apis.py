@@ -1,6 +1,4 @@
 from collections.abc import Generator
-from datetime import datetime
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
@@ -106,7 +104,7 @@ def seed_resource(db: Session):
     return learner, profile, task, visible
 
 
-def test_question_bank_certification_filter_and_evidence_response() -> None:
+def test_question_bank_status_filter_exposes_only_question_data() -> None:
     testing_session = build_test_session()
     with testing_session() as db:
         item = KnowledgeItem(
@@ -135,43 +133,22 @@ def test_question_bank_certification_filter_and_evidence_response() -> None:
         db.add_all(
             [
                 DiagnosticQuestion(
-                    public_id="question_certified",
+                    public_id="question_active",
                     answer_key_json={
                         "correct_option": 0,
-                        "explanation": "由可信原文支持",
+                        "explanation": "题目解析。",
                         "quiz_level": "foundation",
-                        "source_ref_ids": ["knowledge_certified::chunk::0"],
-                        "evidence_quotes": [
-                            {
-                                "source_ref_id": "knowledge_certified::chunk::0",
-                                "quote": "可信原文",
-                            }
-                        ],
                     },
-                    certification_status="certified",
-                    certification_rule_version="question-cert-v1",
-                    certification_report_json={
-                        "deterministic_passed": True,
-                        "failed_fields": [],
-                    },
-                    source_content_hash="sha256:" + "a" * 64,
-                    certified_at=datetime(2026, 8, 26),
                     **common,
                 ),
                 DiagnosticQuestion(
                     public_id="question_stale",
                     answer_key_json={
                         "correct_option": 0,
-                        "explanation": "旧来源",
+                        "explanation": "待更新题目解析。",
                         "quiz_level": "foundation",
-                        "source_ref_ids": ["knowledge_certified::chunk::0"],
                     },
-                    certification_status="stale",
-                    certification_report_json={
-                        "deterministic_passed": True,
-                        "failed_fields": ["source_content_hash"],
-                    },
-                    **common,
+                    **{**common, "status": "stale"},
                 ),
             ]
         )
@@ -183,18 +160,17 @@ def test_question_bank_certification_filter_and_evidence_response() -> None:
             "/api/v1/knowledge/questions",
             params={
                 "domain_code": "ai_app_dev",
-                "certification_status": "certified",
+                "status": "active",
             },
         )
         assert response.status_code == 200
         data = response.json()["data"]
         assert data["total"] == 1
         question = data["items"][0]
-        assert question["question_id"] == "question_certified"
-        assert question["certification_status"] == "certified"
-        assert question["certification_rule_version"] == "question-cert-v1"
-        assert question["evidence_quotes"][0]["quote"] == "可信原文"
-        assert question["certification_summary"]["deterministic_passed"] is True
+        assert question["question_id"] == "question_active"
+        assert question["status"] == "active"
+        assert "certification_status" not in question
+        assert "source_ref_ids" not in question
     finally:
         app.dependency_overrides.clear()
 
@@ -537,6 +513,7 @@ def test_question_source_failure_retry_discards_stale_retrieval_checkpoint(
                     "recoverable": True,
                 },
                 error_message=failure_code,
+                contract_version=CONTRACT_VERSION,
             )
         )
         db.commit()
@@ -621,7 +598,10 @@ def test_retry_discards_checkpoint_from_previous_contract_version(monkeypatch) -
             "/api/v1/generation-tasks/task_retry_v7_checkpoint/retry"
         )
         assert response.status_code == 200
-        assert scheduled == ["task_retry_v7_checkpoint"]
+        successor_id = response.json()["data"]["task_id"]
+        assert successor_id != "task_retry_v7_checkpoint"
+        assert response.json()["data"]["status"] == "pending"
+        assert scheduled == [successor_id]
         with testing_session() as db:
             task = db.scalar(
                 select(GenerationTask).where(
@@ -633,9 +613,13 @@ def test_retry_discards_checkpoint_from_previous_contract_version(monkeypatch) -
                     GraphCheckpoint.task_id == "task_retry_v7_checkpoint"
                 )
             )
-            assert task.status == "retry_pending"
-            assert task.progress == 0
-            assert checkpoint is None
+            successor = db.scalar(
+                select(GenerationTask).where(GenerationTask.public_id == successor_id)
+            )
+            assert task.status == "failed"
+            assert checkpoint is not None
+            assert successor is not None
+            assert successor.source_task_id == task.id
     finally:
         app.dependency_overrides.clear()
 

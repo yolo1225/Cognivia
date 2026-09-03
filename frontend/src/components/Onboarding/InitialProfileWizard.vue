@@ -60,7 +60,7 @@
     </section>
 
     <section v-else-if="step === 'result' && result" class="wizard-body result-stage">
-      <span class="result-mark">✓</span><div><span class="stage-label">初始画像已生成</span><h2>{{ profileLabel(result.profile_type) }}</h2><p>本次画像依据已保存：学习背景用于确定学习方向和案例语境，诊断结果用于判定能力与薄弱知识。</p></div>
+      <span class="result-mark">✓</span><div><span class="stage-label">初始画像已生成</span><h2>{{ profileLabel(result.profile_type) }}</h2><p>本次画像依据已保存：学习背景用于确定学习方向和案例语境，诊断结果用于判定能力与薄弱知识。</p><p v-if="result.profile_reliability_message" class="result-reliability">{{ result.profile_reliability_message }}</p></div>
       <div class="result-grid"><div><span>诊断总得分</span><strong>{{ result.score.toFixed(0) }}%</strong></div><div><span>薄弱知识点</span><strong>{{ result.weak_knowledge.length }} 项</strong></div><div><span>学习路线</span><strong>已生成</strong></div></div>
       <div class="result-evidence"><div><span>先验背景</span><strong>{{ form.education_level }} · {{ form.major }} · {{ form.experience_years }} 年经验</strong><small>用于学习方向、案例语境和资源表达方式。</small></div><div><span>诊断测评</span><strong>选择题与简答题总得分 {{ result.score.toFixed(0) }}%</strong><small>{{ result.correct_count }}/{{ result.question_count }} 题完全答对；简答题部分得分计入总分。</small></div></div>
       <div class="result-radar"><RadarChart :values="radarValues" :indicators="abilityLabels" /></div>
@@ -133,7 +133,8 @@ function restoreDiagnosticDraft() {
 
 async function startDiagnostic() {
   if (!domainStore.readiness?.diagnostic_ready) {
-    error.value = `当前领域尚未满足诊断条件：${domainStore.readiness?.runtime_reasons?.join('、') || '领域配置不可用'}`
+    error.value = domainStore.readiness?.diagnostic_inventory?.reason
+      || `当前领域尚未满足诊断条件：${domainStore.readiness?.runtime_reasons?.join('、') || '领域配置不可用'}`
     return
   }
   error.value = ''

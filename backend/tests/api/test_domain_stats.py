@@ -38,13 +38,25 @@ def test_domain_stats_return_real_database_counts() -> None:
             content_md="测试内容",
             source_title="测试来源",
         )
+        staged_knowledge = KnowledgeItem(
+            public_id="knowledge_staged_001",
+            domain_code="ai_app_dev",
+            name="待启用知识点",
+            category="测试",
+            difficulty=1,
+            tags_json=[],
+            content_md="待启用测试内容",
+            source_title="测试来源",
+            status="staged",
+            needs_reembedding=True,
+        )
         learner = Learner(
             public_id="learner_001",
             background="test",
             target_domain="ai_app_dev",
             learning_style="mixed",
         )
-        db.add_all([knowledge, learner])
+        db.add_all([knowledge, staged_knowledge, learner])
         db.flush()
         profile = LearnerProfile(
             public_id="profile_001",
@@ -106,10 +118,12 @@ def test_domain_stats_return_real_database_counts() -> None:
         assert response.status_code == 200
         assert response.json()["data"] == {
             "domain_code": "ai_app_dev",
-            "knowledge_items": 1,
+            "knowledge_items": 2,
             "diagnostic_questions": 1,
             "knowledge_relations": 0,
             "pending_embeddings": 1,
+            "staged_knowledge_items": 1,
+            "staged_pending_embeddings": 1,
             "knowledge_documents": 0,
             "ready_documents": 0,
             "failed_documents": 0,

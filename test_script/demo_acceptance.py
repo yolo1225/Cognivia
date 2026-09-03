@@ -71,7 +71,7 @@ def _current_resource(
         None,
     )
     if resource is None:
-        raise AssertionError(f"no current passed V6 {resource_type} resource found")
+        raise AssertionError(f"no current passed V8 {resource_type} resource found")
     return resource
 
 
@@ -154,7 +154,7 @@ def _stage0_task_evidence(
         or len(str(run.get("prompt_hash") or "")) != 64
         for run in trace_runs
     ):
-        raise AssertionError("internal trace lacks V9 contract or Prompt provenance")
+        raise AssertionError("internal trace lacks V10 contract or Prompt provenance")
     if not trace.get("messages"):
         raise AssertionError("internal trace has no structured handoff records")
     trace_arbitrations = sum(
@@ -375,7 +375,7 @@ def main() -> None:
             raise AssertionError("completed baseline has no lecture resource")
         # The completed baseline is immutable historical evidence. A later
         # feedback run may have replaced its resource version, so tutoring
-        # must attach to the learner's current passed V6 package member.
+        # must attach to the learner's current passed V8 package member.
         context["resource_id"] = _current_resource(
             args.base_url, learner_id, "lecture"
         )["resource_id"]

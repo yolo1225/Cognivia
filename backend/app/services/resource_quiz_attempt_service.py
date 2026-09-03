@@ -20,10 +20,11 @@ from app.models import (
     MistakeReviewItem,
     ResourceQuizAttempt,
 )
-from app.services.mistake_review_service import _upsert_item
+from app.services.mistake_review_service import RETIRED_STATUS, _upsert_item
 
 
 OBJECTIVE_TYPES = {"single_choice", "multiple_choice"}
+INVALIDATION_STATUS = "invalidated"
 
 
 def _normalize(value: str) -> str:
@@ -46,6 +47,7 @@ def _questions(resource: LearningResource) -> list[dict[str, Any]]:
 
 
 def _serialize(attempt: ResourceQuizAttempt) -> dict[str, Any]:
+    system = dict((attempt.answers_json or {}).get("_system") or {})
     return {
         "attempt_id": attempt.public_id,
         "resource_version": attempt.resource_version,
@@ -55,7 +57,86 @@ def _serialize(attempt: ResourceQuizAttempt) -> dict[str, Any]:
         "objective_correct": attempt.objective_correct,
         "objective_total": attempt.objective_total,
         "completed_at": attempt.completed_at.isoformat() if attempt.completed_at else None,
+        "requires_regeneration": attempt.status == INVALIDATION_STATUS,
+        "invalidation_reason": system.get("invalidation_reason"),
+        "invalidation_message": system.get("invalidation_message"),
     }
+
+
+def _formal_question_for_payload(
+    db: Session, *, task: GenerationTask, question_payload: dict[str, Any]
+) -> DiagnosticQuestion | None:
+    public_ids = list(
+        dict.fromkeys(
+            str(value)
+            for value in [
+                question_payload.get("question_id"),
+                *(question_payload.get("reference_question_ids") or []),
+            ]
+            if str(value)
+        )
+    )
+    if not public_ids:
+        return None
+    rows = list(
+        db.scalars(
+            select(DiagnosticQuestion)
+            .where(
+                DiagnosticQuestion.domain_code == task.domain_code,
+                DiagnosticQuestion.public_id.in_(public_ids),
+                DiagnosticQuestion.status == "active",
+            )
+            .order_by(DiagnosticQuestion.id)
+        )
+    )
+    return rows[0] if rows else None
+
+
+def _formal_evidence_issue(
+    db: Session, *, task: GenerationTask, questions: list[dict[str, Any]]
+) -> str | None:
+    if not task.path_node_id:
+        return None
+    for question in questions:
+        if str(question.get("question_type") or "") not in OBJECTIVE_TYPES:
+            continue
+        if _formal_question_for_payload(db, task=task, question_payload=question) is None:
+            return "当前测试引用的正式题已停用或不可用，请重新生成当前节点测试。"
+    return None
+
+
+def _invalidate_attempt(attempt: ResourceQuizAttempt, *, reason: str) -> None:
+    payload = dict(attempt.answers_json or {})
+    payload["_system"] = {
+        "invalidation_reason": "FORMAL_QUESTION_UNAVAILABLE",
+        "invalidation_message": reason,
+        "invalidated_at": datetime.now(UTC).isoformat(),
+    }
+    attempt.answers_json = payload
+    attempt.status = INVALIDATION_STATUS
+
+
+def _retire_attempt_mistakes(db: Session, *, attempt: ResourceQuizAttempt, reason: str) -> None:
+    """Keep an invalidated quiz from leaving unresolved path blockers behind."""
+
+    items = db.scalars(
+        select(MistakeReviewItem).where(
+            MistakeReviewItem.learner_id == attempt.learner_id,
+            MistakeReviewItem.source_type == "graded_quiz",
+            MistakeReviewItem.source_record_id.like(f"{attempt.public_id}:%"),
+            MistakeReviewItem.status != "consolidated",
+        )
+    )
+    for item in items:
+        summary = dict(item.error_summary_json or {})
+        summary.update(
+            {
+                "retired_reason": "FORMAL_QUESTION_UNAVAILABLE",
+                "retired_message": reason,
+            }
+        )
+        item.error_summary_json = summary
+        item.status = RETIRED_STATUS
 
 
 def _latest_attempt(
@@ -75,7 +156,7 @@ def _latest_attempt(
 def current_or_create(
     db: Session, *, learner: Learner, resource: LearningResource
 ) -> dict[str, Any]:
-    _resource_owner(db, resource, learner.id)
+    task = _resource_owner(db, resource, learner.id)
     attempt = _latest_attempt(db, learner_id=learner.id, resource=resource)
     if attempt is None:
         attempt = ResourceQuizAttempt(
@@ -87,6 +168,10 @@ def current_or_create(
             answers_json={},
         )
         db.add(attempt)
+        issue = _formal_evidence_issue(db, task=task, questions=_questions(resource))
+        if issue:
+            _invalidate_attempt(attempt, reason=issue)
+            _retire_attempt_mistakes(db, attempt=attempt, reason=issue)
         db.commit()
     return _serialize(attempt)
 
@@ -126,6 +211,8 @@ def save_answer(
     )
     if attempt is None or attempt.learner_id != learner.id or attempt.resource_id != resource.id:
         raise ValueError("QUIZ_ATTEMPT_NOT_FOUND")
+    if attempt.status == INVALIDATION_STATUS:
+        raise ValueError("QUIZ_ATTEMPT_REQUIRES_REGENERATION")
     if attempt.status == "completed":
         raise ValueError("QUIZ_ATTEMPT_COMPLETED")
     question = next((item for item in _questions(resource) if str(item.get("question_id")) == question_id), None)
@@ -153,6 +240,9 @@ def save_answer(
             )
         )
         if knowledge is not None:
+            formal_question = _formal_question_for_payload(
+                db, task=task, question_payload=question
+            )
             _upsert_item(
                 db,
                 learner_id=learner.id,
@@ -165,6 +255,10 @@ def save_answer(
                 difficulty=int(question.get("difficulty") or resource.difficulty),
                 summary={
                     "question_id": question_id,
+                    "formal_question_id": (
+                        formal_question.public_id if formal_question is not None else None
+                    ),
+                    "reference_question_ids": list(question.get("reference_question_ids") or []),
                     "score": 0,
                     "comment": "分阶测试客观题未达到掌握标准",
                     "question": {
@@ -191,6 +285,16 @@ def complete(
         question for question in questions
         if str(question.get("question_type") or "") in OBJECTIVE_TYPES
     ]
+    issue = _formal_evidence_issue(db, task=task, questions=objective_questions)
+    if issue:
+        _invalidate_attempt(attempt, reason=issue)
+        _retire_attempt_mistakes(db, attempt=attempt, reason=issue)
+        db.commit()
+        return {
+            **_serialize(attempt),
+            "evidence_result": {"materialized_count": 0, "evidence_ids": [], "governance_results": []},
+            "node_gate": _node_gate_for_attempt(db, learner=learner, task=task),
+        }
     answers = attempt.answers_json or {}
     if any(
         not isinstance(answers.get(str(question.get("question_id") or "")), dict)
@@ -243,22 +347,9 @@ def _materialize_objective_evidence(
     evidence_records: list[AnswerRecord] = []
     answers = attempt.answers_json or {}
     for question_payload in questions:
-        public_ids = [
-            str(value)
-            for value in [
-                question_payload.get("question_id"),
-                *(question_payload.get("reference_question_ids") or []),
-            ]
-            if str(value)
-        ]
-        question = db.scalar(
-            select(DiagnosticQuestion)
-            .where(
-                DiagnosticQuestion.domain_code == task.domain_code,
-                DiagnosticQuestion.public_id.in_(public_ids),
-            )
-            .order_by(DiagnosticQuestion.id)
-        ) if public_ids else None
+        question = _formal_question_for_payload(
+            db, task=task, question_payload=question_payload
+        )
         if question is None:
             continue
         existing = db.scalar(

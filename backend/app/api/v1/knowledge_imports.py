@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal, get_db
-from app.models import Domain, KnowledgeDocument, KnowledgeImportCandidate, KnowledgeImportRun
+from app.models import Domain, KnowledgeDocument, KnowledgeImportCandidate, KnowledgeImportRun, KnowledgeItem
 from app.rag.candidate_index import CandidateIndexBuilder
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.rag.vector_store import VectorStore
@@ -22,14 +22,18 @@ from app.services.knowledge_import_publish_service import (
     KnowledgeImportPublishError,
     activate_import_candidate,
     approve_candidates,
-    ensure_import_source_locators,
     publish_approved,
     smoke_domain_index,
     smoke_import_index,
 )
 from app.services.knowledge_import_validation_service import validate_import
 from app.services.ability_weight_service import normalize_ability_weights
-from app.services.knowledge_import_orchestrator import resolve_run, serialize_run
+from app.services.knowledge_import_orchestrator import (
+    refresh_import_readiness,
+    resolve_run,
+    serialize_run,
+)
+from app.services.domain_change_set_service import update_change_set_summary
 
 router = APIRouter()
 
@@ -150,7 +154,7 @@ def import_summary(import_id: str, db: Session = Depends(get_db)) -> ApiResponse
         **serialize_run(run),
         "document_public_id": document.public_id,
         "knowledge_items": counts["knowledge_item"],
-        "diagnostic_questions": counts["diagnostic_question"],
+        "projected_knowledge_items": readiness.get("knowledge_items", counts["knowledge_item"]),
         "relations_generated": len(relations),
         "relations_accepted": sum(not item.validation_errors_json for item in relations),
         "relations_filtered": sum(bool(item.validation_errors_json) for item in relations),
@@ -168,7 +172,6 @@ def import_summary(import_id: str, db: Session = Depends(get_db)) -> ApiResponse
         "isolated_node_ratio": readiness.get("isolated_node_ratio", 0),
         "cycle_count": readiness.get("cycle_count", 0),
         "unresolved_relation_conflicts": readiness.get("unresolved_relation_conflicts", 0),
-        "question_knowledge_coverage": readiness.get("question_knowledge_coverage", 0),
         "ability_weights_ready": readiness.get("ability_weights_ready", 0),
         "ability_weights_missing": readiness.get("ability_weights_missing", 0),
         "ability_weight_blocking_ids": readiness.get("ability_weight_blocking_ids", []),
@@ -225,8 +228,8 @@ def graph_preview(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
         elif candidate.candidate_type == "knowledge_relation":
             edges.append({
                 "id": candidate.public_id,
-                "source": payload.get("source_candidate_id"),
-                "target": payload.get("target_candidate_id"),
+                "source": payload.get("source_candidate_id") or payload.get("source_existing_knowledge_id"),
+                "target": payload.get("target_candidate_id") or payload.get("target_existing_knowledge_id"),
                 "relation_type": payload.get("relation_type"),
                 "confidence": candidate.confidence,
                 "accepted": not bool(candidate.validation_errors_json),
@@ -264,6 +267,38 @@ def confirm_publish(
     )
     if job is None:
         raise HTTPException(status_code=409, detail="候选索引任务不存在")
+    if document.change_set_id:
+        from app.models import DomainChangeSet
+        from app.services.question_import_service import knowledge_catalog_fingerprint
+
+        change_set = db.get(DomainChangeSet, document.change_set_id)
+        if change_set is None:
+            raise HTTPException(status_code=409, detail="领域变更集不存在")
+        staged_items = list(
+            db.scalars(
+                select(KnowledgeItem).where(
+                    KnowledgeItem.domain_code == document.domain_code,
+                    KnowledgeItem.status.in_(("published", "staged")),
+                )
+            )
+        )
+        update_change_set_summary(
+            change_set,
+            document_id=document.public_id,
+            target_catalog_fingerprint=knowledge_catalog_fingerprint(staged_items),
+            status="ready_for_questions",
+            error_summary=None,
+        )
+        run.status = "ready_for_questions"
+        run.current_step = "ready_for_questions"
+        document.status = "ready_for_questions"
+        db.commit()
+        return ok({
+            **serialize_run(run),
+            "status": "ready_for_questions",
+            "change_set_id": change_set.public_id,
+            "next_action": "download_change_set_question_template",
+        })
     run.status = "publishing"
     run.current_step = "publishing"
     document.status = "publishing"
@@ -368,7 +403,6 @@ def build_index(
     )
     if document.status != "index_pending" and not failed_retry:
         raise HTTPException(status_code=409, detail="导入尚未批准或已进入其他阶段")
-    ensure_import_source_locators(db, document)
     job = candidate_index_job.try_start(
         db,
         document.domain_code,
@@ -452,6 +486,37 @@ def smoke_test(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
             "candidate_manifest": manifest_payload,
         }
     )
+
+
+@router.post("/{import_id}/revalidate-graph", response_model=ApiResponse)
+def revalidate_graph(import_id: str, db: Session = Depends(get_db)) -> ApiResponse:
+    """Retry the graph gate after direction or relation maintenance only."""
+    run, document = _run(db, import_id)
+    job = candidate_index_job.latest_job(
+        db,
+        document.domain_code,
+        source_document_id=document.id,
+    )
+    result = dict(job.result_json or {}) if job else {}
+    manifest = result.get("candidate_manifest")
+    smoke = result.get("smoke_test")
+    if (
+        job is None
+        or job.status != candidate_index_job.STATUS_SUCCESS
+        or not isinstance(manifest, dict)
+        or not isinstance(smoke, dict)
+        or not smoke.get("passed")
+        or smoke.get("index_version") != manifest.get("index_version")
+    ):
+        raise HTTPException(status_code=409, detail="候选索引尚未通过当前版本的检索冒烟")
+    readiness = refresh_import_readiness(
+        db,
+        run,
+        document,
+        manifest=manifest,
+        smoke_test=smoke,
+    )
+    return ok({**serialize_run(run), "projected_readiness": readiness})
 
 
 @router.post("/{import_id}/publish", response_model=ApiResponse)

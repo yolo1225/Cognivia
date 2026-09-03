@@ -1,0 +1,58 @@
+{
+  "domain_code": "smart_manufacturing",
+  "name": "智能制造实训",
+  "domain_schema_version": "1.0",
+  "resource_types": [
+    "lecture",
+    "practice_guide",
+    "graded_quiz"
+  ],
+  "ability_dimensions": [
+    "theory",
+    "practice",
+    "problem_solving",
+    "knowledge_breadth",
+    "learning_speed"
+  ],
+  "learning_directions": [
+    {
+      "value": "plc_control",
+      "label": "PLC 控制与组态",
+      "description": "PLC、梯形图和 TIA Portal 实操",
+      "match_tags": [
+        "plc",
+        "tia",
+        "ladder"
+      ]
+    },
+    {
+      "value": "industrial_connectivity",
+      "label": "工业互联网连接",
+      "description": "网络、标识与工业互联网基础",
+      "match_tags": [
+        "industrial-internet",
+        "network",
+        "iot"
+      ]
+    },
+    {
+      "value": "robot_integration",
+      "label": "机器人集成",
+      "description": "示教、I/O、ROS 2 与机器人协同",
+      "match_tags": [
+        "robot",
+        "ros2",
+        "driver"
+      ]
+    }
+  ],
+  "mvp_targets": {
+    "knowledge_items": 67,
+    "diagnostic_questions": 402,
+    "evaluation_cases": 0
+  },
+  "profile_policy": {
+    "version": "smart_manufacturing_profile_v1",
+    "data_fingerprint": "sha256:83969cdc879536b399aa1fef27bb7c3fce32ab8a89ec9d377d532b835b8616f7"
+  }
+}

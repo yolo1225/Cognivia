@@ -1,0 +1,407 @@
+[
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "agent_role_design",
+    "target_knowledge_id": "knowledge_retrieval_agent"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "agent_role_design",
+    "target_knowledge_id": "langgraph_stategraph"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "ai_app_dev_overview",
+    "target_knowledge_id": "agent_role_design"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "ai_app_dev_overview",
+    "target_knowledge_id": "embedding_basics"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "ai_app_dev_overview",
+    "target_knowledge_id": "git_collaboration"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "ai_app_dev_overview",
+    "target_knowledge_id": "http_rest_basics"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "ai_app_dev_overview",
+    "target_knowledge_id": "observability_tracing"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "ai_app_dev_overview",
+    "target_knowledge_id": "prompt_basic"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "ai_app_dev_overview",
+    "target_knowledge_id": "python_api_basics"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "citation_traceability",
+    "target_knowledge_id": "hallucination_guardrails"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "citation_traceability",
+    "target_knowledge_id": "review_validation_agent"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "content_generation_agent",
+    "target_knowledge_id": "review_validation_agent"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "data_schema_design",
+    "target_knowledge_id": "knowledge_base_ingestion"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "data_schema_design",
+    "target_knowledge_id": "privacy_log_policy"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "data_schema_design",
+    "target_knowledge_id": "sqlalchemy_modeling"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "data_schema_design",
+    "target_knowledge_id": "structured_output_validation"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "embedding_basics",
+    "target_knowledge_id": "chromadb_collections"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "embedding_basics",
+    "target_knowledge_id": "vector_similarity"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "evaluation_metrics",
+    "target_knowledge_id": "llm_judge_reliability"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "fastapi_endpoint_design",
+    "target_knowledge_id": "frontend_api_client"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "fastapi_endpoint_design",
+    "target_knowledge_id": "pydantic_schema_validation"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "frontend_vue_state",
+    "target_knowledge_id": "frontend_api_client"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "function_calling_tools",
+    "target_knowledge_id": "prompt_injection_defense"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "http_rest_basics",
+    "target_knowledge_id": "data_schema_design"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "http_rest_basics",
+    "target_knowledge_id": "docker_containerization"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "http_rest_basics",
+    "target_knowledge_id": "fastapi_endpoint_design"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "http_rest_basics",
+    "target_knowledge_id": "frontend_vue_state"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "http_rest_basics",
+    "target_knowledge_id": "secret_management"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "http_rest_basics",
+    "target_knowledge_id": "streaming_responses"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "knowledge_base_ingestion",
+    "target_knowledge_id": "document_parsing"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "knowledge_retrieval_agent",
+    "target_knowledge_id": "content_generation_agent"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "langgraph_stategraph",
+    "target_knowledge_id": "orchestrator_workflow"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "llm_api_calling",
+    "target_knowledge_id": "api_resilience_retry"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "llm_api_calling",
+    "target_knowledge_id": "function_calling_tools"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "llm_api_calling",
+    "target_knowledge_id": "openai_compatible_api"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "llm_api_calling",
+    "target_knowledge_id": "streaming_responses"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "llm_api_calling",
+    "target_knowledge_id": "token_context_budget"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "metadata_filtering",
+    "target_knowledge_id": "retrieval_reranking"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "orchestrator_workflow",
+    "target_knowledge_id": "sse_progress_events"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "prompt_basic",
+    "target_knowledge_id": "llm_api_calling"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "prompt_basic",
+    "target_knowledge_id": "prompt_context_design"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "prompt_basic",
+    "target_knowledge_id": "prompt_output_format"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "prompt_context_design",
+    "target_knowledge_id": "content_generation_agent"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "prompt_context_design",
+    "target_knowledge_id": "prompt_injection_defense"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "prompt_evaluation",
+    "target_knowledge_id": "evaluation_metrics"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "prompt_evaluation",
+    "target_knowledge_id": "llm_judge_reliability"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "prompt_output_format",
+    "target_knowledge_id": "function_calling_tools"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "prompt_output_format",
+    "target_knowledge_id": "prompt_evaluation"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "prompt_output_format",
+    "target_knowledge_id": "structured_output_validation"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "pydantic_schema_validation",
+    "target_knowledge_id": "automated_testing"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "python_api_basics",
+    "target_knowledge_id": "automated_testing"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "python_api_basics",
+    "target_knowledge_id": "llm_api_calling"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "python_api_basics",
+    "target_knowledge_id": "python_async_concurrency"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "python_async_concurrency",
+    "target_knowledge_id": "api_resilience_retry"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "rag_pipeline_overview",
+    "target_knowledge_id": "citation_traceability"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "rag_pipeline_overview",
+    "target_knowledge_id": "knowledge_base_ingestion"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "rag_pipeline_overview",
+    "target_knowledge_id": "knowledge_retrieval_agent"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "rag_pipeline_overview",
+    "target_knowledge_id": "metadata_filtering"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "rag_pipeline_overview",
+    "target_knowledge_id": "rag_chunking"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "review_validation_agent",
+    "target_knowledge_id": "evaluation_metrics"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "review_validation_agent",
+    "target_knowledge_id": "hallucination_guardrails"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "sqlalchemy_modeling",
+    "target_knowledge_id": "alembic_migrations"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "sqlalchemy_modeling",
+    "target_knowledge_id": "mysql_indexing"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "streaming_responses",
+    "target_knowledge_id": "observability_tracing"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "streaming_responses",
+    "target_knowledge_id": "sse_progress_events"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "vector_similarity",
+    "target_knowledge_id": "rag_pipeline_overview"
+  },
+  {
+    "relation_type": "prerequisite",
+    "source_knowledge_id": "vector_similarity",
+    "target_knowledge_id": "retrieval_reranking"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "alembic_migrations",
+    "target_knowledge_id": "knowledge_base_ingestion"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "automated_testing",
+    "target_knowledge_id": "evaluation_metrics"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "citation_traceability",
+    "target_knowledge_id": "privacy_log_policy"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "frontend_api_client",
+    "target_knowledge_id": "sse_progress_events"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "knowledge_base_ingestion",
+    "target_knowledge_id": "alembic_migrations"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "langgraph_stategraph",
+    "target_knowledge_id": "orchestrator_workflow"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "openai_compatible_api",
+    "target_knowledge_id": "fastapi_endpoint_design"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "prompt_context_design",
+    "target_knowledge_id": "token_context_budget"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "prompt_injection_defense",
+    "target_knowledge_id": "hallucination_guardrails"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "prompt_output_format",
+    "target_knowledge_id": "structured_output_validation"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "pydantic_schema_validation",
+    "target_knowledge_id": "structured_output_validation"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "python_async_concurrency",
+    "target_knowledge_id": "streaming_responses"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "rag_chunking",
+    "target_knowledge_id": "token_context_budget"
+  },
+  {
+    "relation_type": "related",
+    "source_knowledge_id": "structured_output_validation",
+    "target_knowledge_id": "pydantic_schema_validation"
+  }
+]

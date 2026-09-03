@@ -12,7 +12,7 @@ from alembic import op
 import sqlalchemy as sa
 
 from app.models import KnowledgeItem
-from app.services.question_source_binding_service import candidate_chunks_for_item
+from app.alembic_legacy_question_helpers import candidate_chunks_for_item
 
 
 revision = "20260828_0045"

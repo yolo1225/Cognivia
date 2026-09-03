@@ -52,9 +52,21 @@ backend/tmp_p0_migration.db
 backend/uv.lock
 /tmp/
 
+# Rebuildable review, browser-capture, and question-batch outputs.
+/.tmp-pdf-review/
+/output/
+/frontend/output/
+/tmp-smart-question-batches/
+
+# Local database recovery exports are not source or submission material.
+/data/backups/
+
 # Local competition source documents
 /XH-202630*.pdf
 /docs/设计方案-*.docx
+
+# Locally generated competition submission artifacts.
+/deliverables/
 
 # Local prototype materials
 /docs/prototype/

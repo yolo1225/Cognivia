@@ -1,0 +1,639 @@
+[
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_69f5fe7eec5c477a",
+    "target_knowledge_id": "ki_209aa3438fb46c68",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "IO与执行器",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_209aa3438fb46c68",
+    "target_knowledge_id": "ki_22ac9040e58bb0e2",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "IO与执行器",
+      "source_difficulty": 2,
+      "target_difficulty": 3
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_07efe4e93e4a7f74",
+    "target_knowledge_id": "ki_8e730c3cb5bd0867",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "PLC基础",
+      "source_difficulty": 1,
+      "target_difficulty": 1
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_8e730c3cb5bd0867",
+    "target_knowledge_id": "ki_34b6c891863fe3f7",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "PLC基础",
+      "source_difficulty": 1,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_34b6c891863fe3f7",
+    "target_knowledge_id": "ki_db57e4a1af87914e",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "PLC基础",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_1fab2a5c6c5ad504",
+    "target_knowledge_id": "ki_e0f0e68ceb532784",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "TIA Portal实操",
+      "source_difficulty": 1,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_e0f0e68ceb532784",
+    "target_knowledge_id": "ki_1fe7f407915d15fb",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "TIA Portal实操",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_1fe7f407915d15fb",
+    "target_knowledge_id": "ki_e5d3342302e40e27",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "TIA Portal实操",
+      "source_difficulty": 2,
+      "target_difficulty": 3
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_c5a352abd66c1a00",
+    "target_knowledge_id": "ki_c98539cffb5cefac",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "制造执行",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_c98539cffb5cefac",
+    "target_knowledge_id": "ki_b1213df508e39898",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "制造执行",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_b1213df508e39898",
+    "target_knowledge_id": "ki_e2281032f2474e70",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "制造执行",
+      "source_difficulty": 2,
+      "target_difficulty": 3
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_bbbeaa43f0da01bb",
+    "target_knowledge_id": "ki_1a479143e7e4a51c",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "安全",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_cf1639cb2c1f44b7",
+    "target_knowledge_id": "ki_260b8a37072e8657",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "工业智能",
+      "source_difficulty": 2,
+      "target_difficulty": 3
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_6710db5cb6eefaed",
+    "target_knowledge_id": "ki_dea22bbd80be7245",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "工业物联网",
+      "source_difficulty": 1,
+      "target_difficulty": 1
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_dea22bbd80be7245",
+    "target_knowledge_id": "ki_91b9750c0d2d9f17",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "工业物联网",
+      "source_difficulty": 1,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_91b9750c0d2d9f17",
+    "target_knowledge_id": "ki_213f5f85ca840f54",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "工业物联网",
+      "source_difficulty": 2,
+      "target_difficulty": 3
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_213f5f85ca840f54",
+    "target_knowledge_id": "ki_a220d8b8126bb00d",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "工业物联网",
+      "source_difficulty": 3,
+      "target_difficulty": 3
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_ac8e095c5488fcb7",
+    "target_knowledge_id": "ki_e2d7953ac404e27a",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "总览与体系",
+      "source_difficulty": 1,
+      "target_difficulty": 1
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_e2d7953ac404e27a",
+    "target_knowledge_id": "ki_4603d844f705d61b",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "总览与体系",
+      "source_difficulty": 1,
+      "target_difficulty": 1
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_4603d844f705d61b",
+    "target_knowledge_id": "ki_679055329ed96aed",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "总览与体系",
+      "source_difficulty": 1,
+      "target_difficulty": 1
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_679055329ed96aed",
+    "target_knowledge_id": "ki_8aece8fc307b8651",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "总览与体系",
+      "source_difficulty": 1,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_8aece8fc307b8651",
+    "target_knowledge_id": "ki_713a457ebbd1ce6c",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "总览与体系",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_713a457ebbd1ce6c",
+    "target_knowledge_id": "ki_a78b4a9c7ed554d3",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "总览与体系",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_283a736369af182f",
+    "target_knowledge_id": "ki_448fb4aafa9eb2d8",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "数字化设计",
+      "source_difficulty": 1,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_448fb4aafa9eb2d8",
+    "target_knowledge_id": "ki_19881678b556ae7d",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "数字化设计",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_19881678b556ae7d",
+    "target_knowledge_id": "ki_c9a83abb024336c3",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "数字化设计",
+      "source_difficulty": 2,
+      "target_difficulty": 3
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_3631ce09e52555f7",
+    "target_knowledge_id": "ki_73040d5c55591199",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "机器人仿真与集成",
+      "source_difficulty": 3,
+      "target_difficulty": 3
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_73040d5c55591199",
+    "target_knowledge_id": "ki_c6e0d437718ca065",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "机器人仿真与集成",
+      "source_difficulty": 3,
+      "target_difficulty": 4
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_c6e0d437718ca065",
+    "target_knowledge_id": "ki_f3c9136c20115ace",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "机器人仿真与集成",
+      "source_difficulty": 4,
+      "target_difficulty": 4
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_f3c9136c20115ace",
+    "target_knowledge_id": "ki_753a9cfe0d2d23b1",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "机器人仿真与集成",
+      "source_difficulty": 4,
+      "target_difficulty": 4
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_7ed8333672c0dfbd",
+    "target_knowledge_id": "ki_c2b42d638cc46952",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "机器人基础",
+      "source_difficulty": 1,
+      "target_difficulty": 1
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_c2b42d638cc46952",
+    "target_knowledge_id": "ki_cd695947b8909427",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "机器人基础",
+      "source_difficulty": 1,
+      "target_difficulty": 1
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_cd695947b8909427",
+    "target_knowledge_id": "ki_bb473cf75ead8132",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "机器人基础",
+      "source_difficulty": 1,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_5859dd9ae17dbc6d",
+    "target_knowledge_id": "ki_e9d43cf30b0f3f00",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "标识解析",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_73d2c3af2b54aa37",
+    "target_knowledge_id": "ki_617bc7cb95342cd3",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "梯形图编程",
+      "source_difficulty": 1,
+      "target_difficulty": 1
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_617bc7cb95342cd3",
+    "target_knowledge_id": "ki_310e5b610c687f24",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "梯形图编程",
+      "source_difficulty": 1,
+      "target_difficulty": 1
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_310e5b610c687f24",
+    "target_knowledge_id": "ki_72210960f5fc02c9",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "梯形图编程",
+      "source_difficulty": 1,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_72210960f5fc02c9",
+    "target_knowledge_id": "ki_5b9572b29e6bbe6e",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "梯形图编程",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_5b9572b29e6bbe6e",
+    "target_knowledge_id": "ki_5c03786f12f901c9",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "梯形图编程",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_5c03786f12f901c9",
+    "target_knowledge_id": "ki_6923d61e529ace1a",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "梯形图编程",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_bdcc4bff0bd0bcd3",
+    "target_knowledge_id": "ki_735bd6082c73122d",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "模拟量处理",
+      "source_difficulty": 2,
+      "target_difficulty": 3
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_60615564b22f71ce",
+    "target_knowledge_id": "ki_c38752752b340900",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "示教编程",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_c38752752b340900",
+    "target_knowledge_id": "ki_2e34400aa000b493",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "示教编程",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_2e34400aa000b493",
+    "target_knowledge_id": "ki_c5760abacfdf0dc5",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "示教编程",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_c5760abacfdf0dc5",
+    "target_knowledge_id": "ki_3bebafdc01501051",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "示教编程",
+      "source_difficulty": 2,
+      "target_difficulty": 3
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_3b59eadd9e7bc4e2",
+    "target_knowledge_id": "ki_cb0b853bacd206e7",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "程序结构",
+      "source_difficulty": 3,
+      "target_difficulty": 3
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_6848351a79846659",
+    "target_knowledge_id": "ki_00040ffb65674150",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "网络体系",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_00040ffb65674150",
+    "target_knowledge_id": "ki_e41a07e08282bfe3",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "网络体系",
+      "source_difficulty": 2,
+      "target_difficulty": 2
+    }
+  },
+  {
+    "relation_type": "next_step",
+    "source_knowledge_id": "ki_e41a07e08282bfe3",
+    "target_knowledge_id": "ki_6a818aa6404fb1b6",
+    "generation_method": "curriculum_rule",
+    "evidence": {
+      "evidence_kind": "curriculum_rule",
+      "rule": "same_category_difficulty_progression",
+      "category": "网络体系",
+      "source_difficulty": 2,
+      "target_difficulty": 3
+    }
+  }
+]

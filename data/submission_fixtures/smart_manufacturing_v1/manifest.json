@@ -1,0 +1,79 @@
+{
+  "schema_version": "submission-fixture-manifest-v1",
+  "fixture_version": "smart_manufacturing_submission_fixture_v1",
+  "domain_code": "smart_manufacturing",
+  "source_assets": {
+    "knowledge_package": "source_assets/01-smart-manufacturing-complete.md",
+    "question_workbook": "source_assets/smart_manufacturing-question-bank-filled.xlsx",
+    "knowledge_catalog_fingerprint": "sha256:83969cdc879536b399aa1fef27bb7c3fce32ab8a89ec9d377d532b835b8616f7",
+    "question_inventory_fingerprint": "sha256:90b20c84148983e90acf1681610a103046b7d7e447bff3db54329cbfb2f39dcf"
+  },
+  "counts": {
+    "knowledge_items": 67,
+    "knowledge_relations": 49,
+    "relation_types": {
+      "next_step": 49
+    },
+    "active_questions": 402,
+    "question_purposes": {
+      "diagnosis": 67,
+      "graded_quiz": 201,
+      "mastery_validation": 134
+    },
+    "template_compatible_questions": 402,
+    "supplemental_diagnosis_questions": 0,
+    "evaluation_cases": 0,
+    "manual_demo_cases": 3,
+    "learner_profiles": 3
+  },
+  "files": {
+    "domain.json": {
+      "sha256": "ec181c3065b453fa53e5df7ccd9b54c09e41fe5a2290bfe6446327b958eb4758"
+    },
+    "knowledge_items.json": {
+      "sha256": "d423a2952eb82024471c6622e40c9e13d8dd0296e172ee782a3df1ea25f14bec"
+    },
+    "relations.json": {
+      "sha256": "34b31d882b7846c376bb7dc774349b60301d117319972992e47e59bbb3627536"
+    },
+    "diagnostic_questions.json": {
+      "sha256": "d60691dff103d1d52222af63182d1b596e08c7facbb00f9113bf7bf45ae4b4bd"
+    },
+    "template_question_source.json": {
+      "sha256": "1d281e543d1f65332fe1d935da89112a3c229bbe864912042de46ab407522c13"
+    },
+    "supplemental_diagnosis_questions.json": {
+      "sha256": "a5338d955b09046ec0b16f3a9625b7955c763aae07dc722e474e6078745f932f"
+    },
+    "learner_profiles.json": {
+      "sha256": "8ad8345dba4a3314b92d60b2b31b9b2ae5076f3116a712b74a1f97b998663634"
+    },
+    "manual_demo_cases.json": {
+      "sha256": "e86c493875747442de48ea1142563f1fd15d17ac231fb2b4df3f6db61f39f677"
+    },
+    "import_source_manifest.json": {
+      "sha256": "17cd07d2a5a86e8c0de201efc1f4231372ecef7a91e49b75e701808fa46a1c3a"
+    },
+    "import_source/01-smart-manufacturing-complete.md": {
+      "sha256": "7aeb2bc43ba65cf32eb454af3ed320e96773a34c83327e529ed46468f4fdc8b6"
+    },
+    "source_assets/01-smart-manufacturing-complete.md": {
+      "sha256": "7e1ea33aa3a6f02ffd15d041beb0bb3725d8f22bebbf56d3c6cb572139c1c289"
+    },
+    "source_assets/smart_manufacturing-question-bank-filled.xlsx": {
+      "sha256": "69dc1305d6e061a6b6f94e95084a00654531b84235d2673d37334e4287fb32ff"
+    },
+    "README.md": {
+      "sha256": "9408ad7c69e83011f2b617bf329b7e51fc1abf7b9280b3c4acd2b75c2042302d"
+    }
+  },
+  "import_source": {
+    "path": "import_source/01-smart-manufacturing-complete.md",
+    "sha256": "7aeb2bc43ba65cf32eb454af3ed320e96773a34c83327e529ed46468f4fdc8b6",
+    "deliverable_path": "deliverables/knowledge-import-packages/smart_manufacturing/01-smart-manufacturing-complete.md"
+  },
+  "reproduction_modes": {
+    "bootstrap": "load the fixture into an empty database",
+    "import_demo": "upload the canonical Markdown, then import matching formal questions"
+  }
+}

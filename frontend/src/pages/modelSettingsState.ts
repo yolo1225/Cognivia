@@ -171,10 +171,9 @@ export function indexReasonText(reason: string | null) {
     embedding_configuration_missing: "Embedding 配置不完整",
     knowledge_items_missing: "当前领域没有可索引知识点",
     question_bank_total_insufficient: "正式题库数量不足，索引本身无需重建",
-    question_bank_question_invalid: "正式题库存在未通过认证的题目",
+    question_bank_question_invalid: "正式题库存在结构不完整的题目",
     question_bank_distribution_insufficient: "正式题库题型、难度或层级分布不足",
     question_bank_knowledge_coverage_insufficient: "正式题库未覆盖全部知识点",
-    question_source_binding_invalid: "题库来源绑定已失效",
   };
   return messages[reason || ""] || "Candidate RAG 索引当前不可用";
 }

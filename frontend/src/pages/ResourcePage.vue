@@ -33,6 +33,14 @@
       </details>
     </section>
 
+    <section v-if="profileAdaptation && profileAdaptation.status !== 'current' && !isShowingProgress" class="profile-adaptation" :class="profileAdaptation.status">
+      <div>
+        <strong>{{ profileAdaptation.label }}</strong>
+        <p>{{ profileAdaptation.description }}</p>
+      </div>
+      <button type="button" class="btn" @click="openReport">查看当前学习安排</button>
+    </section>
+
     <div v-if="isShowingProgress" class="panel generation-state">
       <strong>{{ generationStatusTitle }}</strong>
       <p class="sub">{{ generationStatusDescription }}</p>
@@ -108,6 +116,7 @@
                   <span>难度 {{ selected.difficulty }}/5</span>
                   <span>{{ resourceQualityStatusLabel(selected.review_status) }}</span>
                   <span v-if="selected.freshness_status === 'knowledge_changed'">知识库已更新</span>
+                  <span v-else-if="profileAdaptation?.status !== 'current'">旧画像资源</span>
                   <span v-else-if="selected.membership_type === 'inherited'">沿用上一学习包</span>
                 </div>
                 <h1>{{ selected.title }}</h1>
@@ -207,7 +216,7 @@
       <div v-else ref="messageList" class="tutor-messages" aria-live="polite">
         <article v-if="nodeAssessment && !assessmentInMessages" class="tutor-message is-agent node-adjustment-message">
           <div class="tutor-message-meta"><span class="tutor-avatar" aria-hidden="true">AI</span><span>节点学习判断</span></div>
-          <TutoringAssessmentCard :assessment="nodeAssessment" :submitting="assessmentSubmitting === nodeAssessment.assessment_id" :resource-submitting="resourceDecisionSubmitting === nodeAssessment.adjustment_proposal_id" pending-hint="验证结果将作用于当前节点，不会合并其他资源的对话内容。" @answer="answerAssessment(nodeAssessment, $event)" @resource-decision="decideAssessmentResource(nodeAssessment, $event)" />
+          <TutoringAssessmentCard :assessment="nodeAssessment" :submitting="assessmentSubmitting === nodeAssessment.assessment_id" :show-resource-decision="false" pending-hint="验证结果将作用于当前节点，不会合并其他资源的对话内容。资源适配可在首页或学情画像中处理。" @answer="answerAssessment(nodeAssessment, $event)" />
         </article>
         <article v-for="message in tutorMessages" :key="message.message_id" class="tutor-message" :class="message.sender === 'learner' ? 'is-learner' : 'is-agent'">
           <div class="tutor-message-meta"><span class="tutor-avatar" aria-hidden="true">{{ message.sender === 'learner' ? '我' : 'AI' }}</span><span>{{ message.sender === 'learner' ? '我' : 'AI 导学' }}</span></div>
@@ -217,7 +226,7 @@
           <small v-if="message.stream_status === 'interrupted' || message.stream_status === 'failed'" class="tutor-stream-note">回复中断，可继续提问。</small>
           <small v-if="message.sources?.length" class="tutor-sources">依据：{{ message.sources.map(source => source.name).join('、') }}</small>
           <small v-if="message.evidence_reason" class="tutor-stream-note">{{ message.evidence_reason }}</small>
-          <TutoringAssessmentCard v-if="message.assessment" :assessment="message.assessment" :submitting="assessmentSubmitting === message.assessment.assessment_id" :resource-submitting="resourceDecisionSubmitting === message.assessment.adjustment_proposal_id" @answer="answerAssessment(message.assessment!, $event)" @resource-decision="decideAssessmentResource(message.assessment!, $event)" />
+          <TutoringAssessmentCard v-if="message.assessment" :assessment="message.assessment" :submitting="assessmentSubmitting === message.assessment.assessment_id" :show-resource-decision="false" @answer="answerAssessment(message.assessment!, $event)" />
           <small v-if="message.assessment_unavailable" class="tutor-stream-note">当前知识点暂无可用的正式验证题，画像保持不变。</small>
         </article>
       </div>
@@ -256,7 +265,6 @@ import PageHeader from '@/components/Shared/PageHeader.vue'
 import PageState from '@/components/Shared/PageState.vue'
 import MetricStrip from '@/components/Shared/MetricStrip.vue'
 import { answerTutoringAssessment, createTutoringSession, getTutoringSession, pauseTutoringMessage, requestMasteryCheck, streamTutoringMessage, type TutoringAssessment, type TutoringSession } from '@/api/tutoring'
-import { decideLearningAdjustmentResource } from '@/api/learningAdjustments'
 import ResourceMarkdownViewer from '@/components/ResourceViewer/ResourceMarkdownViewer.vue'
 import GradedQuizViewer from '@/components/ResourceViewer/GradedQuizViewer.vue'
 import ResourceTypeIcon from '@/components/ResourceViewer/ResourceTypeIcon.vue'
@@ -296,7 +304,6 @@ let activeReplyId = ''
 let tutorOpenRequestId = 0
 const assessmentSubmitting = ref('')
 const masteryCheckLoading = ref(false)
-const resourceDecisionSubmitting = ref('')
 const feedbackOptions = [{ value: 'too_hard', label: '内容太难' }, { value: 'too_easy', label: '内容太简单' }, { value: 'confusing', label: '解释不清楚' }, { value: 'incorrect', label: '内容可能有误' }, { value: 'helpful', label: '对我有帮助' }]
 const formats = [
   { value: 'markdown', label: 'Markdown', desc: '保留标题、表格、代码块和知识来源结构。', tag: '源格式' },
@@ -348,6 +355,7 @@ const knowledgeLabels = computed(() => Object.fromEntries(
   sourceDetails.value.map(source => [source.knowledge_id, source.name]),
 ))
 const knowledgeImpact = computed(() => currentPackage.value?.knowledge_impact || null)
+const profileAdaptation = computed(() => currentPackage.value?.profile_adaptation || null)
 const pathNodeTitle = computed(() => taskDetail.value?.path_node_title || currentPackage.value?.path_node_title || '')
 const pathNodeOrder = computed(() => taskDetail.value?.path_node_order || currentPackage.value?.path_node_order || '-')
 const generationBasis = computed(() => taskDetail.value?.generation_basis || currentPackage.value?.generation_basis || null)
@@ -402,7 +410,9 @@ const quizContent = computed(() => {
 const isGradedQuiz = computed(() => Boolean(quizContent.value))
 const showToc = computed(() => !isGradedQuiz.value && headings.value.length > 1)
 const tutorMessages = computed(() => tutorSession.value?.messages || [])
-const nodeAssessment = computed(() => tutorSession.value?.pending_assessment || tutorSession.value?.node_adjustment_result || null)
+// Scored checks are rendered only on the tutoring message that created them.
+// This avoids presenting a historical adjustment from another session as a new answer result.
+const nodeAssessment = computed(() => tutorSession.value?.pending_assessment || null)
 const assessmentInMessages = computed(() => Boolean(nodeAssessment.value && tutorMessages.value.some(message => message.assessment?.assessment_id === nodeAssessment.value?.assessment_id)))
 const taskId = computed(() => String(route.query.task_id || '').trim())
 const currentLearnerId = computed(() => {
@@ -582,22 +592,6 @@ async function requestTutorMasteryCheck() {
     scrollTutorToLatest()
   } catch (error) { showToast(masteryCheckErrorMessage(error), 'info') }
   finally { masteryCheckLoading.value = false }
-}
-
-async function decideAssessmentResource(assessment: TutoringAssessment, decision: 'generate' | 'skip') {
-  const proposalId = assessment.adjustment_proposal_id
-  if (!proposalId || resourceDecisionSubmitting.value) return
-  resourceDecisionSubmitting.value = proposalId
-  try {
-    const result = await decideLearningAdjustmentResource(proposalId, decision)
-    assessment.resource_decision = decision
-    if (result.task_id) {
-      await router.push({ path: '/resources', query: { task_id: result.task_id, ...(currentLearnerId.value ? { learner_id: currentLearnerId.value } : {}) } })
-    } else {
-      showToast('已暂不生成资源，画像与路线调整保持生效。', 'info')
-    }
-  } catch { showToast('资源选择保存失败，路线可能已更新，请刷新后重试。', 'error') }
-  finally { resourceDecisionSubmitting.value = '' }
 }
 
 async function pauseTutorMessage() {
@@ -829,6 +823,8 @@ onUnmounted(clearTaskTimer)
 .knowledge-impact.dismissed { border-color: var(--line); background: var(--soft); }
 .knowledge-impact.dismissed strong { color: var(--ink); }
 .knowledge-impact.dismissed p { color: var(--muted); }
+.profile-adaptation { display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid var(--line-info); border-radius: 12px; background: var(--blue2); padding: 16px 18px; }
+.profile-adaptation.pending { border-color: var(--line-warning); background: var(--amber2); }.profile-adaptation strong { color: var(--ink); font-size: 14px; }.profile-adaptation p { margin-top: 5px; color: var(--body); font-size: 12.5px; line-height: 1.6; }
 .impact-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
 /* 空态 */
@@ -933,7 +929,7 @@ onUnmounted(clearTaskTimer)
 }
 @media (max-width: 900px) {
   .resource-switcher { grid-template-columns: 1fr; }
-  .knowledge-impact { align-items: stretch; flex-direction: column; }
+  .knowledge-impact,.profile-adaptation { align-items: stretch; flex-direction: column; }
   .impact-actions { display: grid; }
 }
 @media (max-width: 640px) {

@@ -68,9 +68,6 @@ def seed(factory: sessionmaker[Session]) -> None:
             answer_key_json={"correct_option": 1},
             difficulty=2,
             status="active",
-            certification_status="certified",
-            certification_rule_version="question-cert-v1",
-            source_content_hash="sha256:" + "d" * 64,
         )
         alternative = DiagnosticQuestion(
             public_id="question_alternative",
@@ -86,9 +83,6 @@ def seed(factory: sessionmaker[Session]) -> None:
             },
             difficulty=2,
             status="active",
-            certification_status="certified",
-            certification_rule_version="question-cert-v1",
-            source_content_hash="sha256:" + "e" * 64,
         )
         corroborating = DiagnosticQuestion(
             public_id="question_corroborating",
@@ -103,9 +97,6 @@ def seed(factory: sessionmaker[Session]) -> None:
             },
             difficulty=2,
             status="active",
-            certification_status="certified",
-            certification_rule_version="question-cert-v1",
-            source_content_hash="sha256:" + "f" * 64,
         )
         db.add_all([original, alternative, corroborating])
         db.flush()
@@ -531,5 +522,88 @@ def test_resource_quiz_attempt_is_server_scored_and_creates_mistake() -> None:
                 select(MistakeReviewItem).where(MistakeReviewItem.source_type == "graded_quiz")
             )
             assert mistake is not None
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_path_quiz_invalidated_after_question_withdrawal_leaves_no_evidence_or_blocker() -> None:
+    factory = session_factory()
+    seed(factory)
+    with factory() as db:
+        task = db.scalar(select(GenerationTask).where(GenerationTask.public_id == "task_quiz"))
+        task.path_node_id = "knowledge:knowledge_rag"
+        db.commit()
+    app.dependency_overrides[get_db] = override_db(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "user", "learner", "learner_mistake"
+    )
+    client = TestClient(app)
+    try:
+        started = client.post("/api/v1/resources/resource_quiz/quiz-attempts", json={})
+        assert started.status_code == 200
+        attempt_id = started.json()["data"]["attempt_id"]
+        answered = client.put(
+            f"/api/v1/resources/resource_quiz/quiz-attempts/{attempt_id}/answers/generated_q1",
+            json={"answer": ["错误"]},
+        )
+        assert answered.status_code == 200
+        with factory() as db:
+            original = db.scalar(
+                select(DiagnosticQuestion).where(DiagnosticQuestion.public_id == "question_original")
+            )
+            original.status = "disabled"
+            original.disabled_reason = "题目修订"
+            db.commit()
+
+        completed = client.post(
+            f"/api/v1/resources/resource_quiz/quiz-attempts/{attempt_id}/complete",
+            json={},
+        )
+        data = completed.json()["data"]
+        assert completed.status_code == 200
+        assert data["status"] == "invalidated"
+        assert data["requires_regeneration"] is True
+        assert data["evidence_result"]["materialized_count"] == 0
+        assert "重新生成" in data["invalidation_message"]
+        listed = client.get("/api/v1/mistake-review/items?domain_code=ai_app_dev")
+        assert listed.status_code == 200
+        assert listed.json()["data"]["items"] == []
+        with factory() as db:
+            assert db.scalar(
+                select(AnswerRecord).where(AnswerRecord.session_id == attempt_id)
+            ) is None
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_withdrawn_original_question_cannot_be_reopened_for_consolidation() -> None:
+    factory = session_factory()
+    seed(factory)
+    app.dependency_overrides[get_db] = override_db(factory)
+    app.dependency_overrides[get_current_user] = lambda: Principal(
+        "user", "learner", "learner_mistake"
+    )
+    client = TestClient(app)
+    try:
+        item_id = client.get("/api/v1/mistake-review/items?domain_code=ai_app_dev").json()["data"]["items"][0]["item_id"]
+        started = client.post(f"/api/v1/mistake-review/items/{item_id}/start", json={})
+        assert started.status_code == 200
+        attempt_id = started.json()["data"]["attempt_id"]
+        with factory() as db:
+            original = db.scalar(
+                select(DiagnosticQuestion).where(DiagnosticQuestion.public_id == "question_original")
+            )
+            original.status = "disabled"
+            db.commit()
+
+        answered = client.post(
+            f"/api/v1/mistake-review/items/{item_id}/attempts/{attempt_id}/answer",
+            json={"answer": 1},
+        )
+        assert answered.status_code == 409
+        assert "原题已停用" in answered.json()["error"]["message"]
+        summary = client.get("/api/v1/mistake-review/summary?domain_code=ai_app_dev")
+        assert summary.json()["data"]["total"] == 0
+        assert client.get("/api/v1/mistake-review/items?domain_code=ai_app_dev").json()["data"]["items"] == []
     finally:
         app.dependency_overrides.clear()

@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.api.v1 import learning_packages as learning_packages_api
+from app.agents.contracts import QUALITY_RULE_VERSION
 from app.core.security import Principal
 from app.models import (
     Base,
@@ -12,10 +13,13 @@ from app.models import (
     KnowledgeItem,
     KnowledgeUpdateImpact,
     Learner,
+    LearningAdjustmentProposal,
     LearnerProfile,
+    LearningPath,
     LearningPackageResource,
     LearningResource,
     ReviewReport,
+    TutoringSession,
 )
 from app.services.generation_service import (
     _compose_published_package,
@@ -30,6 +34,7 @@ from app.services.learning_package_service import (
     package_member_rows,
     serialize_package,
 )
+from app.services.learning_adjustment_service import pending_resource_proposals
 from app.services.node_mastery_service import affected_resource_types
 
 
@@ -43,8 +48,8 @@ def _report(resource: LearningResource, task: GenerationTask) -> ReviewReport:
         passed=True,
         quality_passed=True,
         decision="passed",
-        review_rule_version="quality-v6-20260818",
-        quality_rule_version="quality-v6-20260818",
+        review_rule_version=QUALITY_RULE_VERSION,
+        quality_rule_version=QUALITY_RULE_VERSION,
         verifiable_claim_count=10,
         evaluated_claim_count=10,
         contradicted_claim_count=0,
@@ -85,7 +90,7 @@ def _package_fixture(
         learning_goal="[[evaluation_case:V4-EVAL-041]] 反馈任务目标继承验证",
         resource_types_json=list(resource_types),
         is_current_package=True,
-        package_quality_json={"quality_rule_version": "quality-v6-20260818"},
+        package_quality_json={"quality_rule_version": QUALITY_RULE_VERSION},
     )
     db.add(source_task)
     db.flush()
@@ -210,6 +215,88 @@ def test_package_serialization_resolves_knowledge_names_for_existing_resources()
     ]
 
 
+def test_pending_profile_adaptation_keeps_old_package_as_history() -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as db:
+        learner, original_profile, source_task, resources = _package_fixture(db, ("lecture",))
+        updated_profile = LearnerProfile(
+            public_id="profile_package_v2",
+            learner_id=learner.id,
+            domain_code="ai_app_dev",
+            ability_profile_json={},
+            weak_knowledge_json=[],
+            profile_version=2,
+            previous_profile_id=original_profile.id,
+            diagnosis_completed=True,
+            profile_source="feedback_revision",
+        )
+        db.add(updated_profile)
+        db.flush()
+        path = LearningPath(
+            public_id="path_package_v2",
+            learner_id=learner.id,
+            profile_id=updated_profile.id,
+            domain_code="ai_app_dev",
+            status="active",
+            path_json={
+                "current_node_id": "knowledge:knowledge_lecture",
+                "node_states": {
+                    "knowledge:knowledge_lecture": {
+                        "path_node_id": "knowledge:knowledge_lecture",
+                        "knowledge_id": "knowledge_lecture",
+                        "title": "当前学习节点",
+                        "status": "current",
+                    }
+                },
+            },
+        )
+        db.add(path)
+        db.flush()
+        tutoring = TutoringSession(
+            public_id="tutoring_package_v2",
+            learner_id=learner.id,
+            resource_id=resources["lecture"].id,
+        )
+        db.add(tutoring)
+        db.flush()
+        proposal = LearningAdjustmentProposal(
+            public_id="adjustment_package_v2",
+            learner_id=learner.id,
+            profile_id=original_profile.id,
+            resulting_profile_id=updated_profile.id,
+            learning_path_id=path.id,
+            resulting_learning_path_id=path.id,
+            path_node_id="knowledge:knowledge_lecture",
+            tutoring_session_id=tutoring.id,
+            source_resource_id=resources["lecture"].id,
+            hypothesis_type="support_down",
+            status="resource_pending",
+            resource_recommendation_json={
+                "path_node_id": "knowledge:knowledge_lecture",
+                "resource_types": ["lecture"],
+                "mode": "remedial",
+            },
+        )
+        db.add(proposal)
+        db.flush()
+
+        proposals = pending_resource_proposals(
+            db, learner_id=learner.id, domain_code="ai_app_dev"
+        )
+        package = serialize_package(db, source_task)
+
+    assert proposals[0]["profile_version"] == 2
+    assert proposals[0]["previous_profile_version"] == 1
+    assert proposals[0]["affected_resources"] == [
+        {"resource_id": "resource_lecture_v1", "resource_type": "lecture", "title": "lecture"}
+    ]
+    assert proposals[0]["route_message"]["reason"] == "GRADED_QUIZ_REQUIRED"
+    assert package["profile_adaptation"]["status"] == "pending"
+    assert package["profile_adaptation"]["proposal_id"] == "adjustment_package_v2"
+
+
 def test_partial_refresh_composes_new_package_with_inherited_resource() -> None:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -301,11 +388,13 @@ def test_partial_refresh_composes_new_package_with_inherited_resource() -> None:
         assert refresh_task.package_coverage_json["primary_owner"] == {
             "knowledge_lecture": "lecture",
             "knowledge_practice_guide": "practice_guide",
+            "knowledge_graded_quiz": "graded_quiz",
         }
-        assert refresh_task.package_coverage_json["required_knowledge_ids"] == [
+        assert set(refresh_task.package_coverage_json["required_knowledge_ids"]) == {
             "knowledge_lecture",
             "knowledge_practice_guide",
-        ]
+            "knowledge_graded_quiz",
+        }
 
 
 def test_package_quality_uses_teaching_resource_coverage_union() -> None:

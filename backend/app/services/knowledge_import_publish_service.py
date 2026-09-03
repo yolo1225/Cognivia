@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
-from uuid import uuid4
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models import (
-    DiagnosticQuestion,
     Domain,
     IndexBuildJob,
     KnowledgeDocument,
@@ -21,7 +19,6 @@ from app.models import (
 )
 from app.agents.domain_evidence_policy import classify_evidence_capabilities
 from app.rag.candidate_index import CandidateIndexBuilder
-from app.rag.candidate_index import knowledge_item_source_content_hash
 from app.rag.candidate_manifest import (
     CandidateIndexManifest,
     CandidateManifestStore,
@@ -30,16 +27,7 @@ from app.rag.database_manifest_store import DatabaseManifestStore
 from app.rag.embedding_provider import OpenAICompatibleEmbeddingProvider
 from app.rag.vector_store import VectorStore
 from app.services.ability_weight_service import normalize_ability_weights
-from app.services.question_source_binding_service import (
-    bind_domain_question_sources,
-    candidate_chunks_for_item,
-    candidate_source_locator,
-)
-from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
-    mark_question_certifications_stale,
-    normalize_evidence_text,
-)
+from app.services.knowledge_update_service import mark_affected_questions_stale
 
 
 class KnowledgeImportPublishError(ValueError):
@@ -56,6 +44,7 @@ def activate_import_candidate(
     job: IndexBuildJob,
     *,
     builder: CandidateIndexBuilder | None = None,
+    commit: bool = True,
 ) -> dict[str, object]:
     """Publish staged rows and switch the candidate manifest as one coordinated unit."""
     domain = db.scalar(
@@ -136,11 +125,8 @@ def activate_import_candidate(
     relation_candidates = [
         item for item in candidates if item.candidate_type == "knowledge_relation"
     ]
-    question_candidates = [
-        item for item in candidates if item.candidate_type == "diagnostic_question"
-    ]
     mapped_item_ids = {item.id for item in knowledge_map.values()}
-    mark_question_certifications_stale(
+    mark_affected_questions_stale(
         db,
         domain_code=document.domain_code,
         knowledge_ids={item.public_id for item in knowledge_map.values()},
@@ -153,28 +139,27 @@ def activate_import_candidate(
                 KnowledgeRelation.target_item_id.in_(mapped_item_ids),
             )
         )
-    if question_candidates and mapped_item_ids:
-        existing_questions = list(db.scalars(
-            select(DiagnosticQuestion).where(
-                DiagnosticQuestion.knowledge_item_id.in_(mapped_item_ids)
-            )
-        ))
-        item_by_id = {item.id: item for item in knowledge_map.values()}
-        for question in existing_questions:
-            answer_key = dict(question.answer_key_json or {})
-            item = item_by_id[question.knowledge_item_id]
-            is_same_import = answer_key.get("import_document_id") == document.public_id
-            is_legacy_import = answer_key.get("source_ref_ids") == [item.public_id]
-            if (is_same_import or is_legacy_import) and question.status == "active":
-                question.status = "disabled"
-                question.disabled_at = datetime.now(UTC).replace(tzinfo=None)
-                question.disabled_reason = "superseded_by_import"
-        db.flush()
     for candidate in candidates:
         payload = candidate.payload_json or {}
         if candidate.candidate_type == "knowledge_relation":
             source = knowledge_map.get(payload.get("source_candidate_id"))
             target = knowledge_map.get(payload.get("target_candidate_id"))
+            if source is None and payload.get("source_existing_knowledge_id"):
+                source = db.scalar(
+                    select(KnowledgeItem).where(
+                        KnowledgeItem.domain_code == document.domain_code,
+                        KnowledgeItem.public_id == payload.get("source_existing_knowledge_id"),
+                        KnowledgeItem.status == "published",
+                    )
+                )
+            if target is None and payload.get("target_existing_knowledge_id"):
+                target = db.scalar(
+                    select(KnowledgeItem).where(
+                        KnowledgeItem.domain_code == document.domain_code,
+                        KnowledgeItem.public_id == payload.get("target_existing_knowledge_id"),
+                        KnowledgeItem.status == "published",
+                    )
+                )
             if source and target and db.scalar(
                 select(KnowledgeRelation.id).where(
                     KnowledgeRelation.source_item_id == source.id,
@@ -187,133 +172,15 @@ def activate_import_candidate(
                     target_item_id=target.id,
                     relation_type=payload.get("relation_type", "related_to"),
                     confidence=candidate.confidence,
-                    evidence_json={"chunk_ids": payload.get("evidence_chunk_ids") or [], "reason": payload.get("reason")},
+                    evidence_json={
+                        "evidence_kind": payload.get("evidence_kind") or "text_quote",
+                        "chunk_ids": payload.get("evidence_chunk_ids") or [],
+                        "source_quote": payload.get("source_quote") or "",
+                        "reason": payload.get("reason") or "",
+                    },
                     generation_method=payload.get("generation_method", "hybrid"),
                     source_document_id=document.id,
                 ))
-        elif candidate.candidate_type == "diagnostic_question":
-            item = knowledge_map.get(payload.get("knowledge_candidate_id"))
-            if item is None:
-                continue
-            if (
-                payload.get("certification_status") != "certified"
-                or payload.get("certification_rule_version")
-                != QUESTION_CERTIFICATION_RULE_VERSION
-            ):
-                raise KnowledgeImportPublishError(
-                    f"题目尚未通过正式认证：{candidate.public_id}"
-                )
-            question_type = payload.get("question_type", "short_answer")
-            options = payload.get("options") or []
-            answer = payload["answer"]
-            source_chunks = [dict(value) for value in payload.get("source_chunks") or []]
-            related_candidate_ids = [
-                str(value)
-                for value in payload.get("related_knowledge_candidate_ids") or []
-            ]
-            source_items = [
-                item,
-                *[
-                    knowledge_map[value]
-                    for value in related_candidate_ids
-                    if value in knowledge_map
-                ],
-            ]
-            source_item_by_public_id = {value.public_id: value for value in source_items}
-            exact_sources: dict[str, dict[str, object]] = {}
-            for source in source_chunks:
-                source_item = source_item_by_public_id.get(
-                    str(source.get("knowledge_id") or "")
-                )
-                if source_item is None:
-                    raise KnowledgeImportPublishError(
-                        f"题目引用了未声明的关联知识点：{candidate.public_id}"
-                    )
-                chunks = {
-                    value.chunk_id: value for value in candidate_chunks_for_item(source_item)
-                }
-                source_ref_id = str(source.get("chunk_id") or "")
-                chunk = chunks.get(source_ref_id)
-                if (
-                    chunk is None
-                    or source.get("source_locator")
-                    != candidate_source_locator(source_item, chunk)
-                    or source.get("source_content_hash")
-                    != knowledge_item_source_content_hash(source_item)
-                ):
-                    raise KnowledgeImportPublishError(
-                        f"题目精确来源已变化：{candidate.public_id}"
-                    )
-                exact_sources[source_ref_id] = {
-                    "source_ref_id": source_ref_id,
-                    "source_locator": source.get("source_locator"),
-                    "knowledge_id": source_item.public_id,
-                    "source_content_hash": source.get("source_content_hash"),
-                    "content": chunk.content,
-                }
-            evidence_quotes = [
-                dict(value)
-                for value in payload.get("evidence_quotes") or []
-                if isinstance(value, dict)
-            ]
-            for evidence in evidence_quotes:
-                source = exact_sources.get(str(evidence.get("source_ref_id") or ""))
-                if (
-                    source is None
-                    or normalize_evidence_text(evidence.get("quote"))
-                    not in normalize_evidence_text(source.get("content"))
-                ):
-                    raise KnowledgeImportPublishError(
-                        f"题目精确引文无法定位：{candidate.public_id}"
-                    )
-            source_ref_ids = list(exact_sources)
-            answer_key = {
-                ("correct_option" if question_type == "single_choice" else "answer"): answer,
-                "explanation": payload.get("explanation", ""),
-                "question_slot": payload.get("question_slot"),
-                "quiz_level": payload.get("quiz_level"),
-                "question_bank_uses": list(payload.get("question_bank_uses") or []),
-                "reserve_role": payload.get("reserve_role"),
-                "assessment_dimension": payload.get("assessment_dimension"),
-                "source_ref_ids": source_ref_ids,
-                "source_locators": {
-                    source_ref_id: exact_sources[source_ref_id]["source_locator"]
-                    for source_ref_id in source_ref_ids
-                },
-                "source_content_hashes": {
-                    source_ref_id: exact_sources[source_ref_id]["source_content_hash"]
-                    for source_ref_id in source_ref_ids
-                },
-                "evidence_quotes": evidence_quotes,
-                "chunker_version": payload.get("chunker_version"),
-                "source_quote": payload.get("source_quote", ""),
-                "import_document_id": document.public_id,
-                "import_candidate_id": candidate.public_id,
-            }
-            if question_type != "single_choice":
-                answer_key["rubric"] = payload.get("rubric") or []
-            db.add(DiagnosticQuestion(
-                public_id=f"dq_{uuid4().hex[:12]}", domain_code=document.domain_code,
-                knowledge_item_id=item.id,
-                related_knowledge_ids_json=[
-                    knowledge_map[candidate_id].public_id
-                    for candidate_id in payload.get("related_knowledge_candidate_ids") or []
-                    if candidate_id in knowledge_map and candidate_id != payload.get("knowledge_candidate_id")
-                ],
-                question_type=question_type, stem=payload["stem"],
-                options_json=options, answer_key_json=answer_key,
-                difficulty=int(payload.get("difficulty", 2)),
-                status="active",
-                certification_status="certified",
-                certification_rule_version=QUESTION_CERTIFICATION_RULE_VERSION,
-                certification_report_json=payload.get("certification_report") or {},
-                source_content_hash=str(payload.get("source_content_hash") or ""),
-                certified_at=(
-                    datetime.fromisoformat(str(payload["certified_at"]))
-                    if payload.get("certified_at")
-                    else datetime.now(UTC).replace(tzinfo=None)
-                ),
-            ))
     for item in items:
         item.status = "published"
         item.needs_reembedding = False
@@ -353,17 +220,34 @@ def activate_import_candidate(
                 proposed_by_value = {
                     str(item.get("value")): item for item in proposed_directions
                 }
+                configured_values = {
+                    str(item.get("value")) for item in configured
+                }
                 for item in configured:
                     proposal = proposed_by_value.get(str(item.get("value")))
                     if proposal is not None:
                         item["match_tags"] = list(proposal.get("match_tags") or [])
-                config["learning_directions"] = configured
+                # A new topic is a new domain direction. Keep the configured
+                # identities intact, but persist suggested directions that do
+                # not correspond to an existing one.
+                config["learning_directions"] = [
+                    *configured,
+                    *[
+                        proposal
+                        for proposal in proposed_directions
+                        if str(proposal.get("value")) not in configured_values
+                    ],
+                ]
             else:
                 config["learning_directions"] = proposed_directions
             domain.config_json = config
         run.status = "ready"
         run.current_step = "ready"
         run.finished_at = datetime.now(UTC)
+    if domain is not None:
+        # Knowledge assets are live, but source changes can stale formal
+        # questions. The independent question-bank import restores readiness.
+        domain.status = "preparing"
 
     active_builder = builder or CandidateIndexBuilder(
         db=db,
@@ -375,7 +259,10 @@ def activate_import_candidate(
     try:
         previous = active_builder.activate_candidate(manifest_payload)
         manifest_switched = True
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except Exception as exc:
         db.rollback()
         if manifest_switched:
@@ -384,17 +271,24 @@ def activate_import_candidate(
             raise
         raise KnowledgeImportPublishError(f"候选索引发布失败：{type(exc).__name__}") from exc
 
-    try:
-        deleted = active_builder.cleanup_after_activation(manifest_payload)
-    except Exception:
-        deleted = 0
-    return {
+    deleted = 0
+    if commit:
+        try:
+            deleted = active_builder.cleanup_after_activation(manifest_payload)
+        except Exception:
+            deleted = 0
+    result_payload: dict[str, object] = {
         "import_id": document.public_id,
         "status": "ready",
         "index_version": manifest_payload["index_version"],
         "active_collection": manifest_payload["active_collection"],
         "old_collections_deleted": deleted,
     }
+    if not commit:
+        result_payload["_previous_manifest"] = previous
+        result_payload["_builder"] = active_builder
+        result_payload["_manifest_payload"] = manifest_payload
+    return result_payload
 
 
 def approve_candidates(
@@ -420,8 +314,6 @@ def approve_candidates(
                 payload.get("source_candidate_id"),
                 payload.get("target_candidate_id"),
             ]
-        elif item.candidate_type == "diagnostic_question":
-            references = [payload.get("knowledge_candidate_id")]
         missing_dependencies.update(
             reference
             for reference in references
@@ -500,6 +392,40 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
             )
             db.add(item)
             db.flush()
+        elif item is not None and item.status == "retired":
+            # Withdrawing an activated source retains the historical knowledge
+            # row for answer-record audit. Re-importing the same stable ID
+            # must restore that row into this change set, otherwise a `skip`
+            # candidate has no staged content for the candidate index.
+            if item.domain_code != document.domain_code:
+                raise KnowledgeImportPublishError("重导知识点不属于当前领域")
+            weights = normalize_ability_weights(payload.get("ability_weights"))
+            if weights is None:
+                raise KnowledgeImportPublishError(
+                    f"能力权重未通过门禁：{item.public_id}"
+                )
+            item.external_id = payload.get("external_id") or item.external_id
+            item.name = str(payload["name"])[:255]
+            item.category = str(payload.get("category") or "未分类")[:64]
+            item.difficulty = int(payload["difficulty"])
+            item.tags_json = payload.get("tags") or []
+            item.evidence_capabilities_json = classify_evidence_capabilities(
+                str(payload.get("content") or "")
+            )
+            item.content_md = str(payload["content"])
+            item.source_title = str(
+                payload.get("source_title") or document.source_title
+            )[:255]
+            item.source_url = payload.get("source_url")
+            item.license_note = str(
+                payload.get("license_note") or document.license_note
+            )[:255]
+            item.ability_weights_json = weights
+            item.source_locator_json = candidate.source_locator_json or {}
+            item.source_document_id = document.id
+            item.needs_reembedding = True
+            item.status = "staged"
+            db.flush()
         if item is None:
             continue
         knowledge_map[candidate.public_id] = item
@@ -527,22 +453,7 @@ def publish_approved(db: Session, document: KnowledgeDocument) -> dict[str, int]
     return {
         "knowledge_items": len(knowledge_map),
         "relations": sum(item.candidate_type == "knowledge_relation" for item in candidates),
-        "questions": sum(item.candidate_type == "diagnostic_question" for item in candidates),
     }
-
-
-def ensure_import_source_locators(db: Session, document: KnowledgeDocument) -> int:
-    """Bind imported questions to their deterministic final Candidate chunks."""
-    items = list(
-        db.scalars(select(KnowledgeItem).where(KnowledgeItem.source_document_id == document.id))
-    )
-    if not items:
-        return 0
-    return bind_domain_question_sources(
-        db,
-        domain_code=document.domain_code,
-        items=items,
-    )
 
 
 def _smoke_context(
@@ -601,14 +512,32 @@ def smoke_import_index(
     manifest_store: CandidateManifestStore | DatabaseManifestStore | None = None,
     manifest_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    items = list(
-        db.scalars(
-            select(KnowledgeItem)
-            .where(KnowledgeItem.source_document_id == document.id)
-            .order_by(KnowledgeItem.id)
+    # A document may consist entirely of updates to existing knowledge IDs.
+    # Those rows deliberately keep their original source_document_id until
+    # activation, so using that column here makes a valid re-import look
+    # empty. The approved candidate is the authoritative projected target for
+    # all three actions: create, update and skip.
+    candidate_payloads = [
+        dict(candidate.payload_json or {})
+        for candidate in db.scalars(
+            select(KnowledgeImportCandidate).where(
+                KnowledgeImportCandidate.document_id == document.id,
+                KnowledgeImportCandidate.candidate_type == "knowledge_item",
+                KnowledgeImportCandidate.status == "approved",
+            )
         )
-    )
-    if not items:
+    ]
+    targets = [
+        {
+            "knowledge_id": str(payload.get("target_public_id") or ""),
+            "name": str(payload.get("name") or ""),
+            "content": str(payload.get("content") or ""),
+            "tags": {str(tag).casefold() for tag in payload.get("tags") or []},
+        }
+        for payload in candidate_payloads
+        if str(payload.get("target_public_id") or "").strip()
+    ]
+    if not targets:
         raise KnowledgeImportPublishError("导入没有可用于检索冒烟的知识点")
     collection, manifest = _smoke_context(
         db,
@@ -617,10 +546,10 @@ def smoke_import_index(
         manifest_store=manifest_store,
         manifest_payload=manifest_payload,
     )
-    target = items[0]
+    target = targets[0]
     query_specs: list[tuple[str, str, str]] = [
-        ("name", target.name, target.public_id),
-        ("definition", target.content_md[:300], target.public_id),
+        ("name", target["name"], target["knowledge_id"]),
+        ("definition", target["content"][:300], target["knowledge_id"]),
     ]
     domain = db.scalar(select(Domain).where(Domain.domain_code == document.domain_code))
     directions = list((domain.config_json if domain else {}).get("learning_directions") or [])
@@ -628,16 +557,16 @@ def smoke_import_index(
         tags = {str(tag).casefold() for tag in direction.get("match_tags") or []}
         representative = next(
             (
-                item for item in items
-                if tags & {str(tag).casefold() for tag in item.tags_json or []}
+                item for item in targets
+                if tags & item["tags"]
             ),
             None,
         )
         if representative is not None:
             query_specs.append((
                 f"direction:{direction.get('value')}",
-                representative.content_md[:300],
-                representative.public_id,
+                representative["content"][:300],
+                representative["knowledge_id"],
             ))
     matches = _smoke_matches(
         collection,
@@ -645,29 +574,43 @@ def smoke_import_index(
         [(query_type, query) for query_type, query, _ in query_specs],
         provider,
     )
-    imported_ids = {item.public_id for item in items}
     checks: dict[str, dict[str, object]] = {}
     for query_type, _, expected_id in query_specs:
-        matched_ids, _ = matches[query_type]
-        passed = expected_id in matched_ids and not any(
-            knowledge_id not in imported_ids for knowledge_id in matched_ids
-        )
+        matched_ids, metadatas = matches[query_type]
+        # An incremental candidate index deliberately contains the published
+        # domain knowledge as well as this document's staged items.  Sibling
+        # domain results are therefore valid Top-K neighbours, not misses.
+        # The smoke check must only require the expected item to be retrieved
+        # and keep the existing cross-domain isolation guarantee.
+        foreign_matches = [
+            knowledge_id
+            for knowledge_id, metadata in zip(matched_ids, metadatas, strict=True)
+            if metadata.get("domain_code") != document.domain_code
+        ]
+        target_hit = expected_id in matched_ids
+        passed = target_hit and not foreign_matches
         checks[query_type] = {
             "passed": passed,
             "expected_knowledge_id": expected_id,
+            "target_hit": target_hit,
             "matched_knowledge_ids": matched_ids,
+            "foreign_knowledge_ids": foreign_matches,
         }
     hit_count = sum(bool(check["passed"]) for check in checks.values())
     hit_rate = hit_count / len(checks) if checks else 0.0
     if hit_rate < 0.9:
-        raise KnowledgeImportPublishError("导入知识 Top-K 检索命中率低于 90%")
+        failed_queries = [key for key, check in checks.items() if not check["passed"]]
+        raise KnowledgeImportPublishError(
+            "导入知识 Top-K 检索命中率低于 90%"
+            f"（{hit_count}/{len(checks)}，失败项：{', '.join(failed_queries)}）"
+        )
     return {
         "passed": True,
         "hit_rate": round(hit_rate, 4),
         "query_count": len(checks),
         "failed_queries": [key for key, check in checks.items() if not check["passed"]],
         "active_collection": manifest.active_collection,
-        "target_knowledge_id": target.public_id,
+        "target_knowledge_id": target["knowledge_id"],
         "checks": checks,
     }
 

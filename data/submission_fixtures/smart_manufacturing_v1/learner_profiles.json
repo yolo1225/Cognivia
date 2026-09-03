@@ -1,0 +1,173 @@
+[
+  {
+    "learner_id": "sm_fixture_learner_beginner",
+    "profile_id": "sm_fixture_profile_beginner_v1",
+    "path_id": "sm_fixture_path_beginner_v1",
+    "domain_code": "smart_manufacturing",
+    "education_level": "高职在读",
+    "major": "机电一体化技术",
+    "experience_years": 0,
+    "learning_style": "guided",
+    "direction_tags": [
+      "plc",
+      "industrial_internet"
+    ],
+    "background": "高职在读｜机电一体化技术｜0年相关经验",
+    "ability_profile": {
+      "profile_type": "beginner",
+      "theory": 38,
+      "practice": 28,
+      "problem_solving": 32,
+      "breadth": 35,
+      "learning_speed": 46,
+      "category_mastery": {},
+      "blind_spot_ids": []
+    },
+    "weak_knowledge": [
+      {
+        "knowledge_id": "ki_52b92f4c531b92d9",
+        "name": "OpenPLC Runtime v4 容器化部署与编辑器连接",
+        "category": "PLC 仿真与集成",
+        "weakness_level": 5,
+        "mastery_type": "unmastered",
+        "prerequisites": [],
+        "evidence_ids": [
+          "submission_fixture:ki_52b92f4c531b92d9"
+        ],
+        "reason": "智能制造提交夹具中的脱敏诊断基线"
+      },
+      {
+        "knowledge_id": "ki_07efe4e93e4a7f74",
+        "name": "PLC 定义与循环扫描工作原理",
+        "category": "PLC基础",
+        "weakness_level": 5,
+        "mastery_type": "unmastered",
+        "prerequisites": [],
+        "evidence_ids": [
+          "submission_fixture:ki_07efe4e93e4a7f74"
+        ],
+        "reason": "智能制造提交夹具中的脱敏诊断基线"
+      },
+      {
+        "knowledge_id": "ki_00040ffb65674150",
+        "name": "工业互联网网络体系",
+        "category": "网络体系",
+        "weakness_level": 5,
+        "mastery_type": "unmastered",
+        "prerequisites": [],
+        "evidence_ids": [
+          "submission_fixture:ki_00040ffb65674150"
+        ],
+        "reason": "智能制造提交夹具中的脱敏诊断基线"
+      }
+    ],
+    "confirmed_at": "2026-09-02T00:00:00+00:00",
+    "fixture_version": "smart_manufacturing_submission_fixture_v1"
+  },
+  {
+    "learner_id": "sm_fixture_learner_intermediate",
+    "profile_id": "sm_fixture_profile_intermediate_v1",
+    "path_id": "sm_fixture_path_intermediate_v1",
+    "domain_code": "smart_manufacturing",
+    "education_level": "本科",
+    "major": "自动化",
+    "experience_years": 1,
+    "learning_style": "mixed",
+    "direction_tags": [
+      "tia_portal",
+      "robot_integration"
+    ],
+    "background": "本科｜自动化｜1年相关经验",
+    "ability_profile": {
+      "profile_type": "intermediate",
+      "theory": 66,
+      "practice": 58,
+      "problem_solving": 61,
+      "breadth": 60,
+      "learning_speed": 64,
+      "category_mastery": {},
+      "blind_spot_ids": []
+    },
+    "weak_knowledge": [
+      {
+        "knowledge_id": "ki_1fe7f407915d15fb",
+        "name": "项目创建与硬件组态",
+        "category": "TIA Portal实操",
+        "weakness_level": 4,
+        "mastery_type": "unmastered",
+        "prerequisites": [],
+        "evidence_ids": [
+          "submission_fixture:ki_1fe7f407915d15fb"
+        ],
+        "reason": "智能制造提交夹具中的脱敏诊断基线"
+      },
+      {
+        "knowledge_id": "ki_22ac9040e58bb0e2",
+        "name": "机器人与外设协同",
+        "category": "IO与执行器",
+        "weakness_level": 4,
+        "mastery_type": "unmastered",
+        "prerequisites": [],
+        "evidence_ids": [
+          "submission_fixture:ki_22ac9040e58bb0e2"
+        ],
+        "reason": "智能制造提交夹具中的脱敏诊断基线"
+      }
+    ],
+    "confirmed_at": "2026-09-02T00:00:00+00:00",
+    "fixture_version": "smart_manufacturing_submission_fixture_v1"
+  },
+  {
+    "learner_id": "sm_fixture_learner_advanced",
+    "profile_id": "sm_fixture_profile_advanced_v1",
+    "path_id": "sm_fixture_path_advanced_v1",
+    "domain_code": "smart_manufacturing",
+    "education_level": "硕士",
+    "major": "控制工程",
+    "experience_years": 3,
+    "learning_style": "practice_oriented",
+    "direction_tags": [
+      "ros2",
+      "robot_integration"
+    ],
+    "background": "硕士｜控制工程｜3年相关经验",
+    "ability_profile": {
+      "profile_type": "advanced",
+      "theory": 88,
+      "practice": 84,
+      "problem_solving": 90,
+      "breadth": 82,
+      "learning_speed": 80,
+      "category_mastery": {},
+      "blind_spot_ids": []
+    },
+    "weak_knowledge": [
+      {
+        "knowledge_id": "ki_f3c9136c20115ace",
+        "name": "UR ROS 2 Driver 启动与控制模式衔接",
+        "category": "机器人仿真与集成",
+        "weakness_level": 3,
+        "mastery_type": "partial_mastery",
+        "prerequisites": [],
+        "evidence_ids": [
+          "submission_fixture:ki_f3c9136c20115ace"
+        ],
+        "reason": "智能制造提交夹具中的脱敏诊断基线"
+      },
+      {
+        "knowledge_id": "ki_c6e0d437718ca065",
+        "name": "UR External Control 中断识别与恢复",
+        "category": "机器人仿真与集成",
+        "weakness_level": 3,
+        "mastery_type": "partial_mastery",
+        "prerequisites": [],
+        "evidence_ids": [
+          "submission_fixture:ki_c6e0d437718ca065"
+        ],
+        "reason": "智能制造提交夹具中的脱敏诊断基线"
+      }
+    ],
+    "confirmed_at": "2026-09-02T00:00:00+00:00",
+    "fixture_version": "smart_manufacturing_submission_fixture_v1"
+  }
+]

@@ -904,7 +904,10 @@ def _build_review_payload(
 ) -> tuple[dict[str, object], int, int]:
     """Build one claim-aligned payload and include supplemental recheck evidence."""
     claims = extract_atomic_claims(resource, request)
-    if claim_ids is not None:
+    # An empty selection has no useful review meaning.  It can occur when a
+    # coverage gap is detected for a target that has no factual claim yet; in
+    # that case review the complete canonical set instead of failing the task.
+    if claim_ids:
         claims = [claim for claim in claims if claim.claim_id in claim_ids]
         if not claims:
             raise ReviewError("review_claim_set_empty")
@@ -1098,7 +1101,7 @@ def _plan_review_batches(
     """Greedily plan stable canonical-order batches under input/output budgets."""
 
     claims = extract_atomic_claims(resource, request)
-    if claim_ids is not None:
+    if claim_ids:
         claims = [claim for claim in claims if claim.claim_id in claim_ids]
     if not claims:
         raise ReviewError("review_claim_set_empty")
@@ -1789,11 +1792,15 @@ class ReviewValidationAgent:
             if set(claim.knowledge_ids).intersection(initially_missing)
         }
         claims_to_refresh = disputed | insufficient_or_contradicted | coverage_claims
-        if disagreement and not claims_to_refresh:
-            claims_to_refresh = {claim.claim_id for claim in claims}
         evidence_refresh_required = bool(
             disagreement or insufficient_or_contradicted or initially_missing
         )
+        if evidence_refresh_required and not claims_to_refresh:
+            # Coverage can be missing because the generated resource contains
+            # no factual claim for that target knowledge point.  There is then
+            # no precise claim to filter by, but rechecking all existing claims
+            # is still required before returning a revision-required report.
+            claims_to_refresh = {claim.claim_id for claim in claims}
         final_primary, final_secondary = primary, secondary
         primary_recheck: ModelReview | None = None
         secondary_recheck: ModelReview | None = None
@@ -2276,7 +2283,7 @@ def _deterministic_review(
     claim_ids: set[str] | None = None,
 ) -> ModelReview:
     claims = extract_atomic_claims(resource, request)
-    if claim_ids is not None:
+    if claim_ids:
         claims = [claim for claim in claims if claim.claim_id in claim_ids]
         if not claims:
             raise ReviewError("review_claim_set_empty")

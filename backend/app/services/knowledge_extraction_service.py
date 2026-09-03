@@ -111,73 +111,9 @@ def replace_candidates(
             status="pending",
             validation_errors_json=[],
         )
-        source_statement = next(
-            (line.strip() for line in section["text"].splitlines() if len(line.strip()) >= 12),
-            section["text"][:180],
-        )[:220]
-        distractors = []
-        for other in sections:
-            if other["checksum"] == section["checksum"]:
-                continue
-            statement = next(
-                (line.strip() for line in other["text"].splitlines() if len(line.strip()) >= 12),
-                other["text"][:180],
-            )[:220]
-            if statement and statement != source_statement and statement not in distractors:
-                distractors.append(statement)
-            if len(distractors) == 3:
-                break
-        single_choice = len(distractors) == 3 and (index - 1) % 5 < 3
-        practical = "operation" in (knowledge.payload_json or {}).get("evidence_capabilities", [])
-        question_dimension = (
-            "错误诊断与修复" if practical and index % 2 == 0
-            else "实操场景选择" if practical
-            else "机制与因果" if index % 2 == 0
-            else "概念理解"
-        )
-        options = [source_statement, *distractors] if single_choice else []
-        if single_choice:
-            answer_index = (index - 1) % len(options)
-            options[0], options[answer_index] = options[answer_index], options[0]
-        else:
-            answer_index = None
-        question = KnowledgeImportCandidate(
-            public_id=_candidate_id(document.public_id, "diagnostic_question", section["checksum"]),
-            document_id=document.id,
-            domain_code=document.domain_code,
-            candidate_type="diagnostic_question",
-            payload_json={
-                "knowledge_candidate_id": public_id,
-                "question_type": "single_choice" if single_choice else "short_answer",
-                "stem": (
-                    f"关于“{heading}”，下列哪项表述与来源材料一致？"
-                    if single_choice
-                    else (
-                        f"结合来源材料，说明“{heading}”的关键机制、适用条件和一个判断依据。"
-                        if not practical
-                        else f"在“{heading}”相关实践中，说明关键操作、预期结果和出现异常时的排查依据。"
-                    )
-                ),
-                "options": options,
-                "answer": (answer_index if single_choice else source_statement),
-                "rubric": [
-                    "包含来源支持的核心概念或操作",
-                    "说明适用条件或判断依据",
-                    "不引入来源无法支持的结论",
-                ],
-                "explanation": f"正确结论可由来源摘录直接验证：{source_statement}",
-                "difficulty": 2,
-                "question_bank_uses": ["diagnosis"],
-                "diagnostic_dimension": question_dimension,
-                "assessment_dimension": "operation" if practical else "theory",
-                "source_quote": source_statement,
-            },
-            source_locator_json=locator,
-            confidence=0.75,
-            status="pending",
-            validation_errors_json=[],
-        )
-        candidates.extend([knowledge, question])
+        # Formal questions are intentionally not generated during document
+        # import.  They enter through the independently certified XLSX bank.
+        candidates.append(knowledge)
     for section, target_candidate in zip(sections, knowledge_ids, strict=True):
         for prerequisite in (section.get("metadata") or {}).get("prerequisites", []):
             source_candidate = external_to_candidate.get(str(prerequisite))

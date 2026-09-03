@@ -1,0 +1,29 @@
+services:
+  redis:
+    container_name: cognivia_${SUBMISSION_STACK_NAME:-submission}_redis
+
+  mysql:
+    container_name: cognivia_${SUBMISSION_STACK_NAME:-submission}_mysql
+    ports: !override
+      - "14306:3306"
+
+  chromadb:
+    container_name: cognivia_${SUBMISSION_STACK_NAME:-submission}_chromadb
+    ports: !override
+      - "18001:8000"
+
+  backend:
+    container_name: cognivia_${SUBMISSION_STACK_NAME:-submission}_backend
+    ports: !override
+      - "18000:8000"
+    environment:
+      ALLOW_FIXTURE_LLM: "false"
+      ENABLE_EVALUATION_OVERRIDES: "false"
+      ENABLE_EVALUATION_RUNNER: "true"
+    volumes:
+      - ./deliverables:/app/deliverables
+
+  frontend:
+    container_name: cognivia_${SUBMISSION_STACK_NAME:-submission}_frontend
+    ports: !override
+      - "15173:5173"

@@ -1,11 +1,14 @@
 import { apiClient } from './client'
 import type { ApiResponse } from '@/types/api'
 
-export type KnowledgeDocumentStatus = 'queued' | 'parsing' | 'extracting' | 'graph_generation' | 'graph_review' | 'question_generation' | 'question_certification' | 'question_review' | 'question_repair' | 'validating' | 'staging' | 'indexing' | 'smoke_testing' | 'ready_to_publish' | 'publishing' | 'ready' | 'needs_attention' | 'failed' | 'withdrawn' | 'cancel_requested' | 'cancelled'
+export type KnowledgeDocumentStatus = 'queued' | 'parsing' | 'extracting' | 'graph_generation' | 'graph_review' | 'validating' | 'staging' | 'index_pending' | 'indexing' | 'smoke_testing' | 'smoke_passed' | 'ready_to_publish' | 'ready_for_questions' | 'publishing' | 'ready' | 'needs_attention' | 'failed' | 'interrupted' | 'withdrawn' | 'cancel_requested' | 'cancelled'
 
 export interface KnowledgeDocumentItem {
   document_id: string
   domain_code: string
+  change_set_id?: number | null
+  import_mode?: 'append' | 'replace'
+  replaces_document_id?: number | null
   original_name: string
   file_type: 'pdf' | 'markdown' | 'text' | 'seed_package'
   mime_type: string
@@ -66,7 +69,15 @@ export async function retryKnowledgeDocument(documentId: string) {
 }
 
 export async function deleteKnowledgeDocument(documentId: string) {
-  const response = await apiClient.delete<ApiResponse<{ document_id: string; status: string }>>(
+  const response = await apiClient.delete<ApiResponse<{
+    document_id: string
+    status: string
+    change_set_cancelled?: boolean
+    change_set_id?: string
+    staged_knowledge_items_removed?: number
+    staged_questions_removed?: number
+    candidate_index_cleanup_scheduled?: boolean
+  }>>(
     `/knowledge/documents/${documentId}`,
   )
   return response.data.data

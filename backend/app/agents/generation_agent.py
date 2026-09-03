@@ -10,7 +10,7 @@ from contextvars import copy_context
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.agents.contracts import (
     GenerateResourceInput,
@@ -21,7 +21,9 @@ from app.agents.contracts import (
     PracticeGuideContent,
     QuestionType,
     QuizQuestion,
+    RetrievedQuestion,
     ResourceType,
+    ReviewClaim,
     SourceRef,
     StructuredResourceContent,
     structured_source_ref_ids,
@@ -30,7 +32,11 @@ from app.agents.observability import record_model_call
 from app.agents.claim_policy import sanitize_deterministic_text
 from app.agents.prompt_registry import get_prompt
 from app.agents.review_claim_manifest import build_review_claims
-from app.agents.domain_evidence_policy import evidence_capability_payload
+from app.agents.domain_evidence_policy import (
+    EvidenceCapability,
+    evidence_capability_payload,
+    get_domain_evidence_policy,
+)
 from app.agents.prompt_budget import bounded_text, estimate_tokens
 from app.core.config import settings
 from app.services.llm_service import (
@@ -75,7 +81,30 @@ class GenerationError(RuntimeError):
         self.violations = [dict(item) for item in (violations or [])][:20]
 
 
-class GeneratedContentResponse(BaseModel):
+def _cap_generated_source_reference_lists(value: object) -> object:
+    """Normalize only the per-field reference cardinality before contract parsing."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                list(nested)[:10]
+                if key == "source_ref_ids" and isinstance(nested, list)
+                else _cap_generated_source_reference_lists(nested)
+            )
+            for key, nested in value.items()
+        }
+    if isinstance(value, list):
+        return [_cap_generated_source_reference_lists(item) for item in value]
+    return value
+
+
+class _SourceBoundedGenerationResponse(BaseModel):
+    @field_validator("structured_content", mode="before", check_fields=False)
+    @classmethod
+    def cap_per_field_source_references(cls, value: object) -> object:
+        return _cap_generated_source_reference_lists(value)
+
+
+class GeneratedContentResponse(_SourceBoundedGenerationResponse):
     # Compatible providers echo request-payload keys (``source_violations``,
     # ``policy_violations``) back alongside the requested output.  These are
     # input context, not part of the contract, so tolerate and drop them rather
@@ -99,7 +128,7 @@ class RevisionPatchResponse(BaseModel):
     patches: list[RevisionFieldPatch] = Field(default_factory=list, max_length=30)
 
 
-class LectureGenerationResponse(BaseModel):
+class LectureGenerationResponse(_SourceBoundedGenerationResponse):
     """Internal response shape for a lecture-only model call."""
 
     model_config = ConfigDict(extra="ignore")
@@ -107,7 +136,7 @@ class LectureGenerationResponse(BaseModel):
     difficulty: int
 
 
-class PracticeGuideGenerationResponse(BaseModel):
+class PracticeGuideGenerationResponse(_SourceBoundedGenerationResponse):
     """Internal response shape for a practice-guide-only model call."""
 
     model_config = ConfigDict(extra="ignore")
@@ -115,7 +144,7 @@ class PracticeGuideGenerationResponse(BaseModel):
     difficulty: int
 
 
-class GradedQuizGenerationResponse(BaseModel):
+class GradedQuizGenerationResponse(_SourceBoundedGenerationResponse):
     """Internal response shape for a graded-quiz-only model call."""
 
     model_config = ConfigDict(extra="ignore")
@@ -355,11 +384,15 @@ class ContentGenerationAgent:
 
             def generate_one(resource_type: ResourceType) -> GeneratedResourceArtifact:
                 target_ids = set(validated.requirements.resource_knowledge_targets[resource_type])
-                question_source_ids = (
+                question_knowledge_ids = (
                     {
-                        str(source_ref_id)
+                        knowledge_id
                         for question in validated.reference_questions
-                        for source_ref_id in question.answer_key.get("source_ref_ids") or []
+                        if {question.knowledge_id, *question.related_knowledge_ids} & target_ids
+                        for knowledge_id in {
+                            question.knowledge_id,
+                            *question.related_knowledge_ids,
+                        }
                     }
                     if resource_type is ResourceType.GRADED_QUIZ
                     else set()
@@ -370,7 +403,7 @@ class ContentGenerationAgent:
                     if chunk.source.source_ref_id in validated.requirements.source_whitelist
                     and (
                         chunk.knowledge_id in target_ids
-                        or chunk.source.source_ref_id in question_source_ids
+                        or chunk.knowledge_id in question_knowledge_ids
                     )
                 ]
                 if not allowed_sources:
@@ -606,9 +639,48 @@ class ContentGenerationAgent:
                 if _source_violations(response.structured_content, whitelist):
                     raise GenerationError("generated_source_outside_whitelist_after_repair")
 
+                review_claims = _try_build_review_claims(
+                    resource_type, response.structured_content
+                )
+                if previous_candidate is not None and review_claims is None:
+                    # A local deletion may legitimately remove a field's old claim, but
+                    # it must not turn an affected resource into generic teaching prose.
+                    # Rebuild only this resource from the refreshed evidence once.
+                    self._logger.warning(
+                        "generation_revision_claim_regeneration task_id=%s resource_type=%s",
+                        validated.task_id,
+                        resource_type.value,
+                    )
+                    response = GeneratedContentResponse.model_validate(
+                        self._generator.generate(validated, resource_type, allowed_sources)
+                    )
+                    response = response.model_copy(
+                        update={
+                            "structured_content": normalize_generated_content(
+                                response.structured_content
+                            )
+                        }
+                    )
+                    if _source_violations(response.structured_content, whitelist):
+                        raise GenerationError("revision_candidate_source_missing")
+                    response = _strip_audited_claims_after_repairs(
+                        response,
+                        resource_type,
+                        audited_claims_by_type.get(resource_type, {}),
+                    )
+                    review_claims = _try_build_review_claims(
+                        resource_type, response.structured_content
+                    )
+                if review_claims is None:
+                    raise GenerationError("revision_claim_set_empty_after_repair")
+
                 if resource_type == ResourceType.GRADED_QUIZ:
                     blueprint = (
-                        _quiz_blueprint_for_content(validated, response.structured_content)
+                        _quiz_blueprint_for_content(
+                            validated,
+                            response.structured_content,
+                            allowed_sources,
+                        )
                         if targeted_quiz_revision
                         else _quiz_blueprint(
                             validated,
@@ -673,9 +745,7 @@ class ContentGenerationAgent:
                             for source_id in used_source_ids
                         )
                     },
-                    review_claims=build_review_claims(
-                        resource_type, response.structured_content
-                    ),
+                    review_claims=review_claims,
                 )
 
             resource_types = validated.requirements.resource_types
@@ -904,6 +974,32 @@ def _generation_payload(
             for item in request.reference_questions
             if item.knowledge_id in target_ids
         ]
+    if resource_type == ResourceType.PRACTICE_GUIDE:
+        target_chunks = [
+            chunks_by_source[source.source_ref_id]
+            for source in allowed_sources
+            if chunks_by_source[source.source_ref_id].knowledge_id in target_ids
+        ]
+        has_operation_evidence = any(
+            EvidenceCapability.OPERATION
+            in get_domain_evidence_policy(request.context.domain_code).classify(chunk)
+            for chunk in target_chunks
+        )
+        payload["practice_guide_mode"] = (
+            "operation_task" if has_operation_evidence else "conceptual_learning_activity"
+        )
+        payload["practice_guide_rules"] = (
+            [
+                "优先生成由证据支持的分步骤操作、观察和核验任务。",
+                "标题和学习目标应明确这是操作练习，不得补造命令、配置效果或固定结果。",
+            ]
+            if has_operation_evidence
+            else [
+                "生成有明确产出物的分析、设计、比较、评审或学习记录任务。",
+                "标题和学习目标应明确这是分析或设计练习，不得把概念材料伪装成可执行操作。",
+                "验收结果只能描述学习者提交的记录、方案、检查表或对比结论。",
+            ]
+        )
     if candidate is not None:
         payload["correction_attempt"] = correction_attempt
         payload["candidate"] = candidate.model_dump(mode="json")
@@ -1004,6 +1100,20 @@ def _normalize_revision_path(path: str, resource_type: ResourceType) -> str | No
     return None
 
 
+def _atomic_revision_target(
+    path: str, resource_type: ResourceType
+) -> tuple[str, int] | None:
+    """Return a sentence-level target when a claim path ends in an extra index."""
+    candidate = path.strip()
+    match = re.fullmatch(r"(.+)\[(\d+)\]", candidate)
+    if match is None:
+        return None
+    parent, index = match.groups()
+    if any(pattern.fullmatch(parent) for pattern in _EDITABLE_REVISION_PATHS[resource_type]):
+        return parent, int(index)
+    return None
+
+
 def _path_tokens(path: str) -> list[str | int]:
     tokens: list[str | int] = []
     for name, index in re.findall(r"([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)\]", path):
@@ -1058,12 +1168,24 @@ def _apply_revision_patches(
         if (normalized := _normalize_revision_path(path, resource_type)) is not None
     }
     payload = original.structured_content.model_dump(mode="python")
-    seen: set[str] = set()
+    seen: set[tuple[str, int | None]] = set()
+    touched_parents: set[str] = set()
     for patch in proposed.patches:
         normalized = _normalize_revision_path(patch.path, resource_type)
-        if normalized is None or normalized not in allowed or normalized in seen:
+        atomic_target = _atomic_revision_target(patch.path, resource_type)
+        target_key = (normalized, atomic_target[1] if atomic_target else None)
+        if (
+            normalized is None
+            or normalized not in allowed
+            or target_key in seen
+            or normalized in touched_parents
+            or (
+                atomic_target is None
+                and any(existing_parent == normalized for existing_parent, _ in seen)
+            )
+        ):
             raise GenerationError("patch_validation_failed")
-        seen.add(normalized)
+        seen.add(target_key)
         tokens = _path_tokens(normalized)
         try:
             old_value = _read_path(payload, tokens)
@@ -1071,6 +1193,17 @@ def _apply_revision_patches(
             raise GenerationError("patch_validation_failed") from exc
         if old_value is not None and not isinstance(old_value, str):
             raise GenerationError("patch_validation_failed")
+        if atomic_target is not None:
+            if not isinstance(old_value, str) or not isinstance(patch.value, str):
+                raise GenerationError("patch_validation_failed")
+            units = _claim_units(old_value)
+            if atomic_target[1] >= len(units) or _claim_unit_count(patch.value) > 1:
+                raise GenerationError("patch_validation_failed")
+            units[atomic_target[1]] = patch.value.strip()
+            if not units[atomic_target[1]]:
+                raise GenerationError("patch_validation_failed")
+            _write_path(payload, tokens, "".join(units))
+            continue
         if old_value is not None and patch.value is None and not normalized.endswith(
             (".code_or_command", ".troubleshooting")
         ):
@@ -1079,6 +1212,7 @@ def _apply_revision_patches(
             if _claim_unit_count(patch.value) > max(1, _claim_unit_count(old_value)):
                 raise GenerationError("patch_validation_failed")
         _write_path(payload, tokens, patch.value)
+        touched_parents.add(normalized)
     _remove_residual_audited_claims(payload, resource_type, audited_claims or {})
     try:
         content = type(original.structured_content).model_validate(payload)
@@ -1105,10 +1239,22 @@ def _sanitize_revision_patches(
     payload = original.structured_content.model_dump(mode="python")
     accepted: list[RevisionFieldPatch] = []
     rejected: list[str] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, int | None]] = set()
+    touched_parents: set[str] = set()
     for patch in proposed.patches:
         normalized = _normalize_revision_path(patch.path, resource_type)
-        if normalized is None or normalized not in allowed or normalized in seen:
+        atomic_target = _atomic_revision_target(patch.path, resource_type)
+        target_key = (normalized, atomic_target[1] if atomic_target else None)
+        if (
+            normalized is None
+            or normalized not in allowed
+            or target_key in seen
+            or normalized in touched_parents
+            or (
+                atomic_target is None
+                and any(existing_parent == normalized for existing_parent, _ in seen)
+            )
+        ):
             rejected.append(patch.path[:160])
             continue
         try:
@@ -1118,6 +1264,21 @@ def _sanitize_revision_patches(
             continue
         if old_value is not None and not isinstance(old_value, str):
             rejected.append(patch.path[:160])
+            continue
+        if atomic_target is not None:
+            if not isinstance(old_value, str) or not isinstance(patch.value, str):
+                rejected.append(patch.path[:160])
+                continue
+            units = _claim_units(old_value)
+            if atomic_target[1] >= len(units):
+                rejected.append(patch.path[:160])
+                continue
+            value = _truncate_claim_units(patch.value, 1)
+            if not value.strip():
+                rejected.append(patch.path[:160])
+                continue
+            accepted.append(RevisionFieldPatch(path=patch.path.strip(), value=value))
+            seen.add(target_key)
             continue
         if old_value is not None and patch.value is None and not normalized.endswith(
             (".code_or_command", ".troubleshooting")
@@ -1131,22 +1292,27 @@ def _sanitize_revision_patches(
                 rejected.append(patch.path[:160])
                 continue
         accepted.append(RevisionFieldPatch(path=normalized, value=value))
-        seen.add(normalized)
+        seen.add(target_key)
+        touched_parents.add(normalized)
     return RevisionPatchResponse(patches=accepted), rejected
 
 
 def _claim_unit_count(value: object) -> int:
     if not isinstance(value, str):
         return 0
-    return len([item for item in re.split(r"[。！？!?；;\n]+", value) if item.strip()])
+    return len(_claim_units(value))
 
 
-def _truncate_claim_units(value: str, maximum: int) -> str:
-    units = [
+def _claim_units(value: str) -> list[str]:
+    return [
         item.strip()
         for item in re.findall(r"[^。！？!?；;\n]+[。！？!?；;\n]*", value)
         if item.strip()
     ]
+
+
+def _truncate_claim_units(value: str, maximum: int) -> str:
+    units = _claim_units(value)
     return "".join(units[:maximum]).strip() if units else value.strip()
 
 
@@ -1246,6 +1412,15 @@ def _strip_audited_claims_after_repairs(
     except ValidationError as exc:
         raise GenerationError("revision_post_repair_validation_failed") from exc
     return response.model_copy(update={"structured_content": content})
+
+
+def _try_build_review_claims(
+    resource_type: ResourceType, content: StructuredResourceContent
+) -> list[ReviewClaim] | None:
+    try:
+        return build_review_claims(resource_type, content)
+    except ValueError:
+        return None
 
 
 def _audited_claim_body(path: str, claim: str) -> str:
@@ -1540,6 +1715,7 @@ def _quiz_blueprint(
 def _quiz_blueprint_for_content(
     request: GenerateResourceInput,
     content: StructuredResourceContent,
+    allowed_sources: list[SourceRef],
 ) -> list[dict[str, object]]:
     """Build a formal-bank blueprint for a locally revised quiz."""
 
@@ -1549,7 +1725,14 @@ def _quiz_blueprint_for_content(
     blueprint: list[dict[str, object]] = []
     for question in content.questions:
         reference = references.get(question.question_id)
-        if reference is None or not reference.answer_key.get("source_ref_ids"):
+        if reference is None:
+            raise QuestionBankError("graded_quiz_question_bank_scope_invalid")
+        source_ref_ids = _runtime_question_source_ref_ids(
+            request,
+            allowed_sources,
+            reference,
+        )
+        if not source_ref_ids:
             raise QuestionBankError("graded_quiz_question_bank_scope_invalid")
         blueprint.append(
             {
@@ -1558,7 +1741,7 @@ def _quiz_blueprint_for_content(
                 "question_type": reference.question_type.value,
                 "knowledge_id": reference.knowledge_id,
                 "difficulty": reference.difficulty,
-                "allowed_source_ref_ids": list(reference.answer_key["source_ref_ids"]),
+                "allowed_source_ref_ids": source_ref_ids,
                 "reference_question_ids": [reference.question_id],
             }
         )
@@ -1631,16 +1814,7 @@ def _quiz_question_matches_target(
     slot: dict[str, object],
     request: GenerateResourceInput,
 ) -> bool:
-    """Validate a bank question's certified attribution deterministically.
-
-    The formal-question certification already establishes that the stem, answer
-    and rubric are supported by its primary knowledge item and declared real
-    relations.  Re-comparing CJK token overlap at runtime is both lossy and
-    incorrect for integrated questions: a question may legitimately use more
-    terms from a related item than from its primary item.  Runtime only needs
-    to confirm that the immutable blueprint attribution and certified evidence
-    links have survived assembly.
-    """
+    """Check that a formal question preserves its runtime evidence scope."""
     if question.knowledge_id != str(slot["knowledge_id"]):
         return False
     if question.reference_question_ids != list(slot["reference_question_ids"]):
@@ -1657,6 +1831,22 @@ def _quiz_question_matches_target(
         in {question.knowledge_id, *question.related_knowledge_ids}
         for source_id in question_source_ids
     )
+
+
+def _runtime_question_source_ref_ids(
+    request: GenerateResourceInput,
+    allowed_sources: list[SourceRef],
+    question: RetrievedQuestion,
+) -> list[str]:
+    """Select current evidence for a formal question without persisting Chunk links."""
+    allowed_ids = {source.source_ref_id for source in allowed_sources}
+    knowledge_ids = {question.knowledge_id, *question.related_knowledge_ids}
+    return [
+        chunk.source.source_ref_id
+        for chunk in request.retrieved_chunks
+        if chunk.source.source_ref_id in allowed_ids
+        and chunk.knowledge_id in knowledge_ids
+    ][:3]
 
 
 def _candidate_evidence_body(value: str) -> str:
@@ -1724,7 +1914,12 @@ def _fixture_response(
     chunks_by_source = {chunk.source.source_ref_id: chunk for chunk in request.retrieved_chunks}
     first_source = allowed_sources[0]
     first_chunk = chunks_by_source[first_source.source_ref_id]
-    source_ids = [source.source_ref_id for source in allowed_sources]
+    # The fixture is built before the live gateway call.  Keep every generated
+    # field within the frozen per-field source limit even when retrieval returns
+    # more than ten valid chunks for a resource.
+    source_ids = list(dict.fromkeys(
+        source.source_ref_id for source in allowed_sources
+    ))[:10]
     audience = request.profile.profile_type.value
     title = f"{first_chunk.name}个性化学习资源"
     difficulty = request.requirements.target_difficulty
@@ -1747,21 +1942,36 @@ def _fixture_response(
             summary=f"基于检索证据掌握{first_chunk.name}。",
         )
     elif resource_type == ResourceType.PRACTICE_GUIDE:
+        practice_target_ids = set(
+            request.requirements.resource_knowledge_targets.get(ResourceType.PRACTICE_GUIDE, [])
+        )
+        target_chunks = [
+            chunk
+            for chunk in request.retrieved_chunks
+            if not practice_target_ids or chunk.knowledge_id in practice_target_ids
+        ]
+        has_operation_evidence = any(
+            EvidenceCapability.OPERATION
+            in get_domain_evidence_policy(request.context.domain_code).classify(chunk)
+            for chunk in target_chunks
+        )
+        activity_label = "可追溯实操任务" if has_operation_evidence else "可追溯学习任务"
+        activity_title = f"验证{first_chunk.name}" if has_operation_evidence else f"分析{first_chunk.name}"
         content = PracticeGuideContent(
             title=title,
             target_audience=audience,
-            learning_objectives=[f"完成{first_chunk.name}的最小可复现实操"],
+            learning_objectives=[f"完成{first_chunk.name}的{activity_label}"],
             environment_requirements=["与引用材料相符的受控学习环境"],
             steps=[
                 {
                     "order": 1,
-                    "title": f"验证{first_chunk.name}",
+                    "title": activity_title,
                     "instruction": first_chunk.content,
                     "expected_result": "记录实际结果并与引用材料核对。",
                     "source_ref_ids": source_ids,
                 }
             ],
-            acceptance_criteria=["能够复现实操并指出所用知识来源。"],
+            acceptance_criteria=[f"完成{activity_label}并指出所用知识来源。"],
         )
     else:
         questions = []

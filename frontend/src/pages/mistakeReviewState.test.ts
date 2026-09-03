@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MistakeReviewItem } from '@/api/mistakeReview'
-import { mistakePathLabel, mistakePathTone } from './mistakeReviewState'
+import { isTextAnswerQuestion, mistakePathLabel, mistakePathTone } from './mistakeReviewState'
 
 function item(overrides: Partial<MistakeReviewItem>): MistakeReviewItem {
   return {
@@ -26,6 +26,11 @@ function item(overrides: Partial<MistakeReviewItem>): MistakeReviewItem {
 }
 
 describe('mistake review path labels', () => {
+  it('identifies short-answer consolidation attempts as text input questions', () => {
+    expect(isTextAnswerQuestion('short_answer')).toBe(true)
+    expect(isTextAnswerQuestion('single_choice')).toBe(false)
+  })
+
   it('marks current blockers as the first-priority task', () => {
     const value = item({ is_current_priority: true, path_node_status: 'current', path_order: 1 })
     expect(mistakePathLabel(value)).toBe('当前必做')

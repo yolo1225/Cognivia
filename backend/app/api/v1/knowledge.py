@@ -9,16 +9,14 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.agents.domain_evidence_policy import classify_evidence_capabilities
-from app.models import DiagnosticQuestion, KnowledgeDocument, KnowledgeItem, KnowledgeRelation
+from app.models import DiagnosticQuestion, KnowledgeItem, KnowledgeRelation
 from app.rag.readiness import candidate_rag_status
 from app.schemas.common import ApiResponse, ok
 from app.services import candidate_index_job
 from app.services.domain_api_service import default_ability_weights, mark_domain_preparing
 from app.services.question_bank_service import question_bank_coverage
-from app.services.question_certification_service import mark_question_certifications_stale
-from app.services.knowledge_document_service import KnowledgeDocumentError, retry_document
-from app.services.knowledge_import_orchestrator import create_import_run, schedule_import
 from app.services.knowledge_update_service import (
+    mark_affected_questions_stale,
     mark_affected_content,
     related_knowledge_ids,
     replace_item_relations,
@@ -33,7 +31,6 @@ class QuestionDisableRequest(BaseModel):
 
 def _serialize_question(question: DiagnosticQuestion, item: KnowledgeItem) -> dict[str, Any]:
     answer_key = dict(question.answer_key_json or {})
-    certification_report = dict(question.certification_report_json or {})
     return {
         "question_id": question.public_id,
         "domain_code": question.domain_code,
@@ -50,19 +47,8 @@ def _serialize_question(question: DiagnosticQuestion, item: KnowledgeItem) -> di
         "options": list(question.options_json or []),
         "answer": answer_key.get("correct_option", answer_key.get("answer")),
         "explanation": answer_key.get("explanation"),
-        "source_ref_ids": list(answer_key.get("source_ref_ids") or []),
-        "source_quote": answer_key.get("source_quote"),
-        "evidence_quotes": list(answer_key.get("evidence_quotes") or []),
         "difficulty": question.difficulty,
         "status": question.status,
-        "certification_status": question.certification_status,
-        "certification_rule_version": question.certification_rule_version,
-        "certified_at": question.certified_at,
-        "certification_summary": {
-            "deterministic_passed": certification_report.get("deterministic_passed"),
-            "failed_fields": list(certification_report.get("failed_fields") or []),
-            "source_content_hash": question.source_content_hash,
-        },
         "disabled_at": question.disabled_at,
         "disabled_reason": question.disabled_reason,
     }
@@ -74,10 +60,7 @@ def list_question_bank(
     knowledge_id: str | None = Query(default=None),
     question_type: str | None = Query(default=None),
     quiz_level: str | None = Query(default=None),
-    status: str | None = Query(default=None, pattern="^(active|disabled)$"),
-    certification_status: str | None = Query(
-        default=None, pattern="^(pending|certified|rejected|stale)$"
-    ),
+    status: str | None = Query(default=None, pattern="^(active|staged|stale|disabled)$"),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -89,10 +72,6 @@ def list_question_bank(
         filters.append(DiagnosticQuestion.question_type == question_type)
     if status:
         filters.append(DiagnosticQuestion.status == status)
-    if certification_status:
-        filters.append(
-            DiagnosticQuestion.certification_status == certification_status
-        )
     rows = list(
         db.execute(
             select(DiagnosticQuestion, KnowledgeItem)
@@ -122,7 +101,6 @@ def list_question_bank(
 def disable_question(
     question_id: str,
     payload: QuestionDisableRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> ApiResponse:
     row = db.execute(
@@ -143,36 +121,14 @@ def disable_question(
     coverage = question_bank_coverage(
         db, domain_code=question.domain_code, knowledge_ids=[item.public_id]
     )
-    import_id = None
-    source_document_id = str((question.answer_key_json or {}).get("import_document_id") or "")
-    source_document = (
-        db.scalar(
-            select(KnowledgeDocument).where(
-                KnowledgeDocument.public_id == source_document_id,
-                KnowledgeDocument.domain_code == question.domain_code,
-            )
-        )
-        if source_document_id
-        else None
-    )
-    replenishment_status = "source_document_required"
-    if source_document is not None:
-        try:
-            retry_document(db, source_document)
-            run = create_import_run(db, source_document)
-            import_id = run.public_id
-            background_tasks.add_task(schedule_import, run.public_id)
-            replenishment_status = "queued"
-        except KnowledgeDocumentError:
-            replenishment_status = "already_running"
     return ok({
         "question": _serialize_question(question, item),
         "coverage": coverage,
         "replenishment": {
             "required": item.public_id in coverage["missing_knowledge_ids"],
             "knowledge_id": item.public_id,
-            "status": replenishment_status,
-            "import_id": import_id,
+            "status": "question_template_required",
+            "next_action": "download_question_template",
         },
     })
 
@@ -422,7 +378,7 @@ def update_knowledge_item(
     item.needs_reembedding = True
     db.flush()
     affected_ids.update(related_knowledge_ids(db, item))
-    mark_question_certifications_stale(
+    mark_affected_questions_stale(
         db,
         domain_code=item.domain_code,
         knowledge_ids={item.public_id},

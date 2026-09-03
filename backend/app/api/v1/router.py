@@ -6,12 +6,14 @@ from app.api.v1 import (
     admin_users,
     diagnostics,
     domains,
+    domain_change_sets,
     evaluations,
     generation_tasks,
     health,
     knowledge,
     knowledge_documents,
     knowledge_imports,
+    question_imports,
     learners,
     learning_packages,
     learning_adjustments,
@@ -74,6 +76,18 @@ api_router.include_router(
     prefix="/learning-paths",
     tags=["learning-paths"],
     dependencies=[Depends(get_current_user)],
+)
+api_router.include_router(
+    question_imports.router,
+    prefix="/question-imports",
+    tags=["question-imports"],
+    dependencies=[Depends(require_admin)],
+)
+api_router.include_router(
+    domain_change_sets.router,
+    prefix="/domain-change-sets",
+    tags=["domain-change-sets"],
+    dependencies=[Depends(require_admin)],
 )
 api_router.include_router(
     learning_adjustments.router,

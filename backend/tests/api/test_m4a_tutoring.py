@@ -107,9 +107,6 @@ def _seed(db: Session) -> None:
             answer_key_json={"correct_option": 0},
             difficulty=1,
             status="active",
-            certification_status="certified",
-            certification_rule_version="question-cert-v1",
-            source_content_hash="sha256:" + "b" * 64,
         )
     )
     for index in range(3):
@@ -120,16 +117,13 @@ def _seed(db: Session) -> None:
                 knowledge_item_id=knowledge.id,
                 question_type="single_choice",
                 stem=f"验证题 {index}",
-                options_json=["正确", "错误"],
+                options_json=["正确", f"错误选项 {index}"],
                 answer_key_json={
                     "correct_option": 0,
                     "question_bank_uses": ["mastery_validation"],
                 },
                 difficulty=3,
                 status="active",
-                certification_status="certified",
-                certification_rule_version="question-cert-v1",
-                source_content_hash="sha256:" + "c" * 64,
             )
         )
     db.flush()
@@ -435,7 +429,7 @@ def test_mistake_tutoring_session_is_isolated_and_restored() -> None:
         app.dependency_overrides.clear()
 
 
-def test_mastery_retry_keeps_wrong_question_and_hides_answer_disclosure() -> None:
+def test_mastery_retry_uses_an_unseen_question_and_hides_answer_disclosure() -> None:
     factory = _session_factory()
     with factory() as db:
         _seed(db)
@@ -477,7 +471,7 @@ def test_mastery_retry_keeps_wrong_question_and_hides_answer_disclosure() -> Non
         retry = client.post(
             f"/api/v1/tutoring/sessions/{session_id}/mastery-check"
         ).json()["data"]
-        assert retry["question_id"] == first["question_id"]
+        assert retry["question_id"] != first["question_id"]
         corrected = client.post(
             f"/api/v1/tutoring/sessions/{session_id}/assessments/{retry['assessment_id']}/answers",
             json={"answer": 0},
@@ -597,16 +591,31 @@ def test_node_evidence_aggregates_across_resources_and_allows_cross_session_answ
         lecture_state = client.get(
             f"/api/v1/tutoring/sessions/{lecture_session}"
         ).json()["data"]
-        assert lecture_state["pending_assessment"]["assessment_id"] == assessment[
+        assert lecture_state["pending_assessment"] is None
+        practice_state = client.get(
+            f"/api/v1/tutoring/sessions/{practice_session}"
+        ).json()["data"]
+        assert practice_state["pending_assessment"]["assessment_id"] == assessment[
             "assessment_id"
         ]
 
-        answered = client.post(
+        cross_session_answer = client.post(
             f"/api/v1/tutoring/sessions/{lecture_session}/assessments/{assessment['assessment_id']}/answers",
+            json={"answer": 0},
+        )
+        assert cross_session_answer.status_code == 409
+
+        answered = client.post(
+            f"/api/v1/tutoring/sessions/{practice_session}/assessments/{assessment['assessment_id']}/answers",
             json={"answer": 0},
         )
         assert answered.status_code == 200, answered.json()
         assert answered.json()["data"]["decision"] == "evidence_recorded"
+
+        lecture_after_answer = client.get(
+            f"/api/v1/tutoring/sessions/{lecture_session}"
+        ).json()["data"]
+        assert lecture_after_answer["node_adjustment_result"] is None
 
         with factory() as db:
             feedback = db.query(Feedback).order_by(Feedback.id).all()

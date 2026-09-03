@@ -89,6 +89,28 @@ def test_accumulation_is_order_independent_and_single_item_does_not_force_known(
         assert forward["items"]["python_api_basics"][key] == reverse["items"]["python_api_basics"][key]
 
 
+def test_auxiliary_mistake_redo_cannot_independently_confirm_known() -> None:
+    core = _pair("core-question", "python_api_basics", 1.0)
+    first = build_knowledge_state(
+        config=AI_APP_DEV_PROFILE_V2,
+        evidence=[core[0]],
+        assessments=[core[1]],
+    )
+    auxiliary = _pair("mistake-redo", "python_api_basics", 1.0)
+    state = build_knowledge_state(
+        config=AI_APP_DEV_PROFILE_V2,
+        evidence=[auxiliary[0]],
+        assessments=[auxiliary[1]],
+        previous_state=first,
+        evidence_class_by_id={"mistake-redo": "auxiliary"},
+    )
+
+    item = state["items"]["python_api_basics"]
+    assert item["core_evidence_count"] == 1
+    assert item["auxiliary_evidence_count"] == 1
+    assert item["status"] != "known"
+
+
 def test_public_projection_hides_accumulator_parameters() -> None:
     evidence, assessment = _pair("ev-1", "python_api_basics", 0.0)
     state = build_knowledge_state(

@@ -24,6 +24,7 @@
           <span class="section-kicker">当前学情</span>
           <h2>{{ profileTypeLabel(report.profile_type) }}</h2>
           <p>基于诊断结果形成，后续学习和作答会持续更新。</p>
+          <p v-if="profileReliabilityMessage" class="profile-reliability">{{ profileReliabilityMessage }}</p>
           <div class="overview-tags"><span v-for="direction in directionList" :key="direction">{{ direction }}</span><span>{{ contextSnapshot.education_level || '学习背景待补充' }}</span></div>
           <small>画像 {{ profileVersionLabel }} · {{ formatDate(profileUpdatedAt) }} 更新</small>
         </div>
@@ -102,6 +103,7 @@ import PageHeader from '@/components/Shared/PageHeader.vue'
 import PageState from '@/components/Shared/PageState.vue'
 import { useAuthStore } from '@/stores/authStore'
 import { useDomainStore } from '@/stores/domainStore'
+import { learningDecision } from '@/utils/learningDecision'
 
 const router = useRouter()
 const route = useRoute()
@@ -170,6 +172,15 @@ const pathNodes = computed<LearningPathNode[]>(() => report.value?.learning_path
 const currentPathNode = computed(() => pathNodes.value.find(node => node.status === 'current') || null)
 const completedPathNodeCount = computed(() => pathNodes.value.filter(node => node.status === 'completed').length)
 const blockingMistakeCount = computed(() => Number(report.value?.node_gate?.blocking_mistake_count || 0))
+const profileReliabilityMessage = computed(() => {
+  const evidence = (report.value?.evidence_profile || report.value?.ability_profile?.evidence_profile || {}) as Record<string, unknown>
+  if (evidence.status === 'accumulating') {
+    return String(evidence.message || '正式证据正在累计，达到独立验证门槛后才会更新画像版本。')
+  }
+  return evidence.reliability_status === 'provisional'
+    ? String(evidence.reliability_message || '当前为初步画像，后续正式评估会继续提高可靠度。')
+    : ''
+})
 const selectedPathNodeId = ref('')
 const selectedPathNode = computed(() => (
   pathNodes.value.find(node => node.path_node_id === selectedPathNodeId.value)
@@ -229,15 +240,11 @@ type CurrentTask = {
 }
 
 const currentTask = computed<CurrentTask | null>(() => {
-  if (blockingMistakeCount.value) return {
-    tone: 'mistake', eyebrow: '当前优先任务', title: `先完成 ${blockingMistakeCount.value} 道错题巩固`,
-    description: '这些错题与当前学习节点直接相关，完成后才能继续推进路线。', button: '开始错题巩固', disabled: false, action: 'mistake',
-  }
   const proposal = activeAdjustment.value
   if (proposal) {
     if (proposal.status === 'resource_pending' || proposal.recovery_available || proposal.generation_task?.status === 'failed') return {
-      tone: 'resource', eyebrow: '当前学习安排', title: proposal.resource_recommendation.mode === 'remedial' ? '补充当前节点学习内容' : '准备下一节点学习内容',
-      description: '画像已更新，确认后将生成与当前状态匹配的学习资源。', button: adjustmentGenerateLabel(proposal, Boolean(proposal.recovery_available || proposal.generation_task?.status === 'failed')),
+      tone: 'resource', eyebrow: '当前学习安排', title: learningDecision(proposal).title,
+      description: learningDecision(proposal).description, button: adjustmentGenerateLabel(proposal, Boolean(proposal.recovery_available || proposal.generation_task?.status === 'failed')),
       disabled: adjustmentSubmitting.value === proposal.proposal_id, action: 'adjustment_generate', proposal,
     }
     if (proposal.generation_task?.task_id) return {
@@ -247,9 +254,15 @@ const currentTask = computed<CurrentTask | null>(() => {
   }
   const node = currentPathNode.value
   if (!node) return null
-  if (node.resource_state === 'ready') return { tone: 'route', eyebrow: '当前学习节点', title: node.title, description: node.learning_objective, button: '继续当前学习', disabled: false, action: 'node_resource', node }
+  // Consolidation blocks advancing beyond the node, not creation of the
+  // current node's initial learning package.
   if (node.resource_state === 'generating') return { tone: 'resource', eyebrow: '当前学习节点', title: '学习内容正在准备', description: `正在为「${node.title}」生成学习内容。`, button: '查看生成进度', disabled: false, action: 'node_resource', node }
-  return { tone: 'route', eyebrow: '当前学习节点', title: node.title, description: node.learning_objective, button: node.resource_state === 'failed' ? '重新生成学习内容' : '生成学习内容', disabled: creatingGeneration.value, action: 'node_generate', node }
+  if (node.resource_state !== 'ready') return { tone: 'route', eyebrow: '当前学习节点', title: node.title, description: node.learning_objective, button: node.resource_state === 'failed' ? '重新生成学习内容' : '生成学习内容', disabled: creatingGeneration.value, action: 'node_generate', node }
+  if (blockingMistakeCount.value) return {
+    tone: 'mistake', eyebrow: '当前优先任务', title: `先完成 ${blockingMistakeCount.value} 道错题巩固`,
+    description: '这些错题与当前学习节点直接相关，完成后才能继续推进路线。', button: '开始错题巩固', disabled: false, action: 'mistake',
+  }
+  return { tone: 'route', eyebrow: '当前学习节点', title: node.title, description: node.learning_objective, button: '继续当前学习', disabled: false, action: 'node_resource', node }
 })
 
 function percentOrEmpty(value?: number | null) { return value == null ? '暂无' : `${Math.round(value)}%` }
@@ -272,12 +285,12 @@ function knowledgeStateLabel(state: string) {
 
 function adjustmentTaskAction(proposal: LearningAdjustmentSummary) {
   if (proposal.generation_task?.status !== 'completed') return '查看生成进度'
-  return proposal.resource_recommendation.mode === 'remedial' ? '查看补救资源' : '查看下一节点资源'
+  return learningDecision(proposal).type === 'next_stage' ? '查看下一节点资源' : '查看适配资源'
 }
 
 function adjustmentGenerateLabel(proposal: LearningAdjustmentSummary, retry = false) {
-  const label = proposal.resource_recommendation.mode === 'remedial' ? '补救资源' : '下一节点学习包'
-  return `${retry ? '重新生成' : '生成'}${label}`
+  const label = learningDecision(proposal).generateLabel || '适配资源'
+  return retry ? `重新生成${label.replace(/^生成/, '')}` : label
 }
 
 function profileChangeLabel(change: NonNullable<LearningReport['profile_changes']>[number]) {
@@ -380,10 +393,7 @@ function nodeGenerationErrorMessage(error: unknown) {
   const detail = (error as { response?: { data?: { error?: { code?: string; message?: string } } } })
     ?.response?.data?.error
   if (detail?.code === 'GRADED_QUIZ_QUESTION_BANK_NOT_READY') {
-    return '当前学习单元的正式认证题不足 3 道，暂不能生成分级测验。'
-  }
-  if (detail?.message?.includes('DOMAIN_GENERATION_NOT_READY:question_source_binding_invalid')) {
-    return '领域题目来源校验未通过，系统已阻止生成以保证内容可追溯。'
+    return '当前学习单元的正式题目不足 3 道，暂不能生成分级测验。'
   }
   if (detail?.code === 'http_409' && detail.message === 'PATH_NODE_CHANGED') {
     return '学习路线已更新，请刷新报告后按新的当前节点生成资源。'
@@ -602,7 +612,7 @@ onBeforeUnmount(() => {
 /* 画像总览 */
 .profile-overview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .9fr) minmax(230px, .78fr); gap: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .overview-copy,.overview-stats,.overview-action { min-width: 0; padding: 23px 24px; }
-.overview-copy h2 { margin-top: 5px; color: var(--ink); font-size: 23px; line-height: 1.35; }.overview-copy > p { margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.65; }.overview-copy > small { display: block; margin-top: 12px; color: var(--muted); font-size: 11px; }
+.overview-copy h2 { margin-top: 5px; color: var(--ink); font-size: 23px; line-height: 1.35; }.overview-copy > p { margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.65; }.overview-copy > p.profile-reliability { color: var(--amber); font-size: 12px; }.overview-copy > small { display: block; margin-top: 12px; color: var(--muted); font-size: 11px; }
 .overview-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }.overview-tags span { border-radius: 6px; background: var(--soft); color: var(--body); padding: 4px 7px; font-size: 11px; }
 .overview-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; border-left: 1px solid var(--line); }.overview-stats div { display: grid; align-content: center; gap: 4px; min-width: 0; }.overview-stats span,.overview-stats small { color: var(--muted); font-size: 10px; }.overview-stats strong { color: var(--ink); font-size: 22px; line-height: 1.1; }.overview-stats small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .overview-action { display: grid; align-content: center; gap: 7px; border-left: 1px solid var(--line); background: var(--blue2); }.overview-action > span { color: var(--blue); font-size: 10px; font-weight: 750; }.overview-action strong { color: var(--ink); font-size: 15px; line-height: 1.4; }.overview-action p { color: var(--body); font-size: 11px; line-height: 1.55; }.overview-action .btn { justify-self: start; margin-top: 3px; }

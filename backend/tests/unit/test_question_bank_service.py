@@ -13,7 +13,6 @@ from app.services.question_bank_service import (
     select_mastery_question,
     select_graded_quiz_candidates,
 )
-from app.services.question_certification_service import QUESTION_CERTIFICATION_RULE_VERSION
 
 
 def _select(rows: list[dict], *, profile_type: str, target_difficulty: int) -> list[dict]:
@@ -76,8 +75,6 @@ def test_mastery_check_stays_on_unmet_knowledge_without_reusing_failed_question(
                 answer_key_json={"correct_option": 0, "question_bank_uses": ["mastery_validation"]},
                 difficulty=4,
                 status="active",
-                certification_status="certified",
-                certification_rule_version=QUESTION_CERTIFICATION_RULE_VERSION,
             )
 
         completed_question = question("completed_question", completed)

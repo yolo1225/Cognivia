@@ -1,4 +1,4 @@
-from sqlalchemy import JSON, Float, ForeignKey, String, Text
+from sqlalchemy import JSON, Float, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -6,6 +6,14 @@ from app.models.base import Base, TimestampMixin
 
 class Feedback(TimestampMixin, Base):
     __tablename__ = "resource_feedback"
+    __table_args__ = (
+        Index(
+            "ix_resource_feedback_node_evidence_lookup",
+            "learner_id",
+            "evidence_status",
+            "tutoring_session_id",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     resource_id: Mapped[int] = mapped_column(ForeignKey("learning_resources.id"))

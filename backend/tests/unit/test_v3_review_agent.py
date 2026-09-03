@@ -124,6 +124,15 @@ def _with_verdicts(deterministic_review, verdict: EvidenceVerdict, source_ids=No
     return deterministic_review.model_copy(update={"fact_checks": checks})
 
 
+class FullySupportingChannel:
+    def review(self, *, deterministic_review, resource, **_kwargs):
+        return _with_verdicts(
+            deterministic_review,
+            EvidenceVerdict.SUPPORTED,
+            [source.source_ref_id for source in resource.source_refs],
+        )
+
+
 class ConsensusContradictionChannel:
     def review(self, *, deterministic_review, **_kwargs):
         return _with_verdicts(deterministic_review, EvidenceVerdict.CONTRADICTED)
@@ -312,6 +321,39 @@ def test_v3_review_emits_dual_model_contract_report() -> None:
         or report.undetermined_claim_ids
         or report.missing_knowledge_ids
     )
+
+
+def test_coverage_only_gap_rechecks_all_claims_instead_of_failing() -> None:
+    request = _input()
+    targets = [
+        *request.requirements.resource_knowledge_targets[ResourceType.LECTURE],
+        "coverage_only_target",
+    ]
+    requirements = request.requirements.model_copy(
+        update={
+            "required_knowledge_ids": targets,
+            "resource_knowledge_targets": {ResourceType.LECTURE: targets},
+        }
+    )
+    retriever = StaticSupplementalRetriever([])
+    review_request = request.model_copy(update={"requirements": requirements})
+
+    report = (
+        ReviewValidationAgent(
+            channel=FullySupportingChannel(), evidence_retriever=retriever
+        )
+        .execute(review_request)
+        .reports[0]
+    )
+
+    canonical_ids = {
+        claim.claim_id
+        for claim in extract_atomic_claims(review_request.resources[0], review_request)
+    }
+    assert report.arbitration.required
+    assert "coverage_only_target" in report.missing_knowledge_ids
+    assert retriever.calls == 1
+    assert set(report.arbitration.disputed_claim_ids) == canonical_ids
 
 
 def test_evidence_not_mentioned_is_undetermined_without_factual_penalty() -> None:

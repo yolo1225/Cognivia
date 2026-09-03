@@ -21,6 +21,22 @@ from app.services.diagnostic_service import (
 
 router = APIRouter()
 
+_DIAGNOSTIC_START_ERROR_MESSAGES = {
+    "diagnostic_question_distribution_unavailable": "当前活动题库不足 10 道可用诊断题，请补齐后重试。",
+    "initial_diagnostic_requires_ten_questions": "首次诊断固定为 10 道题。",
+    "initial_context_required": "请先完整填写学习背景和学习方向。",
+    "learner_domain_mismatch": "当前学习方向所属领域已变化，请刷新后重新选择。",
+    "initial_profile_already_ready": "当前学习者已完成首次诊断。",
+}
+
+
+def _diagnostic_start_error(exc: ValueError) -> HTTPException:
+    code = str(exc).lower()
+    message = _DIAGNOSTIC_START_ERROR_MESSAGES.get(
+        code, "暂时无法创建诊断，请检查领域状态后重试。"
+    )
+    return HTTPException(status_code=409, detail=message)
+
 
 @router.post("/sessions", response_model=ApiResponse)
 def create_session(
@@ -127,7 +143,7 @@ def retry_session(
             learner_id=self_service_learner(principal, (payload or {}).get("learner_id")),
         )
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc).upper()) from exc
+        raise _diagnostic_start_error(exc) from exc
     if started:
         background_tasks.add_task(run_diagnostic_scoring_job, session_id)
     return ok(result)

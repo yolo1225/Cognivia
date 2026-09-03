@@ -1,0 +1,65 @@
+{
+  "schema_version": "submission-fixture-manifest-v1",
+  "fixture_version": "ai_app_dev_submission_fixture_v1",
+  "domain_code": "ai_app_dev",
+  "source_snapshots": {
+    "knowledge_items": "deliverables/competition-initial-review/07_测试数据与案例/知识库快照/knowledge_items.json",
+    "diagnostic_questions": "deliverables/competition-initial-review/07_测试数据与案例/题库快照/diagnostic_questions.json"
+  },
+  "counts": {
+    "knowledge_items": 75,
+    "prerequisite_relations": 67,
+    "related_relations": 14,
+    "active_questions": 465,
+    "question_purposes": {
+      "diagnosis": 90,
+      "graded_quiz": 225,
+      "mastery_validation": 150
+    },
+    "template_compatible_questions": 450,
+    "supplemental_diagnosis_questions": 15,
+    "evaluation_cases": 50,
+    "manual_demo_cases": 3
+  },
+  "files": {
+    "domain.json": {
+      "sha256": "896dfff03ccb53abde871a314255ea938c3c24be4592361efa21b0ef6fe00bf6"
+    },
+    "knowledge_items.json": {
+      "sha256": "0f02beec87f1031171160da252692382be996044938c4bb189cb78fa7c8fcd7b"
+    },
+    "relations.json": {
+      "sha256": "a09dc8bde4a650a9a3e0849d488af95af21e279b1055fa324c5430a8e6894cab"
+    },
+    "diagnostic_questions.json": {
+      "sha256": "a30743f1653f8592abb3efa332b5d83af1184ec98300768676ed572ae068a052"
+    },
+    "template_question_source.json": {
+      "sha256": "7494e6b616350d8b4be9bdebf53fafd44037f848130b1c320764c77502b85ea4"
+    },
+    "supplemental_diagnosis_questions.json": {
+      "sha256": "50bfca4df3e7f87198d124812ccf2dbb65e1ac6fb48cece3700851ec85cd7393"
+    },
+    "manual_demo_cases.json": {
+      "sha256": "38e77ff5b98d91daac2d8f7424970cf01646352b33c2330230cb5440e6d63a87"
+    },
+    "evaluation_cases_v4.json": {
+      "sha256": "d3f403f9cb7a33da1c0da26d47a1cf2656da62e5b74b6b581a2ab199a3228795"
+    },
+    "evaluation_manifest.json": {
+      "sha256": "7674b3aa72958fab4432152f84c82d81a0d050824cd509d19e4b9820a2d747bc"
+    },
+    "import_source_manifest.json": {
+      "sha256": "5304185807628473c82dfbb7075f73aebefc7ae70bde957e7c3b82bdf10a854e"
+    }
+  },
+  "import_source": {
+    "path": "import_source/01-ai-app-dev-complete.md",
+    "sha256": "1d574c76b8fbc6aae96fbb5ff0a5920d06d30fc8e4757d00112411ea3198fe59",
+    "deliverable_path": "deliverables/knowledge-import-packages/ai_app_dev/01-ai-app-dev-complete.md"
+  },
+  "reproduction_modes": {
+    "bootstrap": "load the fixture into an empty database",
+    "import_demo": "upload the Markdown, then download and fill a current question template"
+  }
+}

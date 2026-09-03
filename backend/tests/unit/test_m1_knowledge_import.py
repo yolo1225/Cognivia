@@ -30,9 +30,7 @@ from app.services.knowledge_import_publish_service import (
 from app.services.knowledge_import_validation_service import validate_import
 from app.services.knowledge_parser_service import parse_document, replace_chunks
 from app.services.knowledge_model_import_service import (
-    _adapt_question_output,
     _adapt_validation_decision,
-    _generate_question_records,
     _validate_candidate_batch,
     repair_curriculum_relations,
 )
@@ -212,12 +210,12 @@ def test_source_withdrawal_keeps_shared_item_and_evidence_file(tmp_path, monkeyp
     first = delete_document(db, documents[0])
     assert first["knowledge_preserved_shared"] == 1
     assert item.status == "published"
-    assert not paths[0].exists()
+    assert paths[0].exists()
 
     second = delete_document(db, documents[1])
-    assert second["knowledge_deleted"] == 1
-    assert db.get(KnowledgeItem, item.id) is None
-    assert not paths[1].exists()
+    assert second["knowledge_retired"] == 1
+    assert db.get(KnowledgeItem, item.id).status == "retired"
+    assert paths[1].exists()
 
 
 def test_cancel_requested_processing_document_can_be_deleted(tmp_path, monkeypatch) -> None:
@@ -234,19 +232,19 @@ def test_cancel_requested_processing_document_can_be_deleted(tmp_path, monkeypat
         original_name=path.name, stored_path="kdoc_cancelled/source.md",
         file_type="markdown", mime_type="text/markdown",
         size_bytes=path.stat().st_size, sha256="c" * 64,
-        status="question_generation", source_title="测试来源", license_note="test",
+        status="graph_generation", source_title="测试来源", license_note="test",
         uploaded_by="tester",
     )
     db.add(document)
     db.flush()
     run = KnowledgeImportRun(
         public_id="kir_cancelled", document_id=document.id, domain_code=document.domain_code,
-        current_step="question_generation", status="cancel_requested", input_version="v1",
+        current_step="graph_generation", status="cancel_requested", input_version="v1",
     )
     db.add(run)
     db.flush()
     db.add(KnowledgeImportBatch(
-        run_id=run.id, step="question_generation", batch_key="batch-1",
+        run_id=run.id, step="graph_generation", batch_key="batch-1",
         input_hash="d" * 64, prompt_version="v1", status="running",
     ))
     db.commit()
@@ -254,9 +252,9 @@ def test_cancel_requested_processing_document_can_be_deleted(tmp_path, monkeypat
 
     result = delete_document(db, document)
 
-    assert result["status"] == "deleted"
-    assert db.scalar(select(KnowledgeImportRun).where(KnowledgeImportRun.id == run_id)) is None
-    assert not path.exists()
+    assert result["status"] == "withdrawn"
+    assert db.scalar(select(KnowledgeImportRun).where(KnowledgeImportRun.id == run_id)) is not None
+    assert path.exists()
 
 
 def test_active_processing_document_still_requires_cancellation(tmp_path, monkeypatch) -> None:
@@ -288,7 +286,7 @@ def test_learning_directions_are_suggested_from_imported_categories_and_tags() -
             payload_json={"category": "模型基础", "tags": ["llm", "api"]},
         ),
         SimpleNamespace(
-            candidate_type="diagnostic_question",
+            candidate_type="unsupported_legacy_candidate",
             payload_json={"category": "ignored", "tags": ["ignored"]},
         ),
     ]
@@ -341,6 +339,24 @@ def test_direction_mapping_merge_preserves_manual_identity_and_covers_new_tags()
     assert set(merged[0]["match_tags"]) == {"existing", "new-topic"}
 
 
+def test_direction_mapping_merge_adds_a_distinct_topic() -> None:
+    configured = [{
+        "value": "llm",
+        "label": "大模型应用",
+        "match_tags": ["llm", "api", "workflow"],
+    }]
+    suggested = [{
+        "value": "engineering",
+        "label": "工程基础",
+        "match_tags": ["python", "fastapi", "mysql", "docker", "api"],
+    }]
+
+    merged = _merge_learning_direction_mappings(configured, suggested)
+
+    assert [item["value"] for item in merged] == ["llm", "engineering"]
+    assert merged[1]["label"] == "工程基础"
+
+
 def test_sparse_graph_cannot_pass_all_node_quality_gate() -> None:
     item_tags = {f"node-{index}": {"shared"} for index in range(114)}
     edges = [
@@ -382,58 +398,7 @@ def test_related_to_does_not_count_as_learning_path() -> None:
     assert quality["path_participating_nodes"] == 0
 
 
-def test_question_adapter_normalizes_live_provider_aliases_and_nulls() -> None:
-    adapted = _adapt_question_output({"items": [{
-        "knowledge_candidate_id": "knowledge-1",
-        "type": "short-answer",
-        "question_text": "说明该机制的两个关键作用。",
-        "answer": ["作用一", "作用二"],
-        "rubric": None,
-        "analysis": None,
-        "dimension": "mechanism",
-        "evidence_quotes": [
-            {"source_ref_id": "ki_1::chunk::0", "quote": "作用一"}
-        ],
-    }, {
-        "knowledge_id": "knowledge-2",
-        "type": "single-choice",
-        "question": "哪项表述正确？",
-        "options": ["甲", "乙", "丙", "丁"],
-        "answer": "B",
-        "rubric": ["选择唯一正确项"],
-        "dimension": "concept",
-    }, {
-        "knowledge_id": "knowledge-3",
-        "type": "short_answer",
-        "stem": None,
-        "answer": ["无题干记录应被过滤"],
-    }]})
 
-    assert len(adapted["questions"]) == 2
-    assert adapted["questions"][0]["answer"] == "作用一；作用二"
-    assert adapted["questions"][0]["rubric"] == ["作用一", "作用二"]
-    assert adapted["questions"][0]["evidence_quotes"] == [
-        {"source_ref_id": "ki_1::chunk::0", "quote": "作用一"}
-    ]
-    assert adapted["questions"][1]["answer"] == 1
-
-
-def test_question_adapter_accepts_top_level_question_array() -> None:
-    adapted = _adapt_question_output([{
-        "knowledge_id": "knowledge-1",
-        "question_slot": 1,
-        "type": "single-choice",
-        "question": "哪项正确？",
-        "options": ["甲", "乙"],
-        "answer": 0,
-    }])
-
-    assert len(adapted["questions"]) == 1
-    assert adapted["questions"][0]["question_slot"] == 1
-
-
-def test_question_adapter_rejects_non_collection_payload_as_empty() -> None:
-    assert _adapt_question_output("invalid")["questions"] == []
 
 
 def test_curriculum_repair_connects_only_deficient_nodes_without_model_calls(
@@ -514,8 +479,8 @@ def test_candidate_review_adaptively_splits_on_provider_input_limit(monkeypatch)
             public_id=f"question-{index}",
             document_id=1,
             domain_code="demo",
-            candidate_type="diagnostic_question",
-            payload_json={"stem": "题干", "source_quote": "来源"},
+            candidate_type="knowledge_relation",
+            payload_json={"source_candidate_id": "a", "target_candidate_id": "b", "relation_type": "related_to"},
         )
         for index in range(8)
     ]
@@ -537,8 +502,8 @@ def test_single_truncated_candidate_review_is_filtered(monkeypatch) -> None:
         public_id="question-1",
         document_id=1,
         domain_code="demo",
-        candidate_type="diagnostic_question",
-        payload_json={"stem": "题干", "source_quote": "来源"},
+        candidate_type="knowledge_relation",
+        payload_json={"source_candidate_id": "a", "target_candidate_id": "b", "relation_type": "related_to"},
     )
 
     assert _validate_candidate_batch([candidate]) == set()
@@ -583,99 +548,6 @@ def test_import_batch_identity_reuses_same_input(tmp_path) -> None:
 
     assert first.id == second.id
 
-
-def test_question_generation_splits_each_knowledge_into_tier_pairs(
-    tmp_path, monkeypatch
-) -> None:
-    db = _session()
-    document = _document(tmp_path)
-    db.add(document)
-    db.flush()
-    run = KnowledgeImportRun(
-        public_id="run-question-pairs",
-        document_id=document.id,
-        domain_code=document.domain_code,
-        current_step="question_generation",
-        status="running",
-        input_version="sha256:" + "b" * 64,
-        artifact_manifest_json={},
-        step_state_json={},
-    )
-    knowledge = KnowledgeImportCandidate(
-        public_id="knowledge-pair-test",
-        document_id=document.id,
-        domain_code=document.domain_code,
-        candidate_type="knowledge_item",
-        payload_json={
-            "name": "向量检索",
-            "target_public_id": "ki_vector_retrieval",
-            "category": "RAG",
-            "difficulty": 2,
-            "tags": ["retrieval"],
-            "content": "向量检索根据查询向量与知识切片向量的相似度召回相关内容。",
-            "evidence_capabilities": [],
-            "source_title": "测试来源",
-            "source_url": None,
-            "license_note": "测试许可",
-        },
-        source_locator_json={},
-        confidence=0.9,
-        status="pending",
-        validation_errors_json=[],
-    )
-    db.add_all([run, knowledge])
-    db.flush()
-    payloads = []
-    prompts = []
-
-    def fake_execute(_batch_id, **kwargs):
-        payloads.append(kwargs["payload"])
-        prompts.append(kwargs["system_prompt"])
-        return {"questions": []}
-
-    monkeypatch.setattr(
-        "app.services.knowledge_model_import_service.execute_json_batch", fake_execute
-    )
-    monkeypatch.setattr(
-        "app.services.knowledge_model_import_service.run_parallel",
-        lambda jobs, max_workers: [job() for job in jobs],
-    )
-
-    _generate_question_records(
-        db,
-        run,
-        [knowledge],
-        step="question_generation",
-        missing_slots_by_knowledge={knowledge.public_id: [1, 2, 3, 4, 5, 6]},
-    )
-
-    assert [
-        payload["knowledge"][0]["required_question_slots"] for payload in payloads
-    ] == [[1], [2], [3], [4], [5], [6]]
-    assert [
-        payload["knowledge"][0]["required_question_purpose"] for payload in payloads
-    ] == [
-        "diagnosis",
-        "graded_quiz",
-        "graded_quiz",
-        "graded_quiz",
-        "mastery_validation",
-        "mastery_validation",
-    ]
-    assert all(len(payload["knowledge"][0]["source_chunks"]) == 1 for payload in payloads)
-    assert all("question_bank_use" in prompt for prompt in prompts)
-    assert all("错题巩固不是题目用途" in prompt for prompt in prompts)
-    assert all("题槽1至3用于诊断和分阶测验" not in prompt for prompt in prompts)
-    batch_keys = list(
-        db.scalars(
-            select(KnowledgeImportBatch.batch_key).where(
-                KnowledgeImportBatch.run_id == run.id
-            )
-        )
-    )
-    assert any("foundation" in key for key in batch_keys)
-    assert any("improvement" in key for key in batch_keys)
-    assert any("challenge" in key for key in batch_keys)
 
 
 def test_curriculum_graph_is_branching_and_covers_module_nodes() -> None:
@@ -741,45 +613,6 @@ def test_import_input_version_fits_persisted_column(tmp_path) -> None:
     assert len(version) == 71
     assert column_length is not None and len(version) <= column_length
 
-
-def test_model_import_run_blocks_incomplete_formal_question_bank(tmp_path, monkeypatch) -> None:
-    from app.services import knowledge_document_service
-
-    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
-    db = _session()
-    document = _document(tmp_path)
-    db.add(document)
-    db.commit()
-    replace_candidates(db, document, parse_document(document))
-    db.add(
-        KnowledgeImportRun(
-            public_id="run-question-bank-incomplete",
-            document_id=document.id,
-            domain_code=document.domain_code,
-            current_step="validation",
-            status="running",
-            input_version="sha256:" + "b" * 64,
-            artifact_manifest_json={},
-            step_state_json={},
-        )
-    )
-    db.commit()
-
-    result = validate_import(db, document.id)
-
-    assert result["invalid"] >= 2
-    knowledge_candidates = list(
-        db.scalars(
-            select(KnowledgeImportCandidate).where(
-                KnowledgeImportCandidate.document_id == document.id,
-                KnowledgeImportCandidate.candidate_type == "knowledge_item",
-            )
-        )
-    )
-    assert all(
-        "正式题库用途密度不足" in "".join(item.validation_errors_json)
-        for item in knowledge_candidates
-    )
 
 
 def test_chunk_replacement_reuses_identical_evidence_on_retry(tmp_path, monkeypatch) -> None:
@@ -882,111 +715,14 @@ def test_approved_candidates_publish_multiple_items(tmp_path, monkeypatch) -> No
     assert validate_import(db, document.id)["invalid"] == 0
     approve_candidates(db, document)
     result = publish_approved(db, document)
-    assert result == {"knowledge_items": 2, "relations": 0, "questions": 2}
+    assert result == {"knowledge_items": 2, "relations": 0}
     items = list(db.scalars(select(KnowledgeItem)))
     assert len(items) == 2
     assert all(item.status == "staged" and item.source_locator_json for item in items)
     assert list(db.scalars(select(DiagnosticQuestion))) == []
 
 
-def test_choice_answer_and_prerequisite_cycle_are_blocked(tmp_path, monkeypatch) -> None:
-    from app.services import knowledge_document_service
 
-    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
-    db = _session()
-    document = _document(tmp_path)
-    db.add(document)
-    db.commit()
-    candidates = replace_candidates(db, document, parse_document(document))
-    db.commit()
-    knowledge = [item for item in candidates if item.candidate_type == "knowledge_item"]
-    question = next(item for item in candidates if item.candidate_type == "diagnostic_question")
-    question.payload_json = {
-        **question.payload_json,
-        "question_type": "choice",
-        "options": ["A", "B"],
-        "answer": "C",
-    }
-    db.add_all([
-        KnowledgeImportCandidate(
-            public_id="kic_cycle",
-            document_id=document.id,
-            domain_code=document.domain_code,
-            candidate_type="knowledge_relation",
-            payload_json={
-                "source_candidate_id": knowledge[1].public_id,
-                "target_candidate_id": knowledge[0].public_id,
-                "relation_type": "prerequisite",
-            },
-            source_locator_json=knowledge[0].source_locator_json,
-            confidence=0.8,
-            status="pending",
-            validation_errors_json=[],
-        ),
-        KnowledgeImportCandidate(
-            public_id="kic_cycle_reverse", document_id=document.id,
-            domain_code=document.domain_code, candidate_type="knowledge_relation",
-            payload_json={"source_candidate_id": knowledge[0].public_id,
-                          "target_candidate_id": knowledge[1].public_id,
-                          "relation_type": "prerequisite"},
-            source_locator_json=knowledge[0].source_locator_json,
-            confidence=0.8, status="pending", validation_errors_json=[],
-        ),
-    ])
-    db.commit()
-    result = validate_import(db, document.id)
-    assert result["invalid"] >= 2
-    assert "选择题答案不在选项中" in question.validation_errors_json
-    assert any(
-        "前置关系存在环" in item.validation_errors_json
-        for item in db.scalars(
-            select(KnowledgeImportCandidate).where(
-                KnowledgeImportCandidate.candidate_type == "knowledge_relation"
-            )
-        )
-    )
-
-
-def test_zero_choice_index_is_a_valid_answer(tmp_path, monkeypatch) -> None:
-    from app.services import knowledge_document_service
-
-    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
-    db = _session()
-    document = _document(tmp_path)
-    db.add(document)
-    db.commit()
-    candidates = replace_candidates(db, document, parse_document(document))
-    question = next(item for item in candidates if item.candidate_type == "diagnostic_question")
-    question.payload_json = {
-        **question.payload_json,
-        "question_type": "single_choice",
-        "options": ["正确答案", "干扰项"],
-        "answer": 0,
-        "explanation": "第一项与来源章节一致",
-    }
-    db.commit()
-
-    assert validate_import(db, document.id)["invalid"] == 0
-    assert question.validation_errors_json == []
-
-
-def test_partial_approval_requires_referenced_knowledge(tmp_path, monkeypatch) -> None:
-    from app.services import knowledge_document_service
-
-    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
-    db = _session()
-    document = _document(tmp_path)
-    db.add(document)
-    db.commit()
-    candidates = replace_candidates(db, document, parse_document(document))
-    db.commit()
-    assert validate_import(db, document.id)["invalid"] == 0
-    question = next(item for item in candidates if item.candidate_type == "diagnostic_question")
-    try:
-        approve_candidates(db, document, [question.public_id])
-        raise AssertionError("approval accepted without referenced knowledge candidate")
-    except KnowledgeImportPublishError as exc:
-        assert "引用依赖" in str(exc)
 
 
 def test_name_and_definition_smoke_must_hit_imported_knowledge(tmp_path, monkeypatch) -> None:
@@ -1015,7 +751,10 @@ def test_name_and_definition_smoke_must_hit_imported_knowledge(tmp_path, monkeyp
     class Collection:
         def query(self, **_kwargs):
             return {
-                "metadatas": [[{"knowledge_id": target.public_id}]],
+                "metadatas": [[{
+                    "knowledge_id": target.public_id,
+                    "domain_code": target.domain_code,
+                }]],
                 "distances": [[0.0]],
             }
 
@@ -1037,6 +776,213 @@ def test_name_and_definition_smoke_must_hit_imported_knowledge(tmp_path, monkeyp
     assert result["passed"] is True
     assert result["checks"]["name"]["passed"] is True
     assert result["checks"]["definition"]["passed"] is True
+
+
+def test_import_smoke_uses_update_candidate_when_no_new_item_is_staged(tmp_path, monkeypatch) -> None:
+    """Re-importing a stable knowledge ID must smoke its projected update."""
+    from app.services import knowledge_document_service
+
+    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
+    db = _session()
+    document = _document(tmp_path)
+    db.add(document)
+    db.add_all([
+        KnowledgeItem(
+            public_id="knowledge_existing_rag_basic",
+            external_id="rag.basic",
+            domain_code=document.domain_code,
+            name="RAG 基础",
+            category="RAG",
+            difficulty=2,
+            content_md="旧版内容。",
+            source_title="既有资料",
+            license_note="test",
+            status="published",
+        ),
+        KnowledgeItem(
+            public_id="knowledge_existing_rag_retrieval",
+            external_id="rag.retrieval",
+            domain_code=document.domain_code,
+            name="检索",
+            category="RAG",
+            difficulty=2,
+            content_md="旧版检索内容。",
+            source_title="既有资料",
+            license_note="test",
+            status="published",
+        ),
+    ])
+    db.commit()
+
+    replace_candidates(db, document, parse_document(document))
+    db.commit()
+    assert validate_import(db, document.id)["invalid"] == 0
+    candidate = db.scalar(select(KnowledgeImportCandidate).where(
+        KnowledgeImportCandidate.document_id == document.id,
+        KnowledgeImportCandidate.candidate_type == "knowledge_item",
+        KnowledgeImportCandidate.payload_json["external_id"].as_string() == "rag.basic",
+    ))
+    assert candidate is not None
+    assert candidate.payload_json["action"] == "update"
+    expected_id = candidate.payload_json["target_public_id"]
+
+    approve_candidates(db, document)
+    publish_approved(db, document)
+    assert db.scalar(select(KnowledgeItem).where(
+        KnowledgeItem.source_document_id == document.id
+    )) is None
+
+    class Provider:
+        def embed_texts(self, texts):
+            return [[1.0, 0.0] for _ in texts]
+
+    class Collection:
+        def query(self, **_kwargs):
+            return {"metadatas": [[{
+                "knowledge_id": expected_id,
+                "domain_code": document.domain_code,
+            }]], "distances": [[0.0]]}
+
+    class Client:
+        def get_collection(self, **_kwargs):
+            return Collection()
+
+    class Store:
+        def load(self, *_args, **_kwargs):
+            return SimpleNamespace(active_collection="candidate", indexed_chunk_count=2)
+
+    result = smoke_import_index(
+        db, document, provider=Provider(), client=Client(), manifest_store=Store(),
+    )
+    assert result["passed"] is True
+    assert result["target_knowledge_id"] == expected_id
+
+
+def test_reimporting_withdrawn_source_restages_retired_knowledge(tmp_path, monkeypatch) -> None:
+    """A withdrawn source keeps audit rows, but its stable IDs are reusable."""
+    from app.services import knowledge_document_service
+
+    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
+    db = _session()
+    document = _document(tmp_path)
+    db.add(document)
+    db.commit()
+    sections = parse_document(document)
+    db.add_all([
+        KnowledgeItem(
+            public_id="knowledge_retired_rag_basic",
+            external_id="rag.basic",
+            domain_code=document.domain_code,
+            name="RAG 基础",
+            category="RAG",
+            difficulty=2,
+            content_md=sections[0]["text"],
+            source_title="已撤回来源",
+            license_note="test",
+            status="retired",
+        ),
+        KnowledgeItem(
+            public_id="knowledge_retired_rag_retrieval",
+            external_id="rag.retrieval",
+            domain_code=document.domain_code,
+            name="检索",
+            category="RAG",
+            difficulty=2,
+            content_md=sections[1]["text"],
+            source_title="已撤回来源",
+            license_note="test",
+            status="retired",
+        ),
+    ])
+    db.commit()
+
+    candidates = replace_candidates(db, document, sections)
+    assert all(
+        candidate.payload_json["action"] == "skip"
+        for candidate in candidates
+        if candidate.candidate_type == "knowledge_item"
+    )
+    db.commit()
+    assert validate_import(db, document.id)["invalid"] == 0
+    approve_candidates(db, document)
+    staged = publish_approved(db, document)
+
+    restored = list(db.scalars(select(KnowledgeItem).where(
+        KnowledgeItem.source_document_id == document.id
+    )))
+    assert staged["knowledge_items"] == 2
+    assert {item.public_id for item in restored} == {
+        "knowledge_retired_rag_basic", "knowledge_retired_rag_retrieval",
+    }
+    assert all(item.status == "staged" and item.needs_reembedding for item in restored)
+
+
+def test_import_smoke_accepts_published_sibling_from_same_domain(tmp_path, monkeypatch) -> None:
+    """Incremental imports share a candidate collection with existing knowledge."""
+    from app.services import knowledge_document_service
+
+    monkeypatch.setattr(knowledge_document_service, "KNOWLEDGE_STORAGE_ROOT", tmp_path)
+    db = _session()
+    document = _document(tmp_path)
+    db.add(document)
+    db.commit()
+    replace_candidates(db, document, parse_document(document))
+    db.commit()
+    validate_import(db, document.id)
+    approve_candidates(db, document)
+    publish_approved(db, document)
+    target = db.scalar(
+        select(KnowledgeItem)
+        .where(KnowledgeItem.source_document_id == document.id)
+        .order_by(KnowledgeItem.id)
+    )
+    sibling = KnowledgeItem(
+        public_id="knowledge_existing_sibling",
+        domain_code=document.domain_code,
+        name="既有同领域知识",
+        category="test",
+        difficulty=1,
+        content_md="已经发布的同领域知识内容。",
+        source_title="测试教材",
+        license_note="test",
+        status="published",
+    )
+    db.add(sibling)
+    db.commit()
+
+    class Provider:
+        def embed_texts(self, texts):
+            return [[1.0, 0.0] for _ in texts]
+
+    class Collection:
+        def query(self, **_kwargs):
+            return {
+                "metadatas": [[
+                    {"knowledge_id": target.public_id, "domain_code": document.domain_code},
+                    {"knowledge_id": sibling.public_id, "domain_code": document.domain_code},
+                ]],
+                "distances": [[0.0, 0.1]],
+            }
+
+    class Client:
+        def get_collection(self, **_kwargs):
+            return Collection()
+
+    class Store:
+        def load(self, *_args, **_kwargs):
+            return SimpleNamespace(active_collection="candidate", indexed_chunk_count=2)
+
+    result = smoke_import_index(
+        db,
+        document,
+        provider=Provider(),
+        client=Client(),
+        manifest_store=Store(),
+    )
+
+    assert result["passed"] is True
+    assert result["checks"]["name"]["target_hit"] is True
+    assert result["checks"]["name"]["foreign_knowledge_ids"] == []
 
 
 def test_domain_smoke_requires_target_hit_and_domain_isolation() -> None:

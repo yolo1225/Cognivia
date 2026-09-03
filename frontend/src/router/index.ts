@@ -7,7 +7,7 @@ const auth = { requiresAuth:true }
 const routes = [
   { path:'/login', component:()=>import('@/pages/LoginPage.vue'), meta:{ guest:true, title:'登录' } },
   { path:'/register', component:()=>import('@/pages/LoginPage.vue'), meta:{ guest:true, title:'注册' } },
-  { path:'/', redirect:'/dashboard' },
+  { path:'/', component:()=>import('@/pages/WelcomePage.vue'), meta:{ guest:true, title:'领域知识个性化生成与多智能体协同决策系统' } },
   { path:'/dashboard', component:()=>import('@/pages/DashboardPage.vue'), meta:{ ...auth, title:'首页' } },
   { path:'/diagnostic', redirect:'/dashboard', meta:{ ...auth, title:'诊断训练' } },
   { path:'/resources', component:()=>import('@/pages/ResourcePage.vue'), meta:{ ...auth, title:'学习资源' } },

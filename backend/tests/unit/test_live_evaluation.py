@@ -49,6 +49,7 @@ def test_live_result_merge_keeps_gold_and_replaces_only_observation() -> None:
         "results": [
             {
                 "case_id": "EVAL-001",
+                "task_status": "completed",
                 "observed_result": {
                     "determinable": True,
                     "generated_fact_count": 2,
@@ -80,6 +81,11 @@ def test_live_result_merge_keeps_gold_and_replaces_only_observation() -> None:
     assert result["metrics"]["agent_latency_ms"]["review_resource"] == {
         "p50": 80,
         "p95": 80,
+    }
+    assert result["metrics"]["task_success_rate"] == {
+        "numerator": 1,
+        "denominator": 1,
+        "ratio": 1.0,
     }
 
 

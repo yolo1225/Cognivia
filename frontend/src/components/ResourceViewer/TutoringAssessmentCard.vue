@@ -24,7 +24,7 @@
         <span v-if="!assessment.node_gate.quiz_completed">分阶测验待完成</span>
         <span v-if="assessment.node_gate.blocking_mistake_count">待解决错题 {{ assessment.node_gate.blocking_mistake_count }} 道</span>
       </div>
-      <div v-if="assessment.resource_recommendation && !assessment.resource_decision" class="adjustment-actions">
+      <div v-if="showResourceDecision && assessment.resource_recommendation && !assessment.resource_decision" class="adjustment-actions">
         <button class="btn primary" type="button" :disabled="resourceSubmitting" @click="$emit('resource-decision', 'generate')">生成新资源</button>
         <button class="btn" type="button" :disabled="resourceSubmitting" @click="$emit('resource-decision', 'skip')">暂不生成</button>
       </div>
@@ -41,10 +41,12 @@ const props = withDefaults(defineProps<{
   assessment: TutoringAssessment
   submitting?: boolean
   resourceSubmitting?: boolean
+  showResourceDecision?: boolean
   pendingHint?: string
 }>(), {
   submitting: false,
   resourceSubmitting: false,
+  showResourceDecision: true,
   pendingHint: '本题只用于确认近期交互形成的判断，不会凭单次回答自由改写画像。',
 })
 

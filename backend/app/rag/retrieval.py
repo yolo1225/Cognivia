@@ -40,11 +40,6 @@ from app.services.question_bank_service import (
     quiz_revision_question_indexes,
     select_graded_quiz_candidates,
 )
-from app.services.question_certification_service import (
-    QUESTION_CERTIFICATION_RULE_VERSION,
-)
-
-
 ALGORITHM_VERSION = "v3-candidate-retrieval-1.0"
 # Explicit targets are already bounded by the contract. Keep enough chunks to
 # include later heading sections such as "操作步骤" and "验收标准" before
@@ -661,6 +656,88 @@ class CandidateRetriever:
                     continue
                 record.similarity = similarity
 
+    def _question_evidence_records(
+        self,
+        *,
+        collection: Any,
+        manifest: CandidateIndexManifest,
+        domain_code: str,
+        question: DiagnosticQuestion,
+        knowledge_id: str,
+        warnings: list[str],
+    ) -> list[CandidateRecord]:
+        """Find current Candidate evidence for one selected formal question."""
+
+        answer_key = dict(question.answer_key_json or {})
+        answer = answer_key.get("answer")
+        if question.question_type == "single_choice":
+            try:
+                answer = (question.options_json or [])[int(answer_key["correct_option"])]
+            except (KeyError, TypeError, ValueError, IndexError):
+                answer = ""
+        query_text = "\n".join(
+            value
+            for value in (
+                question.stem,
+                str(answer or ""),
+                str(answer_key.get("explanation") or ""),
+            )
+            if str(value).strip()
+        )[:2000]
+        if not query_text:
+            self._warn(warnings, f"quiz_runtime_evidence_missing:{knowledge_id}")
+            return []
+        knowledge_scope = _ordered_unique(
+            [knowledge_id, *(question.related_knowledge_ids_json or [])]
+        )
+        where: dict[str, Any] | None = None
+        if len(knowledge_scope) == 1:
+            where = {"knowledge_id": knowledge_scope[0]}
+        elif knowledge_scope:
+            where = {"knowledge_id": {"$in": knowledge_scope}}
+        try:
+            vector = self._embed_query(query_text, manifest)
+            result = collection.query(
+                query_embeddings=[vector],
+                n_results=min(collection.count(), 3),
+                where=where,
+                include=["documents", "metadatas", "distances", "embeddings"],
+            )
+        except TypeError:
+            # Test doubles and older Chroma clients may not support `where` on
+            # query. Query all records and retain only the question scope below.
+            try:
+                result = collection.query(
+                    query_embeddings=[vector],
+                    n_results=collection.count(),
+                    include=["documents", "metadatas", "distances", "embeddings"],
+                )
+            except Exception:
+                self._warn(warnings, f"quiz_runtime_evidence_missing:{knowledge_id}")
+                return []
+        except Exception:
+            self._warn(warnings, f"quiz_runtime_evidence_missing:{knowledge_id}")
+            return []
+        records = [
+            record
+            for record in self._valid_records(
+                self._records_from_query_result(result),
+                manifest,
+                domain_code,
+                warnings,
+            )
+            if record.knowledge_id in set(knowledge_scope)
+        ]
+        for record in records:
+            distance = record.metadata.pop("__distance__", None)
+            if isinstance(distance, (int, float)):
+                record.similarity = _clamp(1.0 - float(distance))
+                record.routes.add(RetrievalMatchType.PRIORITY)
+        records = [record for record in records if record.similarity is not None]
+        if not records:
+            self._warn(warnings, f"quiz_runtime_evidence_missing:{knowledge_id}")
+        return records[:1]
+
     def _assemble_output(
         self,
         *,
@@ -883,11 +960,6 @@ class CandidateRetriever:
                     .join(KnowledgeItem, DiagnosticQuestion.knowledge_item_id == KnowledgeItem.id)
                     .where(DiagnosticQuestion.domain_code == request.context.domain_code)
                     .where(DiagnosticQuestion.status == "active")
-                    .where(DiagnosticQuestion.certification_status == "certified")
-                    .where(
-                        DiagnosticQuestion.certification_rule_version
-                        == QUESTION_CERTIFICATION_RULE_VERSION
-                    )
                     .order_by(DiagnosticQuestion.id)
                 )
             )
@@ -950,107 +1022,39 @@ class CandidateRetriever:
                     excluded_question_ids=excluded_question_ids,
                     **selection_kwargs,
                 )
-        required_question_sources = list(
-            dict.fromkeys(
-                (
-                    str(source_ref_id),
-                    str(source_ref_id).split("::chunk::", 1)[0],
-                    str(
-                        ((question.answer_key_json or {}).get("source_locators") or {}).get(
-                            str(source_ref_id)
-                        )
-                        or ""
-                    ),
-                )
-                for question, _ in questions
-                for source_ref_id in (
-                    (question.answer_key_json or {}).get("source_ref_ids") or []
-                )
+        # Formal questions only carry knowledge-point references. For each
+        # selected question, retrieve current Candidate evidence from its stem,
+        # answer and explanation. These Chunk IDs exist only in this response.
+        question_evidence: dict[str, CandidateRecord] = {}
+        for question, knowledge_id in questions:
+            records = self._question_evidence_records(
+                collection=collection,
+                manifest=manifest,
+                domain_code=request.context.domain_code,
+                question=question,
+                knowledge_id=knowledge_id,
+                warnings=warnings,
             )
-        )
-        required_source_chunk_ids: set[str] = set()
-        priority_knowledge_ids = set(request.retrieval_plan.priority_knowledge_ids)
-        for source_ref_id, knowledge_id, source_locator in required_question_sources:
-            if not source_ref_id:
-                self._warn(warnings, f"quiz_source_ref_missing:{knowledge_id}")
-                continue
-            already_selected = next(
-                (
-                    record
-                    for record in selected
-                    if record.chunk_id == source_ref_id
-                    and record.knowledge_id == knowledge_id
-                ),
-                None,
-            )
-            if already_selected is not None:
-                required_source_chunk_ids.add(already_selected.chunk_id)
-                continue
-            exact_records = self._explicit_records(
-                collection,
-                manifest,
-                request.context.domain_code,
-                knowledge_id,
-                warnings,
-            )
-            if not exact_records:
-                continue
-            self._score_candidates(exact_records, query_vector, manifest, request, warnings)
-            chosen = next(
-                (record for record in exact_records if record.chunk_id == source_ref_id),
-                None,
-            )
-            if chosen is None:
-                self._warn(warnings, f"quiz_source_ref_missing:{knowledge_id}")
-                continue
+            if records:
+                question_evidence[question.public_id] = records[0]
+        if question_evidence:
+            required_records = list(question_evidence.values())
+            required_ids = {record.chunk_id for record in required_records}
+            retained = [record for record in selected if record.chunk_id not in required_ids]
+            selected = [*required_records, *retained][: request.retrieval_plan.n_results]
+        selected_ids = {record.chunk_id for record in selected}
+        questions = [
+            (question, knowledge_id)
+            for question, knowledge_id in questions
             if (
-                source_locator
-                and _clean_text(chosen.metadata.get("source_locator")) != source_locator
-            ):
-                self._warn(warnings, f"quiz_source_locator_mismatch:{knowledge_id}")
-                continue
-            if chosen.similarity is None or chosen.chunk_id in selected_ids:
-                continue
-            if len(selected) >= MAX_OUTPUT_CHUNKS:
-                knowledge_counts = {
-                    value: sum(
-                        1 for record in selected if record.knowledge_id == value
-                    )
-                    for value in {record.knowledge_id for record in selected}
-                }
-                replacement_index = next(
-                    (
-                        index
-                        for index in range(len(selected) - 1, -1, -1)
-                        if selected[index].chunk_id not in required_source_chunk_ids
-                        and (
-                            selected[index].knowledge_id not in priority_knowledge_ids
-                            or knowledge_counts[selected[index].knowledge_id] > 1
-                        )
-                    ),
-                    None,
-                )
-                if replacement_index is None:
-                    self._warn(warnings, "quiz_source_chunk_budget_exhausted")
-                    continue
-                removed = selected.pop(replacement_index)
-                selected_ids.remove(removed.chunk_id)
-            chosen.routes.add(RetrievalMatchType.PRIORITY)
-            selected.append(chosen)
-            selected_ids.add(chosen.chunk_id)
-            required_source_chunk_ids.add(chosen.chunk_id)
+                evidence := question_evidence.get(question.public_id)
+            ) is not None
+            and evidence.chunk_id in selected_ids
+        ]
         covered = _ordered_unique(record.knowledge_id for record in selected)
         missing = _ordered_unique(
             [*missing, *(value for value in explicit_order if value not in set(covered))]
         )
-        questions = [
-            row
-            for row in questions
-            if {
-                str(value)
-                for value in (row[0].answer_key_json or {}).get("source_ref_ids") or []
-            }.issubset(selected_ids)
-        ]
         chunks = [
             RetrievedChunk(
                 chunk_id=record.chunk_id,

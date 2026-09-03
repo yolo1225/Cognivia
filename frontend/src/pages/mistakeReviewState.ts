@@ -1,5 +1,9 @@
 import type { MistakeReviewItem } from '@/api/mistakeReview'
 
+export function isTextAnswerQuestion(questionType: string) {
+  return questionType === 'short_answer'
+}
+
 export function mistakePathLabel(item: MistakeReviewItem): string {
   if (item.is_current_priority) return '当前必做'
   if (item.path_node_status === 'locked') {

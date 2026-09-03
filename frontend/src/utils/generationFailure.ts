@@ -10,11 +10,11 @@ const FAILURE_COPY: Record<string, GenerationFailureCopy> = {
   },
   revision_claim_set_empty_after_repair: {
     title: '实操指南修订后缺少可核验内容',
-    description: '系统已停止发布仅剩教学占位语的实操指南。请重新生成；若仍失败，需要为当前知识点补充可核验的实操来源。',
+    description: '自动修订未能保留可由来源核验的实操事实。本次学习包未发布；请重新生成，若仍失败需补充当前知识点的可核验实操来源。',
   },
   review_claim_set_empty: {
     title: '实操指南修订后缺少可核验内容',
-    description: '历史修订结果没有留下可供双模型审核的事实内容，可使用最新修订策略重新生成。',
+    description: '自动修订后没有留下可供双模型审核的事实内容。本次学习包未发布，可重新生成。',
   },
   revision_exhausted: {
     title: '学习包质量指标未达标',

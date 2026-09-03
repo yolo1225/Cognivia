@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.models import Domain, KnowledgeDocument
+from app.models import Domain, DomainChangeSet, KnowledgeDocument
 from app.schemas.common import ApiResponse, ok
 from app.services.knowledge_document_service import (
     MAX_FILE_BYTES,
@@ -19,6 +19,12 @@ from app.services.knowledge_document_service import (
     serialize_document,
 )
 from app.services.knowledge_import_orchestrator import create_import_run, schedule_import
+from app.services.domain_change_set_service import (
+    DomainChangeSetError,
+    create_change_set,
+    get_change_set,
+    update_change_set_summary,
+)
 from app.services import candidate_index_job
 
 router = APIRouter()
@@ -62,8 +68,7 @@ def list_documents(domain_code: str = Query(...), db: Session = Depends(get_db))
                     statuses[value]
                     for value in (
                         "queued", "parsing", "extracting", "graph_generation",
-                        "graph_review", "question_generation", "question_review",
-                        "question_repair", "validating", "staging", "indexing",
+                        "graph_review", "validating", "staging", "indexing",
                         "smoke_testing", "publishing",
                     )
                 ),
@@ -83,6 +88,9 @@ async def upload_document(
     source_title: str = Query(""),
     license_note: str = Query(""),
     uploaded_by: str = Query("demo_admin"),
+    change_set_id: str | None = Query(default=None),
+    import_mode: str = Query(default="append", pattern="^(append|replace)$"),
+    replaces_document_id: str | None = Query(default=None),
     x_file_name: str = Header(...),
     db: Session = Depends(get_db),
 ) -> ApiResponse:
@@ -93,7 +101,28 @@ async def upload_document(
         content.extend(chunk)
         if len(content) > MAX_FILE_BYTES:
             raise HTTPException(status_code=413, detail="单个文件不能超过 20MB")
+    change_set: DomainChangeSet | None = None
+    replace_target: KnowledgeDocument | None = None
     try:
+        if change_set_id:
+            change_set = get_change_set(db, change_set_id, domain_code=domain_code)
+        elif db.scalar(select(Domain).where(Domain.domain_code == domain_code)).status == "ready":
+            # Candidate-index activation is isolated per source document. Keep
+            # automatic maintenance units equally small and let their question
+            # workbooks be split into as many batches as needed.
+            change_set = create_change_set(
+                db, domain_code=domain_code, mode=import_mode, created_by=uploaded_by
+            )
+        if replaces_document_id:
+            replace_target = db.scalar(
+                select(KnowledgeDocument).where(
+                    KnowledgeDocument.public_id == replaces_document_id,
+                    KnowledgeDocument.domain_code == domain_code,
+                    KnowledgeDocument.status != "deleted",
+                )
+            )
+            if replace_target is None:
+                raise KnowledgeDocumentError("未找到可替换的来源文档")
         document = create_document(
             db,
             domain_code=domain_code,
@@ -103,13 +132,25 @@ async def upload_document(
             source_title=source_title,
             license_note=license_note,
             uploaded_by=uploaded_by,
+            change_set=change_set,
+            import_mode=import_mode,
+            replaces_document=replace_target,
         )
-    except KnowledgeDocumentError as exc:
+        if change_set is not None:
+            update_change_set_summary(change_set, document_id=document.public_id)
+            db.commit()
+    except (KnowledgeDocumentError, DomainChangeSetError) as exc:
         code = 409 if "已存在" in str(exc) else 422
         raise HTTPException(status_code=code, detail=str(exc)) from exc
     run = create_import_run(db, document)
     _schedule_import(run.public_id)
-    return ok({**serialize_document(document), "import_id": run.public_id, "run_id": run.public_id, "input_version": run.input_version})
+    return ok({
+        **serialize_document(document),
+        "import_id": run.public_id,
+        "run_id": run.public_id,
+        "input_version": run.input_version,
+        "change_set_id": change_set.public_id if change_set else None,
+    })
 
 
 @router.get("/{document_id}", response_model=ApiResponse)
@@ -143,10 +184,17 @@ def remove_document(
         result = delete_document(db, document)
     except KnowledgeDocumentError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    job = candidate_index_job.try_start(db, document.domain_code)
-    if job is not None:
-        background_tasks.add_task(candidate_index_job.run_rebuild, job.id, document.domain_code)
-        result["index_rebuild_job_id"] = job.id
+    candidate_manifests = result.pop("candidate_manifests", [])
+    if result.get("change_set_cancelled"):
+        background_tasks.add_task(
+            candidate_index_job.discard_change_set_candidates, candidate_manifests
+        )
+        result["candidate_index_cleanup_scheduled"] = bool(candidate_manifests)
     else:
-        result["index_rebuild_pending"] = True
+        job = candidate_index_job.try_start(db, document.domain_code)
+        if job is not None:
+            background_tasks.add_task(candidate_index_job.run_rebuild, job.id, document.domain_code)
+            result["index_rebuild_job_id"] = job.id
+        else:
+            result["index_rebuild_pending"] = True
     return ok(result)

@@ -6,10 +6,13 @@ from app.models.diagnostic import (
     DiagnosticSession,
     PathNodeAssessment,
 )
+from app.models.question_import import QuestionImportRow, QuestionImportRun
+from app.models.domain_change_set import DomainChangeSet
 from app.models.domain import Domain
 from app.models.evaluation import EvaluationCase
 from app.models.feedback import Feedback
 from app.models.index_build_job import IndexBuildJob
+from app.models.idempotency import IdempotencyRecord
 from app.models.knowledge import (
     DomainIndexManifest,
     KnowledgeChunk,
@@ -46,12 +49,16 @@ __all__ = [
     "DiagnosticQuestion",
     "DiagnosticSession",
     "PathNodeAssessment",
+    "QuestionImportRow",
+    "QuestionImportRun",
+    "DomainChangeSet",
     "Domain",
     "EvaluationCase",
     "Feedback",
     "GenerationTask",
     "KnowledgeUpdateImpact",
     "IndexBuildJob",
+    "IdempotencyRecord",
     "DomainIndexManifest",
     "KnowledgeChunk",
     "KnowledgeItem",
